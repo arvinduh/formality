@@ -111,6 +111,8 @@ impl DeclaresFacets for PythonSurface {
   }
 }
 
+pub const PYTHON_EXTENSIONS: &[&str] = &["py", "pyi"];
+
 impl LanguageSurface for PythonSurface {
   fn name(&self) -> &'static str {
     "python"
@@ -121,7 +123,7 @@ impl LanguageSurface for PythonSurface {
   }
 
   fn file_extensions(&self) -> &[&'static str] {
-    &["py"]
+    PYTHON_EXTENSIONS
   }
 
   fn clone_box(&self) -> Box<dyn LanguageSurface> {
@@ -135,7 +137,7 @@ impl LanguageSurface for PythonSurface {
       || root.join("Pipfile").is_file()
       || root.join("ruff.toml").is_file()
       || root.join(".ruff.toml").is_file()
-      || !find_files_with_ext(root, &["py"], &[], &[], &[]).is_empty()
+      || !find_files_with_ext(root, PYTHON_EXTENSIONS, &[], &[], &[]).is_empty()
   }
 
   fn tool_info(
@@ -167,7 +169,7 @@ impl LanguageSurface for PythonSurface {
 
     let files = find_files_with_ext(
       &ctx.root,
-      &["py"],
+      PYTHON_EXTENSIONS,
       &ctx.paths,
       &ctx.lang_config.files,
       &ctx.lang_config.exclude,
@@ -267,7 +269,7 @@ impl LanguageSurface for PythonSurface {
 
     let files = find_files_with_ext(
       &ctx.root,
-      &["py"],
+      PYTHON_EXTENSIONS,
       &ctx.paths,
       &ctx.lang_config.files,
       &ctx.lang_config.exclude,

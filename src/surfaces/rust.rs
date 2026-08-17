@@ -179,7 +179,12 @@ impl LanguageSurface for RustSurface {
         "2021"
       }
     } else {
-      "2024"
+      ctx
+        .lang_config
+        .rust
+        .as_ref()
+        .and_then(|r| r.edition.as_deref())
+        .unwrap_or("2021")
     };
 
     if ctx.check_only {
