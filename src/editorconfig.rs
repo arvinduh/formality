@@ -271,10 +271,12 @@ mod tests {
 
   #[test]
   fn test_generate_editorconfig_fixed_tabs_and_unsupported_line_length() {
-    let mut global = ResolvedGlobalConfig::default();
-    global.use_tabs = true;
-    global.indent_size = 4;
-    global.line_length = 100;
+    let global = ResolvedGlobalConfig {
+      use_tabs: true,
+      indent_size: 4,
+      line_length: 100,
+      ..ResolvedGlobalConfig::default()
+    };
 
     let surfaces = all_surfaces();
     let ec = generate_editorconfig(&global, &surfaces);

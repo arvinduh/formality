@@ -47,13 +47,15 @@ fn test_editorconfig_generation_all_surfaces() {
 
 #[test]
 fn test_editorconfig_generation_customized_global_facets() {
-  let mut global = ResolvedGlobalConfig::default();
-  global.indent_size = 4;
-  global.line_length = 120;
-  global.end_of_line = "crlf".to_string();
-  global.use_tabs = true;
-  global.insert_final_newline = false;
-  global.trim_trailing_whitespace = false;
+  let global = ResolvedGlobalConfig {
+    indent_size: 4,
+    line_length: 120,
+    end_of_line: "crlf".to_string(),
+    use_tabs: true,
+    insert_final_newline: false,
+    trim_trailing_whitespace: false,
+    ..ResolvedGlobalConfig::default()
+  };
 
   let surfaces = all_surfaces();
   let ec = generate_editorconfig(&global, &surfaces);
