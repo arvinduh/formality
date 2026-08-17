@@ -7,6 +7,7 @@ use super::{
 use std::path::Path;
 use std::time::Instant;
 
+#[derive(Debug, Default, Clone, Copy)]
 pub struct MarkdownSurface;
 
 impl DeclaresFacets for MarkdownSurface {
@@ -34,6 +35,14 @@ impl LanguageSurface for MarkdownSurface {
 
   fn aliases(&self) -> &[&'static str] {
     &["md"]
+  }
+
+  fn file_extensions(&self) -> &[&'static str] {
+    MD_EXTENSIONS
+  }
+
+  fn clone_box(&self) -> Box<dyn LanguageSurface> {
+    Box::new(*self)
   }
 
   fn detect(&self, root: &Path) -> bool {

@@ -577,65 +577,13 @@ fn resolve_target_surfaces(
     let mut active = Vec::new();
     for surface in all_surfaces() {
       let lang_cfg = config.resolve_for_lang(surface.name());
-      let matching = match surface.name() {
-        "rust" => find_files_with_ext(
-          root,
-          &["rs"],
-          paths,
-          &lang_cfg.files,
-          &lang_cfg.exclude,
-        ),
-        "python" => find_files_with_ext(
-          root,
-          &["py"],
-          paths,
-          &lang_cfg.files,
-          &lang_cfg.exclude,
-        ),
-        "cpp" => find_files_with_ext(
-          root,
-          &["c", "cpp", "cc", "cxx", "h", "hpp", "hxx"],
-          paths,
-          &lang_cfg.files,
-          &lang_cfg.exclude,
-        ),
-        "markdown" => find_files_with_ext(
-          root,
-          &["md", "markdown"],
-          paths,
-          &lang_cfg.files,
-          &lang_cfg.exclude,
-        ),
-        "yaml" => find_files_with_ext(
-          root,
-          &["yaml", "yml"],
-          paths,
-          &lang_cfg.files,
-          &lang_cfg.exclude,
-        ),
-        "json" => find_files_with_ext(
-          root,
-          &["json", "jsonc"],
-          paths,
-          &lang_cfg.files,
-          &lang_cfg.exclude,
-        ),
-        "toml" => find_files_with_ext(
-          root,
-          &["toml"],
-          paths,
-          &lang_cfg.files,
-          &lang_cfg.exclude,
-        ),
-        "typst" => find_files_with_ext(
-          root,
-          &["typ"],
-          paths,
-          &lang_cfg.files,
-          &lang_cfg.exclude,
-        ),
-        _ => Vec::new(),
-      };
+      let matching = find_files_with_ext(
+        root,
+        surface.file_extensions(),
+        paths,
+        &lang_cfg.files,
+        &lang_cfg.exclude,
+      );
       if !matching.is_empty() {
         active.push(surface);
       }
