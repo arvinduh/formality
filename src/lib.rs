@@ -2,6 +2,7 @@ pub mod cli;
 pub mod config;
 pub mod diff;
 pub mod doctor;
+pub mod editorconfig;
 pub mod facets;
 pub mod lsp;
 pub mod runner;
@@ -15,6 +16,7 @@ use clap::Parser;
 use cli::{Cli, Commands};
 use colored::Colorize;
 use config::{DEFAULT_CONFIG_FILE_NAME, FormalityConfig, find_project_config};
+pub use editorconfig::generate_editorconfig;
 use runner::{Runner, RunnerAction};
 use std::path::{Path, PathBuf};
 use surfaces::{

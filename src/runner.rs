@@ -59,7 +59,7 @@ impl Runner {
     };
 
     // Execute surfaces concurrently
-    let results: Vec<SurfaceResult> = match action {
+    let mut results: Vec<SurfaceResult> = match action {
       RunnerAction::Fix => {
         // Stage 1: Run lint(fix: true) across matched surfaces
         let lint_results: Vec<SurfaceResult> = surfaces
@@ -126,6 +126,12 @@ impl Runner {
         })
         .collect(),
     };
+
+    if let RunnerAction::Sync { check } = action {
+      let editorconfig_res =
+        crate::editorconfig::sync_editorconfig(root, config, &surfaces, check);
+      results.push(editorconfig_res);
+    }
 
     let mut exit_code = 0;
     let mut pass_count = 0;
