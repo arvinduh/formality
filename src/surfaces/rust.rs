@@ -16,6 +16,7 @@ pub struct RustfmtConfig {
   pub newline_style: String,
   pub use_small_heuristics: String,
   pub edition: String,
+  pub reorder_imports: bool,
 }
 
 impl NativeConfig for RustfmtConfig {
@@ -45,6 +46,7 @@ impl RustfmtConfig {
       newline_style: newline_style.to_string(),
       use_small_heuristics: "Default".to_string(),
       edition: edition.to_string(),
+      reorder_imports: true,
     }
   }
 
@@ -451,6 +453,7 @@ mod tests {
     assert!(content.contains("tab_spaces = 2"));
     assert!(content.contains("max_width = 80"));
     assert!(content.contains("newline_style = \"Unix\""));
+    assert!(content.contains("reorder_imports = true"));
 
     // Check mode should pass when file is up-to-date
     let check_ctx = dummy_execution_context(temp.path(), true);
@@ -466,6 +469,7 @@ mod tests {
       newline_style: "Windows".to_string(),
       use_small_heuristics: "Default".to_string(),
       edition: "2021".to_string(),
+      reorder_imports: true,
     };
     let rendered = cfg.render().unwrap();
     assert!(rendered.starts_with(crate::surfaces::AUTO_GENERATED_HEADER));
@@ -473,6 +477,7 @@ mod tests {
     assert!(rendered.contains("max_width = 100"));
     assert!(rendered.contains("newline_style = \"Windows\""));
     assert!(rendered.contains("edition = \"2021\""));
+    assert!(rendered.contains("reorder_imports = true"));
   }
 
   #[test]
@@ -545,5 +550,29 @@ mod tests {
       .and_then(|r| r.edition.as_deref())
       .unwrap_or("2021");
     assert_eq!(edition_configured, "2018");
+  }
+  #[test]
+  fn test_rust_format_reorders_imports() {
+    if !check_binary_exists("rustfmt") && !check_binary_exists("cargo") {
+      return;
+    }
+    let temp = TempDir::new().unwrap();
+    let src = temp.path().join("src");
+    std::fs::create_dir_all(&src).unwrap();
+    let file = src.join("main.rs");
+    let unformatted = "use std::time::Instant;\nuse std::collections::HashMap;\nuse std::path::Path;\n\nfn main() { let _ = (HashMap::<u32, u32>::new(), Path::new(\"/\"), Instant::now()); }\n";
+    std::fs::write(&file, unformatted).unwrap();
+
+    let surface = RustSurface;
+    let ctx_fix = dummy_execution_context(temp.path(), false);
+    let fix_res = surface.format(&ctx_fix);
+    assert!(matches!(fix_res.status, SurfaceStatus::Passed));
+
+    let formatted = std::fs::read_to_string(&file).unwrap();
+    let hashmap_idx = formatted.find("use std::collections::HashMap;").unwrap();
+    let path_idx = formatted.find("use std::path::Path;").unwrap();
+    let instant_idx = formatted.find("use std::time::Instant;").unwrap();
+    assert!(hashmap_idx < path_idx);
+    assert!(path_idx < instant_idx);
   }
 }
