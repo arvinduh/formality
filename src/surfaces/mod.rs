@@ -446,10 +446,20 @@ pub fn find_files_with_ext(
   root: &Path,
   extensions: &[&str],
   specific_paths: &[PathBuf],
+  files_override: &[PathBuf],
+  exclude: &[PathBuf],
 ) -> Vec<PathBuf> {
-  if !specific_paths.is_empty() {
+  let targets = if !specific_paths.is_empty() {
+    specific_paths
+  } else if !files_override.is_empty() {
+    files_override
+  } else {
+    &[]
+  };
+
+  let raw_files = if !targets.is_empty() {
     let mut out = Vec::new();
-    for p in specific_paths {
+    for p in targets {
       let full_p = if p.is_absolute() {
         p.clone()
       } else {
@@ -466,10 +476,112 @@ pub fn find_files_with_ext(
         out.extend(walk_dir_ext(&full_p, extensions));
       }
     }
-    return out;
+    out
+  } else {
+    walk_dir_ext(root, extensions)
+  };
+
+  if exclude.is_empty() {
+    raw_files
+  } else {
+    raw_files
+      .into_iter()
+      .filter(|file| !is_excluded(file, root, exclude))
+      .collect()
+  }
+}
+
+pub fn simple_glob_match(pattern: &str, text: &str) -> bool {
+  let p_chars: Vec<char> = pattern.chars().collect();
+  let t_chars: Vec<char> = text.chars().collect();
+  let (p_len, t_len) = (p_chars.len(), t_chars.len());
+
+  let mut p_idx = 0;
+  let mut t_idx = 0;
+  let mut star_idx = None;
+  let mut match_idx = 0;
+
+  while t_idx < t_len {
+    if p_idx < p_len
+      && (p_chars[p_idx] == '?' || p_chars[p_idx] == t_chars[t_idx])
+    {
+      p_idx += 1;
+      t_idx += 1;
+    } else if p_idx < p_len && p_chars[p_idx] == '*' {
+      star_idx = Some(p_idx);
+      match_idx = t_idx;
+      p_idx += 1;
+    } else if let Some(star) = star_idx {
+      p_idx = star + 1;
+      match_idx += 1;
+      t_idx = match_idx;
+    } else {
+      return false;
+    }
   }
 
-  walk_dir_ext(root, extensions)
+  while p_idx < p_len && p_chars[p_idx] == '*' {
+    p_idx += 1;
+  }
+
+  p_idx == p_len
+}
+
+pub fn is_excluded(path: &Path, root: &Path, exclude: &[PathBuf]) -> bool {
+  if exclude.is_empty() {
+    return false;
+  }
+  let rel_path = path.strip_prefix(root).unwrap_or(path);
+  let rel_str = rel_path.to_string_lossy().replace('\\', "/");
+  let file_name = path.file_name().and_then(|f| f.to_str()).unwrap_or("");
+
+  for ex in exclude {
+    let ex_str_raw = ex.to_string_lossy();
+    let ex_str = ex_str_raw.replace('\\', "/");
+    let ex_trimmed = ex_str.trim_matches('/');
+
+    // 1. Direct path prefix or exact match with full / root-relative path
+    if path.starts_with(ex) || rel_path.starts_with(ex) {
+      return true;
+    }
+    let full_ex = if ex.is_absolute() {
+      ex.clone()
+    } else {
+      root.join(ex)
+    };
+    if path.starts_with(&full_ex) {
+      return true;
+    }
+
+    // 2. Relative prefix, exact relative string match, or directory match
+    if rel_str == ex_trimmed || rel_str.starts_with(&format!("{}/", ex_trimmed))
+    {
+      return true;
+    }
+
+    // 3. Filename match
+    if file_name == ex_trimmed || file_name == ex_str_raw {
+      return true;
+    }
+
+    // 4. Any path component matches
+    if rel_path.components().any(|c| {
+      c.as_os_str().to_string_lossy() == ex_trimmed
+        || c.as_os_str() == ex.as_os_str()
+    }) {
+      return true;
+    }
+
+    // 5. Glob / wildcard pattern matching
+    if (ex_trimmed.contains('*') || ex_trimmed.contains('?'))
+      && (simple_glob_match(ex_trimmed, &rel_str)
+        || simple_glob_match(ex_trimmed, file_name))
+    {
+      return true;
+    }
+  }
+
+  false
 }
 
 fn walk_dir_ext(dir: &Path, extensions: &[&str]) -> Vec<PathBuf> {
@@ -652,9 +764,274 @@ pub fn sync_file_helper(
   }
 }
 
+struct TempFileGuard<'a>(&'a Path);
+
+impl<'a> Drop for TempFileGuard<'a> {
+  fn drop(&mut self) {
+    let _ = std::fs::remove_file(self.0);
+  }
+}
+
+/// Executes an in-place formatter on temporary copies of the given files and generates
+/// unified diffs between the original content and the formatted content.
+///
+/// Uses an RAII guard to guarantee that `.fml-check.tmp` files are cleaned up on all exit paths.
+pub fn diff_check_via_tempcopy(
+  files: &[PathBuf],
+  run_in_place: impl Fn(&Path) -> std::io::Result<std::process::Output>,
+  surface_name: &'static str,
+  start: Instant,
+) -> SurfaceResult {
+  if files.is_empty() {
+    return SurfaceResult {
+      surface_name,
+      status: SurfaceStatus::Passed,
+      duration: start.elapsed(),
+    };
+  }
+
+  let mut combined_diff = String::new();
+
+  for original in files {
+    let original_content = match std::fs::read_to_string(original) {
+      Ok(c) => c,
+      Err(e) => {
+        return SurfaceResult {
+          surface_name,
+          status: SurfaceStatus::ExecutionError {
+            message: format!("Failed to read {}: {}", original.display(), e),
+          },
+          duration: start.elapsed(),
+        };
+      }
+    };
+
+    let ext = original.extension().and_then(|e| e.to_str()).unwrap_or("");
+    let scratch = if ext.is_empty() {
+      original.with_extension("fml-check.tmp")
+    } else {
+      original.with_extension(format!("{}.fml-check.tmp", ext))
+    };
+
+    if let Err(e) = std::fs::write(&scratch, &original_content) {
+      return SurfaceResult {
+        surface_name,
+        status: SurfaceStatus::ExecutionError {
+          message: format!(
+            "Failed to write temp file {}: {}",
+            scratch.display(),
+            e
+          ),
+        },
+        duration: start.elapsed(),
+      };
+    }
+
+    let _guard = TempFileGuard(&scratch);
+
+    let output = match run_in_place(&scratch) {
+      Ok(out) => out,
+      Err(e) => {
+        return SurfaceResult {
+          surface_name,
+          status: SurfaceStatus::ExecutionError {
+            message: format!(
+              "Failed to run formatter for {}: {}",
+              original.display(),
+              e
+            ),
+          },
+          duration: start.elapsed(),
+        };
+      }
+    };
+
+    if !output.status.success() {
+      let stderr = String::from_utf8_lossy(&output.stderr).to_string();
+      let stdout = String::from_utf8_lossy(&output.stdout).to_string();
+      let msg = if !stderr.trim().is_empty() {
+        stderr
+      } else if !stdout.trim().is_empty() {
+        stdout
+      } else {
+        format!("Formatter failed for {}", original.display())
+      };
+      return SurfaceResult {
+        surface_name,
+        status: SurfaceStatus::ViolationsFound {
+          message: msg,
+          diff: None,
+        },
+        duration: start.elapsed(),
+      };
+    }
+
+    let formatted = match std::fs::read_to_string(&scratch) {
+      Ok(f) => f,
+      Err(e) => {
+        return SurfaceResult {
+          surface_name,
+          status: SurfaceStatus::ExecutionError {
+            message: format!(
+              "Failed to read formatted temp file {}: {}",
+              scratch.display(),
+              e
+            ),
+          },
+          duration: start.elapsed(),
+        };
+      }
+    };
+
+    if formatted != original_content {
+      let diff = render_diff(
+        &original_content,
+        &formatted,
+        &original.display().to_string(),
+        &format!("{} (formatted)", original.display()),
+      );
+      if !combined_diff.is_empty() {
+        combined_diff.push('\n');
+      }
+      combined_diff.push_str(&diff);
+    }
+  }
+
+  if !combined_diff.is_empty() {
+    SurfaceResult {
+      surface_name,
+      status: SurfaceStatus::ViolationsFound {
+        message: String::new(),
+        diff: Some(combined_diff),
+      },
+      duration: start.elapsed(),
+    }
+  } else {
+    SurfaceResult {
+      surface_name,
+      status: SurfaceStatus::Passed,
+      duration: start.elapsed(),
+    }
+  }
+}
+
 #[cfg(test)]
 mod tests {
   use super::*;
+  use tempfile::TempDir;
+
+  fn create_dummy_success_output() -> std::process::Output {
+    #[cfg(windows)]
+    {
+      std::process::Command::new("cmd")
+        .args(["/C", "exit 0"])
+        .output()
+        .expect("cmd exit 0 failed")
+    }
+    #[cfg(not(windows))]
+    {
+      std::process::Command::new("true")
+        .output()
+        .expect("true failed")
+    }
+  }
+
+  #[test]
+  fn test_diff_check_via_tempcopy_clean() {
+    let temp = TempDir::new().unwrap();
+    let file = temp.path().join("clean.rs");
+    std::fs::write(&file, "fn main() {\n  println!(\"clean\");\n}\n").unwrap();
+
+    let start = Instant::now();
+    let res = diff_check_via_tempcopy(
+      std::slice::from_ref(&file),
+      |_scratch| Ok(create_dummy_success_output()),
+      "rust",
+      start,
+    );
+
+    assert!(matches!(res.status, SurfaceStatus::Passed));
+
+    let ext = file.extension().unwrap().to_str().unwrap();
+    let scratch = file.with_extension(format!("{}.fml-check.tmp", ext));
+    assert!(!scratch.exists());
+  }
+
+  #[test]
+  fn test_diff_check_via_tempcopy_with_diff() {
+    let temp = TempDir::new().unwrap();
+    let file = temp.path().join("dirty.rs");
+    std::fs::write(&file, "fn main() {let x=1;}").unwrap();
+
+    let start = Instant::now();
+    let res = diff_check_via_tempcopy(
+      std::slice::from_ref(&file),
+      |scratch| {
+        std::fs::write(scratch, "fn main() {\n  let x = 1;\n}\n")?;
+        Ok(create_dummy_success_output())
+      },
+      "rust",
+      start,
+    );
+
+    match res.status {
+      SurfaceStatus::ViolationsFound { message, diff } => {
+        assert!(message.is_empty());
+        let diff_str = diff.expect("diff should be present");
+        assert!(diff_str.contains("dirty.rs"));
+        assert!(diff_str.contains("(formatted)"));
+      }
+      other => panic!("Expected ViolationsFound, got {:?}", other),
+    }
+
+    let ext = file.extension().unwrap().to_str().unwrap();
+    let scratch = file.with_extension(format!("{}.fml-check.tmp", ext));
+    assert!(!scratch.exists());
+  }
+
+  #[test]
+  fn test_diff_check_via_tempcopy_raii_cleanup_on_error() {
+    let temp = TempDir::new().unwrap();
+    let file = temp.path().join("error_case.rs");
+    std::fs::write(&file, "invalid syntax").unwrap();
+
+    let start = Instant::now();
+    let res = diff_check_via_tempcopy(
+      std::slice::from_ref(&file),
+      |_scratch| Err(std::io::Error::other("mock execution error")),
+      "rust",
+      start,
+    );
+
+    assert!(matches!(res.status, SurfaceStatus::ExecutionError { .. }));
+
+    let ext = file.extension().unwrap().to_str().unwrap();
+    let scratch = file.with_extension(format!("{}.fml-check.tmp", ext));
+    assert!(!scratch.exists());
+  }
+
+  #[test]
+  fn test_diff_check_via_tempcopy_raii_cleanup_on_panic() {
+    let temp = TempDir::new().unwrap();
+    let file = temp.path().join("panic_case.rs");
+    std::fs::write(&file, "panic content").unwrap();
+
+    let start = Instant::now();
+    let _ = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+      diff_check_via_tempcopy(
+        std::slice::from_ref(&file),
+        |_scratch| {
+          panic!("simulated panic inside run_in_place");
+        },
+        "rust",
+        start,
+      );
+    }));
+
+    let ext = file.extension().unwrap().to_str().unwrap();
+    let scratch = file.with_extension(format!("{}.fml-check.tmp", ext));
+    assert!(!scratch.exists());
+  }
 
   #[test]
   fn test_tool_info_auto_install_cmd_coverage() {
@@ -789,5 +1166,86 @@ mod tests {
         ]
       )
     );
+  }
+
+  #[test]
+  fn test_find_files_with_ext_files_override() {
+    let temp = tempfile::TempDir::new().unwrap();
+    let root = temp.path();
+    let file_a = root.join("a.rs");
+    let file_b = root.join("b.rs");
+    let file_c = root.join("c.rs");
+    std::fs::write(&file_a, "fn a() {}").unwrap();
+    std::fs::write(&file_b, "fn b() {}").unwrap();
+    std::fs::write(&file_c, "fn c() {}").unwrap();
+
+    let files_override = vec![PathBuf::from("a.rs"), PathBuf::from("c.rs")];
+    let matched = find_files_with_ext(root, &["rs"], &[], &files_override, &[]);
+    assert_eq!(matched.len(), 2);
+    assert!(matched.contains(&file_a));
+    assert!(matched.contains(&file_c));
+    assert!(!matched.contains(&file_b));
+  }
+
+  #[test]
+  fn test_find_files_with_ext_exclude_patterns() {
+    let temp = tempfile::TempDir::new().unwrap();
+    let root = temp.path();
+    let src_dir = root.join("src");
+    let gen_dir = src_dir.join("generated");
+    std::fs::create_dir_all(&gen_dir).unwrap();
+
+    let normal = src_dir.join("main.rs");
+    let generated = gen_dir.join("api.rs");
+    let ignored = src_dir.join("ignored.rs");
+    std::fs::write(&normal, "fn main() {}").unwrap();
+    std::fs::write(&generated, "fn api() {}").unwrap();
+    std::fs::write(&ignored, "fn ignored() {}").unwrap();
+
+    let exclude =
+      vec![PathBuf::from("src/generated"), PathBuf::from("ignored.rs")];
+    let matched = find_files_with_ext(root, &["rs"], &[], &[], &exclude);
+    assert_eq!(matched.len(), 1);
+    assert_eq!(matched[0], normal);
+  }
+
+  #[test]
+  fn test_find_files_with_ext_specific_paths_precedence() {
+    let temp = tempfile::TempDir::new().unwrap();
+    let root = temp.path();
+    let file_a = root.join("a.rs");
+    let file_b = root.join("b.rs");
+    std::fs::write(&file_a, "fn a() {}").unwrap();
+    std::fs::write(&file_b, "fn b() {}").unwrap();
+
+    let specific = vec![PathBuf::from("a.rs")];
+    let files_override = vec![PathBuf::from("b.rs")];
+    let matched =
+      find_files_with_ext(root, &["rs"], &specific, &files_override, &[]);
+    assert_eq!(matched.len(), 1);
+    assert_eq!(matched[0], file_a);
+  }
+
+  #[test]
+  fn test_simple_glob_match() {
+    assert!(simple_glob_match("*.rs", "main.rs"));
+    assert!(simple_glob_match("src/*.rs", "src/main.rs"));
+    assert!(simple_glob_match("src/**/api.rs", "src/gen/api.rs"));
+    assert!(simple_glob_match("test?.rs", "test1.rs"));
+    assert!(!simple_glob_match("*.py", "main.rs"));
+    assert!(!simple_glob_match("test?.rs", "test12.rs"));
+  }
+
+  #[test]
+  fn test_extra_args_wired_to_command() {
+    let mut cmd = create_tool_command("cargo");
+    let extra_args = vec!["--verbose".to_string(), "--locked".to_string()];
+    cmd.args(&extra_args);
+    let args: Vec<String> = cmd
+      .get_args()
+      .map(|a| a.to_string_lossy().to_string())
+      .collect();
+    assert!(args.contains(&"--verbose".to_string()));
+    assert!(args.contains(&"--locked".to_string()));
   }
 }

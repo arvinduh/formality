@@ -1,7 +1,7 @@
 use super::{
   ExecutionContext, LanguageSurface, SurfaceResult, SurfaceStatus, ToolInfo,
-  check_binary_exists, create_tool_command, find_files_with_ext,
-  sync_file_helper,
+  check_binary_exists, create_tool_command, diff_check_via_tempcopy,
+  find_files_with_ext, sync_file_helper,
 };
 use std::path::Path;
 use std::time::Instant;
@@ -22,7 +22,7 @@ impl LanguageSurface for MarkdownSurface {
   fn detect(&self, root: &Path) -> bool {
     root.join(".markdownlint.json").is_file()
       || root.join(".markdownlint.yaml").is_file()
-      || !find_files_with_ext(root, MD_EXTENSIONS, &[]).is_empty()
+      || !find_files_with_ext(root, MD_EXTENSIONS, &[], &[], &[]).is_empty()
   }
 
   fn tool_info(
@@ -61,7 +61,13 @@ impl LanguageSurface for MarkdownSurface {
       };
     }
 
-    let files = find_files_with_ext(&ctx.root, MD_EXTENSIONS, &ctx.paths);
+    let files = find_files_with_ext(
+      &ctx.root,
+      MD_EXTENSIONS,
+      &ctx.paths,
+      &ctx.lang_config.files,
+      &ctx.lang_config.exclude,
+    );
     if files.is_empty() {
       return SurfaceResult {
         surface_name: self.name(),
@@ -70,17 +76,32 @@ impl LanguageSurface for MarkdownSurface {
       };
     }
 
-    let mut cmd = create_tool_command("prettier");
     if ctx.check_only {
-      cmd.arg("--check");
-    } else {
-      cmd.arg("--write");
+      return diff_check_via_tempcopy(
+        &files,
+        |scratch| {
+          let mut cmd = create_tool_command("prettier");
+          cmd
+            .arg("--write")
+            .arg("--parser")
+            .arg("markdown")
+            .arg(scratch);
+          cmd.current_dir(&ctx.root);
+          cmd.output()
+        },
+        self.name(),
+        start,
+      );
     }
+
+    let mut cmd = create_tool_command("prettier");
+    cmd.arg("--write");
 
     for f in &files {
       cmd.arg(f);
     }
 
+    cmd.args(&ctx.lang_config.extra_args);
     cmd.current_dir(&ctx.root);
 
     match cmd.output() {
@@ -140,7 +161,13 @@ impl LanguageSurface for MarkdownSurface {
       };
     };
 
-    let files = find_files_with_ext(&ctx.root, MD_EXTENSIONS, &ctx.paths);
+    let files = find_files_with_ext(
+      &ctx.root,
+      MD_EXTENSIONS,
+      &ctx.paths,
+      &ctx.lang_config.files,
+      &ctx.lang_config.exclude,
+    );
     if files.is_empty() {
       return SurfaceResult {
         surface_name: self.name(),
@@ -158,6 +185,7 @@ impl LanguageSurface for MarkdownSurface {
       cmd.arg(f);
     }
 
+    cmd.args(&ctx.lang_config.extra_args);
     cmd.current_dir(&ctx.root);
 
     match cmd.output() {
