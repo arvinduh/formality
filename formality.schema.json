@@ -25,10 +25,22 @@
       "description": "Typed formatting and linting options for C/C++.",
       "type": "object",
       "properties": {
+        "based_on_style": {
+          "type": ["string", "null"]
+        },
+        "break_before_braces": {
+          "type": ["string", "null"]
+        },
         "column_limit": {
           "type": ["integer", "null"],
           "format": "uint",
           "minimum": 0.0
+        },
+        "pointer_alignment": {
+          "type": ["string", "null"]
+        },
+        "sort_includes": {
+          "type": ["boolean", "null"]
         },
         "standard": {
           "type": ["string", "null"]
