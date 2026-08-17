@@ -104,10 +104,38 @@ impl PythonOptions {
   Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize, JsonSchema,
 )]
 pub struct CppOptions {
-  #[serde(skip_serializing_if = "Option::is_none")]
+  #[serde(skip_serializing_if = "Option::is_none", alias = "Standard", alias = "std")]
   pub standard: Option<String>,
-  #[serde(skip_serializing_if = "Option::is_none")]
+  #[serde(
+    skip_serializing_if = "Option::is_none",
+    alias = "ColumnLimit",
+    alias = "column-limit"
+  )]
   pub column_limit: Option<usize>,
+  #[serde(
+    skip_serializing_if = "Option::is_none",
+    alias = "BasedOnStyle",
+    alias = "based-on-style"
+  )]
+  pub based_on_style: Option<String>,
+  #[serde(
+    skip_serializing_if = "Option::is_none",
+    alias = "PointerAlignment",
+    alias = "pointer-alignment"
+  )]
+  pub pointer_alignment: Option<String>,
+  #[serde(
+    skip_serializing_if = "Option::is_none",
+    alias = "BreakBeforeBraces",
+    alias = "break-before-braces"
+  )]
+  pub break_before_braces: Option<String>,
+  #[serde(
+    skip_serializing_if = "Option::is_none",
+    alias = "SortIncludes",
+    alias = "sort-includes"
+  )]
+  pub sort_includes: Option<bool>,
 }
 
 impl CppOptions {
@@ -118,10 +146,27 @@ impl CppOptions {
     if other.column_limit.is_some() {
       self.column_limit = other.column_limit;
     }
+    if other.based_on_style.is_some() {
+      self.based_on_style = other.based_on_style;
+    }
+    if other.pointer_alignment.is_some() {
+      self.pointer_alignment = other.pointer_alignment;
+    }
+    if other.break_before_braces.is_some() {
+      self.break_before_braces = other.break_before_braces;
+    }
+    if other.sort_includes.is_some() {
+      self.sort_includes = other.sort_includes;
+    }
   }
 
   pub fn is_empty(&self) -> bool {
-    self.standard.is_none() && self.column_limit.is_none()
+    self.standard.is_none()
+      && self.column_limit.is_none()
+      && self.based_on_style.is_none()
+      && self.pointer_alignment.is_none()
+      && self.break_before_braces.is_none()
+      && self.sort_includes.is_none()
   }
 }
 
@@ -1259,6 +1304,10 @@ mod tests {
       [lang.cpp]
       standard = "c++20"
       column_limit = 100
+      based_on_style = "Google"
+      pointer_alignment = "Left"
+      break_before_braces = "Attach"
+      sort_includes = true
 
       [lang.markdown]
       prose_wrap = "never"
@@ -1299,6 +1348,10 @@ mod tests {
       Some(CppOptions {
         standard: Some("c++20".to_string()),
         column_limit: Some(100),
+        based_on_style: Some("Google".to_string()),
+        pointer_alignment: Some("Left".to_string()),
+        break_before_braces: Some("Attach".to_string()),
+        sort_includes: Some(true),
       })
     );
 
@@ -1342,6 +1395,10 @@ mod tests {
       [lang.cpp.cpp]
       standard = "c++23"
       column_limit = 120
+      based_on_style = "Chromium"
+      pointer_alignment = "Right"
+      break_before_braces = "Allman"
+      sort_includes = false
 
       [lang.yaml.yaml]
       indent_sequence = false
@@ -1373,6 +1430,10 @@ mod tests {
       Some(CppOptions {
         standard: Some("c++23".to_string()),
         column_limit: Some(120),
+        based_on_style: Some("Chromium".to_string()),
+        pointer_alignment: Some("Right".to_string()),
+        break_before_braces: Some("Allman".to_string()),
+        sort_includes: Some(false),
       })
     );
 
@@ -1514,14 +1575,26 @@ mod tests {
     let mut cpp1 = CppOptions {
       standard: Some("c++17".to_string()),
       column_limit: None,
+      based_on_style: Some("LLVM".to_string()),
+      pointer_alignment: None,
+      break_before_braces: None,
+      sort_includes: Some(true),
     };
     let cpp2 = CppOptions {
       standard: None,
       column_limit: Some(100),
+      based_on_style: None,
+      pointer_alignment: Some("Right".to_string()),
+      break_before_braces: Some("Allman".to_string()),
+      sort_includes: Some(false),
     };
     cpp1.merge(cpp2);
     assert_eq!(cpp1.standard.as_deref(), Some("c++17"));
     assert_eq!(cpp1.column_limit, Some(100));
+    assert_eq!(cpp1.based_on_style.as_deref(), Some("LLVM"));
+    assert_eq!(cpp1.pointer_alignment.as_deref(), Some("Right"));
+    assert_eq!(cpp1.break_before_braces.as_deref(), Some("Allman"));
+    assert_eq!(cpp1.sort_includes, Some(false));
 
     let mut yaml1 = YamlOptions {
       indent_sequence: Some(true),
