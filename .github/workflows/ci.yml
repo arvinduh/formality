@@ -1,0 +1,46 @@
+name: CI
+
+on:
+  push:
+    branches: ["main"]
+  pull_request:
+    branches: ["main"]
+
+env:
+  CARGO_TERM_COLOR: always
+  CLICOLOR_FORCE: "1"
+  FORCE_COLOR: "1"
+
+jobs:
+  check-and-test:
+    name: Format, Lint & Test (Dogfooding fml)
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt, clippy
+
+      - name: Set up Rust cache
+        uses: Swatinem/rust-cache@v2
+
+      - name: Build fml
+        run: cargo build
+
+      - name: Install tool dependencies via fml
+        run: ./target/debug/fml install
+
+      - name: Verify Config Sync
+        run: ./target/debug/fml sync --check
+
+      - name: Check Formatting
+        run: ./target/debug/fml fmt --check
+
+      - name: Lint Surfaces
+        run: ./target/debug/fml lint
+
+      - name: Run Test Suite
+        run: cargo test --verbose

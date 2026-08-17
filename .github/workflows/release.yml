@@ -1,0 +1,125 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - "v*"
+
+permissions:
+  contents: write
+
+jobs:
+  build-release:
+    name: Build Binary (${{ matrix.target }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: ubuntu-latest
+            target: x86_64-unknown-linux-gnu
+            binary_name: fml
+            asset_name: fml-x86_64-unknown-linux-gnu.tar.gz
+          - os: ubuntu-latest
+            target: aarch64-unknown-linux-gnu
+            binary_name: fml
+            asset_name: fml-aarch64-unknown-linux-gnu.tar.gz
+            use_cross: true
+          - os: macos-latest
+            target: x86_64-apple-darwin
+            binary_name: fml
+            asset_name: fml-x86_64-apple-darwin.tar.gz
+          - os: macos-latest
+            target: aarch64-apple-darwin
+            binary_name: fml
+            asset_name: fml-aarch64-apple-darwin.tar.gz
+          - os: windows-latest
+            target: x86_64-pc-windows-msvc
+            binary_name: fml.exe
+            asset_name: fml-x86_64-pc-windows-msvc.zip
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ matrix.target }}
+
+      - name: Install cross (if needed)
+        if: matrix.use_cross
+        run: cargo install cross --git https://github.com/cross-rs/cross
+
+      - name: Build binary
+        run: |
+          if [ "${{ matrix.use_cross }}" = "true" ]; then
+            cross build --release --target ${{ matrix.target }}
+          else
+            cargo build --release --target ${{ matrix.target }}
+          fi
+        shell: bash
+
+      - name: Package archive (Unix)
+        if: matrix.os != 'windows-latest'
+        run: |
+          tar -czf ${{ matrix.asset_name }} -C target/${{ matrix.target }}/release ${{ matrix.binary_name }}
+        shell: bash
+
+      - name: Package archive (Windows)
+        if: matrix.os == 'windows-latest'
+        run: |
+          Compress-Archive -Path target/${{ matrix.target }}/release/${{ matrix.binary_name }} -DestinationPath ${{ matrix.asset_name }}
+        shell: pwsh
+
+      - name: Upload Release Asset
+        uses: softprops/action-gh-release@v2
+        with:
+          files: ${{ matrix.asset_name }}
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+  package-vscode-and-schema:
+    name: Package VS Code Extension & Schema
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Set up Rust cache
+        uses: Swatinem/rust-cache@v2
+
+      - name: Build fml (needed to generate schema)
+        run: cargo build --release
+
+      # The schema is embedded in the binary; generate the file from it so it
+      # can be attached to the release. Users reference this release-asset URL
+      # in their formality.toml #:schema directives, never the raw git URL.
+      - name: Generate schema file
+        run: |
+          mkdir -p schema
+          ./target/release/fml schema --output schema/formality.schema.json
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+
+      - name: Package VS Code Extension (.vsix)
+        run: |
+          cd editors/vscode
+          npm install
+          npx @vscode/vsce package --no-git-tag-version --allow-missing-repository
+          cd ../..
+
+      - name: Upload VS Code Extension and Schema to Release
+        uses: softprops/action-gh-release@v2
+        with:
+          files: |
+            editors/vscode/*.vsix
+            schema/formality.schema.json
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

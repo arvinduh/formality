@@ -1,0 +1,20 @@
+- id: fml-sync
+  name: fml sync (verify configs)
+  description: Verify that native tool configs are in sync with formality.toml
+  entry: fml sync --check
+  language: system
+  pass_filenames: false
+
+- id: fml-fmt
+  name: fml fmt (staged)
+  description: Format staged files across active surfaces using formality
+  entry: fml fmt --staged
+  language: system
+  pass_filenames: false
+
+- id: fml-lint
+  name: fml lint (staged)
+  description: Lint staged files across active surfaces using formality
+  entry: fml lint --staged
+  language: system
+  pass_filenames: false
