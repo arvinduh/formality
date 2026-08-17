@@ -800,7 +800,8 @@ mod tests {
       break_before_braces = "Allman"
       sort_includes = false
     "#;
-    let cfg = FormalityConfig::parse_str(toml_str, Path::new("formality.toml")).unwrap();
+    let cfg = FormalityConfig::parse_str(toml_str, Path::new("formality.toml"))
+      .unwrap();
     let ctx = ExecutionContext {
       root: root.clone(),
       paths: Vec::new(),
