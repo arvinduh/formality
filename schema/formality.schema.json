@@ -56,6 +56,12 @@
         "end_of_line": {
           "type": ["string", "null"]
         },
+        "exclude": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
         "ignore_languages": {
           "type": ["array", "null"],
           "items": {

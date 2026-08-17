@@ -292,6 +292,8 @@ pub struct GlobalConfig {
   pub use_tabs: Option<bool>,
   #[serde(skip_serializing_if = "Option::is_none")]
   pub layout: Option<LayoutFacet>,
+  #[serde(default, skip_serializing_if = "Vec::is_empty")]
+  pub exclude: Vec<PathBuf>,
 }
 
 impl Default for GlobalConfig {
@@ -307,6 +309,7 @@ impl Default for GlobalConfig {
       trim_trailing_whitespace: Some(true),
       use_tabs: Some(false),
       layout: None,
+      exclude: Vec::new(),
     }
   }
 }
@@ -346,6 +349,9 @@ impl GlobalConfig {
       } else {
         self.layout = Some(other_layout);
       }
+    }
+    if !other.exclude.is_empty() {
+      self.exclude = other.exclude;
     }
   }
 }
@@ -652,6 +658,7 @@ pub struct ResolvedGlobalConfig {
   pub trim_trailing_whitespace: bool,
   pub use_tabs: bool,
   pub layout: LayoutFacet,
+  pub exclude: Vec<PathBuf>,
 }
 
 impl Default for ResolvedGlobalConfig {
@@ -828,6 +835,7 @@ impl FormalityConfig {
       trim_trailing_whitespace,
       use_tabs,
       layout,
+      exclude: current.map(|g| g.exclude.clone()).unwrap_or_default(),
     }
   }
 
@@ -961,7 +969,13 @@ impl FormalityConfig {
         .and_then(|l| l.extra_args.clone())
         .unwrap_or_default(),
       files: lang_cfg.and_then(|l| l.files.clone()).unwrap_or_default(),
-      exclude: lang_cfg.and_then(|l| l.exclude.clone()).unwrap_or_default(),
+      exclude: {
+        let mut ex = global.exclude.clone();
+        if let Some(lang_ex) = lang_cfg.and_then(|l| l.exclude.clone()) {
+          ex.extend(lang_ex);
+        }
+        ex
+      },
       rust,
       python,
       cpp,
@@ -1536,6 +1550,7 @@ mod tests {
         use_tabs: Some(false),
         prose_wrap: Some("always".to_string()),
       }),
+      exclude: Vec::new(),
     });
 
     let rust_cfg = LangConfig {
