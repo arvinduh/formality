@@ -7,6 +7,7 @@ use super::{
 use std::path::Path;
 use std::time::Instant;
 
+#[derive(Debug, Default, Clone, Copy)]
 pub struct TomlSurface;
 
 impl DeclaresFacets for TomlSurface {
@@ -34,6 +35,14 @@ impl LanguageSurface for TomlSurface {
 
   fn aliases(&self) -> &[&'static str] {
     &[]
+  }
+
+  fn file_extensions(&self) -> &[&'static str] {
+    TOML_EXTENSIONS
+  }
+
+  fn clone_box(&self) -> Box<dyn LanguageSurface> {
+    Box::new(*self)
   }
 
   fn detect(&self, root: &Path) -> bool {

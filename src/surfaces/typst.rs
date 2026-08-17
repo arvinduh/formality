@@ -6,6 +6,7 @@ use super::{
 use std::path::Path;
 use std::time::Instant;
 
+#[derive(Debug, Default, Clone, Copy)]
 pub struct TypstSurface;
 
 impl DeclaresFacets for TypstSurface {
@@ -33,6 +34,14 @@ impl LanguageSurface for TypstSurface {
 
   fn aliases(&self) -> &[&'static str] {
     &["typ"]
+  }
+
+  fn file_extensions(&self) -> &[&'static str] {
+    TYPST_EXTENSIONS
+  }
+
+  fn clone_box(&self) -> Box<dyn LanguageSurface> {
+    Box::new(*self)
   }
 
   fn detect(&self, root: &Path) -> bool {
