@@ -275,7 +275,8 @@ impl LanguageSurface for PythonSurface {
       .and_then(|p| p.quote_style.as_deref())
       .unwrap_or("double");
 
-    let target_version_clause = if let Some(ref py_opts) = ctx.lang_config.python
+    let target_version_clause = if let Some(ref py_opts) =
+      ctx.lang_config.python
       && let Some(ref tv) = py_opts.target_version
     {
       format!("target-version = \"{}\"\n", tv)
@@ -315,7 +316,9 @@ impl LanguageSurface for PythonSurface {
 #[cfg(test)]
 mod tests {
   use super::*;
-  use crate::config::{PythonOptions, ResolvedGlobalConfig, ResolvedLangConfig};
+  use crate::config::{
+    PythonOptions, ResolvedGlobalConfig, ResolvedLangConfig,
+  };
   use tempfile::TempDir;
 
   #[test]
@@ -349,7 +352,10 @@ mod tests {
 
     let content = std::fs::read_to_string(&config_path).unwrap();
     assert!(content.contains("[lint]"));
-    assert!(content.contains("select = [\"E\", \"F\", \"I\", \"UP\", \"B\", \"SIM\"]"));
+    assert!(
+      content
+        .contains("select = [\"E\", \"F\", \"I\", \"UP\", \"B\", \"SIM\"]")
+    );
     assert!(content.contains("quote-style = \"single\""));
     assert!(content.contains("target-version = \"py312\""));
     assert!(content.contains("line-length = 100"));
