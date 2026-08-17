@@ -282,3 +282,85 @@ impl LanguageSurface for TomlSurface {
     sync_file_helper(&target, "taplo.toml", &content, check, start, self.name())
   }
 }
+
+#[cfg(test)]
+mod tests {
+  use super::*;
+  use crate::config::ResolvedGlobalConfig;
+  use tempfile::TempDir;
+
+  #[test]
+  fn test_toml_surface_facets() {
+    let surface = TomlSurface;
+    assert_eq!(
+      surface.facet_support(Facet::IndentTabs),
+      FacetSupport::Configurable
+    );
+    assert_eq!(
+      surface.facet_support(Facet::IndentWidth),
+      FacetSupport::Configurable
+    );
+    assert_eq!(
+      surface.facet_support(Facet::LineLength),
+      FacetSupport::Configurable
+    );
+    assert_eq!(
+      surface.facet_support(Facet::QuoteStyle),
+      FacetSupport::Unsupported
+    );
+  }
+
+  #[test]
+  fn test_toml_surface_tool_info() {
+    let surface = TomlSurface;
+    let cfg = crate::config::ResolvedLangConfig::new("toml");
+    let tools = surface.tool_info(&cfg);
+    assert_eq!(tools.len(), 1);
+    assert_eq!(tools[0].binary, "taplo");
+    assert!(tools[0].is_required_for_fmt);
+    assert!(tools[0].is_required_for_lint);
+  }
+
+  #[test]
+  fn test_toml_sync_config() {
+    let temp = TempDir::new().unwrap();
+    let surface = TomlSurface;
+    let mut lang_cfg = crate::config::ResolvedLangConfig::new("toml");
+    lang_cfg.line_length = 80;
+    lang_cfg.indent_size = 2;
+
+    let ctx = ExecutionContext {
+      root: temp.path().to_path_buf(),
+      paths: Vec::new(),
+      global_config: ResolvedGlobalConfig::default(),
+      lang_config: lang_cfg,
+      check_only: false,
+    };
+
+    let res = surface.sync_config(&ctx, false);
+    assert!(matches!(
+      res.status,
+      SurfaceStatus::ConfigSynced { created: true, .. }
+    ));
+
+    let config_path = temp.path().join("taplo.toml");
+    assert!(config_path.is_file());
+
+    let content = std::fs::read_to_string(&config_path).unwrap();
+    assert!(content.contains("column_width = 80"));
+    assert!(content.contains("indent_string = \"  \""));
+  }
+
+  #[test]
+  fn test_toml_extra_args_propagation() {
+    let mut cmd = create_tool_command("taplo");
+    cmd.arg("format").arg("-");
+    let extra_args = vec!["--colors".to_string(), "never".to_string()];
+    cmd.args(&extra_args);
+    let args: Vec<String> = cmd
+      .get_args()
+      .map(|a| a.to_string_lossy().to_string())
+      .collect();
+    assert_eq!(args, vec!["format", "-", "--colors", "never"]);
+  }
+}
