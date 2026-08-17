@@ -218,8 +218,19 @@ impl LanguageSurface for YamlSurface {
     }
   }
 
-  fn lint(&self, ctx: &ExecutionContext, _fix: bool) -> SurfaceResult {
+  fn lint(&self, ctx: &ExecutionContext, fix: bool) -> SurfaceResult {
     let start = Instant::now();
+
+    if fix {
+      return SurfaceResult {
+        surface_name: self.name(),
+        status: SurfaceStatus::Skipped {
+          reason: "Tool does not support autofix; run fml fmt instead"
+            .to_string(),
+        },
+        duration: start.elapsed(),
+      };
+    }
 
     if !check_binary_exists("yamllint") {
       return SurfaceResult {

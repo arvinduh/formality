@@ -160,7 +160,20 @@ impl LanguageSurface for JsonSurface {
     }
   }
 
-  fn lint(&self, ctx: &ExecutionContext, _fix: bool) -> SurfaceResult {
+  fn lint(&self, ctx: &ExecutionContext, fix: bool) -> SurfaceResult {
+    let start = Instant::now();
+
+    if fix {
+      return SurfaceResult {
+        surface_name: self.name(),
+        status: SurfaceStatus::Skipped {
+          reason: "Tool does not support autofix; run fml fmt instead"
+            .to_string(),
+        },
+        duration: start.elapsed(),
+      };
+    }
+
     // Prettier format checking can serve as JSON syntax linting
     let mut check_ctx = ctx.clone();
     check_ctx.check_only = true;
