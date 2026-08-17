@@ -9,9 +9,11 @@ pub mod typst;
 pub mod yaml;
 
 pub use native::{
-  AUTO_GENERATED_HEADER, NativeConfig, render_native_config,
-  serialize_json_pretty, serialize_toml_with_header,
-  serialize_yaml_with_header,
+  AUTO_GENERATED_HEADER, EDITORCONFIG_FILE_NAME, NativeConfig,
+  generate_editorconfig, generate_editorconfig_from_config,
+  render_native_config, serialize_json_pretty,
+  serialize_toml_with_header, serialize_yaml_with_header,
+  sync_editorconfig,
 };
 
 use crate::config::{
