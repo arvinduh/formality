@@ -6,3 +6,4 @@ max_width = 80
 newline_style = "Unix"
 use_small_heuristics = "Default"
 edition = "2024"
+reorder_imports = true
