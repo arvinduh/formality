@@ -492,39 +492,56 @@ pub fn find_files_with_ext(
 }
 
 pub fn simple_glob_match(pattern: &str, text: &str) -> bool {
-  let p_chars: Vec<char> = pattern.chars().collect();
-  let t_chars: Vec<char> = text.chars().collect();
-  let (p_len, t_len) = (p_chars.len(), t_chars.len());
+  glob_match_slices(pattern.as_bytes(), text.as_bytes())
+}
 
-  let mut p_idx = 0;
-  let mut t_idx = 0;
-  let mut star_idx = None;
-  let mut match_idx = 0;
+fn glob_match_slices(pattern: &[u8], text: &[u8]) -> bool {
+  if pattern.is_empty() {
+    return text.is_empty();
+  }
 
-  while t_idx < t_len {
-    if p_idx < p_len
-      && (p_chars[p_idx] == '?' || p_chars[p_idx] == t_chars[t_idx])
-    {
-      p_idx += 1;
-      t_idx += 1;
-    } else if p_idx < p_len && p_chars[p_idx] == '*' {
-      star_idx = Some(p_idx);
-      match_idx = t_idx;
-      p_idx += 1;
-    } else if let Some(star) = star_idx {
-      p_idx = star + 1;
-      match_idx += 1;
-      t_idx = match_idx;
-    } else {
+  if pattern.starts_with(b"**") {
+    let mut rest_pat = &pattern[2..];
+    if rest_pat.starts_with(b"/") {
+      rest_pat = &rest_pat[1..];
+    }
+    for i in 0..=text.len() {
+      if glob_match_slices(rest_pat, &text[i..]) {
+        return true;
+      }
+    }
+    return false;
+  }
+
+  if pattern[0] == b'*' {
+    let rest_pat = &pattern[1..];
+    for i in 0..=text.len() {
+      if i > 0 && text[i - 1] == b'/' {
+        break;
+      }
+      if glob_match_slices(rest_pat, &text[i..]) {
+        return true;
+      }
+    }
+    return false;
+  }
+
+  if text.is_empty() {
+    return false;
+  }
+
+  if pattern[0] == b'?' {
+    if text[0] == b'/' {
       return false;
     }
+    return glob_match_slices(&pattern[1..], &text[1..]);
   }
 
-  while p_idx < p_len && p_chars[p_idx] == '*' {
-    p_idx += 1;
+  if pattern[0] == text[0] {
+    return glob_match_slices(&pattern[1..], &text[1..]);
   }
 
-  p_idx == p_len
+  false
 }
 
 pub fn is_excluded(path: &Path, root: &Path, exclude: &[PathBuf]) -> bool {

@@ -76,6 +76,7 @@ impl LanguageSurface for JsonSurface {
           };
           let mut cmd = create_tool_command("prettier");
           cmd.arg("--write").arg("--parser").arg(parser).arg(scratch);
+          cmd.args(&ctx.lang_config.extra_args);
           cmd.current_dir(&ctx.root);
           cmd.output()
         },
