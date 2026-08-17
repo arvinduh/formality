@@ -1617,7 +1617,8 @@ mod tests {
       match res.status {
         SurfaceStatus::Skipped { reason } => {
           assert_eq!(
-            reason, "Tool does not support autofix; run fml fmt instead",
+            reason,
+            "Tool does not support autofix; run fml fmt instead",
             "Mismatch for surface {}",
             surface.name()
           );
