@@ -104,7 +104,11 @@ impl PythonOptions {
   Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize, JsonSchema,
 )]
 pub struct CppOptions {
-  #[serde(skip_serializing_if = "Option::is_none", alias = "Standard", alias = "std")]
+  #[serde(
+    skip_serializing_if = "Option::is_none",
+    alias = "Standard",
+    alias = "std"
+  )]
   pub standard: Option<String>,
   #[serde(
     skip_serializing_if = "Option::is_none",
