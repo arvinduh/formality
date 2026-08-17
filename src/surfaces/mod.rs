@@ -11,6 +11,7 @@ use crate::config::{
   FormalityConfig, ResolvedGlobalConfig, ResolvedLangConfig,
 };
 use crate::diff::render_diff;
+pub use crate::facets::{DeclaresFacets, Facet, FacetSupport};
 use std::path::{Path, PathBuf};
 use std::time::{Duration, Instant};
 
@@ -345,7 +346,7 @@ impl SurfaceResult {
   }
 }
 
-pub trait LanguageSurface: Send + Sync {
+pub trait LanguageSurface: DeclaresFacets + Send + Sync {
   fn name(&self) -> &'static str;
   fn display_name(&self) -> &'static str {
     self.name()

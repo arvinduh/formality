@@ -2,6 +2,7 @@ pub mod cli;
 pub mod config;
 pub mod diff;
 pub mod doctor;
+pub mod facets;
 pub mod lsp;
 pub mod runner;
 pub mod surfaces;
