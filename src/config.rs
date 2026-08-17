@@ -292,6 +292,8 @@ pub struct GlobalConfig {
   pub use_tabs: Option<bool>,
   #[serde(skip_serializing_if = "Option::is_none")]
   pub layout: Option<LayoutFacet>,
+  #[serde(default, skip_serializing_if = "Vec::is_empty")]
+  pub exclude: Vec<PathBuf>,
 }
 
 impl Default for GlobalConfig {
@@ -307,6 +309,7 @@ impl Default for GlobalConfig {
       trim_trailing_whitespace: Some(true),
       use_tabs: Some(false),
       layout: None,
+      exclude: Vec::new(),
     }
   }
 }
@@ -346,6 +349,9 @@ impl GlobalConfig {
       } else {
         self.layout = Some(other_layout);
       }
+    }
+    if !other.exclude.is_empty() {
+      self.exclude = other.exclude;
     }
   }
 }
@@ -652,6 +658,7 @@ pub struct ResolvedGlobalConfig {
   pub trim_trailing_whitespace: bool,
   pub use_tabs: bool,
   pub layout: LayoutFacet,
+  pub exclude: Vec<PathBuf>,
 }
 
 impl Default for ResolvedGlobalConfig {
@@ -828,6 +835,7 @@ impl FormalityConfig {
       trim_trailing_whitespace,
       use_tabs,
       layout,
+      exclude: current.map(|g| g.exclude.clone()).unwrap_or_default(),
     }
   }
 
@@ -961,7 +969,13 @@ impl FormalityConfig {
         .and_then(|l| l.extra_args.clone())
         .unwrap_or_default(),
       files: lang_cfg.and_then(|l| l.files.clone()).unwrap_or_default(),
-      exclude: lang_cfg.and_then(|l| l.exclude.clone()).unwrap_or_default(),
+      exclude: {
+        let mut ex = global.exclude.clone();
+        if let Some(lang_ex) = lang_cfg.and_then(|l| l.exclude.clone()) {
+          ex.extend(lang_ex);
+        }
+        ex
+      },
       rust,
       python,
       cpp,
@@ -1008,8 +1022,10 @@ impl FormalityConfig {
     Ok((config, project_config_path))
   }
 
-  /// Generates standard template for `fml init` versioned to current package release
-  pub fn generate_init_template(detected_langs: &[&str]) -> String {
+  /// Generates sample configuration template versioned to current package release.
+  /// Omits hardcoded `languages = [...]` so `fml` uses built-in auto-detection across
+  /// all workspace surfaces by default.
+  pub fn generate_sample() -> String {
     let mut out = String::new();
     out.push_str("# formality configuration file\n");
     out.push_str("# https://github.com/arvinduh/formality\n");
@@ -1021,15 +1037,6 @@ impl FormalityConfig {
       env!("CARGO_PKG_VERSION")
     ));
     out.push_str("[global]\n");
-
-    if !detected_langs.is_empty() {
-      let formatted_langs: Vec<String> = detected_langs
-        .iter()
-        .map(|l| format!("\"{}\"", l))
-        .collect();
-      out.push_str(&format!("languages = [{}]\n", formatted_langs.join(", ")));
-    }
-
     out.push_str("indent_size = 2\n");
     out.push_str("line_length = 80\n");
     out.push_str("end_of_line = \"lf\"\n");
@@ -1038,6 +1045,11 @@ impl FormalityConfig {
     out.push_str("trim_trailing_whitespace = true\n");
 
     out
+  }
+
+  /// Generates standard template for `fml init` versioned to current package release.
+  pub fn generate_init_template(_detected_langs: &[&str]) -> String {
+    Self::generate_sample()
   }
 }
 
@@ -1538,6 +1550,7 @@ mod tests {
         use_tabs: Some(false),
         prose_wrap: Some("always".to_string()),
       }),
+      exclude: Vec::new(),
     });
 
     let rust_cfg = LangConfig {
@@ -1669,5 +1682,47 @@ mod tests {
         truthy: Some(true),
       })
     );
+  }
+
+  #[test]
+  fn test_generate_sample_omits_languages() {
+    let sample = FormalityConfig::generate_sample();
+    assert!(sample.contains("# formality configuration file"));
+    assert!(sample.contains(
+      "#:schema https://github.com/arvinduh/formality/releases/download/v"
+    ));
+    assert!(sample.contains("[global]"));
+    assert!(!sample.contains("languages ="));
+    assert!(sample.contains("indent_size = 2"));
+    assert!(sample.contains("line_length = 80"));
+    assert!(sample.contains("end_of_line = \"lf\""));
+    assert!(sample.contains("charset = \"utf-8\""));
+    assert!(sample.contains("insert_final_newline = true"));
+    assert!(sample.contains("trim_trailing_whitespace = true"));
+
+    let parsed =
+      FormalityConfig::parse_str(&sample, Path::new("formality.toml")).unwrap();
+    let global = parsed.resolve_global();
+    assert_eq!(global.languages, None);
+    assert_eq!(global.indent_size, 2);
+    assert_eq!(global.line_length, 80);
+    assert_eq!(global.end_of_line, "lf");
+    assert_eq!(global.charset, "utf-8");
+    assert!(global.insert_final_newline);
+    assert!(global.trim_trailing_whitespace);
+  }
+
+  #[test]
+  fn test_generate_init_template_omits_languages() {
+    let template =
+      FormalityConfig::generate_init_template(&["rust", "python", "toml"]);
+    assert!(!template.contains("languages ="));
+    assert!(template.contains("[global]"));
+
+    let parsed =
+      FormalityConfig::parse_str(&template, Path::new("formality.toml"))
+        .unwrap();
+    let global = parsed.resolve_global();
+    assert_eq!(global.languages, None);
   }
 }
