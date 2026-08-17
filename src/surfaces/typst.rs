@@ -1,12 +1,28 @@
 use super::{
-  ExecutionContext, LanguageSurface, SurfaceResult, SurfaceStatus, ToolInfo,
-  check_binary_exists, create_tool_command, diff_check_via_tempcopy,
-  find_files_with_ext,
+  DeclaresFacets, ExecutionContext, Facet, FacetSupport, LanguageSurface,
+  SurfaceResult, SurfaceStatus, ToolInfo, check_binary_exists,
+  create_tool_command, diff_check_via_tempcopy, find_files_with_ext,
 };
 use std::path::Path;
 use std::time::Instant;
 
 pub struct TypstSurface;
+
+impl DeclaresFacets for TypstSurface {
+  fn facet_support(&self, facet: Facet) -> FacetSupport {
+    match facet {
+      Facet::IndentTabs => FacetSupport::Fixed("spaces"),
+      Facet::IndentWidth => FacetSupport::Configurable,
+      Facet::LineLength => FacetSupport::Configurable,
+      Facet::QuoteStyle => FacetSupport::Unsupported,
+      Facet::TrailingComma => FacetSupport::Unsupported,
+      Facet::ImportSort => FacetSupport::Unsupported,
+      Facet::ProseWrap => FacetSupport::Unsupported,
+      Facet::Edition => FacetSupport::Unsupported,
+      Facet::Standard => FacetSupport::Unsupported,
+    }
+  }
+}
 
 const TYPST_EXTENSIONS: &[&str] = &["typ"];
 

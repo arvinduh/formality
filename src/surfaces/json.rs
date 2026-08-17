@@ -1,12 +1,29 @@
 use super::{
-  ExecutionContext, LanguageSurface, SurfaceResult, SurfaceStatus, ToolInfo,
-  check_binary_exists, create_tool_command, diff_check_via_tempcopy,
-  find_files_with_ext, markdown::sync_prettier_config,
+  DeclaresFacets, ExecutionContext, Facet, FacetSupport, LanguageSurface,
+  SurfaceResult, SurfaceStatus, ToolInfo, check_binary_exists,
+  create_tool_command, diff_check_via_tempcopy, find_files_with_ext,
+  markdown::sync_prettier_config,
 };
 use std::path::Path;
 use std::time::Instant;
 
 pub struct JsonSurface;
+
+impl DeclaresFacets for JsonSurface {
+  fn facet_support(&self, facet: Facet) -> FacetSupport {
+    match facet {
+      Facet::IndentTabs => FacetSupport::Configurable,
+      Facet::IndentWidth => FacetSupport::Configurable,
+      Facet::LineLength => FacetSupport::Unsupported,
+      Facet::QuoteStyle => FacetSupport::Fixed("double"),
+      Facet::TrailingComma => FacetSupport::Fixed("none"),
+      Facet::ImportSort => FacetSupport::Unsupported,
+      Facet::ProseWrap => FacetSupport::Unsupported,
+      Facet::Edition => FacetSupport::Unsupported,
+      Facet::Standard => FacetSupport::Unsupported,
+    }
+  }
+}
 
 const JSON_EXTENSIONS: &[&str] = &["json", "jsonc"];
 

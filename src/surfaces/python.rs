@@ -1,12 +1,29 @@
 use super::{
-  ExecutionContext, LanguageSurface, SurfaceResult, SurfaceStatus, ToolInfo,
-  check_binary_exists, create_tool_command, diff_check_via_tempcopy,
-  find_files_with_ext, sync_file_helper,
+  DeclaresFacets, ExecutionContext, Facet, FacetSupport, LanguageSurface,
+  SurfaceResult, SurfaceStatus, ToolInfo, check_binary_exists,
+  create_tool_command, diff_check_via_tempcopy, find_files_with_ext,
+  sync_file_helper,
 };
 use std::path::Path;
 use std::time::Instant;
 
 pub struct PythonSurface;
+
+impl DeclaresFacets for PythonSurface {
+  fn facet_support(&self, facet: Facet) -> FacetSupport {
+    match facet {
+      Facet::IndentTabs => FacetSupport::Configurable,
+      Facet::IndentWidth => FacetSupport::Configurable,
+      Facet::LineLength => FacetSupport::Configurable,
+      Facet::QuoteStyle => FacetSupport::Configurable,
+      Facet::TrailingComma => FacetSupport::Unsupported,
+      Facet::ImportSort => FacetSupport::Configurable,
+      Facet::ProseWrap => FacetSupport::Unsupported,
+      Facet::Edition => FacetSupport::Unsupported,
+      Facet::Standard => FacetSupport::Unsupported,
+    }
+  }
+}
 
 impl LanguageSurface for PythonSurface {
   fn name(&self) -> &'static str {
