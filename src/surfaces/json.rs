@@ -76,13 +76,19 @@ impl LanguageSurface for JsonSurface {
       };
     }
 
-    let files = find_files_with_ext(
+    let files: Vec<std::path::PathBuf> = find_files_with_ext(
       &ctx.root,
       JSON_EXTENSIONS,
       &ctx.paths,
       &ctx.lang_config.files,
       &ctx.lang_config.exclude,
-    );
+    )
+    .into_iter()
+    .filter(|p| {
+      let fname = p.file_name().and_then(|f| f.to_str()).unwrap_or("");
+      fname != "package-lock.json" && fname != "npm-shrinkwrap.json"
+    })
+    .collect();
     if files.is_empty() {
       return SurfaceResult {
         surface_name: self.name(),
