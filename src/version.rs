@@ -13,6 +13,7 @@ pub const MSTV_PRETTIER: Version = Version::new(2, 0, 0);
 pub const MSTV_TAPLO: Version = Version::new(0, 8, 0);
 pub const MSTV_MARKDOWNLINT_CLI2: Version = Version::new(0, 4, 0);
 pub const MSTV_TYPSTYLE: Version = Version::new(0, 11, 0);
+pub const MSTV_YAMLLINT: Version = Version::new(1, 26, 0);
 
 /// Represents a Semantic Version (SemVer) with optional prerelease identifier.
 #[derive(Debug, Clone, Eq, PartialEq, Hash)]
@@ -219,6 +220,7 @@ pub fn minimum_supported_tool_version(binary: &str) -> Option<Version> {
     "taplo" => Some(MSTV_TAPLO),
     "markdownlint-cli2" => Some(MSTV_MARKDOWNLINT_CLI2),
     "typstyle" => Some(MSTV_TYPSTYLE),
+    "yamllint" => Some(MSTV_YAMLLINT),
     _ => None,
   }
 }

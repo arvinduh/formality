@@ -77,6 +77,7 @@ impl LanguageSurface for TypstSurface {
             .arg(ctx.lang_config.line_length.to_string())
             .arg("-i")
             .arg(scratch);
+          cmd.args(&ctx.lang_config.extra_args);
           cmd.current_dir(&ctx.root);
           cmd.output()
         },
