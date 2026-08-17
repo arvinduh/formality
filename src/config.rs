@@ -40,9 +40,11 @@ impl GlobalConfig {
   pub fn merge(&mut self, other: GlobalConfig) {
     if other.languages.is_some() {
       self.languages = other.languages;
+      self.ignore_languages = None;
     }
     if other.ignore_languages.is_some() {
       self.ignore_languages = other.ignore_languages;
+      self.languages = None;
     }
     if other.indent_size.is_some() {
       self.indent_size = other.indent_size;
@@ -207,10 +209,27 @@ impl FormalityConfig {
   }
 
   pub fn parse_str(content: &str, path: &Path) -> Result<Self, ConfigError> {
-    toml::from_str(content).map_err(|source| ConfigError::Parse {
-      path: path.to_path_buf(),
-      source,
-    })
+    let config: Self =
+      toml::from_str(content).map_err(|source| ConfigError::Parse {
+        path: path.to_path_buf(),
+        source,
+      })?;
+    config.validate(path)?;
+    Ok(config)
+  }
+
+  pub fn validate(&self, path: &Path) -> Result<(), ConfigError> {
+    if let Some(ref global) = self.global {
+      if global.languages.is_some() && global.ignore_languages.is_some() {
+        return Err(ConfigError::Invalid(format!(
+          "Cannot specify both 'languages' (allowlist) and 'ignore_languages' (blocklist) in [global] at {}.\n\
+           • Use 'languages = [...]' to exclusively allow specific surfaces.\n\
+           • Use 'ignore_languages = [...]' to exclude specific surfaces from auto-detection.",
+          path.display()
+        )));
+      }
+    }
+    Ok(())
   }
 
   pub fn load_file(path: &Path) -> Result<Self, ConfigError> {
@@ -510,11 +529,10 @@ mod tests {
   }
 
   #[test]
-  fn test_languages_list_parsing() {
+  fn test_languages_allowlist_parsing() {
     let toml = r#"
       [global]
       languages = ["rust", "toml"]
-      ignore_languages = ["cpp"]
       indent_size = 4
     "#;
     let parsed =
@@ -524,8 +542,39 @@ mod tests {
       global.languages,
       Some(vec!["rust".to_string(), "toml".to_string()])
     );
-    assert_eq!(global.ignore_languages, Some(vec!["cpp".to_string()]));
+    assert_eq!(global.ignore_languages, None);
     assert_eq!(global.indent_size, 4);
+  }
+
+  #[test]
+  fn test_ignore_languages_blocklist_parsing() {
+    let toml = r#"
+      [global]
+      ignore_languages = ["cpp", "python"]
+      indent_size = 4
+    "#;
+    let parsed =
+      FormalityConfig::parse_str(toml, Path::new("test.toml")).unwrap();
+    let global = parsed.resolve_global();
+    assert_eq!(global.languages, None);
+    assert_eq!(
+      global.ignore_languages,
+      Some(vec!["cpp".to_string(), "python".to_string()])
+    );
+    assert_eq!(global.indent_size, 4);
+  }
+
+  #[test]
+  fn test_languages_and_ignore_languages_are_mutually_exclusive() {
+    let toml = r#"
+      [global]
+      languages = ["rust", "toml"]
+      ignore_languages = ["cpp"]
+    "#;
+    let result = FormalityConfig::parse_str(toml, Path::new("test.toml"));
+    assert!(result.is_err());
+    let err_msg = result.unwrap_err().to_string();
+    assert!(err_msg.contains("Cannot specify both 'languages' (allowlist) and 'ignore_languages' (blocklist)"));
   }
 
   #[test]
