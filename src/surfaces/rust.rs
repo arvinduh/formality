@@ -72,6 +72,23 @@ impl DeclaresFacets for RustSurface {
   }
 }
 
+pub fn build_clippy_args(fix: bool, extra_args: &[String]) -> Vec<String> {
+  let mut args = vec!["clippy".to_string()];
+  if fix {
+    args.push("--fix".to_string());
+    args.push("--allow-dirty".to_string());
+    args.push("--allow-staged".to_string());
+  }
+  args.push("--all-targets".to_string());
+  args.push("--".to_string());
+  args.push("-D".to_string());
+  args.push("warnings".to_string());
+  for arg in extra_args {
+    args.push(arg.clone());
+  }
+  args
+}
+
 pub(crate) fn build_rustfmt_fallback_cmd(
   edition: &str,
   check_only: bool,
@@ -103,6 +120,10 @@ impl LanguageSurface for RustSurface {
 
   fn clone_box(&self) -> Box<dyn LanguageSurface> {
     Box::new(*self)
+  }
+
+  fn supports_lint_fix(&self) -> bool {
+    true
   }
 
   fn detect(&self, root: &Path) -> bool {
@@ -285,12 +306,7 @@ impl LanguageSurface for RustSurface {
     }
 
     let mut cmd = create_tool_command("cargo");
-    cmd.arg("clippy");
-    if fix {
-      cmd.arg("--fix").arg("--allow-dirty").arg("--allow-staged");
-    }
-    cmd.arg("--all-targets").arg("--").arg("-D").arg("warnings");
-    cmd.args(&ctx.lang_config.extra_args);
+    cmd.args(build_clippy_args(fix, &ctx.lang_config.extra_args));
     cmd.current_dir(&ctx.root);
 
     match cmd.output() {

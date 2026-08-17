@@ -5,7 +5,7 @@ use super::{
   serialize_toml_with_header, sync_file_helper,
 };
 use serde::{Deserialize, Serialize};
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use std::time::Instant;
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
@@ -113,6 +113,28 @@ impl DeclaresFacets for PythonSurface {
 
 pub const PYTHON_EXTENSIONS: &[&str] = &["py", "pyi"];
 
+pub fn build_ruff_check_args(
+  files: &[PathBuf],
+  fix: bool,
+  extra_args: &[String],
+) -> Vec<String> {
+  let mut args = vec!["check".to_string()];
+  if fix {
+    args.push("--fix".to_string());
+  }
+  if !files.is_empty() {
+    for f in files {
+      args.push(f.to_string_lossy().to_string());
+    }
+  } else {
+    args.push(".".to_string());
+  }
+  for arg in extra_args {
+    args.push(arg.clone());
+  }
+  args
+}
+
 impl LanguageSurface for PythonSurface {
   fn name(&self) -> &'static str {
     "python"
@@ -128,6 +150,10 @@ impl LanguageSurface for PythonSurface {
 
   fn clone_box(&self) -> Box<dyn LanguageSurface> {
     Box::new(*self)
+  }
+
+  fn supports_lint_fix(&self) -> bool {
+    true
   }
 
   fn detect(&self, root: &Path) -> bool {
@@ -282,24 +308,21 @@ impl LanguageSurface for PythonSurface {
       };
     }
 
-    let mut cmd = create_tool_command("ruff");
-    cmd.arg("check");
-    if fix {
-      cmd.arg("--fix");
-    }
-
-    if !ctx.paths.is_empty()
+    let files_to_pass = if !ctx.paths.is_empty()
       || !ctx.lang_config.files.is_empty()
       || !ctx.lang_config.exclude.is_empty()
     {
-      for f in &files {
-        cmd.arg(f);
-      }
+      files
     } else {
-      cmd.arg(".");
-    }
+      Vec::new()
+    };
 
-    cmd.args(&ctx.lang_config.extra_args);
+    let mut cmd = create_tool_command("ruff");
+    cmd.args(build_ruff_check_args(
+      &files_to_pass,
+      fix,
+      &ctx.lang_config.extra_args,
+    ));
     cmd.current_dir(&ctx.root);
 
     match cmd.output() {

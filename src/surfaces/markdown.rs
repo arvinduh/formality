@@ -259,10 +259,20 @@ impl LanguageSurface for MarkdownSurface {
   fn lint(&self, ctx: &ExecutionContext, fix: bool) -> SurfaceResult {
     let start = Instant::now();
 
-    let (binary, has_fix_flag) = if check_binary_exists("markdownlint-cli2") {
-      ("markdownlint-cli2", true)
+    if fix {
+      return SurfaceResult {
+        surface_name: self.name(),
+        status: SurfaceStatus::Skipped {
+          reason: "Tool does not support autofix; run fml fmt instead".to_string(),
+        },
+        duration: start.elapsed(),
+      };
+    }
+
+    let binary = if check_binary_exists("markdownlint-cli2") {
+      "markdownlint-cli2"
     } else if check_binary_exists("markdownlint") {
-      ("markdownlint", true)
+      "markdownlint"
     } else {
       return SurfaceResult {
         surface_name: self.name(),
@@ -290,9 +300,6 @@ impl LanguageSurface for MarkdownSurface {
     }
 
     let mut cmd = create_tool_command(binary);
-    if fix && has_fix_flag {
-      cmd.arg("--fix");
-    }
 
     for f in &files {
       cmd.arg(f);
