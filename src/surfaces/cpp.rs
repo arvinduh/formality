@@ -81,11 +81,15 @@ pub fn build_clang_tidy_args(
   files: &[PathBuf],
   fix: bool,
   std_flag: &str,
+  extra_args: &[String],
 ) -> Vec<String> {
   let mut args = Vec::new();
   if fix {
     args.push("-fix".to_string());
     args.push("-fix-errors".to_string());
+  }
+  for arg in extra_args {
+    args.push(arg.clone());
   }
   for f in files {
     args.push(f.to_string_lossy().to_string());
@@ -172,6 +176,7 @@ impl LanguageSurface for CppSurface {
         |scratch| {
           let mut cmd = create_tool_command("clang-format");
           cmd.arg("-i").arg(scratch);
+          cmd.args(&ctx.lang_config.extra_args);
           cmd.current_dir(&ctx.root);
           cmd.output()
         },
@@ -270,6 +275,7 @@ impl LanguageSurface for CppSurface {
         cpp_files.push(f.clone());
       }
     }
+
     let groups: Vec<(Vec<PathBuf>, &'static str)> =
       [(c_files, "-std=c17"), (cpp_files, "-std=c++17")]
         .into_iter()
@@ -280,9 +286,13 @@ impl LanguageSurface for CppSurface {
 
     for (flist, std_flag) in groups {
       let mut cmd = create_tool_command("clang-tidy");
-      let args = build_clang_tidy_args(&flist, fix, std_flag);
+      let args = build_clang_tidy_args(
+        &flist,
+        fix,
+        std_flag,
+        &ctx.lang_config.extra_args,
+      );
       cmd.args(&args);
-      cmd.args(&ctx.lang_config.extra_args);
       cmd.current_dir(&ctx.root);
 
       match cmd.output() {
@@ -514,10 +524,12 @@ mod tests {
   #[test]
   fn test_build_clang_tidy_args_without_fix() {
     let files = vec![PathBuf::from("src/main.c"), PathBuf::from("src/utils.c")];
-    let args = build_clang_tidy_args(&files, false, "-std=c17");
+    let extra_args = vec!["--checks=*".to_string()];
+    let args = build_clang_tidy_args(&files, false, "-std=c17", &extra_args);
     assert_eq!(
       args,
       vec![
+        "--checks=*".to_string(),
         "src/main.c".to_string(),
         "src/utils.c".to_string(),
         "--".to_string(),
@@ -529,7 +541,7 @@ mod tests {
   #[test]
   fn test_build_clang_tidy_args_with_fix() {
     let files = vec![PathBuf::from("src/app.cpp")];
-    let args = build_clang_tidy_args(&files, true, "-std=c++17");
+    let args = build_clang_tidy_args(&files, true, "-std=c++17", &[]);
     assert_eq!(
       args,
       vec![
