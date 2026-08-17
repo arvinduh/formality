@@ -1,7 +1,7 @@
 use super::{
   ExecutionContext, LanguageSurface, SurfaceResult, SurfaceStatus, ToolInfo,
-  check_binary_exists, create_tool_command, find_files_with_ext,
-  sync_file_helper,
+  check_binary_exists, create_tool_command, diff_check_via_tempcopy,
+  find_files_with_ext, sync_file_helper,
 };
 use std::path::Path;
 use std::time::Instant;
@@ -74,12 +74,22 @@ impl LanguageSurface for CppSurface {
       };
     }
 
-    let mut cmd = create_tool_command("clang-format");
     if ctx.check_only {
-      cmd.arg("--dry-run").arg("--Werror");
-    } else {
-      cmd.arg("-i");
+      return diff_check_via_tempcopy(
+        &files,
+        |scratch| {
+          let mut cmd = create_tool_command("clang-format");
+          cmd.arg("-i").arg(scratch);
+          cmd.current_dir(&ctx.root);
+          cmd.output()
+        },
+        self.name(),
+        start,
+      );
     }
+
+    let mut cmd = create_tool_command("clang-format");
+    cmd.arg("-i");
 
     for f in &files {
       cmd.arg(f);

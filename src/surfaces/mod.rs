@@ -652,9 +652,279 @@ pub fn sync_file_helper(
   }
 }
 
+struct TempFileGuard<'a>(&'a Path);
+
+impl<'a> Drop for TempFileGuard<'a> {
+  fn drop(&mut self) {
+    let _ = std::fs::remove_file(self.0);
+  }
+}
+
+/// Executes an in-place formatter on temporary copies of the given files and generates
+/// unified diffs between the original content and the formatted content.
+///
+/// Uses an RAII guard to guarantee that `.fml-check.tmp` files are cleaned up on all exit paths.
+pub fn diff_check_via_tempcopy(
+  files: &[PathBuf],
+  run_in_place: impl Fn(&Path) -> std::io::Result<std::process::Output>,
+  surface_name: &'static str,
+  start: Instant,
+) -> SurfaceResult {
+  if files.is_empty() {
+    return SurfaceResult {
+      surface_name,
+      status: SurfaceStatus::Passed,
+      duration: start.elapsed(),
+    };
+  }
+
+  let mut combined_diff = String::new();
+
+  for original in files {
+    let original_content = match std::fs::read_to_string(original) {
+      Ok(c) => c,
+      Err(e) => {
+        return SurfaceResult {
+          surface_name,
+          status: SurfaceStatus::ExecutionError {
+            message: format!("Failed to read {}: {}", original.display(), e),
+          },
+          duration: start.elapsed(),
+        };
+      }
+    };
+
+    let ext = original.extension().and_then(|e| e.to_str()).unwrap_or("");
+    let scratch = if ext.is_empty() {
+      original.with_extension("fml-check.tmp")
+    } else {
+      original.with_extension(format!("{}.fml-check.tmp", ext))
+    };
+
+    if let Err(e) = std::fs::write(&scratch, &original_content) {
+      return SurfaceResult {
+        surface_name,
+        status: SurfaceStatus::ExecutionError {
+          message: format!(
+            "Failed to write temp file {}: {}",
+            scratch.display(),
+            e
+          ),
+        },
+        duration: start.elapsed(),
+      };
+    }
+
+    let _guard = TempFileGuard(&scratch);
+
+    let output = match run_in_place(&scratch) {
+      Ok(out) => out,
+      Err(e) => {
+        return SurfaceResult {
+          surface_name,
+          status: SurfaceStatus::ExecutionError {
+            message: format!(
+              "Failed to run formatter for {}: {}",
+              original.display(),
+              e
+            ),
+          },
+          duration: start.elapsed(),
+        };
+      }
+    };
+
+    if !output.status.success() {
+      let stderr = String::from_utf8_lossy(&output.stderr).to_string();
+      let stdout = String::from_utf8_lossy(&output.stdout).to_string();
+      let msg = if !stderr.trim().is_empty() {
+        stderr
+      } else if !stdout.trim().is_empty() {
+        stdout
+      } else {
+        format!("Formatter failed for {}", original.display())
+      };
+      return SurfaceResult {
+        surface_name,
+        status: SurfaceStatus::ViolationsFound {
+          message: msg,
+          diff: None,
+        },
+        duration: start.elapsed(),
+      };
+    }
+
+    let formatted = match std::fs::read_to_string(&scratch) {
+      Ok(f) => f,
+      Err(e) => {
+        return SurfaceResult {
+          surface_name,
+          status: SurfaceStatus::ExecutionError {
+            message: format!(
+              "Failed to read formatted temp file {}: {}",
+              scratch.display(),
+              e
+            ),
+          },
+          duration: start.elapsed(),
+        };
+      }
+    };
+
+    if formatted != original_content {
+      let diff = render_diff(
+        &original_content,
+        &formatted,
+        &original.display().to_string(),
+        &format!("{} (formatted)", original.display()),
+      );
+      if !combined_diff.is_empty() {
+        combined_diff.push('\n');
+      }
+      combined_diff.push_str(&diff);
+    }
+  }
+
+  if !combined_diff.is_empty() {
+    SurfaceResult {
+      surface_name,
+      status: SurfaceStatus::ViolationsFound {
+        message: String::new(),
+        diff: Some(combined_diff),
+      },
+      duration: start.elapsed(),
+    }
+  } else {
+    SurfaceResult {
+      surface_name,
+      status: SurfaceStatus::Passed,
+      duration: start.elapsed(),
+    }
+  }
+}
+
 #[cfg(test)]
 mod tests {
   use super::*;
+  use tempfile::TempDir;
+
+  fn create_dummy_success_output() -> std::process::Output {
+    #[cfg(windows)]
+    {
+      std::process::Command::new("cmd")
+        .args(["/C", "exit 0"])
+        .output()
+        .expect("cmd exit 0 failed")
+    }
+    #[cfg(not(windows))]
+    {
+      std::process::Command::new("true")
+        .output()
+        .expect("true failed")
+    }
+  }
+
+  #[test]
+  fn test_diff_check_via_tempcopy_clean() {
+    let temp = TempDir::new().unwrap();
+    let file = temp.path().join("clean.rs");
+    std::fs::write(&file, "fn main() {\n  println!(\"clean\");\n}\n").unwrap();
+
+    let start = Instant::now();
+    let res = diff_check_via_tempcopy(
+      &[file.clone()],
+      |_scratch| Ok(create_dummy_success_output()),
+      "rust",
+      start,
+    );
+
+    assert!(matches!(res.status, SurfaceStatus::Passed));
+
+    let ext = file.extension().unwrap().to_str().unwrap();
+    let scratch = file.with_extension(format!("{}.fml-check.tmp", ext));
+    assert!(!scratch.exists());
+  }
+
+  #[test]
+  fn test_diff_check_via_tempcopy_with_diff() {
+    let temp = TempDir::new().unwrap();
+    let file = temp.path().join("dirty.rs");
+    std::fs::write(&file, "fn main() {let x=1;}").unwrap();
+
+    let start = Instant::now();
+    let res = diff_check_via_tempcopy(
+      &[file.clone()],
+      |scratch| {
+        std::fs::write(scratch, "fn main() {\n  let x = 1;\n}\n")?;
+        Ok(create_dummy_success_output())
+      },
+      "rust",
+      start,
+    );
+
+    match res.status {
+      SurfaceStatus::ViolationsFound { message, diff } => {
+        assert!(message.is_empty());
+        let diff_str = diff.expect("diff should be present");
+        assert!(diff_str.contains("dirty.rs"));
+        assert!(diff_str.contains("(formatted)"));
+      }
+      other => panic!("Expected ViolationsFound, got {:?}", other),
+    }
+
+    let ext = file.extension().unwrap().to_str().unwrap();
+    let scratch = file.with_extension(format!("{}.fml-check.tmp", ext));
+    assert!(!scratch.exists());
+  }
+
+  #[test]
+  fn test_diff_check_via_tempcopy_raii_cleanup_on_error() {
+    let temp = TempDir::new().unwrap();
+    let file = temp.path().join("error_case.rs");
+    std::fs::write(&file, "invalid syntax").unwrap();
+
+    let start = Instant::now();
+    let res = diff_check_via_tempcopy(
+      &[file.clone()],
+      |_scratch| {
+        Err(std::io::Error::new(
+          std::io::ErrorKind::Other,
+          "mock execution error",
+        ))
+      },
+      "rust",
+      start,
+    );
+
+    assert!(matches!(res.status, SurfaceStatus::ExecutionError { .. }));
+
+    let ext = file.extension().unwrap().to_str().unwrap();
+    let scratch = file.with_extension(format!("{}.fml-check.tmp", ext));
+    assert!(!scratch.exists());
+  }
+
+  #[test]
+  fn test_diff_check_via_tempcopy_raii_cleanup_on_panic() {
+    let temp = TempDir::new().unwrap();
+    let file = temp.path().join("panic_case.rs");
+    std::fs::write(&file, "panic content").unwrap();
+
+    let start = Instant::now();
+    let _ = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+      diff_check_via_tempcopy(
+        &[file.clone()],
+        |_scratch| {
+          panic!("simulated panic inside run_in_place");
+        },
+        "rust",
+        start,
+      );
+    }));
+
+    let ext = file.extension().unwrap().to_str().unwrap();
+    let scratch = file.with_extension(format!("{}.fml-check.tmp", ext));
+    assert!(!scratch.exists());
+  }
 
   #[test]
   fn test_tool_info_auto_install_cmd_coverage() {

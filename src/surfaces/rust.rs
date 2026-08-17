@@ -1,7 +1,7 @@
 use super::{
   ExecutionContext, LanguageSurface, SurfaceResult, SurfaceStatus, ToolInfo,
-  check_binary_exists, create_tool_command, find_files_with_ext,
-  sync_file_helper,
+  check_binary_exists, create_tool_command, diff_check_via_tempcopy,
+  find_files_with_ext, sync_file_helper,
 };
 use std::path::Path;
 use std::time::Instant;
@@ -65,42 +65,65 @@ impl LanguageSurface for RustSurface {
       };
     }
 
+    let files = find_files_with_ext(&ctx.root, &["rs"], &ctx.paths);
+    if files.is_empty() {
+      return SurfaceResult {
+        surface_name: self.name(),
+        status: SurfaceStatus::Passed,
+        duration: start.elapsed(),
+      };
+    }
+
+    let edition = if let Ok(manifest) =
+      std::fs::read_to_string(ctx.root.join("Cargo.toml"))
+    {
+      if manifest.contains("edition = \"2024\"") {
+        "2024"
+      } else if manifest.contains("edition = \"2018\"") {
+        "2018"
+      } else {
+        "2021"
+      }
+    } else {
+      "2024"
+    };
+
+    if ctx.check_only {
+      return diff_check_via_tempcopy(
+        &files,
+        |scratch| {
+          let mut c = if check_binary_exists("rustfmt") {
+            let mut cmd = create_tool_command("rustfmt");
+            cmd.arg("--edition").arg(edition);
+            cmd
+          } else {
+            let mut c = create_tool_command("cargo");
+            c.arg("fmt").arg("--").arg("--edition").arg(edition);
+            c
+          };
+          c.arg(scratch);
+          c.current_dir(&ctx.root);
+          c.output()
+        },
+        self.name(),
+        start,
+      );
+    }
+
     let mut cmd =
       if check_binary_exists("cargo") && ctx.root.join("Cargo.toml").exists() {
         let mut c = create_tool_command("cargo");
         c.arg("fmt");
-        if ctx.check_only {
-          c.arg("--check");
-        }
         if !ctx.paths.is_empty() {
-          let files = find_files_with_ext(&ctx.root, &["rs"], &ctx.paths);
-          if files.is_empty() {
-            return SurfaceResult {
-              surface_name: self.name(),
-              status: SurfaceStatus::Passed,
-              duration: start.elapsed(),
-            };
-          }
           c.arg("--");
-          for f in files {
+          for f in &files {
             c.arg(f);
           }
         }
         c
       } else {
-        let files = find_files_with_ext(&ctx.root, &["rs"], &ctx.paths);
-        if files.is_empty() {
-          return SurfaceResult {
-            surface_name: self.name(),
-            status: SurfaceStatus::Passed,
-            duration: start.elapsed(),
-          };
-        }
         let mut c = create_tool_command("rustfmt");
-        if ctx.check_only {
-          c.arg("--check");
-        }
-        for f in files {
+        for f in &files {
           c.arg(f);
         }
         c
