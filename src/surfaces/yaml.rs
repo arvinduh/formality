@@ -384,7 +384,7 @@ mod tests {
     let cfg = YamllintConfig::from_context(&ctx);
     assert_eq!(cfg.rules.document_start, YamllintRuleToggle::Disable);
     assert_eq!(cfg.rules.truthy, YamllintRuleToggle::Disable);
-    assert_eq!(cfg.rules.indentation.indent_sequences, true);
+    assert!(cfg.rules.indentation.indent_sequences);
 
     let rendered = cfg.render().unwrap();
     assert!(rendered.contains("document-start: disable"));
@@ -412,7 +412,7 @@ mod tests {
     let cfg = YamllintConfig::from_context(&ctx);
     assert_eq!(cfg.rules.document_start, YamllintRuleToggle::Enable);
     assert_eq!(cfg.rules.truthy, YamllintRuleToggle::Enable);
-    assert_eq!(cfg.rules.indentation.indent_sequences, false);
+    assert!(!cfg.rules.indentation.indent_sequences);
 
     let rendered = cfg.render().unwrap();
     assert!(rendered.contains("document-start: enable"));
