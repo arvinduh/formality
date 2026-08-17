@@ -1,9 +1,8 @@
 use super::{
   ExecutionContext, LanguageSurface, SurfaceResult, SurfaceStatus, ToolInfo,
-  check_binary_exists, find_files_with_ext,
+  check_binary_exists, create_tool_command, find_files_with_ext,
 };
 use std::path::Path;
-use std::process::Command;
 use std::time::Instant;
 
 pub struct TypstSurface;
@@ -61,7 +60,7 @@ impl LanguageSurface for TypstSurface {
       };
     }
 
-    let mut cmd = Command::new("typstyle");
+    let mut cmd = create_tool_command("typstyle");
     cmd
       .arg("--column")
       .arg(ctx.lang_config.line_length.to_string());

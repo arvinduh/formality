@@ -1,9 +1,9 @@
 use super::{
   ExecutionContext, LanguageSurface, SurfaceResult, SurfaceStatus, ToolInfo,
-  check_binary_exists, find_files_with_ext, sync_file_helper,
+  check_binary_exists, create_tool_command, find_files_with_ext,
+  sync_file_helper,
 };
 use std::path::Path;
-use std::process::Command;
 use std::time::Instant;
 
 pub struct TomlSurface;
@@ -63,7 +63,7 @@ impl LanguageSurface for TomlSurface {
       };
     }
 
-    let mut cmd = Command::new("taplo");
+    let mut cmd = create_tool_command("taplo");
     cmd.arg("format");
     if ctx.check_only {
       cmd.arg("--check");
@@ -139,7 +139,7 @@ impl LanguageSurface for TomlSurface {
       };
     }
 
-    let mut cmd = Command::new("taplo");
+    let mut cmd = create_tool_command("taplo");
     cmd.arg("lint");
 
     for f in &files {

@@ -1,11 +1,11 @@
 use crate::config::FormalityConfig;
 use crate::surfaces::{
-  LanguageSurface, ToolInfo, all_surfaces, detect_surfaces_smart,
+  LanguageSurface, ToolInfo, all_surfaces, create_tool_command,
+  detect_surfaces_smart,
 };
 use colored::Colorize;
 use std::collections::{HashMap, HashSet};
 use std::path::Path;
-use std::process::Command;
 
 /// Install a deduplicated list of missing tools.
 ///
@@ -36,7 +36,7 @@ pub fn install_missing_tools(missing: &[ToolInfo]) -> bool {
         args.join(" ").cyan()
       );
 
-      let mut cmd = Command::new(&program);
+      let mut cmd = create_tool_command(&program);
       cmd.args(&args);
 
       match cmd.status() {
@@ -285,32 +285,51 @@ pub fn run_doctor(
 
 fn get_tool_version(binary: &str) -> Option<String> {
   let output = match binary {
-    "cargo" => Command::new("cargo").arg("--version").output().ok()?,
-    "rustfmt" => Command::new("rustfmt").arg("--version").output().ok()?,
-    "clippy-driver" => Command::new("clippy-driver")
+    "cargo" => create_tool_command("cargo")
       .arg("--version")
       .output()
       .ok()?,
-    "ruff" => Command::new("ruff").arg("--version").output().ok()?,
-    "clang-format" => Command::new("clang-format")
+    "rustfmt" => create_tool_command("rustfmt")
       .arg("--version")
       .output()
       .ok()?,
-    "clang-tidy" => {
-      Command::new("clang-tidy").arg("--version").output().ok()?
-    }
-    "prettier" => Command::new("prettier").arg("--version").output().ok()?,
-    "markdownlint-cli2" => Command::new("markdownlint-cli2")
+    "clippy-driver" => create_tool_command("clippy-driver")
       .arg("--version")
       .output()
       .ok()?,
-    "markdownlint" => Command::new("markdownlint")
+    "ruff" => create_tool_command("ruff").arg("--version").output().ok()?,
+    "clang-format" => create_tool_command("clang-format")
       .arg("--version")
       .output()
       .ok()?,
-    "yamllint" => Command::new("yamllint").arg("--version").output().ok()?,
-    "taplo" => Command::new("taplo").arg("--version").output().ok()?,
-    "typstyle" => Command::new("typstyle").arg("--version").output().ok()?,
+    "clang-tidy" => create_tool_command("clang-tidy")
+      .arg("--version")
+      .output()
+      .ok()?,
+    "prettier" => create_tool_command("prettier")
+      .arg("--version")
+      .output()
+      .ok()?,
+    "markdownlint-cli2" => create_tool_command("markdownlint-cli2")
+      .arg("--version")
+      .output()
+      .ok()?,
+    "markdownlint" => create_tool_command("markdownlint")
+      .arg("--version")
+      .output()
+      .ok()?,
+    "yamllint" => create_tool_command("yamllint")
+      .arg("--version")
+      .output()
+      .ok()?,
+    "taplo" => create_tool_command("taplo")
+      .arg("--version")
+      .output()
+      .ok()?,
+    "typstyle" => create_tool_command("typstyle")
+      .arg("--version")
+      .output()
+      .ok()?,
     _ => return None,
   };
 

@@ -1,9 +1,9 @@
 use super::{
   ExecutionContext, LanguageSurface, SurfaceResult, SurfaceStatus, ToolInfo,
-  check_binary_exists, find_files_with_ext, sync_file_helper,
+  check_binary_exists, create_tool_command, find_files_with_ext,
+  sync_file_helper,
 };
 use std::path::Path;
-use std::process::Command;
 use std::time::Instant;
 
 pub struct RustSurface;
@@ -67,7 +67,7 @@ impl LanguageSurface for RustSurface {
 
     let mut cmd =
       if check_binary_exists("cargo") && ctx.root.join("Cargo.toml").exists() {
-        let mut c = Command::new("cargo");
+        let mut c = create_tool_command("cargo");
         c.arg("fmt");
         if ctx.check_only {
           c.arg("--check");
@@ -96,7 +96,7 @@ impl LanguageSurface for RustSurface {
             duration: start.elapsed(),
           };
         }
-        let mut c = Command::new("rustfmt");
+        let mut c = create_tool_command("rustfmt");
         if ctx.check_only {
           c.arg("--check");
         }
@@ -161,7 +161,7 @@ impl LanguageSurface for RustSurface {
       };
     }
 
-    let mut cmd = Command::new("cargo");
+    let mut cmd = create_tool_command("cargo");
     cmd.arg("clippy");
     if fix {
       cmd.arg("--fix").arg("--allow-dirty").arg("--allow-staged");

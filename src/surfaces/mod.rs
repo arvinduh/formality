@@ -435,6 +435,34 @@ pub fn check_binary_exists(binary: &str) -> bool {
   which::which(binary).is_ok()
 }
 
+/// Creates a `Command` with proper handling for Windows batch files (.cmd/.bat)
+/// such as `npm`, `pnpm`, `yarn`, `npx`, and globally installed node CLIs.
+pub fn create_tool_command(binary: &str) -> std::process::Command {
+  #[cfg(windows)]
+  {
+    if binary == "npm"
+      || binary == "pnpm"
+      || binary == "yarn"
+      || binary == "npx"
+    {
+      let mut cmd = std::process::Command::new("cmd");
+      cmd.arg("/C").arg(binary);
+      return cmd;
+    }
+    if let Ok(path) = which::which(binary) {
+      if let Some(ext) = path.extension().and_then(|e| e.to_str())
+        && (ext.eq_ignore_ascii_case("cmd") || ext.eq_ignore_ascii_case("bat"))
+      {
+        let mut cmd = std::process::Command::new("cmd");
+        cmd.arg("/C").arg(path);
+        return cmd;
+      }
+      return std::process::Command::new(path);
+    }
+  }
+  std::process::Command::new(binary)
+}
+
 /// Returns true if `content` was written by `fml sync` (contains the
 /// auto-generation sentinel comment). Used to guard against silently
 /// overwriting hand-written configs.
