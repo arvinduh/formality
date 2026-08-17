@@ -202,6 +202,10 @@ impl MarkdownOptions {
 pub struct YamlOptions {
   #[serde(skip_serializing_if = "Option::is_none")]
   pub indent_sequence: Option<bool>,
+  #[serde(skip_serializing_if = "Option::is_none")]
+  pub document_start: Option<bool>,
+  #[serde(skip_serializing_if = "Option::is_none")]
+  pub truthy: Option<bool>,
 }
 
 impl YamlOptions {
@@ -209,10 +213,18 @@ impl YamlOptions {
     if other.indent_sequence.is_some() {
       self.indent_sequence = other.indent_sequence;
     }
+    if other.document_start.is_some() {
+      self.document_start = other.document_start;
+    }
+    if other.truthy.is_some() {
+      self.truthy = other.truthy;
+    }
   }
 
   pub fn is_empty(&self) -> bool {
     self.indent_sequence.is_none()
+      && self.document_start.is_none()
+      && self.truthy.is_none()
   }
 }
 
@@ -1372,6 +1384,8 @@ mod tests {
       yaml.yaml,
       Some(YamlOptions {
         indent_sequence: Some(true),
+        document_start: None,
+        truthy: None,
       })
     );
 
@@ -1446,6 +1460,8 @@ mod tests {
       yaml.yaml,
       Some(YamlOptions {
         indent_sequence: Some(false),
+        document_start: None,
+        truthy: None,
       })
     );
   }
@@ -1602,12 +1618,18 @@ mod tests {
 
     let mut yaml1 = YamlOptions {
       indent_sequence: Some(true),
+      document_start: Some(true),
+      truthy: None,
     };
     let yaml2 = YamlOptions {
       indent_sequence: Some(false),
+      document_start: None,
+      truthy: Some(false),
     };
     yaml1.merge(yaml2);
     assert_eq!(yaml1.indent_sequence, Some(false));
+    assert_eq!(yaml1.document_start, Some(true));
+    assert_eq!(yaml1.truthy, Some(false));
 
     let mut layout1 = LayoutFacet {
       indent_size: Some(2),
@@ -1626,5 +1648,26 @@ mod tests {
     assert_eq!(layout1.line_length, Some(100));
     assert_eq!(layout1.use_tabs, Some(true));
     assert_eq!(layout1.prose_wrap.as_deref(), Some("preserve"));
+  }
+
+  #[test]
+  fn test_yaml_options_document_start_and_truthy_rules() {
+    let toml = r#"
+      [lang.yaml]
+      indent_sequence = true
+      document_start = false
+      truthy = true
+    "#;
+    let parsed =
+      FormalityConfig::parse_str(toml, Path::new("test.toml")).unwrap();
+    let yaml = parsed.resolve_for_lang("yaml");
+    assert_eq!(
+      yaml.yaml,
+      Some(YamlOptions {
+        indent_sequence: Some(true),
+        document_start: Some(false),
+        truthy: Some(true),
+      })
+    );
   }
 }
