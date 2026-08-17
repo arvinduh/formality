@@ -24,11 +24,8 @@ pub fn install_missing_tools(missing: &[ToolInfo]) -> bool {
     return true;
   }
 
-  println!(
-    "\n{}",
-    "──────────────────────────────────────────────────────────────────"
-      .dimmed()
-  );
+  let separator = crate::table::separator_line(0);
+  println!("\n{}", separator.dimmed());
   println!("{}", "Auto-installing Missing Toolchains:".bold().cyan());
 
   let mut all_ok = true;
@@ -134,21 +131,6 @@ pub fn run_doctor(
   install: bool,
   config: &FormalityConfig,
 ) -> i32 {
-  println!(
-    "{} {}",
-    "fml doctor".bold().cyan(),
-    if show_all {
-      "(all surfaces)".dimmed()
-    } else {
-      "(active surfaces)".dimmed()
-    }
-  );
-  println!(
-    "{}",
-    "──────────────────────────────────────────────────────────────────"
-      .dimmed()
-  );
-
   let surfaces: Vec<Box<dyn LanguageSurface>> = if show_all {
     all_surfaces()
   } else {
@@ -267,6 +249,7 @@ pub fn run_doctor(
         }
       } else if !missing_unique_tools.iter().any(|t| t.binary == tool.binary) {
         missing_unique_tools.push(tool.clone());
+
         let row = Row::new(vec![
           Cell::styled("[MISS] ", Style::Warn),
           Cell::styled(tool.binary, Style::Warn),
@@ -280,6 +263,18 @@ pub fn run_doctor(
 
   let palette = Palette::detect();
   let rendered_table = render(&doctor_table, &palette);
+  let separator = crate::table::separator_for_content(&rendered_table);
+
+  println!(
+    "{} {}",
+    "fml doctor".bold().cyan(),
+    if show_all {
+      "(all surfaces)".dimmed()
+    } else {
+      "(active surfaces)".dimmed()
+    }
+  );
+  println!("{}", separator.dimmed());
   if !rendered_table.is_empty() {
     println!("{}", rendered_table);
   }
@@ -298,11 +293,7 @@ pub fn run_doctor(
     }
 
     if !unconfigured.is_empty() {
-      println!(
-        "\n{}",
-        "──────────────────────────────────────────────────────────────────"
-          .dimmed()
-      );
+      println!("\n{}", separator.dimmed());
       println!("{}", "Unconfigured Workspace Languages:".yellow().bold());
       for name in unconfigured {
         println!(
@@ -324,11 +315,7 @@ pub fn run_doctor(
     install_missing_tools(&missing_unique_tools);
   }
 
-  println!(
-    "{}",
-    "──────────────────────────────────────────────────────────────────"
-      .dimmed()
-  );
+  println!("{}", separator.dimmed());
   let outdated_str = if !outdated_unique_tools.is_empty() {
     format!(" ({} outdated)", outdated_unique_tools.len())
       .yellow()
