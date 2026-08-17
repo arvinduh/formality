@@ -1,0 +1,305 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "title": "FormalityConfig",
+  "type": "object",
+  "properties": {
+    "global": {
+      "anyOf": [
+        {
+          "$ref": "#/definitions/GlobalConfig"
+        },
+        {
+          "type": "null"
+        }
+      ]
+    },
+    "lang": {
+      "type": "object",
+      "additionalProperties": {
+        "$ref": "#/definitions/LangConfig"
+      }
+    }
+  },
+  "definitions": {
+    "CppOptions": {
+      "description": "Typed formatting and linting options for C/C++.",
+      "type": "object",
+      "properties": {
+        "column_limit": {
+          "type": ["integer", "null"],
+          "format": "uint",
+          "minimum": 0.0
+        },
+        "standard": {
+          "type": ["string", "null"]
+        }
+      }
+    },
+    "GlobalConfig": {
+      "type": "object",
+      "properties": {
+        "charset": {
+          "type": ["string", "null"]
+        },
+        "end_of_line": {
+          "type": ["string", "null"]
+        },
+        "ignore_languages": {
+          "type": ["array", "null"],
+          "items": {
+            "type": "string"
+          }
+        },
+        "indent_size": {
+          "type": ["integer", "null"],
+          "format": "uint",
+          "minimum": 0.0
+        },
+        "insert_final_newline": {
+          "type": ["boolean", "null"]
+        },
+        "languages": {
+          "type": ["array", "null"],
+          "items": {
+            "type": "string"
+          }
+        },
+        "layout": {
+          "anyOf": [
+            {
+              "$ref": "#/definitions/LayoutFacet"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "line_length": {
+          "type": ["integer", "null"],
+          "format": "uint",
+          "minimum": 0.0
+        },
+        "trim_trailing_whitespace": {
+          "type": ["boolean", "null"]
+        },
+        "use_tabs": {
+          "type": ["boolean", "null"]
+        }
+      }
+    },
+    "JsonOptions": {
+      "description": "Typed formatting and linting options for JSON.",
+      "type": "object"
+    },
+    "LangConfig": {
+      "type": "object",
+      "properties": {
+        "cpp": {
+          "anyOf": [
+            {
+              "$ref": "#/definitions/CppOptions"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "enabled": {
+          "type": ["boolean", "null"]
+        },
+        "exclude": {
+          "type": ["array", "null"],
+          "items": {
+            "type": "string"
+          }
+        },
+        "extra_args": {
+          "type": ["array", "null"],
+          "items": {
+            "type": "string"
+          }
+        },
+        "files": {
+          "type": ["array", "null"],
+          "items": {
+            "type": "string"
+          }
+        },
+        "format_tool": {
+          "type": ["string", "null"]
+        },
+        "indent_size": {
+          "type": ["integer", "null"],
+          "format": "uint",
+          "minimum": 0.0
+        },
+        "json": {
+          "anyOf": [
+            {
+              "$ref": "#/definitions/JsonOptions"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "layout": {
+          "anyOf": [
+            {
+              "$ref": "#/definitions/LayoutFacet"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "line_length": {
+          "type": ["integer", "null"],
+          "format": "uint",
+          "minimum": 0.0
+        },
+        "lint_tool": {
+          "type": ["string", "null"]
+        },
+        "markdown": {
+          "anyOf": [
+            {
+              "$ref": "#/definitions/MarkdownOptions"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "prose_wrap": {
+          "type": ["string", "null"]
+        },
+        "python": {
+          "anyOf": [
+            {
+              "$ref": "#/definitions/PythonOptions"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "rust": {
+          "anyOf": [
+            {
+              "$ref": "#/definitions/RustOptions"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "toml": {
+          "anyOf": [
+            {
+              "$ref": "#/definitions/TomlOptions"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "typst": {
+          "anyOf": [
+            {
+              "$ref": "#/definitions/TypstOptions"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "use_tabs": {
+          "type": ["boolean", "null"]
+        },
+        "yaml": {
+          "anyOf": [
+            {
+              "$ref": "#/definitions/YamlOptions"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        }
+      }
+    },
+    "LayoutFacet": {
+      "description": "Common layout facets configuring formatting layout across tools.",
+      "type": "object",
+      "properties": {
+        "indent_size": {
+          "type": ["integer", "null"],
+          "format": "uint",
+          "minimum": 0.0
+        },
+        "line_length": {
+          "type": ["integer", "null"],
+          "format": "uint",
+          "minimum": 0.0
+        },
+        "prose_wrap": {
+          "type": ["string", "null"]
+        },
+        "use_tabs": {
+          "type": ["boolean", "null"]
+        }
+      }
+    },
+    "MarkdownOptions": {
+      "description": "Typed formatting and linting options for Markdown.",
+      "type": "object",
+      "properties": {
+        "prose_wrap": {
+          "type": ["string", "null"]
+        }
+      }
+    },
+    "PythonOptions": {
+      "description": "Typed formatting and linting options for Python.",
+      "type": "object",
+      "properties": {
+        "quote_style": {
+          "type": ["string", "null"]
+        },
+        "target_version": {
+          "type": ["string", "null"]
+        }
+      }
+    },
+    "RustOptions": {
+      "description": "Typed formatting and linting options for Rust.",
+      "type": "object",
+      "properties": {
+        "edition": {
+          "type": ["string", "null"]
+        },
+        "version": {
+          "type": ["string", "null"]
+        }
+      }
+    },
+    "TomlOptions": {
+      "description": "Typed formatting and linting options for TOML.",
+      "type": "object"
+    },
+    "TypstOptions": {
+      "description": "Typed formatting and linting options for Typst.",
+      "type": "object"
+    },
+    "YamlOptions": {
+      "description": "Typed formatting and linting options for YAML.",
+      "type": "object",
+      "properties": {
+        "indent_sequence": {
+          "type": ["boolean", "null"]
+        }
+      }
+    }
+  }
+}
