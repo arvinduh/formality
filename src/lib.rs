@@ -6,6 +6,7 @@ pub mod lsp;
 pub mod runner;
 pub mod surfaces;
 pub mod update;
+pub mod version;
 
 use clap::Parser;
 use cli::{Cli, Commands};
