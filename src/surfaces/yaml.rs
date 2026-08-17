@@ -7,6 +7,7 @@ use super::{
 use std::path::Path;
 use std::time::Instant;
 
+#[derive(Debug, Default, Clone, Copy)]
 pub struct YamlSurface;
 
 impl DeclaresFacets for YamlSurface {
@@ -34,6 +35,14 @@ impl LanguageSurface for YamlSurface {
 
   fn aliases(&self) -> &[&'static str] {
     &["yml"]
+  }
+
+  fn file_extensions(&self) -> &[&'static str] {
+    YAML_EXTENSIONS
+  }
+
+  fn clone_box(&self) -> Box<dyn LanguageSurface> {
+    Box::new(*self)
   }
 
   fn detect(&self, root: &Path) -> bool {

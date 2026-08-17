@@ -569,7 +569,10 @@ mod tests {
       rust.facet_support(Facet::ImportSort),
       FacetSupport::Configurable
     );
-    assert_eq!(rust.facet_support(Facet::Edition), FacetSupport::Configurable);
+    assert_eq!(
+      rust.facet_support(Facet::Edition),
+      FacetSupport::Configurable
+    );
     assert_eq!(
       rust.facet_support(Facet::QuoteStyle),
       FacetSupport::Unsupported
@@ -582,7 +585,10 @@ mod tests {
       rust.facet_support(Facet::TrailingComma),
       FacetSupport::Unsupported
     );
-    assert_eq!(rust.facet_support(Facet::Standard), FacetSupport::Unsupported);
+    assert_eq!(
+      rust.facet_support(Facet::Standard),
+      FacetSupport::Unsupported
+    );
 
     // 2. PythonSurface
     let python = surfaces.iter().find(|s| s.name() == "python").unwrap();
@@ -621,7 +627,10 @@ mod tests {
 
     // 3. CppSurface
     let cpp = surfaces.iter().find(|s| s.name() == "cpp").unwrap();
-    assert_eq!(cpp.facet_support(Facet::Standard), FacetSupport::Configurable);
+    assert_eq!(
+      cpp.facet_support(Facet::Standard),
+      FacetSupport::Configurable
+    );
     assert_eq!(
       cpp.facet_support(Facet::IndentWidth),
       FacetSupport::Configurable

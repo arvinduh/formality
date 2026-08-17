@@ -7,6 +7,7 @@ use super::{
 use std::path::Path;
 use std::time::Instant;
 
+#[derive(Debug, Default, Clone, Copy)]
 pub struct PythonSurface;
 
 impl DeclaresFacets for PythonSurface {
@@ -32,6 +33,14 @@ impl LanguageSurface for PythonSurface {
 
   fn aliases(&self) -> &[&'static str] {
     &["py"]
+  }
+
+  fn file_extensions(&self) -> &[&'static str] {
+    &["py"]
+  }
+
+  fn clone_box(&self) -> Box<dyn LanguageSurface> {
+    Box::new(*self)
   }
 
   fn detect(&self, root: &Path) -> bool {

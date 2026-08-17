@@ -1,5 +1,8 @@
 use fml::cli::{Cli, Commands};
-use fml::surfaces::{all_surfaces, detect_surfaces, get_surface_by_name};
+use fml::surfaces::{
+  SurfaceRegistry, all_surfaces, detect_surfaces, get_surface_by_name,
+  resolve_canonical_name,
+};
 use std::fs;
 use std::path::PathBuf;
 use tempfile::TempDir;
@@ -9,22 +12,56 @@ fn test_surface_registry_and_aliases() {
   let surfaces = all_surfaces();
   assert_eq!(surfaces.len(), 8);
 
-  assert!(get_surface_by_name("rust").is_some());
-  assert!(get_surface_by_name("rs").is_some());
-  assert!(get_surface_by_name("python").is_some());
-  assert!(get_surface_by_name("py").is_some());
-  assert!(get_surface_by_name("cpp").is_some());
-  assert!(get_surface_by_name("c++").is_some());
-  assert!(get_surface_by_name("cxx").is_some());
-  assert!(get_surface_by_name("markdown").is_some());
-  assert!(get_surface_by_name("md").is_some());
-  assert!(get_surface_by_name("yaml").is_some());
-  assert!(get_surface_by_name("yml").is_some());
-  assert!(get_surface_by_name("json").is_some());
-  assert!(get_surface_by_name("toml").is_some());
-  assert!(get_surface_by_name("typst").is_some());
-  assert!(get_surface_by_name("typ").is_some());
+  let registry = SurfaceRegistry::default();
+  assert_eq!(registry.len(), 8);
+  assert_eq!(
+    registry.supported_languages(),
+    vec![
+      "rust", "python", "cpp", "markdown", "yaml", "json", "toml", "typst"
+    ]
+  );
+
+  let cases = [
+    ("rust", "rust"),
+    ("rs", "rust"),
+    ("RS", "rust"),
+    ("python", "python"),
+    ("py", "python"),
+    ("Py", "python"),
+    ("cpp", "cpp"),
+    ("c", "cpp"),
+    ("c++", "cpp"),
+    ("C++", "cpp"),
+    ("cxx", "cpp"),
+    ("CXX", "cpp"),
+    ("markdown", "markdown"),
+    ("md", "markdown"),
+    ("MD", "markdown"),
+    ("yaml", "yaml"),
+    ("yml", "yaml"),
+    ("YML", "yaml"),
+    ("json", "json"),
+    ("JSON", "json"),
+    ("toml", "toml"),
+    ("TOML", "toml"),
+    ("typst", "typst"),
+    ("typ", "typst"),
+    ("TYP", "typst"),
+  ];
+
+  for (query, canonical) in cases {
+    let surface = get_surface_by_name(query);
+    assert!(surface.is_some(), "Lookup failed for query '{}'", query);
+    assert_eq!(surface.unwrap().name(), canonical);
+    assert_eq!(resolve_canonical_name(query), Some(canonical));
+
+    let reg_surface = registry.get_surface_by_name(query);
+    assert!(reg_surface.is_some());
+    assert_eq!(reg_surface.unwrap().name(), canonical);
+  }
+
   assert!(get_surface_by_name("nonexistent").is_none());
+  assert!(resolve_canonical_name("nonexistent").is_none());
 }
 
 #[test]
