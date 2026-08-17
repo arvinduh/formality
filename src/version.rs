@@ -13,7 +13,156 @@ pub const MSTV_PRETTIER: Version = Version::new(2, 0, 0);
 pub const MSTV_TAPLO: Version = Version::new(0, 8, 0);
 pub const MSTV_MARKDOWNLINT_CLI2: Version = Version::new(0, 4, 0);
 pub const MSTV_TYPSTYLE: Version = Version::new(0, 11, 0);
-pub const MSTV_YAMLLINT: Version = Version::new(1, 26, 0);
+pub const MSTV_YAMLLINT: Version = Version::new(1, 20, 0);
+pub const MSTV_BIOME: Version = Version::new(1, 5, 0);
+pub const MSTV_CHECKSTYLE: Version = Version::new(10, 0, 0);
+pub const MSTV_KTFMT: Version = Version::new(0, 44, 0);
+pub const MSTV_KTLINT: Version = Version::new(1, 0, 0);
+pub const MSTV_GOFMT: Version = Version::new(1, 18, 0);
+pub const MSTV_GOLANGCI_LINT: Version = Version::new(1, 50, 0);
+
+/// Minimum Supported Tool Version entry with metadata, invocation arguments, regex, and upgrade advice.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ToolMstvEntry {
+  pub binary: &'static str,
+  pub min_version: Version,
+  pub version_args: &'static [&'static str],
+  pub regex: &'static str,
+  pub advice: &'static str,
+}
+
+pub const TOOL_MSTV_REGISTRY: &[ToolMstvEntry] = &[
+  ToolMstvEntry {
+    binary: "rustfmt",
+    min_version: MSTV_RUSTFMT,
+    version_args: &["--version"],
+    regex: r"rustfmt (\d+\.\d+\.\d+)",
+    advice: "Run 'rustup component add rustfmt' or 'rustup update'",
+  },
+  ToolMstvEntry {
+    binary: "clippy",
+    min_version: MSTV_CLIPPY,
+    version_args: &["--version"],
+    regex: r"clippy (\d+\.\d+\.\d+)",
+    advice: "Run 'rustup component add clippy' or 'rustup update'",
+  },
+  ToolMstvEntry {
+    binary: "ruff",
+    min_version: MSTV_RUFF,
+    version_args: &["--version"],
+    regex: r"ruff (\d+\.\d+\.\d+)",
+    advice: "Run 'pip install -U ruff' or 'brew install ruff'",
+  },
+  ToolMstvEntry {
+    binary: "clang-format",
+    min_version: MSTV_CLANG_FORMAT,
+    version_args: &["--version"],
+    regex: r"clang-format version (\d+\.\d+\.\d+)",
+    advice: "Install clang-format >= 14 via system package manager or LLVM toolchain",
+  },
+  ToolMstvEntry {
+    binary: "clang-tidy",
+    min_version: MSTV_CLANG_TIDY,
+    version_args: &["--version"],
+    regex: r"clang-tidy version (\d+\.\d+\.\d+)",
+    advice: "Install clang-tidy >= 14 via system package manager or LLVM toolchain",
+  },
+  ToolMstvEntry {
+    binary: "prettier",
+    min_version: MSTV_PRETTIER,
+    version_args: &["--version"],
+    regex: r"(\d+\.\d+\.\d+)",
+    advice: "Run 'npm install -g prettier' or 'brew install prettier'",
+  },
+  ToolMstvEntry {
+    binary: "taplo",
+    min_version: MSTV_TAPLO,
+    version_args: &["--version"],
+    regex: r"taplo (\d+\.\d+\.\d+)",
+    advice: "Run 'cargo binstall taplo-cli' or 'brew install taplo' or 'cargo install --locked taplo-cli'",
+  },
+  ToolMstvEntry {
+    binary: "markdownlint-cli2",
+    min_version: MSTV_MARKDOWNLINT_CLI2,
+    version_args: &["--version"],
+    regex: r"markdownlint-cli2 v?(\d+\.\d+\.\d+)",
+    advice: "Run 'npm install -g markdownlint-cli2' or 'brew install markdownlint-cli2'",
+  },
+  ToolMstvEntry {
+    binary: "typstyle",
+    min_version: MSTV_TYPSTYLE,
+    version_args: &["--version"],
+    regex: r"typstyle (\d+\.\d+\.\d+)",
+    advice: "Run 'cargo install --locked typstyle' or 'brew install typstyle'",
+  },
+  ToolMstvEntry {
+    binary: "yamllint",
+    min_version: MSTV_YAMLLINT,
+    version_args: &["--version"],
+    regex: r"yamllint (\d+\.\d+\.\d+)",
+    advice: "Run 'pip install -U yamllint' or 'brew install yamllint'",
+  },
+  ToolMstvEntry {
+    binary: "biome",
+    min_version: MSTV_BIOME,
+    version_args: &["--version"],
+    regex: r"(\d+\.\d+\.\d+)",
+    advice: "Run 'npm install -g @biomejs/biome' or 'brew install biome'",
+  },
+  ToolMstvEntry {
+    binary: "checkstyle",
+    min_version: MSTV_CHECKSTYLE,
+    version_args: &["--version"],
+    regex: r"Checkstyle version:? (\d+\.\d+(?:\.\d+)?)",
+    advice: "Run 'brew install checkstyle' or update your checkstyle jar",
+  },
+  ToolMstvEntry {
+    binary: "ktfmt",
+    min_version: MSTV_KTFMT,
+    version_args: &["--version"],
+    regex: r"ktfmt version (\d+\.\d+(?:\.\d+)?)",
+    advice: "Run 'brew install ktfmt'",
+  },
+  ToolMstvEntry {
+    binary: "ktlint",
+    min_version: MSTV_KTLINT,
+    version_args: &["--version"],
+    regex: r"(\d+\.\d+\.\d+)",
+    advice: "Run 'brew install ktlint'",
+  },
+  ToolMstvEntry {
+    binary: "gofmt",
+    min_version: MSTV_GOFMT,
+    version_args: &["--help"],
+    regex: r"go(\d+\.\d+(?:\.\d+)?)",
+    advice: "Update Go toolchain via https://go.dev/dl/",
+  },
+  ToolMstvEntry {
+    binary: "golangci-lint",
+    min_version: MSTV_GOLANGCI_LINT,
+    version_args: &["version"],
+    regex: r"golangci-lint has version (\d+\.\d+\.\d+)",
+    advice: "Run 'brew install golangci-lint' or update via https://golangci-lint.run",
+  },
+];
+
+pub fn get_tool_mstv_entry(binary: &str) -> Option<&'static ToolMstvEntry> {
+  let lookup_bin = match binary {
+    "clippy-driver" | "cargo-clippy" => "clippy",
+    other => other,
+  };
+  TOOL_MSTV_REGISTRY
+    .iter()
+    .find(|entry| entry.binary == lookup_bin)
+}
+
+pub fn tool_mstv_entry(binary: &str) -> Option<&'static ToolMstvEntry> {
+  get_tool_mstv_entry(binary)
+}
+
+pub fn all_mstv_entries() -> &'static [ToolMstvEntry] {
+  TOOL_MSTV_REGISTRY
+}
 
 /// Represents a Semantic Version (SemVer) with optional prerelease identifier.
 #[derive(Debug, Clone, Eq, PartialEq, Hash)]
@@ -96,12 +245,17 @@ fn parse_single_token(token: &str) -> Option<Version> {
     return None;
   }
 
-  // Strip leading 'v' or 'V' if immediately followed by a digit
+  // Strip leading 'v' or 'V' or 'go'/'Go' if immediately followed by a digit
   let s = if (cleaned.starts_with('v') || cleaned.starts_with('V'))
     && cleaned.len() > 1
     && cleaned.as_bytes()[1].is_ascii_digit()
   {
     &cleaned[1..]
+  } else if (cleaned.starts_with("go") || cleaned.starts_with("Go"))
+    && cleaned.len() > 2
+    && cleaned.as_bytes()[2].is_ascii_digit()
+  {
+    &cleaned[2..]
   } else {
     cleaned
   };
@@ -210,24 +364,32 @@ impl FromStr for Version {
 
 /// Returns the Minimum Supported Tool Version (MSTV) for a given tool binary, if defined.
 pub fn minimum_supported_tool_version(binary: &str) -> Option<Version> {
-  match binary {
-    "rustfmt" => Some(MSTV_RUSTFMT),
-    "clippy" | "clippy-driver" | "cargo-clippy" => Some(MSTV_CLIPPY),
-    "ruff" => Some(MSTV_RUFF),
-    "clang-format" => Some(MSTV_CLANG_FORMAT),
-    "clang-tidy" => Some(MSTV_CLANG_TIDY),
-    "prettier" => Some(MSTV_PRETTIER),
-    "taplo" => Some(MSTV_TAPLO),
-    "markdownlint-cli2" => Some(MSTV_MARKDOWNLINT_CLI2),
-    "typstyle" => Some(MSTV_TYPSTYLE),
-    "yamllint" => Some(MSTV_YAMLLINT),
-    _ => None,
-  }
+  get_tool_mstv_entry(binary).map(|e| e.min_version.clone())
 }
 
 /// Alias for `minimum_supported_tool_version`.
 pub fn get_mstv(binary: &str) -> Option<Version> {
   minimum_supported_tool_version(binary)
+}
+
+/// Retrieve upgrade advice for a given tool binary.
+pub fn get_upgrade_advice(binary: &str) -> Option<&'static str> {
+  get_tool_mstv_entry(binary).map(|e| e.advice)
+}
+
+/// Alias for `get_upgrade_advice`.
+pub fn tool_upgrade_advice(binary: &str) -> Option<&'static str> {
+  get_upgrade_advice(binary)
+}
+
+/// Retrieve version query arguments for a tool binary.
+pub fn tool_version_args(binary: &str) -> Option<&'static [&'static str]> {
+  get_tool_mstv_entry(binary).map(|e| e.version_args)
+}
+
+/// Retrieve the version extraction regex for a tool binary.
+pub fn tool_version_regex(binary: &str) -> Option<&'static str> {
+  get_tool_mstv_entry(binary).map(|e| e.regex)
 }
 
 /// Probe a tool's version by invoking its CLI (`--version` / `-v`) and parsing the output.
@@ -276,10 +438,14 @@ pub fn get_raw_tool_version(binary: &str) -> Option<String> {
           .ok()
       }
     }
-    _ => create_tool_command(binary).arg("--version").output().ok(),
+    _ => {
+      let args = tool_version_args(binary).unwrap_or(&["--version"]);
+      create_tool_command(binary).args(args).output().ok()
+    }
   }?;
 
-  if output.status.success() {
+  if output.status.success() || (binary == "gofmt" && !output.stderr.is_empty())
+  {
     let stdout = String::from_utf8_lossy(&output.stdout).to_string();
     if !stdout.trim().is_empty() {
       if let Some(line) = stdout
@@ -524,6 +690,33 @@ mod tests {
 
     let clippy = "clippy 0.1.65 (rustc 1.65.0)";
     assert_eq!(Version::extract(clippy), Some(Version::new(0, 1, 65)));
+
+    let yamllint = "yamllint 1.35.1";
+    assert_eq!(Version::extract(yamllint), Some(Version::new(1, 35, 1)));
+
+    let biome = "1.9.4";
+    assert_eq!(Version::extract(biome), Some(Version::new(1, 9, 4)));
+
+    let checkstyle = "Checkstyle version: 10.14.0";
+    assert_eq!(Version::extract(checkstyle), Some(Version::new(10, 14, 0)));
+
+    let checkstyle2 = "Checkstyle version 10.0.0";
+    assert_eq!(Version::extract(checkstyle2), Some(Version::new(10, 0, 0)));
+
+    let ktfmt = "ktfmt version 0.44";
+    assert_eq!(Version::extract(ktfmt), Some(Version::new(0, 44, 0)));
+
+    let ktlint = "1.0.1";
+    assert_eq!(Version::extract(ktlint), Some(Version::new(1, 0, 1)));
+
+    let go = "go version go1.21.5 darwin/arm64";
+    assert_eq!(Version::extract(go), Some(Version::new(1, 21, 5)));
+
+    let go_simple = "go1.18.0";
+    assert_eq!(Version::extract(go_simple), Some(Version::new(1, 18, 0)));
+
+    let golangci = "golangci-lint has version 1.55.2 built with go1.21.5 from 39c1b3f on 2023-12-04T12:00:00Z";
+    assert_eq!(Version::extract(golangci), Some(Version::new(1, 55, 2)));
   }
 
   #[test]
@@ -609,9 +802,161 @@ mod tests {
       minimum_supported_tool_version("typstyle"),
       Some(Version::new(0, 11, 0))
     );
+    assert_eq!(
+      minimum_supported_tool_version("yamllint"),
+      Some(Version::new(1, 20, 0))
+    );
+    assert_eq!(
+      minimum_supported_tool_version("biome"),
+      Some(Version::new(1, 5, 0))
+    );
+    assert_eq!(
+      minimum_supported_tool_version("checkstyle"),
+      Some(Version::new(10, 0, 0))
+    );
+    assert_eq!(
+      minimum_supported_tool_version("ktfmt"),
+      Some(Version::new(0, 44, 0))
+    );
+    assert_eq!(
+      minimum_supported_tool_version("ktlint"),
+      Some(Version::new(1, 0, 0))
+    );
+    assert_eq!(
+      minimum_supported_tool_version("gofmt"),
+      Some(Version::new(1, 18, 0))
+    );
+    assert_eq!(
+      minimum_supported_tool_version("golangci-lint"),
+      Some(Version::new(1, 50, 0))
+    );
     assert_eq!(minimum_supported_tool_version("unknown-tool"), None);
 
     assert_eq!(get_mstv("rustfmt"), Some(Version::new(1, 4, 0)));
+    assert_eq!(get_mstv("yamllint"), Some(Version::new(1, 20, 0)));
+    assert_eq!(get_mstv("typstyle"), Some(Version::new(0, 11, 0)));
+    assert_eq!(get_mstv("biome"), Some(Version::new(1, 5, 0)));
+    assert_eq!(get_mstv("checkstyle"), Some(Version::new(10, 0, 0)));
+    assert_eq!(get_mstv("ktfmt"), Some(Version::new(0, 44, 0)));
+    assert_eq!(get_mstv("ktlint"), Some(Version::new(1, 0, 0)));
+    assert_eq!(get_mstv("gofmt"), Some(Version::new(1, 18, 0)));
+    assert_eq!(get_mstv("golangci-lint"), Some(Version::new(1, 50, 0)));
+  }
+
+  #[test]
+  fn test_tool_mstv_registry_entries() {
+    let yamllint_entry =
+      get_tool_mstv_entry("yamllint").expect("yamllint registered");
+    assert_eq!(yamllint_entry.min_version, Version::new(1, 20, 0));
+    assert_eq!(yamllint_entry.version_args, &["--version"]);
+    assert_eq!(yamllint_entry.regex, r"yamllint (\d+\.\d+\.\d+)");
+    assert_eq!(
+      yamllint_entry.advice,
+      "Run 'pip install -U yamllint' or 'brew install yamllint'"
+    );
+
+    let typstyle_entry =
+      get_tool_mstv_entry("typstyle").expect("typstyle registered");
+    assert_eq!(typstyle_entry.min_version, Version::new(0, 11, 0));
+    assert_eq!(typstyle_entry.version_args, &["--version"]);
+    assert_eq!(typstyle_entry.regex, r"typstyle (\d+\.\d+\.\d+)");
+    assert_eq!(
+      typstyle_entry.advice,
+      "Run 'cargo install --locked typstyle' or 'brew install typstyle'"
+    );
+
+    let biome_entry = get_tool_mstv_entry("biome").expect("biome registered");
+    assert_eq!(biome_entry.min_version, Version::new(1, 5, 0));
+    assert_eq!(biome_entry.version_args, &["--version"]);
+    assert_eq!(biome_entry.regex, r"(\d+\.\d+\.\d+)");
+    assert_eq!(
+      biome_entry.advice,
+      "Run 'npm install -g @biomejs/biome' or 'brew install biome'"
+    );
+
+    let checkstyle_entry =
+      get_tool_mstv_entry("checkstyle").expect("checkstyle registered");
+    assert_eq!(checkstyle_entry.min_version, Version::new(10, 0, 0));
+    assert_eq!(checkstyle_entry.version_args, &["--version"]);
+    assert_eq!(
+      checkstyle_entry.regex,
+      r"Checkstyle version:? (\d+\.\d+(?:\.\d+)?)"
+    );
+    assert_eq!(
+      checkstyle_entry.advice,
+      "Run 'brew install checkstyle' or update your checkstyle jar"
+    );
+
+    let ktfmt_entry = get_tool_mstv_entry("ktfmt").expect("ktfmt registered");
+    assert_eq!(ktfmt_entry.min_version, Version::new(0, 44, 0));
+    assert_eq!(ktfmt_entry.version_args, &["--version"]);
+    assert_eq!(ktfmt_entry.regex, r"ktfmt version (\d+\.\d+(?:\.\d+)?)");
+    assert_eq!(ktfmt_entry.advice, "Run 'brew install ktfmt'");
+
+    let ktlint_entry =
+      get_tool_mstv_entry("ktlint").expect("ktlint registered");
+    assert_eq!(ktlint_entry.min_version, Version::new(1, 0, 0));
+    assert_eq!(ktlint_entry.version_args, &["--version"]);
+    assert_eq!(ktlint_entry.regex, r"(\d+\.\d+\.\d+)");
+    assert_eq!(ktlint_entry.advice, "Run 'brew install ktlint'");
+
+    let gofmt_entry = get_tool_mstv_entry("gofmt").expect("gofmt registered");
+    assert_eq!(gofmt_entry.min_version, Version::new(1, 18, 0));
+    assert_eq!(gofmt_entry.regex, r"go(\d+\.\d+(?:\.\d+)?)");
+    assert_eq!(
+      gofmt_entry.advice,
+      "Update Go toolchain via https://go.dev/dl/"
+    );
+
+    let golangci_entry =
+      get_tool_mstv_entry("golangci-lint").expect("golangci-lint registered");
+    assert_eq!(golangci_entry.min_version, Version::new(1, 50, 0));
+    assert_eq!(golangci_entry.version_args, &["version"]);
+    assert_eq!(
+      golangci_entry.regex,
+      r"golangci-lint has version (\d+\.\d+\.\d+)"
+    );
+    assert_eq!(
+      golangci_entry.advice,
+      "Run 'brew install golangci-lint' or update via https://golangci-lint.run"
+    );
+
+    assert_eq!(
+      tool_upgrade_advice("yamllint"),
+      Some("Run 'pip install -U yamllint' or 'brew install yamllint'")
+    );
+    assert_eq!(
+      tool_upgrade_advice("typstyle"),
+      Some("Run 'cargo install --locked typstyle' or 'brew install typstyle'")
+    );
+    assert_eq!(
+      tool_upgrade_advice("biome"),
+      Some("Run 'npm install -g @biomejs/biome' or 'brew install biome'")
+    );
+    assert_eq!(
+      tool_upgrade_advice("checkstyle"),
+      Some("Run 'brew install checkstyle' or update your checkstyle jar")
+    );
+    assert_eq!(
+      tool_upgrade_advice("ktfmt"),
+      Some("Run 'brew install ktfmt'")
+    );
+    assert_eq!(
+      tool_upgrade_advice("ktlint"),
+      Some("Run 'brew install ktlint'")
+    );
+    assert_eq!(
+      tool_upgrade_advice("gofmt"),
+      Some("Update Go toolchain via https://go.dev/dl/")
+    );
+    assert_eq!(
+      tool_upgrade_advice("golangci-lint"),
+      Some(
+        "Run 'brew install golangci-lint' or update via https://golangci-lint.run"
+      )
+    );
+
+    assert!(all_mstv_entries().len() >= 16);
   }
 
   #[test]
