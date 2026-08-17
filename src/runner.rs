@@ -55,23 +55,6 @@ impl Runner {
       }
     };
 
-    println!(
-      "{} {} {}",
-      "fml".bold().cyan(),
-      action_verb.bold(),
-      format!(
-        "({} surface{})",
-        surfaces.len(),
-        if surfaces.len() == 1 { "" } else { "s" }
-      )
-      .dimmed()
-    );
-    println!(
-      "{}",
-      "──────────────────────────────────────────────────────────────────"
-        .dimmed()
-    );
-
     // Execute surfaces concurrently
     let results: Vec<SurfaceResult> = surfaces
       .par_iter()
@@ -105,19 +88,38 @@ impl Runner {
 
     let mut diagnostics: Vec<(String, String)> = Vec::new();
 
+    let mut runner_table = crate::table::Table::new(vec![
+      crate::table::Column::new(crate::table::Cell::text(""))
+        .width(crate::table::WidthPolicy::Fixed(8)),
+      crate::table::Column::new(crate::table::Cell::text(""))
+        .width(crate::table::WidthPolicy::Fixed(14)),
+      crate::table::Column::new(crate::table::Cell::text(""))
+        .width(crate::table::WidthPolicy::Auto),
+      crate::table::Column::new(crate::table::Cell::text(""))
+        .align(crate::table::Align::Right)
+        .width(crate::table::WidthPolicy::Fixed(12)),
+    ])
+    .layout(crate::table::Layout::compact().indent(2).padding(0, 1));
+
     for res in &results {
       let duration_str = format!("{:.2?}", res.duration);
 
       match &res.status {
         SurfaceStatus::Passed => {
           pass_count += 1;
-          println!(
-            "  {} {:<12} {:<36} {:>10}",
-            "[PASS] ".green().bold(),
-            res.surface_name.bold(),
-            "Clean / Formatted".dimmed(),
-            duration_str.dimmed()
-          );
+          runner_table.add_row(crate::table::Row::new(vec![
+            crate::table::Cell::styled("[PASS] ", crate::table::Style::Ok),
+            crate::table::Cell::styled(
+              res.surface_name,
+              crate::table::Style::Strong,
+            ),
+            crate::table::Cell::styled(
+              "Clean / Formatted",
+              crate::table::Style::Dim,
+            ),
+            crate::table::Cell::styled(duration_str, crate::table::Style::Dim)
+              .align(crate::table::Align::Right),
+          ]));
         }
         SurfaceStatus::ConfigSynced { file, created } => {
           pass_count += 1;
@@ -126,26 +128,35 @@ impl Runner {
           } else {
             format!("Synced {}", file)
           };
-          println!(
-            "  {} {:<12} {:<36} {:>10}",
-            "[SYNC] ".green().bold(),
-            res.surface_name.bold(),
-            detail.cyan(),
-            duration_str.dimmed()
-          );
+          runner_table.add_row(crate::table::Row::new(vec![
+            crate::table::Cell::styled("[SYNC] ", crate::table::Style::Ok),
+            crate::table::Cell::styled(
+              res.surface_name,
+              crate::table::Style::Strong,
+            ),
+            crate::table::Cell::styled(detail, crate::table::Style::Info),
+            crate::table::Cell::styled(duration_str, crate::table::Style::Dim)
+              .align(crate::table::Align::Right),
+          ]));
         }
         SurfaceStatus::ConfigDrifted { file, diff } => {
           violation_count += 1;
           if exit_code < 1 {
             exit_code = 1;
           }
-          println!(
-            "  {} {:<12} {:<36} {:>10}",
-            "[DRIFT]".magenta().bold(),
-            res.surface_name.bold(),
-            format!("{} out of sync", file).magenta(),
-            duration_str.dimmed()
-          );
+          runner_table.add_row(crate::table::Row::new(vec![
+            crate::table::Cell::styled("[DRIFT]", crate::table::Style::Warn),
+            crate::table::Cell::styled(
+              res.surface_name,
+              crate::table::Style::Strong,
+            ),
+            crate::table::Cell::styled(
+              format!("{} out of sync", file),
+              crate::table::Style::Warn,
+            ),
+            crate::table::Cell::styled(duration_str, crate::table::Style::Dim)
+              .align(crate::table::Align::Right),
+          ]));
           diagnostics.push((
             res.surface_name.to_string(),
             format!(
@@ -159,13 +170,19 @@ impl Runner {
           if exit_code < 1 {
             exit_code = 1;
           }
-          println!(
-            "  {} {:<12} {:<36} {:>10}",
-            "[MANUAL]".yellow().bold(),
-            res.surface_name.bold(),
-            format!("{} is manually managed", file).yellow(),
-            duration_str.dimmed()
-          );
+          runner_table.add_row(crate::table::Row::new(vec![
+            crate::table::Cell::styled("[MANUAL]", crate::table::Style::Warn),
+            crate::table::Cell::styled(
+              res.surface_name,
+              crate::table::Style::Strong,
+            ),
+            crate::table::Cell::styled(
+              format!("{} is manually managed", file),
+              crate::table::Style::Warn,
+            ),
+            crate::table::Cell::styled(duration_str, crate::table::Style::Dim)
+              .align(crate::table::Align::Right),
+          ]));
           diagnostics.push((res.surface_name.to_string(), suggestion.clone()));
         }
         SurfaceStatus::ViolationsFound { message, diff } => {
@@ -173,13 +190,19 @@ impl Runner {
           if exit_code < 1 {
             exit_code = 1;
           }
-          println!(
-            "  {} {:<12} {:<36} {:>10}",
-            "[FAIL] ".red().bold(),
-            res.surface_name.bold(),
-            "Violations found".red(),
-            duration_str.dimmed()
-          );
+          runner_table.add_row(crate::table::Row::new(vec![
+            crate::table::Cell::styled("[FAIL] ", crate::table::Style::Error),
+            crate::table::Cell::styled(
+              res.surface_name,
+              crate::table::Style::Strong,
+            ),
+            crate::table::Cell::styled(
+              "Violations found",
+              crate::table::Style::Error,
+            ),
+            crate::table::Cell::styled(duration_str, crate::table::Style::Dim)
+              .align(crate::table::Align::Right),
+          ]));
           let detail = if let Some(d) = diff {
             d.clone()
           } else {
@@ -193,13 +216,19 @@ impl Runner {
         } => {
           tool_missing_count += 1;
           exit_code = 2;
-          println!(
-            "  {} {:<12} {:<36} {:>10}",
-            "[MISS] ".yellow().bold(),
-            res.surface_name.bold(),
-            format!("Missing binary: {}", binary).yellow(),
-            duration_str.dimmed()
-          );
+          runner_table.add_row(crate::table::Row::new(vec![
+            crate::table::Cell::styled("[MISS] ", crate::table::Style::Warn),
+            crate::table::Cell::styled(
+              res.surface_name,
+              crate::table::Style::Strong,
+            ),
+            crate::table::Cell::styled(
+              format!("Missing binary: {}", binary),
+              crate::table::Style::Warn,
+            ),
+            crate::table::Cell::styled(duration_str, crate::table::Style::Dim)
+              .align(crate::table::Align::Right),
+          ]));
           diagnostics.push((
             res.surface_name.to_string(),
             format!(
@@ -211,33 +240,61 @@ impl Runner {
         SurfaceStatus::ExecutionError { message } => {
           error_count += 1;
           exit_code = 2;
-          println!(
-            "  {} {:<12} {:<36} {:>10}",
-            "[ERR]  ".red().bold(),
-            res.surface_name.bold(),
-            "Execution error".red(),
-            duration_str.dimmed()
-          );
+          runner_table.add_row(crate::table::Row::new(vec![
+            crate::table::Cell::styled("[ERR]  ", crate::table::Style::Error),
+            crate::table::Cell::styled(
+              res.surface_name,
+              crate::table::Style::Strong,
+            ),
+            crate::table::Cell::styled(
+              "Execution error",
+              crate::table::Style::Error,
+            ),
+            crate::table::Cell::styled(duration_str, crate::table::Style::Dim)
+              .align(crate::table::Align::Right),
+          ]));
           diagnostics.push((res.surface_name.to_string(), message.clone()));
         }
         SurfaceStatus::Skipped { reason } => {
-          println!(
-            "  {} {:<12} {:<36} {:>10}",
-            "[SKIP] ".dimmed(),
-            res.surface_name.dimmed(),
-            reason.dimmed(),
-            duration_str.dimmed()
-          );
+          runner_table.add_row(crate::table::Row::new(vec![
+            crate::table::Cell::styled("[SKIP] ", crate::table::Style::Dim),
+            crate::table::Cell::styled(
+              res.surface_name,
+              crate::table::Style::Dim,
+            ),
+            crate::table::Cell::styled(
+              reason.clone(),
+              crate::table::Style::Dim,
+            ),
+            crate::table::Cell::styled(duration_str, crate::table::Style::Dim)
+              .align(crate::table::Align::Right),
+          ]));
         }
       }
     }
 
+    let palette = crate::table::Palette::detect();
+    let rendered_table = crate::table::render(&runner_table, &palette);
+    let separator = crate::table::separator_for_content(&rendered_table);
+
+    println!(
+      "{} {} {}",
+      "fml".bold().cyan(),
+      action_verb.bold(),
+      format!(
+        "({} surface{})",
+        surfaces.len(),
+        if surfaces.len() == 1 { "" } else { "s" }
+      )
+      .dimmed()
+    );
+    println!("{}", separator.dimmed());
+    if !rendered_table.is_empty() {
+      println!("{}", rendered_table);
+    }
+
     if !diagnostics.is_empty() {
-      println!(
-        "\n{}",
-        "──────────────────────────────────────────────────────────────────"
-          .dimmed()
-      );
+      println!("\n{}", separator.dimmed());
       println!("{}", "Diagnostics & Suggestions:".bold());
       for (surface, detail) in diagnostics {
         println!("\n  {} {}", "::".cyan().bold(), surface.bold().magenta());
@@ -247,11 +304,7 @@ impl Runner {
       }
     }
 
-    println!(
-      "{}",
-      "──────────────────────────────────────────────────────────────────"
-        .dimmed()
-    );
+    println!("{}", separator.dimmed());
     let mut parts = Vec::new();
     if pass_count > 0 {
       parts.push(format!("{} passed", pass_count).green().bold().to_string());
