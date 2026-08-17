@@ -22,7 +22,7 @@ impl LanguageSurface for TomlSurface {
   fn detect(&self, root: &Path) -> bool {
     root.join("taplo.toml").is_file()
       || root.join(".taplo.toml").is_file()
-      || !find_files_with_ext(root, TOML_EXTENSIONS, &[]).is_empty()
+      || !find_files_with_ext(root, TOML_EXTENSIONS, &[], &[], &[]).is_empty()
   }
 
   fn tool_info(
@@ -54,7 +54,13 @@ impl LanguageSurface for TomlSurface {
       };
     }
 
-    let files = find_files_with_ext(&ctx.root, TOML_EXTENSIONS, &ctx.paths);
+    let files = find_files_with_ext(
+      &ctx.root,
+      TOML_EXTENSIONS,
+      &ctx.paths,
+      &ctx.lang_config.files,
+      &ctx.lang_config.exclude,
+    );
     if files.is_empty() {
       return SurfaceResult {
         surface_name: self.name(),
@@ -73,6 +79,7 @@ impl LanguageSurface for TomlSurface {
       cmd.arg(f);
     }
 
+    cmd.args(&ctx.lang_config.extra_args);
     cmd.current_dir(&ctx.root);
 
     match cmd.output() {
@@ -130,7 +137,13 @@ impl LanguageSurface for TomlSurface {
       };
     }
 
-    let files = find_files_with_ext(&ctx.root, TOML_EXTENSIONS, &ctx.paths);
+    let files = find_files_with_ext(
+      &ctx.root,
+      TOML_EXTENSIONS,
+      &ctx.paths,
+      &ctx.lang_config.files,
+      &ctx.lang_config.exclude,
+    );
     if files.is_empty() {
       return SurfaceResult {
         surface_name: self.name(),
@@ -146,6 +159,7 @@ impl LanguageSurface for TomlSurface {
       cmd.arg(f);
     }
 
+    cmd.args(&ctx.lang_config.extra_args);
     cmd.current_dir(&ctx.root);
 
     match cmd.output() {

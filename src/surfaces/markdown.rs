@@ -22,7 +22,7 @@ impl LanguageSurface for MarkdownSurface {
   fn detect(&self, root: &Path) -> bool {
     root.join(".markdownlint.json").is_file()
       || root.join(".markdownlint.yaml").is_file()
-      || !find_files_with_ext(root, MD_EXTENSIONS, &[]).is_empty()
+      || !find_files_with_ext(root, MD_EXTENSIONS, &[], &[], &[]).is_empty()
   }
 
   fn tool_info(
@@ -61,7 +61,13 @@ impl LanguageSurface for MarkdownSurface {
       };
     }
 
-    let files = find_files_with_ext(&ctx.root, MD_EXTENSIONS, &ctx.paths);
+    let files = find_files_with_ext(
+      &ctx.root,
+      MD_EXTENSIONS,
+      &ctx.paths,
+      &ctx.lang_config.files,
+      &ctx.lang_config.exclude,
+    );
     if files.is_empty() {
       return SurfaceResult {
         surface_name: self.name(),
@@ -81,6 +87,7 @@ impl LanguageSurface for MarkdownSurface {
       cmd.arg(f);
     }
 
+    cmd.args(&ctx.lang_config.extra_args);
     cmd.current_dir(&ctx.root);
 
     match cmd.output() {
@@ -140,7 +147,13 @@ impl LanguageSurface for MarkdownSurface {
       };
     };
 
-    let files = find_files_with_ext(&ctx.root, MD_EXTENSIONS, &ctx.paths);
+    let files = find_files_with_ext(
+      &ctx.root,
+      MD_EXTENSIONS,
+      &ctx.paths,
+      &ctx.lang_config.files,
+      &ctx.lang_config.exclude,
+    );
     if files.is_empty() {
       return SurfaceResult {
         surface_name: self.name(),
@@ -158,6 +171,7 @@ impl LanguageSurface for MarkdownSurface {
       cmd.arg(f);
     }
 
+    cmd.args(&ctx.lang_config.extra_args);
     cmd.current_dir(&ctx.root);
 
     match cmd.output() {

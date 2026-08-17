@@ -24,7 +24,7 @@ impl LanguageSurface for CppSurface {
       || root.join("Makefile").is_file()
       || root.join("meson.build").is_file()
       || root.join(".clang-format").is_file()
-      || !find_files_with_ext(root, CPP_EXTENSIONS, &[]).is_empty()
+      || !find_files_with_ext(root, CPP_EXTENSIONS, &[], &[], &[]).is_empty()
   }
 
   fn tool_info(
@@ -65,7 +65,13 @@ impl LanguageSurface for CppSurface {
       };
     }
 
-    let files = find_files_with_ext(&ctx.root, CPP_EXTENSIONS, &ctx.paths);
+    let files = find_files_with_ext(
+      &ctx.root,
+      CPP_EXTENSIONS,
+      &ctx.paths,
+      &ctx.lang_config.files,
+      &ctx.lang_config.exclude,
+    );
     if files.is_empty() {
       return SurfaceResult {
         surface_name: self.name(),
@@ -85,6 +91,7 @@ impl LanguageSurface for CppSurface {
       cmd.arg(f);
     }
 
+    cmd.args(&ctx.lang_config.extra_args);
     cmd.current_dir(&ctx.root);
 
     match cmd.output() {
@@ -141,7 +148,13 @@ impl LanguageSurface for CppSurface {
       };
     }
 
-    let files = find_files_with_ext(&ctx.root, CPP_EXTENSIONS, &ctx.paths);
+    let files = find_files_with_ext(
+      &ctx.root,
+      CPP_EXTENSIONS,
+      &ctx.paths,
+      &ctx.lang_config.files,
+      &ctx.lang_config.exclude,
+    );
     if files.is_empty() {
       return SurfaceResult {
         surface_name: self.name(),
@@ -155,6 +168,7 @@ impl LanguageSurface for CppSurface {
       cmd.arg(f);
     }
     cmd.arg("--").arg("-std=c++17");
+    cmd.args(&ctx.lang_config.extra_args);
     cmd.current_dir(&ctx.root);
 
     match cmd.output() {

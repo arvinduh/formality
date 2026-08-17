@@ -24,7 +24,7 @@ impl LanguageSurface for PythonSurface {
       || root.join("Pipfile").is_file()
       || root.join("ruff.toml").is_file()
       || root.join(".ruff.toml").is_file()
-      || !find_files_with_ext(root, &["py"], &[]).is_empty()
+      || !find_files_with_ext(root, &["py"], &[], &[], &[]).is_empty()
   }
 
   fn tool_info(
@@ -54,20 +54,39 @@ impl LanguageSurface for PythonSurface {
       };
     }
 
+    let files = find_files_with_ext(
+      &ctx.root,
+      &["py"],
+      &ctx.paths,
+      &ctx.lang_config.files,
+      &ctx.lang_config.exclude,
+    );
+    if files.is_empty() {
+      return SurfaceResult {
+        surface_name: self.name(),
+        status: SurfaceStatus::Passed,
+        duration: start.elapsed(),
+      };
+    }
+
     let mut cmd = create_tool_command("ruff");
     cmd.arg("format");
     if ctx.check_only {
       cmd.arg("--check");
     }
 
-    if !ctx.paths.is_empty() {
-      for p in &ctx.paths {
-        cmd.arg(p);
+    if !ctx.paths.is_empty()
+      || !ctx.lang_config.files.is_empty()
+      || !ctx.lang_config.exclude.is_empty()
+    {
+      for f in &files {
+        cmd.arg(f);
       }
     } else {
       cmd.arg(".");
     }
 
+    cmd.args(&ctx.lang_config.extra_args);
     cmd.current_dir(&ctx.root);
 
     match cmd.output() {
@@ -123,20 +142,39 @@ impl LanguageSurface for PythonSurface {
       };
     }
 
+    let files = find_files_with_ext(
+      &ctx.root,
+      &["py"],
+      &ctx.paths,
+      &ctx.lang_config.files,
+      &ctx.lang_config.exclude,
+    );
+    if files.is_empty() {
+      return SurfaceResult {
+        surface_name: self.name(),
+        status: SurfaceStatus::Passed,
+        duration: start.elapsed(),
+      };
+    }
+
     let mut cmd = create_tool_command("ruff");
     cmd.arg("check");
     if fix {
       cmd.arg("--fix");
     }
 
-    if !ctx.paths.is_empty() {
-      for p in &ctx.paths {
-        cmd.arg(p);
+    if !ctx.paths.is_empty()
+      || !ctx.lang_config.files.is_empty()
+      || !ctx.lang_config.exclude.is_empty()
+    {
+      for f in &files {
+        cmd.arg(f);
       }
     } else {
       cmd.arg(".");
     }
 
+    cmd.args(&ctx.lang_config.extra_args);
     cmd.current_dir(&ctx.root);
 
     match cmd.output() {
