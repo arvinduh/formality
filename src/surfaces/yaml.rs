@@ -9,6 +9,13 @@ use std::path::Path;
 use std::time::Instant;
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "lowercase")]
+pub enum YamllintRuleToggle {
+  Enable,
+  Disable,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct YamllintLineLengthRule {
   pub max: usize,
 }
@@ -25,6 +32,9 @@ pub struct YamllintRulesConfig {
   #[serde(rename = "line-length")]
   pub line_length: YamllintLineLengthRule,
   pub indentation: YamllintIndentationRule,
+  #[serde(rename = "document-start")]
+  pub document_start: YamllintRuleToggle,
+  pub truthy: YamllintRuleToggle,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
@@ -39,6 +49,18 @@ impl NativeConfig for YamllintConfig {
 
 impl YamllintConfig {
   pub fn from_context(ctx: &ExecutionContext) -> Self {
+    let yaml_opts = ctx.lang_config.yaml.as_ref();
+    let indent_sequences =
+      yaml_opts.and_then(|y| y.indent_sequence).unwrap_or(true);
+    let document_start = match yaml_opts.and_then(|y| y.document_start) {
+      Some(true) => YamllintRuleToggle::Enable,
+      _ => YamllintRuleToggle::Disable,
+    };
+    let truthy = match yaml_opts.and_then(|y| y.truthy) {
+      Some(true) => YamllintRuleToggle::Enable,
+      _ => YamllintRuleToggle::Disable,
+    };
+
     Self {
       extends: "default".to_string(),
       rules: YamllintRulesConfig {
@@ -47,8 +69,10 @@ impl YamllintConfig {
         },
         indentation: YamllintIndentationRule {
           spaces: ctx.lang_config.indent_size,
-          indent_sequences: true,
+          indent_sequences,
         },
+        document_start,
+        truthy,
       },
     }
   }
@@ -332,6 +356,8 @@ mod tests {
           spaces: 4,
           indent_sequences: true,
         },
+        document_start: YamllintRuleToggle::Disable,
+        truthy: YamllintRuleToggle::Disable,
       },
     };
     let rendered = cfg.render().unwrap();
@@ -341,6 +367,57 @@ mod tests {
     assert!(rendered.contains("max: 120"));
     assert!(rendered.contains("spaces: 4"));
     assert!(rendered.contains("indent-sequences: true"));
+    assert!(rendered.contains("document-start: disable"));
+    assert!(rendered.contains("truthy: disable"));
+  }
+
+  #[test]
+  fn test_yamllint_config_from_context_rules_disabled_by_default() {
+    let temp = TempDir::new().unwrap();
+    let ctx = ExecutionContext {
+      root: temp.path().to_path_buf(),
+      paths: Vec::new(),
+      global_config: ResolvedGlobalConfig::default(),
+      lang_config: ResolvedLangConfig::new("yaml"),
+      check_only: false,
+    };
+    let cfg = YamllintConfig::from_context(&ctx);
+    assert_eq!(cfg.rules.document_start, YamllintRuleToggle::Disable);
+    assert_eq!(cfg.rules.truthy, YamllintRuleToggle::Disable);
+    assert!(cfg.rules.indentation.indent_sequences);
+
+    let rendered = cfg.render().unwrap();
+    assert!(rendered.contains("document-start: disable"));
+    assert!(rendered.contains("truthy: disable"));
+    assert!(rendered.contains("indent-sequences: true"));
+  }
+
+  #[test]
+  fn test_yamllint_config_from_context_rules_enabled() {
+    let temp = TempDir::new().unwrap();
+    let mut lang_cfg = ResolvedLangConfig::new("yaml");
+    lang_cfg.yaml = Some(crate::config::YamlOptions {
+      indent_sequence: Some(false),
+      document_start: Some(true),
+      truthy: Some(true),
+    });
+
+    let ctx = ExecutionContext {
+      root: temp.path().to_path_buf(),
+      paths: Vec::new(),
+      global_config: ResolvedGlobalConfig::default(),
+      lang_config: lang_cfg,
+      check_only: false,
+    };
+    let cfg = YamllintConfig::from_context(&ctx);
+    assert_eq!(cfg.rules.document_start, YamllintRuleToggle::Enable);
+    assert_eq!(cfg.rules.truthy, YamllintRuleToggle::Enable);
+    assert!(!cfg.rules.indentation.indent_sequences);
+
+    let rendered = cfg.render().unwrap();
+    assert!(rendered.contains("document-start: enable"));
+    assert!(rendered.contains("truthy: enable"));
+    assert!(rendered.contains("indent-sequences: false"));
   }
 
   #[test]
