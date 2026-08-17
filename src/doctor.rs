@@ -3,6 +3,10 @@ use crate::surfaces::{
   LanguageSurface, ToolInfo, all_surfaces, create_tool_command,
   detect_surfaces_smart,
 };
+use crate::version::{
+  ToolStatus, Version, check_tool_compatibility, get_raw_tool_version,
+  minimum_supported_tool_version, probe_tool_version,
+};
 use colored::Colorize;
 use std::collections::{HashMap, HashSet};
 use std::path::Path;
@@ -81,7 +85,7 @@ pub fn install_missing_tools(missing: &[ToolInfo]) -> bool {
 }
 
 /// Collect the missing tools required by `surfaces` for the given action
-/// (format or lint), then install them.  Returns `false` if any tool
+/// (format or lint), then install them. Returns `false` if any tool
 /// could not be installed.
 pub fn preflight_install(
   surfaces: &[Box<dyn LanguageSurface>],
@@ -116,7 +120,9 @@ pub fn preflight_install(
 pub struct ToolLookupResult {
   pub is_installed: bool,
   pub path: Option<String>,
-  pub version: Option<String>,
+  pub raw_version: Option<String>,
+  pub parsed_version: Option<Version>,
+  pub status: Option<ToolStatus>,
 }
 
 pub fn run_doctor(
@@ -154,47 +160,93 @@ pub fn run_doctor(
   let mut cache: HashMap<&'static str, ToolLookupResult> = HashMap::new();
   let mut missing_unique_tools: Vec<ToolInfo> = Vec::new();
   let mut installed_unique_tools = HashSet::new();
+  let mut outdated_unique_tools = HashSet::new();
 
   for surface in &surfaces {
     let resolved = config.resolve_for_lang(surface.name());
     let tools = surface.tool_info(&resolved);
 
     for tool in tools {
-      let lookup =
-        cache.entry(tool.binary).or_insert_with(|| {
-          match which::which(tool.binary) {
-            Ok(path) => {
-              let version = get_tool_version(tool.binary);
-              ToolLookupResult {
-                is_installed: true,
-                path: Some(path.display().to_string()),
-                version,
-              }
-            }
-            Err(_) => ToolLookupResult {
-              is_installed: false,
-              path: None,
-              version: None,
-            },
+      let lookup = cache.entry(tool.binary).or_insert_with(|| {
+        let is_installed = which::which(tool.binary).is_ok()
+          || (tool.binary == "clippy"
+            && (which::which("clippy-driver").is_ok()
+              || which::which("cargo").is_ok()));
+
+        if is_installed {
+          let path = which::which(tool.binary)
+            .or_else(|_| which::which("clippy-driver"))
+            .or_else(|_| which::which("cargo"))
+            .ok()
+            .map(|p| p.display().to_string());
+          let raw_version = get_raw_tool_version(tool.binary);
+          let parsed_version = probe_tool_version(tool.binary);
+          let status = minimum_supported_tool_version(tool.binary)
+            .map(|mstv| check_tool_compatibility(tool.binary, &mstv));
+
+          ToolLookupResult {
+            is_installed: true,
+            path,
+            raw_version,
+            parsed_version,
+            status,
           }
-        });
+        } else {
+          ToolLookupResult {
+            is_installed: false,
+            path: None,
+            raw_version: None,
+            parsed_version: None,
+            status: Some(ToolStatus::NotFound),
+          }
+        }
+      });
 
       if lookup.is_installed {
         if installed_unique_tools.insert(tool.binary) {
-          let v_info = if let Some(ref v) = lookup.version {
-            format!(" ({})", v.trim())
-          } else {
-            String::new()
-          };
           let path_str = lookup.path.as_deref().unwrap_or("");
-          println!(
-            "  {} {:<16} {:<10} {}{}",
-            "[READY]".green().bold(),
-            tool.binary.bold(),
-            surface.name().dimmed(),
-            path_str.dimmed(),
-            v_info.cyan()
-          );
+          match &lookup.status {
+            Some(ToolStatus::Outdated { current, minimum }) => {
+              outdated_unique_tools.insert(tool.binary);
+              let v_info = format!(" (v{} < MSTV v{})", current, minimum);
+              println!(
+                "  {} {:<16} {:<10} {}{}",
+                "[WARN] ".yellow().bold(),
+                tool.binary.bold().yellow(),
+                surface.name().dimmed(),
+                path_str.dimmed(),
+                v_info.yellow().bold()
+              );
+            }
+            Some(ToolStatus::Compatible { current, .. }) => {
+              let v_info = format!(" (v{})", current);
+              println!(
+                "  {} {:<16} {:<10} {}{}",
+                "[READY]".green().bold(),
+                tool.binary.bold(),
+                surface.name().dimmed(),
+                path_str.dimmed(),
+                v_info.cyan()
+              );
+            }
+            _ => {
+              let v_info = if let Some(ref v) = lookup.parsed_version {
+                format!(" (v{})", v)
+              } else if let Some(ref v) = lookup.raw_version {
+                format!(" ({})", v.trim())
+              } else {
+                String::new()
+              };
+              println!(
+                "  {} {:<16} {:<10} {}{}",
+                "[READY]".green().bold(),
+                tool.binary.bold(),
+                surface.name().dimmed(),
+                path_str.dimmed(),
+                v_info.cyan()
+              );
+            }
+          }
         }
       } else if !missing_unique_tools.iter().any(|t| t.binary == tool.binary) {
         missing_unique_tools.push(tool.clone());
@@ -254,9 +306,17 @@ pub fn run_doctor(
     "──────────────────────────────────────────────────────────────────"
       .dimmed()
   );
+  let outdated_str = if !outdated_unique_tools.is_empty() {
+    format!(" ({} outdated)", outdated_unique_tools.len())
+      .yellow()
+      .to_string()
+  } else {
+    String::new()
+  };
   println!(
-    "  {} installed, {} missing{}\n",
+    "  {} installed{}, {} missing{}\n",
     installed_unique_tools.len().to_string().green().bold(),
+    outdated_str,
     if missing_unique_tools.is_empty() {
       "0".green().bold().to_string()
     } else {
@@ -281,65 +341,4 @@ pub fn run_doctor(
   } else {
     2
   }
-}
-
-fn get_tool_version(binary: &str) -> Option<String> {
-  let output = match binary {
-    "cargo" => create_tool_command("cargo")
-      .arg("--version")
-      .output()
-      .ok()?,
-    "rustfmt" => create_tool_command("rustfmt")
-      .arg("--version")
-      .output()
-      .ok()?,
-    "clippy-driver" => create_tool_command("clippy-driver")
-      .arg("--version")
-      .output()
-      .ok()?,
-    "ruff" => create_tool_command("ruff").arg("--version").output().ok()?,
-    "clang-format" => create_tool_command("clang-format")
-      .arg("--version")
-      .output()
-      .ok()?,
-    "clang-tidy" => create_tool_command("clang-tidy")
-      .arg("--version")
-      .output()
-      .ok()?,
-    "prettier" => create_tool_command("prettier")
-      .arg("--version")
-      .output()
-      .ok()?,
-    "markdownlint-cli2" => create_tool_command("markdownlint-cli2")
-      .arg("--version")
-      .output()
-      .ok()?,
-    "markdownlint" => create_tool_command("markdownlint")
-      .arg("--version")
-      .output()
-      .ok()?,
-    "yamllint" => create_tool_command("yamllint")
-      .arg("--version")
-      .output()
-      .ok()?,
-    "taplo" => create_tool_command("taplo")
-      .arg("--version")
-      .output()
-      .ok()?,
-    "typstyle" => create_tool_command("typstyle")
-      .arg("--version")
-      .output()
-      .ok()?,
-    _ => return None,
-  };
-
-  if output.status.success() {
-    let text = String::from_utf8_lossy(&output.stdout);
-    let first_line = text.lines().next().unwrap_or("").trim().to_string();
-    if !first_line.is_empty() {
-      return Some(first_line);
-    }
-  }
-
-  None
 }
