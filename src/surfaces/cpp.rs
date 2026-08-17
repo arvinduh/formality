@@ -215,6 +215,10 @@ impl LanguageSurface for CppSurface {
     Box::new(*self)
   }
 
+  fn supports_lint_fix(&self) -> bool {
+    true
+  }
+
   fn detect(&self, root: &Path) -> bool {
     root.join("CMakeLists.txt").is_file()
       || root.join("Makefile").is_file()

@@ -368,6 +368,9 @@ pub trait LanguageSurface: DeclaresFacets + Send + Sync {
   fn tool_info(&self, config: &ResolvedLangConfig) -> Vec<ToolInfo>;
   fn format(&self, ctx: &ExecutionContext) -> SurfaceResult;
   fn lint(&self, ctx: &ExecutionContext, fix: bool) -> SurfaceResult;
+  fn supports_lint_fix(&self) -> bool {
+    false
+  }
   fn sync_config(&self, ctx: &ExecutionContext, check: bool) -> SurfaceResult;
   fn clone_box(&self) -> Box<dyn LanguageSurface>;
 }
@@ -1577,6 +1580,56 @@ mod tests {
     assert!(reg.get_surface_by_name("py").is_some());
 
     assert_eq!(reg.supported_languages(), vec!["rust", "python"]);
+  }
+
+  #[test]
+  fn test_surface_supports_lint_fix() {
+    assert!(rust::RustSurface.supports_lint_fix());
+    assert!(python::PythonSurface.supports_lint_fix());
+    assert!(cpp::CppSurface.supports_lint_fix());
+    assert!(!yaml::YamlSurface.supports_lint_fix());
+    assert!(!toml::TomlSurface.supports_lint_fix());
+    assert!(!markdown::MarkdownSurface.supports_lint_fix());
+    assert!(!json::JsonSurface.supports_lint_fix());
+    assert!(!typst::TypstSurface.supports_lint_fix());
+  }
+
+  #[test]
+  fn test_unsupported_lint_fix_returns_skipped() {
+    let dummy_ctx = ExecutionContext {
+      root: PathBuf::from("."),
+      paths: Vec::new(),
+      global_config: ResolvedGlobalConfig::default(),
+      lang_config: ResolvedLangConfig::new("dummy"),
+      check_only: false,
+    };
+
+    let unsupported_surfaces: Vec<Box<dyn LanguageSurface>> = vec![
+      Box::new(yaml::YamlSurface),
+      Box::new(toml::TomlSurface),
+      Box::new(markdown::MarkdownSurface),
+      Box::new(json::JsonSurface),
+      Box::new(typst::TypstSurface),
+    ];
+
+    for surface in unsupported_surfaces {
+      let res = surface.lint(&dummy_ctx, true);
+      match res.status {
+        SurfaceStatus::Skipped { reason } => {
+          assert_eq!(
+            reason,
+            "Tool does not support autofix; run fml fmt instead",
+            "Mismatch for surface {}",
+            surface.name()
+          );
+        }
+        other => panic!(
+          "Surface {} did not return Skipped on lint with fix=true: {:?}",
+          surface.name(),
+          other
+        ),
+      }
+    }
   }
 
   #[test]
