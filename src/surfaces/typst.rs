@@ -29,7 +29,7 @@ impl LanguageSurface for TypstSurface {
     vec![ToolInfo {
       binary: "typstyle",
       description: "Beautiful and reliable code formatter for Typst",
-      install_hint: "Install via: cargo install typstyle --locked (or brew install typstyle)",
+      install_hint: "Install via: cargo binstall typstyle (or brew install typstyle / winget install typstyle / cargo install typstyle --locked)",
       is_required_for_fmt: true,
       is_required_for_lint: true,
     }]
@@ -44,7 +44,7 @@ impl LanguageSurface for TypstSurface {
         status: SurfaceStatus::ToolMissing {
           binary: "typstyle".to_string(),
           install_hint:
-            "cargo install typstyle --locked / brew install typstyle"
+            "cargo binstall typstyle / brew install typstyle / winget install typstyle / cargo install typstyle --locked"
               .to_string(),
         },
         duration: start.elapsed(),

@@ -32,7 +32,7 @@ impl LanguageSurface for TomlSurface {
     vec![ToolInfo {
       binary: "taplo",
       description: "TOML toolkit, formatter and linter",
-      install_hint: "Install via: cargo install taplo-cli --locked (or npm install -g @taplo/cli)",
+      install_hint: "Install via: cargo binstall taplo-cli (or npm install -g @taplo/cli / brew install taplo / cargo install taplo-cli --locked)",
       is_required_for_fmt: true,
       is_required_for_lint: true,
     }]
@@ -47,7 +47,7 @@ impl LanguageSurface for TomlSurface {
         status: SurfaceStatus::ToolMissing {
           binary: "taplo".to_string(),
           install_hint:
-            "cargo install taplo-cli --locked / npm install -g @taplo/cli"
+            "cargo binstall taplo-cli / npm install -g @taplo/cli / brew install taplo / cargo install taplo-cli --locked"
               .to_string(),
         },
         duration: start.elapsed(),
@@ -123,7 +123,7 @@ impl LanguageSurface for TomlSurface {
         status: SurfaceStatus::ToolMissing {
           binary: "taplo".to_string(),
           install_hint:
-            "cargo install taplo-cli --locked / npm install -g @taplo/cli"
+            "cargo binstall taplo-cli / npm install -g @taplo/cli / brew install taplo / cargo install taplo-cli --locked"
               .to_string(),
         },
         duration: start.elapsed(),

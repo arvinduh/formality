@@ -33,14 +33,14 @@ impl LanguageSurface for MarkdownSurface {
       ToolInfo {
         binary: "prettier",
         description: "Opinionated code/markdown formatter",
-        install_hint: "Install via: npm install -g prettier",
+        install_hint: "Install via: npm install -g prettier (or pnpm add -g prettier / brew install prettier / winget install Prettier.Prettier)",
         is_required_for_fmt: true,
         is_required_for_lint: false,
       },
       ToolInfo {
         binary: "markdownlint-cli2",
         description: "Fast markdown linter",
-        install_hint: "Install via: npm install -g markdownlint-cli2 (or markdownlint-cli)",
+        install_hint: "Install via: npm install -g markdownlint-cli2 (or brew install markdownlint-cli2)",
         is_required_for_fmt: false,
         is_required_for_lint: true,
       },

@@ -34,7 +34,7 @@ impl LanguageSurface for PythonSurface {
     vec![ToolInfo {
       binary: "ruff",
       description: "Fast Python linter and code formatter",
-      install_hint: "Install via: pip install ruff (or brew install ruff / cargo install ruff)",
+      install_hint: "Install via: uv tool install ruff (or pip install ruff / brew install ruff / cargo binstall ruff)",
       is_required_for_fmt: true,
       is_required_for_lint: true,
     }]

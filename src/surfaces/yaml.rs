@@ -34,14 +34,14 @@ impl LanguageSurface for YamlSurface {
       ToolInfo {
         binary: "prettier",
         description: "YAML formatter",
-        install_hint: "Install via: npm install -g prettier",
+        install_hint: "Install via: npm install -g prettier (or pnpm add -g prettier / brew install prettier / winget install Prettier.Prettier)",
         is_required_for_fmt: true,
         is_required_for_lint: false,
       },
       ToolInfo {
         binary: "yamllint",
         description: "YAML linter",
-        install_hint: "Install via: pip install yamllint (or brew install yamllint)",
+        install_hint: "Install via: pip install yamllint (or uv tool install yamllint / brew install yamllint / winget install yamllint)",
         is_required_for_fmt: false,
         is_required_for_lint: true,
       },

@@ -35,14 +35,14 @@ impl LanguageSurface for CppSurface {
       ToolInfo {
         binary: "clang-format",
         description: "C/C++ code formatter",
-        install_hint: "Install via: sudo apt install clang-format (or brew install clang-format)",
+        install_hint: "Install via: sudo apt install clang-format (or brew install clang-format / pip install clang-format / winget install LLVM.LLVM)",
         is_required_for_fmt: true,
         is_required_for_lint: false,
       },
       ToolInfo {
         binary: "clang-tidy",
         description: "C/C++ linter and static analyzer",
-        install_hint: "Install via: sudo apt install clang-tidy (or brew install llvm)",
+        install_hint: "Install via: sudo apt install clang-tidy (or brew install llvm / winget install LLVM.LLVM)",
         is_required_for_fmt: false,
         is_required_for_lint: true,
       },
@@ -58,7 +58,7 @@ impl LanguageSurface for CppSurface {
         status: SurfaceStatus::ToolMissing {
           binary: "clang-format".to_string(),
           install_hint:
-            "sudo apt install clang-format / brew install clang-format"
+            "sudo apt install clang-format / brew install clang-format / pip install clang-format / winget install LLVM.LLVM"
               .to_string(),
         },
         duration: start.elapsed(),
@@ -134,7 +134,7 @@ impl LanguageSurface for CppSurface {
         surface_name: self.name(),
         status: SurfaceStatus::ToolMissing {
           binary: "clang-tidy".to_string(),
-          install_hint: "sudo apt install clang-tidy / brew install llvm"
+          install_hint: "sudo apt install clang-tidy / brew install llvm / winget install LLVM.LLVM"
             .to_string(),
         },
         duration: start.elapsed(),

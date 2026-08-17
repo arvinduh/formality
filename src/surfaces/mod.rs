@@ -32,175 +32,249 @@ pub struct ToolInfo {
   pub is_required_for_lint: bool,
 }
 
-impl ToolInfo {
-  pub fn get_auto_install_cmd(&self) -> Option<(String, Vec<String>)> {
-    match self.binary {
-      "taplo" => {
-        if check_binary_exists("cargo") {
-          Some((
-            "cargo".to_string(),
-            vec![
-              "install".to_string(),
-              "taplo-cli".to_string(),
-              "--locked".to_string(),
-            ],
-          ))
-        } else if check_binary_exists("npm") {
-          Some((
-            "npm".to_string(),
-            vec![
-              "install".to_string(),
-              "-g".to_string(),
-              "@taplo/cli".to_string(),
-            ],
-          ))
-        } else if check_binary_exists("brew") {
-          Some((
-            "brew".to_string(),
-            vec!["install".to_string(), "taplo".to_string()],
-          ))
-        } else {
-          None
-        }
+/// A package-manager-level way to install a CLI tool: knows how to detect
+/// its own availability and how to build the concrete installer command.
+/// Each tool below declares an ordered slice of these (prebuilt binary
+/// managers first, `cargo install --locked` source compilation as the
+/// fallback) instead of duplicating the "is X available?" cascade per tool.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum InstallMethod {
+  CargoBinstall(&'static str),
+  Npm(&'static str),
+  Pnpm(&'static str),
+  Yarn(&'static str),
+  Bun(&'static str),
+  Uv(&'static str),
+  Pipx(&'static str),
+  Pip(&'static str),
+  Pip3(&'static str),
+  Brew(&'static str),
+  Scoop(&'static str),
+  /// winget resolves the package by fuzzy name/id match.
+  WingetName(&'static str),
+  /// winget resolves the package via `--id=<id> -e`, an exact,
+  /// unambiguous match.
+  WingetId(&'static str),
+  Cargo {
+    package: &'static str,
+    locked: bool,
+  },
+  Rustup(&'static str),
+}
+
+impl InstallMethod {
+  fn is_available(&self) -> bool {
+    match self {
+      InstallMethod::CargoBinstall(_) => has_cargo_binstall(),
+      InstallMethod::Npm(_) => check_binary_exists("npm"),
+      InstallMethod::Pnpm(_) => check_binary_exists("pnpm"),
+      InstallMethod::Yarn(_) => check_binary_exists("yarn"),
+      InstallMethod::Bun(_) => check_binary_exists("bun"),
+      InstallMethod::Uv(_) => check_binary_exists("uv"),
+      InstallMethod::Pipx(_) => check_binary_exists("pipx"),
+      InstallMethod::Pip(_) => check_binary_exists("pip"),
+      InstallMethod::Pip3(_) => check_binary_exists("pip3"),
+      InstallMethod::Brew(_) => check_binary_exists("brew"),
+      InstallMethod::Scoop(_) => check_binary_exists("scoop"),
+      InstallMethod::WingetName(_) | InstallMethod::WingetId(_) => {
+        check_binary_exists("winget")
       }
-      "typstyle" => {
-        if check_binary_exists("cargo") {
-          Some((
-            "cargo".to_string(),
-            vec![
-              "install".to_string(),
-              "typstyle".to_string(),
-              "--locked".to_string(),
-            ],
-          ))
-        } else if check_binary_exists("brew") {
-          Some((
-            "brew".to_string(),
-            vec!["install".to_string(), "typstyle".to_string()],
-          ))
-        } else {
-          None
-        }
-      }
-      "ruff" => {
-        if check_binary_exists("pip") {
-          Some((
-            "pip".to_string(),
-            vec!["install".to_string(), "ruff".to_string()],
-          ))
-        } else if check_binary_exists("pip3") {
-          Some((
-            "pip3".to_string(),
-            vec!["install".to_string(), "ruff".to_string()],
-          ))
-        } else if check_binary_exists("pipx") {
-          Some((
-            "pipx".to_string(),
-            vec!["install".to_string(), "ruff".to_string()],
-          ))
-        } else if check_binary_exists("brew") {
-          Some((
-            "brew".to_string(),
-            vec!["install".to_string(), "ruff".to_string()],
-          ))
-        } else if check_binary_exists("cargo") {
-          Some((
-            "cargo".to_string(),
-            vec!["install".to_string(), "ruff".to_string()],
-          ))
-        } else {
-          None
-        }
-      }
-      "prettier" => {
-        if check_binary_exists("npm") {
-          Some((
-            "npm".to_string(),
-            vec![
-              "install".to_string(),
-              "-g".to_string(),
-              "prettier".to_string(),
-            ],
-          ))
-        } else if check_binary_exists("pnpm") {
-          Some((
-            "pnpm".to_string(),
-            vec!["add".to_string(), "-g".to_string(), "prettier".to_string()],
-          ))
-        } else if check_binary_exists("yarn") {
-          Some((
-            "yarn".to_string(),
-            vec![
-              "global".to_string(),
-              "add".to_string(),
-              "prettier".to_string(),
-            ],
-          ))
-        } else if check_binary_exists("brew") {
-          Some((
-            "brew".to_string(),
-            vec!["install".to_string(), "prettier".to_string()],
-          ))
-        } else {
-          None
-        }
-      }
-      "markdownlint-cli2" | "markdownlint" => {
-        if check_binary_exists("npm") {
-          Some((
-            "npm".to_string(),
-            vec![
-              "install".to_string(),
-              "-g".to_string(),
-              "markdownlint-cli2".to_string(),
-            ],
-          ))
-        } else if check_binary_exists("brew") {
-          Some((
-            "brew".to_string(),
-            vec!["install".to_string(), "markdownlint-cli2".to_string()],
-          ))
-        } else {
-          None
-        }
-      }
-      "yamllint" => {
-        if check_binary_exists("pip") {
-          Some((
-            "pip".to_string(),
-            vec!["install".to_string(), "yamllint".to_string()],
-          ))
-        } else if check_binary_exists("pip3") {
-          Some((
-            "pip3".to_string(),
-            vec!["install".to_string(), "yamllint".to_string()],
-          ))
-        } else if check_binary_exists("brew") {
-          Some((
-            "brew".to_string(),
-            vec!["install".to_string(), "yamllint".to_string()],
-          ))
-        } else {
-          None
-        }
-      }
-      "rustfmt" | "clippy-driver" => {
-        if check_binary_exists("rustup") {
-          let comp = if self.binary == "rustfmt" {
-            "rustfmt"
-          } else {
-            "clippy"
-          };
-          Some((
-            "rustup".to_string(),
-            vec!["component".to_string(), "add".to_string(), comp.to_string()],
-          ))
-        } else {
-          None
-        }
-      }
-      _ => None,
+      InstallMethod::Cargo { .. } => check_binary_exists("cargo"),
+      InstallMethod::Rustup(_) => check_binary_exists("rustup"),
     }
+  }
+
+  fn command(&self) -> (String, Vec<String>) {
+    fn strs(v: &[&str]) -> Vec<String> {
+      v.iter().map(|s| s.to_string()).collect()
+    }
+    match self {
+      InstallMethod::CargoBinstall(pkg) => {
+        ("cargo".to_string(), strs(&["binstall", "-y", pkg]))
+      }
+      InstallMethod::Npm(pkg) => {
+        ("npm".to_string(), strs(&["install", "-g", pkg]))
+      }
+      InstallMethod::Pnpm(pkg) => {
+        ("pnpm".to_string(), strs(&["add", "-g", pkg]))
+      }
+      InstallMethod::Yarn(pkg) => {
+        ("yarn".to_string(), strs(&["global", "add", pkg]))
+      }
+      InstallMethod::Bun(pkg) => ("bun".to_string(), strs(&["add", "-g", pkg])),
+      InstallMethod::Uv(pkg) => {
+        ("uv".to_string(), strs(&["tool", "install", pkg]))
+      }
+      InstallMethod::Pipx(pkg) => ("pipx".to_string(), strs(&["install", pkg])),
+      InstallMethod::Pip(pkg) => ("pip".to_string(), strs(&["install", pkg])),
+      InstallMethod::Pip3(pkg) => ("pip3".to_string(), strs(&["install", pkg])),
+      InstallMethod::Brew(pkg) => ("brew".to_string(), strs(&["install", pkg])),
+      InstallMethod::Scoop(pkg) => {
+        ("scoop".to_string(), strs(&["install", pkg]))
+      }
+      InstallMethod::WingetName(pkg) => (
+        "winget".to_string(),
+        strs(&[
+          "install",
+          pkg,
+          "--accept-source-agreements",
+          "--accept-package-agreements",
+        ]),
+      ),
+      InstallMethod::WingetId(id) => (
+        "winget".to_string(),
+        vec![
+          "install".to_string(),
+          format!("--id={id}"),
+          "-e".to_string(),
+          "--accept-source-agreements".to_string(),
+          "--accept-package-agreements".to_string(),
+        ],
+      ),
+      InstallMethod::Cargo { package, locked } => {
+        let mut args = vec!["install".to_string(), package.to_string()];
+        if *locked {
+          args.push("--locked".to_string());
+        }
+        ("cargo".to_string(), args)
+      }
+      InstallMethod::Rustup(component) => {
+        ("rustup".to_string(), strs(&["component", "add", component]))
+      }
+    }
+  }
+}
+
+const TAPLO_CHAIN: &[InstallMethod] = &[
+  InstallMethod::CargoBinstall("taplo-cli"),
+  InstallMethod::Npm("@taplo/cli"),
+  InstallMethod::Pnpm("@taplo/cli"),
+  InstallMethod::Yarn("@taplo/cli"),
+  InstallMethod::Bun("@taplo/cli"),
+  InstallMethod::Brew("taplo"),
+  InstallMethod::Scoop("taplo"),
+  InstallMethod::WingetId("tamasfe.taplo"),
+  InstallMethod::Cargo {
+    package: "taplo-cli",
+    locked: true,
+  },
+];
+
+const TYPSTYLE_CHAIN: &[InstallMethod] = &[
+  InstallMethod::CargoBinstall("typstyle"),
+  InstallMethod::Brew("typstyle"),
+  InstallMethod::Scoop("typstyle"),
+  InstallMethod::WingetName("typstyle"),
+  InstallMethod::Cargo {
+    package: "typstyle",
+    locked: true,
+  },
+];
+
+const TINYMIST_CHAIN: &[InstallMethod] = &[
+  InstallMethod::CargoBinstall("tinymist"),
+  InstallMethod::Npm("@myriaddreamin/tinymist"),
+  InstallMethod::Brew("tinymist"),
+  InstallMethod::Scoop("tinymist"),
+  InstallMethod::WingetName("Myriad-Dreamin.tinymist"),
+  InstallMethod::Cargo {
+    package: "tinymist",
+    locked: true,
+  },
+];
+
+const RUFF_CHAIN: &[InstallMethod] = &[
+  InstallMethod::Uv("ruff"),
+  InstallMethod::Pipx("ruff"),
+  InstallMethod::Pip("ruff"),
+  InstallMethod::Pip3("ruff"),
+  InstallMethod::Brew("ruff"),
+  InstallMethod::CargoBinstall("ruff"),
+  InstallMethod::Scoop("ruff"),
+  InstallMethod::WingetName("Astral-sh.ruff"),
+  InstallMethod::Cargo {
+    package: "ruff",
+    locked: true,
+  },
+];
+
+const PRETTIER_CHAIN: &[InstallMethod] = &[
+  InstallMethod::Npm("prettier"),
+  InstallMethod::Pnpm("prettier"),
+  InstallMethod::Yarn("prettier"),
+  InstallMethod::Bun("prettier"),
+  InstallMethod::Brew("prettier"),
+  InstallMethod::Scoop("prettier"),
+  InstallMethod::WingetName("Prettier.Prettier"),
+];
+
+const MARKDOWNLINT_CHAIN: &[InstallMethod] = &[
+  InstallMethod::Npm("markdownlint-cli2"),
+  InstallMethod::Pnpm("markdownlint-cli2"),
+  InstallMethod::Yarn("markdownlint-cli2"),
+  InstallMethod::Bun("markdownlint-cli2"),
+  InstallMethod::Brew("markdownlint-cli2"),
+  InstallMethod::Scoop("markdownlint-cli2"),
+];
+
+const YAMLLINT_CHAIN: &[InstallMethod] = &[
+  InstallMethod::Uv("yamllint"),
+  InstallMethod::Pipx("yamllint"),
+  InstallMethod::Pip("yamllint"),
+  InstallMethod::Pip3("yamllint"),
+  InstallMethod::Brew("yamllint"),
+  InstallMethod::Scoop("yamllint"),
+  InstallMethod::WingetName("yamllint"),
+];
+
+const CLANG_FORMAT_CHAIN: &[InstallMethod] = &[
+  InstallMethod::Brew("clang-format"),
+  InstallMethod::Pip("clang-format"),
+  InstallMethod::Pip3("clang-format"),
+  InstallMethod::WingetName("LLVM.LLVM"),
+  InstallMethod::Scoop("llvm"),
+];
+
+const CLANG_TIDY_CHAIN: &[InstallMethod] = &[
+  InstallMethod::Brew("llvm"),
+  InstallMethod::WingetName("LLVM.LLVM"),
+  InstallMethod::Scoop("llvm"),
+];
+
+const RUSTFMT_CHAIN: &[InstallMethod] = &[InstallMethod::Rustup("rustfmt")];
+const CLIPPY_CHAIN: &[InstallMethod] = &[InstallMethod::Rustup("clippy")];
+
+/// Looks up the ordered installer preference chain for a tool binary name.
+/// This is the single place that maps a tool to its installers — adding a
+/// new tool means adding a chain constant and one arm here, not copying a
+/// whole if/else-if cascade.
+fn install_chain_for(binary: &str) -> Option<&'static [InstallMethod]> {
+  match binary {
+    "taplo" => Some(TAPLO_CHAIN),
+    "typstyle" => Some(TYPSTYLE_CHAIN),
+    "tinymist" => Some(TINYMIST_CHAIN),
+    "ruff" => Some(RUFF_CHAIN),
+    "prettier" => Some(PRETTIER_CHAIN),
+    "markdownlint-cli2" | "markdownlint" => Some(MARKDOWNLINT_CHAIN),
+    "yamllint" => Some(YAMLLINT_CHAIN),
+    "clang-format" => Some(CLANG_FORMAT_CHAIN),
+    "clang-tidy" => Some(CLANG_TIDY_CHAIN),
+    "rustfmt" => Some(RUSTFMT_CHAIN),
+    "clippy-driver" => Some(CLIPPY_CHAIN),
+    _ => None,
+  }
+}
+
+impl ToolInfo {
+  /// Returns the (program, args) for the first available installer in this
+  /// tool's preference chain: prebuilt binary package managers first,
+  /// falling back to `cargo install ... --locked` source compilation where
+  /// the tool ships as a crate.
+  pub fn get_auto_install_cmd(&self) -> Option<(String, Vec<String>)> {
+    install_chain_for(self.binary)?
+      .iter()
+      .find(|method| method.is_available())
+      .map(InstallMethod::command)
   }
 }
 
@@ -435,6 +509,10 @@ pub fn check_binary_exists(binary: &str) -> bool {
   which::which(binary).is_ok()
 }
 
+pub fn has_cargo_binstall() -> bool {
+  check_binary_exists("cargo") && check_binary_exists("cargo-binstall")
+}
+
 /// Creates a `Command` with proper handling for Windows batch files (.cmd/.bat)
 /// such as `npm`, `pnpm`, `yarn`, `npx`, and globally installed node CLIs.
 pub fn create_tool_command(binary: &str) -> std::process::Command {
@@ -571,5 +649,145 @@ pub fn sync_file_helper(
         duration: start.elapsed(),
       },
     }
+  }
+}
+
+#[cfg(test)]
+mod tests {
+  use super::*;
+
+  #[test]
+  fn test_tool_info_auto_install_cmd_coverage() {
+    let tools = [
+      "taplo",
+      "typstyle",
+      "tinymist",
+      "ruff",
+      "prettier",
+      "markdownlint-cli2",
+      "yamllint",
+      "clang-format",
+      "clang-tidy",
+      "rustfmt",
+      "clippy-driver",
+    ];
+
+    for binary in tools {
+      let info = ToolInfo {
+        binary,
+        description: "test tool",
+        install_hint: "test hint",
+        is_required_for_fmt: true,
+        is_required_for_lint: true,
+      };
+
+      // Ensure get_auto_install_cmd executes without error
+      let cmd = info.get_auto_install_cmd();
+      if let Some((program, args)) = cmd {
+        assert!(!program.is_empty());
+        assert!(!args.is_empty());
+      }
+    }
+  }
+
+  #[test]
+  fn test_unknown_tool_has_no_install_chain() {
+    let info = ToolInfo {
+      binary: "not-a-real-tool",
+      description: "test tool",
+      install_hint: "test hint",
+      is_required_for_fmt: false,
+      is_required_for_lint: false,
+    };
+    assert!(info.get_auto_install_cmd().is_none());
+  }
+
+  // Command-shape tests below are pure and environment-independent: they
+  // exercise InstallMethod::command() directly rather than going through
+  // is_available(), so they don't depend on what's actually installed on
+  // the machine running the tests.
+
+  #[test]
+  fn test_install_method_command_shapes() {
+    assert_eq!(
+      InstallMethod::CargoBinstall("ruff").command(),
+      (
+        "cargo".to_string(),
+        vec!["binstall".to_string(), "-y".to_string(), "ruff".to_string()]
+      )
+    );
+    assert_eq!(
+      InstallMethod::Npm("@taplo/cli").command(),
+      (
+        "npm".to_string(),
+        vec![
+          "install".to_string(),
+          "-g".to_string(),
+          "@taplo/cli".to_string()
+        ]
+      )
+    );
+    assert_eq!(
+      InstallMethod::Cargo {
+        package: "typstyle",
+        locked: true
+      }
+      .command(),
+      (
+        "cargo".to_string(),
+        vec![
+          "install".to_string(),
+          "typstyle".to_string(),
+          "--locked".to_string()
+        ]
+      )
+    );
+    assert_eq!(
+      InstallMethod::Cargo {
+        package: "some-tool",
+        locked: false
+      }
+      .command(),
+      (
+        "cargo".to_string(),
+        vec!["install".to_string(), "some-tool".to_string()]
+      )
+    );
+    assert_eq!(
+      InstallMethod::WingetId("tamasfe.taplo").command(),
+      (
+        "winget".to_string(),
+        vec![
+          "install".to_string(),
+          "--id=tamasfe.taplo".to_string(),
+          "-e".to_string(),
+          "--accept-source-agreements".to_string(),
+          "--accept-package-agreements".to_string(),
+        ]
+      )
+    );
+    assert_eq!(
+      InstallMethod::WingetName("LLVM.LLVM").command(),
+      (
+        "winget".to_string(),
+        vec![
+          "install".to_string(),
+          "LLVM.LLVM".to_string(),
+          "--accept-source-agreements".to_string(),
+          "--accept-package-agreements".to_string(),
+        ]
+      )
+    );
+    assert_eq!(
+      InstallMethod::Rustup("clippy").command(),
+      (
+        "rustup".to_string(),
+        vec![
+          "component".to_string(),
+          "add".to_string(),
+          "clippy".to_string()
+        ]
+      )
+    );
   }
 }
