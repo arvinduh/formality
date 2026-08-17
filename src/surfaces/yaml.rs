@@ -23,7 +23,7 @@ impl LanguageSurface for YamlSurface {
     root.join(".yamllint").is_file()
       || root.join(".yamllint.yaml").is_file()
       || root.join(".yamllint.yml").is_file()
-      || !find_files_with_ext(root, YAML_EXTENSIONS, &[]).is_empty()
+      || !find_files_with_ext(root, YAML_EXTENSIONS, &[], &[], &[]).is_empty()
   }
 
   fn tool_info(
@@ -62,7 +62,13 @@ impl LanguageSurface for YamlSurface {
       };
     }
 
-    let files = find_files_with_ext(&ctx.root, YAML_EXTENSIONS, &ctx.paths);
+    let files = find_files_with_ext(
+      &ctx.root,
+      YAML_EXTENSIONS,
+      &ctx.paths,
+      &ctx.lang_config.files,
+      &ctx.lang_config.exclude,
+    );
     if files.is_empty() {
       return SurfaceResult {
         surface_name: self.name(),
@@ -82,6 +88,7 @@ impl LanguageSurface for YamlSurface {
       cmd.arg(f);
     }
 
+    cmd.args(&ctx.lang_config.extra_args);
     cmd.current_dir(&ctx.root);
 
     match cmd.output() {
@@ -137,7 +144,13 @@ impl LanguageSurface for YamlSurface {
       };
     }
 
-    let files = find_files_with_ext(&ctx.root, YAML_EXTENSIONS, &ctx.paths);
+    let files = find_files_with_ext(
+      &ctx.root,
+      YAML_EXTENSIONS,
+      &ctx.paths,
+      &ctx.lang_config.files,
+      &ctx.lang_config.exclude,
+    );
     if files.is_empty() {
       return SurfaceResult {
         surface_name: self.name(),
@@ -147,7 +160,10 @@ impl LanguageSurface for YamlSurface {
     }
 
     let mut cmd = create_tool_command("yamllint");
-    if !ctx.paths.is_empty() {
+    if !ctx.paths.is_empty()
+      || !ctx.lang_config.files.is_empty()
+      || !ctx.lang_config.exclude.is_empty()
+    {
       for f in &files {
         cmd.arg(f);
       }
@@ -155,6 +171,7 @@ impl LanguageSurface for YamlSurface {
       cmd.arg(".");
     }
 
+    cmd.args(&ctx.lang_config.extra_args);
     cmd.current_dir(&ctx.root);
 
     match cmd.output() {

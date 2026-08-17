@@ -20,7 +20,7 @@ impl LanguageSurface for JsonSurface {
   }
 
   fn detect(&self, root: &Path) -> bool {
-    !find_files_with_ext(root, JSON_EXTENSIONS, &[]).is_empty()
+    !find_files_with_ext(root, JSON_EXTENSIONS, &[], &[], &[]).is_empty()
   }
 
   fn tool_info(
@@ -50,7 +50,13 @@ impl LanguageSurface for JsonSurface {
       };
     }
 
-    let files = find_files_with_ext(&ctx.root, JSON_EXTENSIONS, &ctx.paths);
+    let files = find_files_with_ext(
+      &ctx.root,
+      JSON_EXTENSIONS,
+      &ctx.paths,
+      &ctx.lang_config.files,
+      &ctx.lang_config.exclude,
+    );
     if files.is_empty() {
       return SurfaceResult {
         surface_name: self.name(),
@@ -70,6 +76,7 @@ impl LanguageSurface for JsonSurface {
       cmd.arg(f);
     }
 
+    cmd.args(&ctx.lang_config.extra_args);
     cmd.current_dir(&ctx.root);
 
     match cmd.output() {

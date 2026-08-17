@@ -446,10 +446,20 @@ pub fn find_files_with_ext(
   root: &Path,
   extensions: &[&str],
   specific_paths: &[PathBuf],
+  files_override: &[PathBuf],
+  exclude: &[PathBuf],
 ) -> Vec<PathBuf> {
-  if !specific_paths.is_empty() {
+  let targets = if !specific_paths.is_empty() {
+    specific_paths
+  } else if !files_override.is_empty() {
+    files_override
+  } else {
+    &[]
+  };
+
+  let raw_files = if !targets.is_empty() {
     let mut out = Vec::new();
-    for p in specific_paths {
+    for p in targets {
       let full_p = if p.is_absolute() {
         p.clone()
       } else {
@@ -466,10 +476,112 @@ pub fn find_files_with_ext(
         out.extend(walk_dir_ext(&full_p, extensions));
       }
     }
-    return out;
+    out
+  } else {
+    walk_dir_ext(root, extensions)
+  };
+
+  if exclude.is_empty() {
+    raw_files
+  } else {
+    raw_files
+      .into_iter()
+      .filter(|file| !is_excluded(file, root, exclude))
+      .collect()
+  }
+}
+
+pub fn simple_glob_match(pattern: &str, text: &str) -> bool {
+  let p_chars: Vec<char> = pattern.chars().collect();
+  let t_chars: Vec<char> = text.chars().collect();
+  let (p_len, t_len) = (p_chars.len(), t_chars.len());
+
+  let mut p_idx = 0;
+  let mut t_idx = 0;
+  let mut star_idx = None;
+  let mut match_idx = 0;
+
+  while t_idx < t_len {
+    if p_idx < p_len
+      && (p_chars[p_idx] == '?' || p_chars[p_idx] == t_chars[t_idx])
+    {
+      p_idx += 1;
+      t_idx += 1;
+    } else if p_idx < p_len && p_chars[p_idx] == '*' {
+      star_idx = Some(p_idx);
+      match_idx = t_idx;
+      p_idx += 1;
+    } else if let Some(star) = star_idx {
+      p_idx = star + 1;
+      match_idx += 1;
+      t_idx = match_idx;
+    } else {
+      return false;
+    }
   }
 
-  walk_dir_ext(root, extensions)
+  while p_idx < p_len && p_chars[p_idx] == '*' {
+    p_idx += 1;
+  }
+
+  p_idx == p_len
+}
+
+pub fn is_excluded(path: &Path, root: &Path, exclude: &[PathBuf]) -> bool {
+  if exclude.is_empty() {
+    return false;
+  }
+  let rel_path = path.strip_prefix(root).unwrap_or(path);
+  let rel_str = rel_path.to_string_lossy().replace('\\', "/");
+  let file_name = path.file_name().and_then(|f| f.to_str()).unwrap_or("");
+
+  for ex in exclude {
+    let ex_str_raw = ex.to_string_lossy();
+    let ex_str = ex_str_raw.replace('\\', "/");
+    let ex_trimmed = ex_str.trim_matches('/');
+
+    // 1. Direct path prefix or exact match with full / root-relative path
+    if path.starts_with(ex) || rel_path.starts_with(ex) {
+      return true;
+    }
+    let full_ex = if ex.is_absolute() {
+      ex.clone()
+    } else {
+      root.join(ex)
+    };
+    if path.starts_with(&full_ex) {
+      return true;
+    }
+
+    // 2. Relative prefix, exact relative string match, or directory match
+    if rel_str == ex_trimmed || rel_str.starts_with(&format!("{}/", ex_trimmed))
+    {
+      return true;
+    }
+
+    // 3. Filename match
+    if file_name == ex_trimmed || file_name == ex_str_raw {
+      return true;
+    }
+
+    // 4. Any path component matches
+    if rel_path.components().any(|c| {
+      c.as_os_str().to_string_lossy() == ex_trimmed
+        || c.as_os_str() == ex.as_os_str()
+    }) {
+      return true;
+    }
+
+    // 5. Glob / wildcard pattern matching
+    if (ex_trimmed.contains('*') || ex_trimmed.contains('?'))
+      && (simple_glob_match(ex_trimmed, &rel_str)
+        || simple_glob_match(ex_trimmed, file_name))
+    {
+      return true;
+    }
+  }
+
+  false
 }
 
 fn walk_dir_ext(dir: &Path, extensions: &[&str]) -> Vec<PathBuf> {
@@ -789,5 +901,86 @@ mod tests {
         ]
       )
     );
+  }
+
+  #[test]
+  fn test_find_files_with_ext_files_override() {
+    let temp = tempfile::TempDir::new().unwrap();
+    let root = temp.path();
+    let file_a = root.join("a.rs");
+    let file_b = root.join("b.rs");
+    let file_c = root.join("c.rs");
+    std::fs::write(&file_a, "fn a() {}").unwrap();
+    std::fs::write(&file_b, "fn b() {}").unwrap();
+    std::fs::write(&file_c, "fn c() {}").unwrap();
+
+    let files_override = vec![PathBuf::from("a.rs"), PathBuf::from("c.rs")];
+    let matched = find_files_with_ext(root, &["rs"], &[], &files_override, &[]);
+    assert_eq!(matched.len(), 2);
+    assert!(matched.contains(&file_a));
+    assert!(matched.contains(&file_c));
+    assert!(!matched.contains(&file_b));
+  }
+
+  #[test]
+  fn test_find_files_with_ext_exclude_patterns() {
+    let temp = tempfile::TempDir::new().unwrap();
+    let root = temp.path();
+    let src_dir = root.join("src");
+    let gen_dir = src_dir.join("generated");
+    std::fs::create_dir_all(&gen_dir).unwrap();
+
+    let normal = src_dir.join("main.rs");
+    let generated = gen_dir.join("api.rs");
+    let ignored = src_dir.join("ignored.rs");
+    std::fs::write(&normal, "fn main() {}").unwrap();
+    std::fs::write(&generated, "fn api() {}").unwrap();
+    std::fs::write(&ignored, "fn ignored() {}").unwrap();
+
+    let exclude =
+      vec![PathBuf::from("src/generated"), PathBuf::from("ignored.rs")];
+    let matched = find_files_with_ext(root, &["rs"], &[], &[], &exclude);
+    assert_eq!(matched.len(), 1);
+    assert_eq!(matched[0], normal);
+  }
+
+  #[test]
+  fn test_find_files_with_ext_specific_paths_precedence() {
+    let temp = tempfile::TempDir::new().unwrap();
+    let root = temp.path();
+    let file_a = root.join("a.rs");
+    let file_b = root.join("b.rs");
+    std::fs::write(&file_a, "fn a() {}").unwrap();
+    std::fs::write(&file_b, "fn b() {}").unwrap();
+
+    let specific = vec![PathBuf::from("a.rs")];
+    let files_override = vec![PathBuf::from("b.rs")];
+    let matched =
+      find_files_with_ext(root, &["rs"], &specific, &files_override, &[]);
+    assert_eq!(matched.len(), 1);
+    assert_eq!(matched[0], file_a);
+  }
+
+  #[test]
+  fn test_simple_glob_match() {
+    assert!(simple_glob_match("*.rs", "main.rs"));
+    assert!(simple_glob_match("src/*.rs", "src/main.rs"));
+    assert!(simple_glob_match("src/**/api.rs", "src/gen/api.rs"));
+    assert!(simple_glob_match("test?.rs", "test1.rs"));
+    assert!(!simple_glob_match("*.py", "main.rs"));
+    assert!(!simple_glob_match("test?.rs", "test12.rs"));
+  }
+
+  #[test]
+  fn test_extra_args_wired_to_command() {
+    let mut cmd = create_tool_command("cargo");
+    let extra_args = vec!["--verbose".to_string(), "--locked".to_string()];
+    cmd.args(&extra_args);
+    let args: Vec<String> = cmd
+      .get_args()
+      .map(|a| a.to_string_lossy().to_string())
+      .collect();
+    assert!(args.contains(&"--verbose".to_string()));
+    assert!(args.contains(&"--locked".to_string()));
   }
 }
