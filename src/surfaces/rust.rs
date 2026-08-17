@@ -398,6 +398,38 @@ mod tests {
   }
 
   #[test]
+  fn test_build_clippy_args_with_and_without_fix() {
+    let no_fix = build_clippy_args(false, &[]);
+    assert_eq!(
+      no_fix,
+      vec![
+        "clippy".to_string(),
+        "--all-targets".to_string(),
+        "--".to_string(),
+        "-D".to_string(),
+        "warnings".to_string(),
+      ]
+    );
+
+    let extra = vec!["--verbose".to_string()];
+    let with_fix = build_clippy_args(true, &extra);
+    assert_eq!(
+      with_fix,
+      vec![
+        "clippy".to_string(),
+        "--fix".to_string(),
+        "--allow-dirty".to_string(),
+        "--allow-staged".to_string(),
+        "--all-targets".to_string(),
+        "--".to_string(),
+        "-D".to_string(),
+        "warnings".to_string(),
+        "--verbose".to_string(),
+      ]
+    );
+  }
+
+  #[test]
   fn test_sync_config_generates_edition_2024() {
     let temp = TempDir::new().unwrap();
     let surface = RustSurface;

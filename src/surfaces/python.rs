@@ -403,6 +403,26 @@ mod tests {
   use tempfile::TempDir;
 
   #[test]
+  fn test_build_ruff_check_args_with_and_without_fix() {
+    let no_fix = build_ruff_check_args(&[], false, &[]);
+    assert_eq!(no_fix, vec!["check".to_string(), ".".to_string()]);
+
+    let files = vec![PathBuf::from("a.py"), PathBuf::from("b.py")];
+    let extra = vec!["--isolated".to_string()];
+    let with_fix = build_ruff_check_args(&files, true, &extra);
+    assert_eq!(
+      with_fix,
+      vec![
+        "check".to_string(),
+        "--fix".to_string(),
+        "a.py".to_string(),
+        "b.py".to_string(),
+        "--isolated".to_string(),
+      ]
+    );
+  }
+
+  #[test]
   fn test_python_sync_config_lint_table_and_quote_style() {
     let temp = TempDir::new().unwrap();
     let surface = PythonSurface;

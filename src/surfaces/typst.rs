@@ -170,7 +170,8 @@ impl LanguageSurface for TypstSurface {
       return SurfaceResult {
         surface_name: self.name(),
         status: SurfaceStatus::Skipped {
-          reason: "Tool does not support autofix; run fml fmt instead".to_string(),
+          reason: "Tool does not support autofix; run fml fmt instead"
+            .to_string(),
         },
         duration: start.elapsed(),
       };
