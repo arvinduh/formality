@@ -7,4 +7,4 @@ editors/vscode/*.vsix
 # pipeline via `fml schema --output` and should not be committed.
 schema/
 .vscode/
-
+/.artifacts/
