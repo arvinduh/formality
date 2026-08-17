@@ -76,6 +76,7 @@ pub fn build_clippy_args(fix: bool, extra_args: &[String]) -> Vec<String> {
   let mut args = vec!["clippy".to_string()];
   if fix {
     args.push("--fix".to_string());
+    args.push("--allow-no-vcs".to_string());
     args.push("--allow-dirty".to_string());
     args.push("--allow-staged".to_string());
   }
@@ -418,6 +419,7 @@ mod tests {
       vec![
         "clippy".to_string(),
         "--fix".to_string(),
+        "--allow-no-vcs".to_string(),
         "--allow-dirty".to_string(),
         "--allow-staged".to_string(),
         "--all-targets".to_string(),
