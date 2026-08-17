@@ -9,6 +9,13 @@ use std::path::Path;
 use std::time::Instant;
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "lowercase")]
+pub enum YamllintRuleToggle {
+  Enable,
+  Disable,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct YamllintLineLengthRule {
   pub max: usize,
 }
@@ -25,6 +32,9 @@ pub struct YamllintRulesConfig {
   #[serde(rename = "line-length")]
   pub line_length: YamllintLineLengthRule,
   pub indentation: YamllintIndentationRule,
+  #[serde(rename = "document-start")]
+  pub document_start: YamllintRuleToggle,
+  pub truthy: YamllintRuleToggle,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
@@ -39,6 +49,19 @@ impl NativeConfig for YamllintConfig {
 
 impl YamllintConfig {
   pub fn from_context(ctx: &ExecutionContext) -> Self {
+    let yaml_opts = ctx.lang_config.yaml.as_ref();
+    let indent_sequences = yaml_opts
+      .and_then(|y| y.indent_sequence)
+      .unwrap_or(true);
+    let document_start = match yaml_opts.and_then(|y| y.document_start) {
+      Some(true) => YamllintRuleToggle::Enable,
+      _ => YamllintRuleToggle::Disable,
+    };
+    let truthy = match yaml_opts.and_then(|y| y.truthy) {
+      Some(true) => YamllintRuleToggle::Enable,
+      _ => YamllintRuleToggle::Disable,
+    };
+
     Self {
       extends: "default".to_string(),
       rules: YamllintRulesConfig {
@@ -47,8 +70,10 @@ impl YamllintConfig {
         },
         indentation: YamllintIndentationRule {
           spaces: ctx.lang_config.indent_size,
-          indent_sequences: true,
+          indent_sequences,
         },
+        document_start,
+        truthy,
       },
     }
   }
@@ -332,6 +357,8 @@ mod tests {
           spaces: 4,
           indent_sequences: true,
         },
+        document_start: YamllintRuleToggle::Disable,
+        truthy: YamllintRuleToggle::Disable,
       },
     };
     let rendered = cfg.render().unwrap();
