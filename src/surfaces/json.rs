@@ -1,9 +1,9 @@
 use super::{
   ExecutionContext, LanguageSurface, SurfaceResult, SurfaceStatus, ToolInfo,
-  check_binary_exists, find_files_with_ext, markdown::sync_prettier_config,
+  check_binary_exists, create_tool_command, find_files_with_ext,
+  markdown::sync_prettier_config,
 };
 use std::path::Path;
-use std::process::Command;
 use std::time::Instant;
 
 pub struct JsonSurface;
@@ -30,7 +30,7 @@ impl LanguageSurface for JsonSurface {
     vec![ToolInfo {
       binary: "prettier",
       description: "JSON formatter",
-      install_hint: "Install via: npm install -g prettier",
+      install_hint: "Install via: npm install -g prettier (or pnpm add -g prettier / brew install prettier / winget install Prettier.Prettier)",
       is_required_for_fmt: true,
       is_required_for_lint: false,
     }]
@@ -59,7 +59,7 @@ impl LanguageSurface for JsonSurface {
       };
     }
 
-    let mut cmd = Command::new("prettier");
+    let mut cmd = create_tool_command("prettier");
     if ctx.check_only {
       cmd.arg("--check");
     } else {

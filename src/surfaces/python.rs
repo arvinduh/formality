@@ -1,9 +1,9 @@
 use super::{
   ExecutionContext, LanguageSurface, SurfaceResult, SurfaceStatus, ToolInfo,
-  check_binary_exists, find_files_with_ext, sync_file_helper,
+  check_binary_exists, create_tool_command, find_files_with_ext,
+  sync_file_helper,
 };
 use std::path::Path;
-use std::process::Command;
 use std::time::Instant;
 
 pub struct PythonSurface;
@@ -34,7 +34,7 @@ impl LanguageSurface for PythonSurface {
     vec![ToolInfo {
       binary: "ruff",
       description: "Fast Python linter and code formatter",
-      install_hint: "Install via: pip install ruff (or brew install ruff / cargo install ruff)",
+      install_hint: "Install via: uv tool install ruff (or pip install ruff / brew install ruff / cargo binstall ruff)",
       is_required_for_fmt: true,
       is_required_for_lint: true,
     }]
@@ -54,7 +54,7 @@ impl LanguageSurface for PythonSurface {
       };
     }
 
-    let mut cmd = Command::new("ruff");
+    let mut cmd = create_tool_command("ruff");
     cmd.arg("format");
     if ctx.check_only {
       cmd.arg("--check");
@@ -123,7 +123,7 @@ impl LanguageSurface for PythonSurface {
       };
     }
 
-    let mut cmd = Command::new("ruff");
+    let mut cmd = create_tool_command("ruff");
     cmd.arg("check");
     if fix {
       cmd.arg("--fix");

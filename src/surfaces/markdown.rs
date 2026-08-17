@@ -1,9 +1,9 @@
 use super::{
   ExecutionContext, LanguageSurface, SurfaceResult, SurfaceStatus, ToolInfo,
-  check_binary_exists, find_files_with_ext, sync_file_helper,
+  check_binary_exists, create_tool_command, find_files_with_ext,
+  sync_file_helper,
 };
 use std::path::Path;
-use std::process::Command;
 use std::time::Instant;
 
 pub struct MarkdownSurface;
@@ -33,14 +33,14 @@ impl LanguageSurface for MarkdownSurface {
       ToolInfo {
         binary: "prettier",
         description: "Opinionated code/markdown formatter",
-        install_hint: "Install via: npm install -g prettier",
+        install_hint: "Install via: npm install -g prettier (or pnpm add -g prettier / brew install prettier / winget install Prettier.Prettier)",
         is_required_for_fmt: true,
         is_required_for_lint: false,
       },
       ToolInfo {
         binary: "markdownlint-cli2",
         description: "Fast markdown linter",
-        install_hint: "Install via: npm install -g markdownlint-cli2 (or markdownlint-cli)",
+        install_hint: "Install via: npm install -g markdownlint-cli2 (or brew install markdownlint-cli2)",
         is_required_for_fmt: false,
         is_required_for_lint: true,
       },
@@ -70,7 +70,7 @@ impl LanguageSurface for MarkdownSurface {
       };
     }
 
-    let mut cmd = Command::new("prettier");
+    let mut cmd = create_tool_command("prettier");
     if ctx.check_only {
       cmd.arg("--check");
     } else {
@@ -149,7 +149,7 @@ impl LanguageSurface for MarkdownSurface {
       };
     }
 
-    let mut cmd = Command::new(binary);
+    let mut cmd = create_tool_command(binary);
     if fix && has_fix_flag {
       cmd.arg("--fix");
     }
