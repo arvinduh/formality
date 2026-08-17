@@ -272,6 +272,8 @@ fn run_command_inner(args: Cli) -> i32 {
       )
     }
 
+    Commands::Fix { .. } => 0,
+
     Commands::Lint {
       fix,
       staged,
