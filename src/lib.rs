@@ -302,13 +302,7 @@ fn run_command_inner(args: Cli) -> i32 {
         doctor::preflight_install(&surfaces, &config, true);
       }
 
-      Runner::run(
-        surfaces,
-        &root,
-        &target_paths,
-        RunnerAction::Fix,
-        &config,
-      )
+      Runner::run(surfaces, &root, &target_paths, RunnerAction::Fix, &config)
     }
 
     Commands::Lint {

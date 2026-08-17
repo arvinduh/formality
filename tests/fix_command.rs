@@ -69,11 +69,7 @@ fn test_fix_command_targeted_paths() {
   let target_file = sub_dir.join("target.toml");
   let untouched_file = root.join("untouched.toml");
 
-  fs::write(
-    &target_file,
-    "[package]\n   name =   \"target\"\n",
-  )
-  .unwrap();
+  fs::write(&target_file, "[package]\n   name =   \"target\"\n").unwrap();
   let original_untouched = "[package]\n   name =   \"untouched\"\n";
   fs::write(&untouched_file, original_untouched).unwrap();
 
