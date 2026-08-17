@@ -26,10 +26,16 @@
       "type": "object",
       "properties": {
         "based_on_style": {
-          "type": ["string", "null"]
+          "type": [
+            "string",
+            "null"
+          ]
         },
         "break_before_braces": {
-          "type": ["string", "null"]
+          "type": [
+            "string",
+            "null"
+          ]
         },
         "column_limit": {
           "type": [
@@ -40,10 +46,16 @@
           "minimum": 0.0
         },
         "pointer_alignment": {
-          "type": ["string", "null"]
+          "type": [
+            "string",
+            "null"
+          ]
         },
         "sort_includes": {
-          "type": ["boolean", "null"]
+          "type": [
+            "boolean",
+            "null"
+          ]
         },
         "standard": {
           "type": [
