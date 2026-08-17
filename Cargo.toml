@@ -38,6 +38,7 @@ tokio = { version = "1", features = ["full"] }
 unicode-width = "0.2"
 walkdir = "2.5.0"
 which = "8.0.5"
+serde_yaml = "0.9.34"
 
 [lints.rust]
 unexpected_cfgs = { level = "warn", check-cfg = ['cfg(test)'] }
