@@ -318,25 +318,32 @@ fn run_command_inner(args: Cli) -> i32 {
       let detected_names: Vec<&str> =
         detected.iter().map(|s| s.name()).collect();
 
-      println!(
-        "{} {}",
-        "fml surfaces".bold().cyan(),
-        format!("({} supported)", all_surfaces().len()).dimmed()
-      );
-      println!(
-        "{}",
-        "──────────────────────────────────────────────────────────────────"
-          .dimmed()
-      );
+      let mut surfaces_table = crate::table::Table::new(vec![
+        crate::table::Column::new(crate::table::Cell::text(""))
+          .width(crate::table::WidthPolicy::Fixed(12)),
+        crate::table::Column::new(crate::table::Cell::text(""))
+          .width(crate::table::WidthPolicy::Fixed(14)),
+        crate::table::Column::new(crate::table::Cell::text(""))
+          .width(crate::table::WidthPolicy::Auto),
+      ])
+      .layout(crate::table::Layout::compact().indent(2).padding(0, 1));
 
       let mut active_count = 0;
       for surface in all_surfaces() {
         let is_detected = detected_names.contains(&surface.name());
-        let (marker, name_colored) = if is_detected {
+        let (status_style, name_style, marker) = if is_detected {
           active_count += 1;
-          ("[ACTIVE]  ".green().bold(), surface.name().bold())
+          (
+            crate::table::Style::Ok,
+            crate::table::Style::Strong,
+            "[ACTIVE]  ",
+          )
         } else {
-          ("[INACTIVE]".dimmed(), surface.name().dimmed())
+          (
+            crate::table::Style::Dim,
+            crate::table::Style::Dim,
+            "[INACTIVE]",
+          )
         };
 
         let aliases_str = if !surface.aliases().is_empty() {
@@ -345,13 +352,27 @@ fn run_command_inner(args: Cli) -> i32 {
           String::new()
         };
 
-        println!("  {} {:<14} {}", marker, name_colored, aliases_str.dimmed());
+        surfaces_table.add_row(crate::table::Row::new(vec![
+          crate::table::Cell::styled(marker, status_style),
+          crate::table::Cell::styled(surface.name(), name_style),
+          crate::table::Cell::styled(aliases_str, crate::table::Style::Dim),
+        ]));
       }
+
+      let palette = crate::table::Palette::detect();
+      let rendered_table = crate::table::render(&surfaces_table, &palette);
+      let separator = crate::table::separator_for_content(&rendered_table);
+
       println!(
-        "{}",
-        "──────────────────────────────────────────────────────────────────"
-          .dimmed()
+        "{} {}",
+        "fml surfaces".bold().cyan(),
+        format!("({} supported)", all_surfaces().len()).dimmed()
       );
+      println!("{}", separator.dimmed());
+      if !rendered_table.is_empty() {
+        println!("{}", rendered_table);
+      }
+      println!("{}", separator.dimmed());
       println!(
         "  {} active, {} inactive\n",
         active_count.to_string().green().bold(),

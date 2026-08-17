@@ -4,6 +4,15 @@
 # Or automatically during project setup: fml init sets this up for you.
 set -euo pipefail
 
-fml sync --check
-fml fmt --staged
-fml lint --staged
+if [ -x "./target/debug/fml" ]; then
+  FML="./target/debug/fml"
+elif [ -x "./target/debug/fml.exe" ]; then
+  FML="./target/debug/fml.exe"
+else
+  FML="fml"
+fi
+
+"$FML" sync --check
+"$FML" fmt --staged
+"$FML" lint --staged
+

@@ -835,9 +835,31 @@ pub fn render(spec: &Table, palette: &Palette) -> String {
 
   let formatted = table.trim_fmt();
 
+  // If there are rule rows (which comfy-table may render as spaces separated by '─'),
+  // post-process rule rows so they form a continuous unbroken rule line across the full table width.
+  let table_width = max_line_display_width(&formatted);
+  let processed = if table_width > 0 {
+    formatted
+      .lines()
+      .map(|line| {
+        let stripped = strip_ansi_escapes(line);
+        if !stripped.is_empty()
+          && stripped.chars().all(|c| c == '\u{2500}' || c == ' ')
+        {
+          "\u{2500}".repeat(table_width)
+        } else {
+          line.to_string()
+        }
+      })
+      .collect::<Vec<_>>()
+      .join("\n")
+  } else {
+    formatted
+  };
+
   if spec.layout.indent > 0 {
     let indent_str = " ".repeat(spec.layout.indent as usize);
-    formatted
+    processed
       .lines()
       .map(|line| {
         if line.trim().is_empty() {
@@ -849,8 +871,71 @@ pub fn render(spec: &Table, palette: &Palette) -> String {
       .collect::<Vec<_>>()
       .join("\n")
   } else {
-    formatted
+    processed
   }
+}
+
+/// Strips ANSI SGR escape sequences from a string.
+pub fn strip_ansi_escapes(s: &str) -> String {
+  let mut result = String::with_capacity(s.len());
+  let mut in_escape = false;
+  for c in s.chars() {
+    if c == '\x1b' {
+      in_escape = true;
+    } else if in_escape {
+      if c == 'm' {
+        in_escape = false;
+      }
+    } else {
+      result.push(c);
+    }
+  }
+  result
+}
+
+/// Measures the maximum visual character display width across all lines in a string,
+/// ignoring ANSI escape codes and accounting for multi-byte/CJK Unicode width.
+pub fn max_line_display_width(s: &str) -> usize {
+  s.lines()
+    .map(|line| {
+      let stripped = strip_ansi_escapes(line);
+      unicode_width::UnicodeWidthStr::width(stripped.as_str())
+    })
+    .max()
+    .unwrap_or(0)
+}
+
+/// Detects the active terminal column width (clamped to [40, 160]), defaulting to 80 when stdout is not a TTY.
+pub fn detect_terminal_width() -> u16 {
+  use std::io::IsTerminal;
+  if std::io::stdout().is_terminal()
+    && let Ok((w, _)) = crossterm::terminal::size()
+    && w > 0
+  {
+    return w.clamp(40, 160);
+  }
+  80
+}
+
+/// Returns a horizontal rule line of `─` matching the specified width.
+pub fn separator_line(width: usize) -> String {
+  let w = if width == 0 {
+    detect_terminal_width() as usize
+  } else {
+    width
+  };
+  "\u{2500}".repeat(w)
+}
+
+/// Returns a horizontal rule line of `─` matching the maximum visual width of the provided content.
+pub fn separator_for_content(content: &str) -> String {
+  let w = max_line_display_width(content);
+  let final_w = if w > 0 {
+    w
+  } else {
+    detect_terminal_width() as usize
+  };
+  separator_line(final_w)
 }
 
 /// Render a JSON-encoded table specification directly into a formatted string.
@@ -1068,5 +1153,41 @@ mod tests {
     let rendered_tc = render(&table, &pal_tc);
     assert!(rendered_tc.contains("\x1b["));
     assert!(rendered_tc.contains("38;2;80;200;120m")); // Ok color
+  }
+
+  #[test]
+  fn test_dynamic_separator_and_width_alignment() {
+    let mut table = Table::new(vec![
+      Column::new("Status").width(WidthPolicy::Fixed(8)),
+      Column::new("Surface").width(WidthPolicy::Fixed(14)),
+      Column::new("Details").width(WidthPolicy::Fixed(24)),
+    ])
+    .layout(Layout::compact());
+
+    table.add_row(Row::new(vec![
+      Cell::styled("[PASS]", Style::Ok),
+      Cell::styled("rust", Style::Tool),
+      Cell::styled("Clean / Formatted", Style::Dim),
+    ]));
+    table.add_row(Row::rule());
+    table.add_row(Row::new(vec![
+      Cell::styled("[FAIL]", Style::Error),
+      Cell::styled("python", Style::Tool),
+      Cell::styled("Violations found", Style::Error),
+    ]));
+
+    let rendered = render(&table, &Palette::none());
+    let max_w = max_line_display_width(&rendered);
+    let sep = separator_for_content(&rendered);
+
+    assert_eq!(sep.chars().count(), max_w);
+    assert!(sep.chars().all(|c| c == '\u{2500}'));
+
+    // Verify the rule line inside the table also spans the table width
+    let rule_line = rendered
+      .lines()
+      .find(|l| l.chars().all(|c| c == '\u{2500}'))
+      .expect("Must have a rule line");
+    assert_eq!(rule_line.chars().count(), max_w);
   }
 }
