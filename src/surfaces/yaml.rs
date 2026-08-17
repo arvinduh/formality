@@ -1,11 +1,62 @@
 use super::{
   DeclaresFacets, ExecutionContext, Facet, FacetSupport, LanguageSurface,
-  SurfaceResult, SurfaceStatus, ToolInfo, check_binary_exists,
+  NativeConfig, SurfaceResult, SurfaceStatus, ToolInfo, check_binary_exists,
   create_tool_command, diff_check_via_tempcopy, find_files_with_ext,
-  markdown::sync_prettier_config,
+  markdown::sync_prettier_config, serialize_yaml_with_header,
 };
+use serde::{Deserialize, Serialize};
 use std::path::Path;
 use std::time::Instant;
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct YamllintLineLengthRule {
+  pub max: usize,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct YamllintIndentationRule {
+  pub spaces: usize,
+  #[serde(rename = "indent-sequences")]
+  pub indent_sequences: bool,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct YamllintRulesConfig {
+  #[serde(rename = "line-length")]
+  pub line_length: YamllintLineLengthRule,
+  pub indentation: YamllintIndentationRule,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct YamllintConfig {
+  pub extends: String,
+  pub rules: YamllintRulesConfig,
+}
+
+impl NativeConfig for YamllintConfig {
+  const FILE_NAME: &'static str = ".yamllint.yaml";
+}
+
+impl YamllintConfig {
+  pub fn from_context(ctx: &ExecutionContext) -> Self {
+    Self {
+      extends: "default".to_string(),
+      rules: YamllintRulesConfig {
+        line_length: YamllintLineLengthRule {
+          max: ctx.lang_config.line_length,
+        },
+        indentation: YamllintIndentationRule {
+          spaces: ctx.lang_config.indent_size,
+          indent_sequences: true,
+        },
+      },
+    }
+  }
+
+  pub fn render(&self) -> Result<String, serde_yaml::Error> {
+    serialize_yaml_with_header(self)
+  }
+}
 
 #[derive(Debug, Default, Clone, Copy)]
 pub struct YamlSurface;
@@ -251,5 +302,53 @@ impl LanguageSurface for YamlSurface {
   fn sync_config(&self, ctx: &ExecutionContext, check: bool) -> SurfaceResult {
     let start = Instant::now();
     sync_prettier_config(ctx, check, start, self.name())
+  }
+}
+
+#[cfg(test)]
+mod tests {
+  use super::*;
+  use crate::config::{ResolvedGlobalConfig, ResolvedLangConfig};
+  use tempfile::TempDir;
+
+  #[test]
+  fn test_yamllint_config_typed_serialization() {
+    let cfg = YamllintConfig {
+      extends: "default".to_string(),
+      rules: YamllintRulesConfig {
+        line_length: YamllintLineLengthRule { max: 120 },
+        indentation: YamllintIndentationRule {
+          spaces: 4,
+          indent_sequences: true,
+        },
+      },
+    };
+    let rendered = cfg.render().unwrap();
+    assert!(rendered.starts_with(crate::surfaces::AUTO_GENERATED_HEADER));
+    assert!(rendered.contains("extends: default"));
+    assert!(rendered.contains("line-length:"));
+    assert!(rendered.contains("max: 120"));
+    assert!(rendered.contains("spaces: 4"));
+    assert!(rendered.contains("indent-sequences: true"));
+  }
+
+  #[test]
+  fn test_yaml_sync_config_delegates_to_prettier() {
+    let temp = TempDir::new().unwrap();
+    let surface = YamlSurface;
+    let ctx = ExecutionContext {
+      root: temp.path().to_path_buf(),
+      paths: Vec::new(),
+      global_config: ResolvedGlobalConfig::default(),
+      lang_config: ResolvedLangConfig::new("yaml"),
+      check_only: false,
+    };
+
+    let res = surface.sync_config(&ctx, false);
+    assert!(matches!(
+      res.status,
+      SurfaceStatus::ConfigSynced { created: true, .. }
+    ));
+    assert!(temp.path().join(".prettierrc.json").is_file());
   }
 }
