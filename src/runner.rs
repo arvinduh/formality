@@ -7,10 +7,12 @@ use rayon::prelude::*;
 use std::path::{Path, PathBuf};
 use std::time::Instant;
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum RunnerAction {
   Format { check: bool },
   Lint { fix: bool },
   Sync { check: bool },
+  Fix,
 }
 
 pub struct Runner;
@@ -53,32 +55,77 @@ impl Runner {
           "sync"
         }
       }
+      RunnerAction::Fix => "fix",
     };
 
     // Execute surfaces concurrently
-    let results: Vec<SurfaceResult> = surfaces
-      .par_iter()
-      .map(|surface| {
-        let lang_config = config.resolve_for_lang(surface.name());
-        let ctx = ExecutionContext {
-          root: root.to_path_buf(),
-          paths: paths.to_vec(),
-          global_config: global_config.clone(),
-          lang_config,
-          check_only: match action {
-            RunnerAction::Format { check } => check,
-            RunnerAction::Lint { .. } => false,
-            RunnerAction::Sync { check } => check,
-          },
-        };
+    let results: Vec<SurfaceResult> = match action {
+      RunnerAction::Fix => {
+        // Stage 1: Run lint(fix: true) across matched surfaces
+        let lint_results: Vec<SurfaceResult> = surfaces
+          .par_iter()
+          .map(|surface| {
+            let lang_config = config.resolve_for_lang(surface.name());
+            let ctx = ExecutionContext {
+              root: root.to_path_buf(),
+              paths: paths.to_vec(),
+              global_config: global_config.clone(),
+              lang_config,
+              check_only: false,
+            };
+            surface.lint(&ctx, true)
+          })
+          .collect();
 
-        match action {
-          RunnerAction::Format { .. } => surface.format(&ctx),
-          RunnerAction::Lint { fix } => surface.lint(&ctx, fix),
-          RunnerAction::Sync { check } => surface.sync_config(&ctx, check),
-        }
-      })
-      .collect();
+        // Stage 2: Run format(check: false) across matched surfaces
+        let fmt_results: Vec<SurfaceResult> = surfaces
+          .par_iter()
+          .map(|surface| {
+            let lang_config = config.resolve_for_lang(surface.name());
+            let ctx = ExecutionContext {
+              root: root.to_path_buf(),
+              paths: paths.to_vec(),
+              global_config: global_config.clone(),
+              lang_config,
+              check_only: false,
+            };
+            surface.format(&ctx)
+          })
+          .collect();
+
+        // Merge results across both stages per surface
+        lint_results
+          .into_iter()
+          .zip(fmt_results)
+          .map(|(lint_res, fmt_res)| combine_fix_results(lint_res, fmt_res))
+          .collect()
+      }
+      _ => surfaces
+        .par_iter()
+        .map(|surface| {
+          let lang_config = config.resolve_for_lang(surface.name());
+          let ctx = ExecutionContext {
+            root: root.to_path_buf(),
+            paths: paths.to_vec(),
+            global_config: global_config.clone(),
+            lang_config,
+            check_only: match action {
+              RunnerAction::Format { check } => check,
+              RunnerAction::Lint { .. } => false,
+              RunnerAction::Sync { check } => check,
+              RunnerAction::Fix => false,
+            },
+          };
+
+          match action {
+            RunnerAction::Format { .. } => surface.format(&ctx),
+            RunnerAction::Lint { fix } => surface.lint(&ctx, fix),
+            RunnerAction::Sync { check } => surface.sync_config(&ctx, check),
+            RunnerAction::Fix => unreachable!(),
+          }
+        })
+        .collect(),
+    };
 
     let mut exit_code = 0;
     let mut pass_count = 0;
@@ -351,6 +398,104 @@ impl Runner {
     println!("  {} in {:.2?}\n", summary_text, start_time.elapsed());
 
     exit_code
+  }
+}
+
+fn combine_fix_results(
+  lint_res: SurfaceResult,
+  fmt_res: SurfaceResult,
+) -> SurfaceResult {
+  let surface_name = lint_res.surface_name;
+  let duration = lint_res.duration + fmt_res.duration;
+
+  let status = match (lint_res.status, fmt_res.status) {
+    // 1. Execution errors take highest precedence
+    (
+      SurfaceStatus::ExecutionError { message: m1 },
+      SurfaceStatus::ExecutionError { message: m2 },
+    ) => SurfaceStatus::ExecutionError {
+      message: format!("{}
+{}", m1, m2),
+    },
+    (SurfaceStatus::ExecutionError { message }, _)
+    | (_, SurfaceStatus::ExecutionError { message }) => {
+      SurfaceStatus::ExecutionError { message }
+    }
+
+    // 2. Missing tool binary
+    (SurfaceStatus::ToolMissing { binary, install_hint }, _)
+    | (_, SurfaceStatus::ToolMissing { binary, install_hint }) => {
+      SurfaceStatus::ToolMissing {
+        binary,
+        install_hint,
+      }
+    }
+
+    // 3. Violations found (e.g. unfixable lint errors or formatting errors)
+    (
+      SurfaceStatus::ViolationsFound {
+        message: m1,
+        diff: d1,
+      },
+      SurfaceStatus::ViolationsFound {
+        message: m2,
+        diff: d2,
+      },
+    ) => {
+      let combined_msg = format!("{}
+{}", m1, m2);
+      let combined_diff = match (d1, d2) {
+        (Some(a), Some(b)) => Some(format!("{}
+{}", a, b)),
+        (Some(a), None) | (None, Some(a)) => Some(a),
+        (None, None) => None,
+      };
+      SurfaceStatus::ViolationsFound {
+        message: combined_msg,
+        diff: combined_diff,
+      }
+    }
+    (SurfaceStatus::ViolationsFound { message, diff }, _)
+    | (_, SurfaceStatus::ViolationsFound { message, diff }) => {
+      SurfaceStatus::ViolationsFound { message, diff }
+    }
+
+    // 4. Config drift or manual config
+    (SurfaceStatus::ConfigDrifted { file, diff }, _)
+    | (_, SurfaceStatus::ConfigDrifted { file, diff }) => {
+      SurfaceStatus::ConfigDrifted { file, diff }
+    }
+    (SurfaceStatus::ManualConfig { file, suggestion }, _)
+    | (_, SurfaceStatus::ManualConfig { file, suggestion }) => {
+      SurfaceStatus::ManualConfig { file, suggestion }
+    }
+
+    // 5. Passed (both passed, or one passed and one was skipped)
+    (SurfaceStatus::Passed, SurfaceStatus::Passed)
+    | (SurfaceStatus::Passed, SurfaceStatus::Skipped { .. })
+    | (SurfaceStatus::Skipped { .. }, SurfaceStatus::Passed) => {
+      SurfaceStatus::Passed
+    }
+
+    // 6. ConfigSynced
+    (SurfaceStatus::ConfigSynced { file, created }, _)
+    | (_, SurfaceStatus::ConfigSynced { file, created }) => {
+      SurfaceStatus::ConfigSynced { file, created }
+    }
+
+    // 7. Both skipped
+    (
+      SurfaceStatus::Skipped { reason: r1 },
+      SurfaceStatus::Skipped { reason: r2 },
+    ) => SurfaceStatus::Skipped {
+      reason: format!("{}; {}", r1, r2),
+    },
+  };
+
+  SurfaceResult {
+    surface_name,
+    status,
+    duration,
   }
 }
 
