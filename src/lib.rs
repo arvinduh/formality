@@ -5,6 +5,7 @@ pub mod doctor;
 pub mod lsp;
 pub mod runner;
 pub mod surfaces;
+pub mod table;
 pub mod update;
 pub mod version;
 
@@ -450,6 +451,34 @@ fn run_command_inner(args: Cli) -> i32 {
     Commands::Lsp => {
       lsp::run_lsp_server(Some(root));
       0
+    }
+
+    Commands::Table { json } => {
+      let json_str = if let Some(j) = json {
+        j
+      } else {
+        use std::io::Read;
+        let mut buf = String::new();
+        if let Err(e) = std::io::stdin().read_to_string(&mut buf) {
+          eprintln!(
+            "{} Failed to read table spec from stdin: {}",
+            "[ERR]".red().bold(),
+            e
+          );
+          return 2;
+        }
+        buf
+      };
+      match table::render_json(&json_str) {
+        Ok(rendered) => {
+          print!("{}", rendered);
+          0
+        }
+        Err(e) => {
+          eprintln!("{} Invalid table JSON spec: {}", "[ERR]".red().bold(), e);
+          2
+        }
+      }
     }
   }
 }
