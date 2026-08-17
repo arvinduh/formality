@@ -8,6 +8,7 @@ use std::path::{Path, PathBuf};
 use std::process::Command;
 use std::time::Instant;
 
+#[derive(Debug, Default, Clone, Copy)]
 pub struct RustSurface;
 
 impl DeclaresFacets for RustSurface {
@@ -49,6 +50,14 @@ impl LanguageSurface for RustSurface {
 
   fn aliases(&self) -> &[&'static str] {
     &["rs"]
+  }
+
+  fn file_extensions(&self) -> &[&'static str] {
+    &["rs"]
+  }
+
+  fn clone_box(&self) -> Box<dyn LanguageSurface> {
+    Box::new(*self)
   }
 
   fn detect(&self, root: &Path) -> bool {
