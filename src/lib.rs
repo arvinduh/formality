@@ -14,8 +14,8 @@ use config::{DEFAULT_CONFIG_FILE_NAME, FormalityConfig, find_project_config};
 use runner::{Runner, RunnerAction};
 use std::path::{Path, PathBuf};
 use surfaces::{
-  LanguageSurface, all_surfaces, detect_surfaces_smart, find_files_with_ext,
-  get_surface_by_name,
+  FileCategory, LanguageSurface, all_surfaces, classify_file,
+  detect_surfaces_smart, find_files_with_ext, get_surface_by_name,
 };
 
 /// The JSON Schema for formality.toml, embedded directly so the binary can
@@ -558,6 +558,53 @@ fn resolve_target_surfaces(
         active.push(surface);
       }
     }
+
+    // Inspect targeted file paths for taxonomy classification
+    let mut unsupported_exts = std::collections::BTreeSet::new();
+    let mut non_code_count = 0;
+    let mut file_count = 0;
+
+    for p in paths {
+      let full_p = if p.is_absolute() {
+        p.clone()
+      } else {
+        root.join(p)
+      };
+
+      if full_p.is_file() {
+        file_count += 1;
+        match classify_file(&full_p) {
+          FileCategory::UnsupportedLanguage(ext) => {
+            unsupported_exts.insert(ext);
+          }
+          FileCategory::NonCode => {
+            non_code_count += 1;
+          }
+          FileCategory::Supported(_) => {}
+        }
+      }
+    }
+
+    if !unsupported_exts.is_empty() {
+      for ext in &unsupported_exts {
+        eprintln!(
+          "{} Language surface for '.{}' is not yet supported by formality.",
+          "[WARN]".yellow().bold(),
+          ext
+        );
+      }
+      eprintln!(
+        "  {} Request new language support at: {}\n",
+        "Tip:".cyan().bold(),
+        "https://github.com/arvinduh/formality/issues".bold()
+      );
+    } else if active.is_empty() && file_count > 0 && non_code_count == file_count {
+      eprintln!(
+        "{} Targeted file(s) are non-code/asset files and are not managed by formality.\n",
+        "[INFO]".cyan().bold()
+      );
+    }
+
     return Ok(active);
   }
 

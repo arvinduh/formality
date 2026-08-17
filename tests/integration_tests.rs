@@ -391,3 +391,47 @@ fn test_ignore_languages_filtering() {
   assert!(!names.contains(&"yaml"));
   assert!(!names.contains(&"json"));
 }
+
+#[test]
+fn test_targeting_unsupported_language_file() {
+  let temp = tempfile::TempDir::new().unwrap();
+  let go_file = temp.path().join("server.go");
+  std::fs::write(&go_file, "package main\n\nfunc main() {}\n").unwrap();
+
+  let args = Cli {
+    config: None,
+    root: Some(temp.path().to_path_buf()),
+    command: Commands::Fmt {
+      check: false,
+      staged: false,
+      changed: false,
+      lang: Vec::new(),
+      install: false,
+      paths: vec![go_file],
+    },
+  };
+  let code = fml::run_with_args(args);
+  assert_eq!(code, 0);
+}
+
+#[test]
+fn test_targeting_non_code_file() {
+  let temp = tempfile::TempDir::new().unwrap();
+  let txt_file = temp.path().join("notes.txt");
+  std::fs::write(&txt_file, "some notes\n").unwrap();
+
+  let args = Cli {
+    config: None,
+    root: Some(temp.path().to_path_buf()),
+    command: Commands::Fmt {
+      check: false,
+      staged: false,
+      changed: false,
+      lang: Vec::new(),
+      install: false,
+      paths: vec![txt_file],
+    },
+  };
+  let code = fml::run_with_args(args);
+  assert_eq!(code, 0);
+}
