@@ -3,10 +3,26 @@ use super::{
   check_binary_exists, create_tool_command, find_files_with_ext,
   sync_file_helper,
 };
-use std::path::Path;
+use std::path::{Path, PathBuf};
+use std::process::Command;
 use std::time::Instant;
 
 pub struct RustSurface;
+
+pub(crate) fn build_rustfmt_fallback_cmd(
+  check_only: bool,
+  files: &[PathBuf],
+) -> Command {
+  let mut c = create_tool_command("rustfmt");
+  c.arg("--edition").arg("2024");
+  if check_only {
+    c.arg("--check");
+  }
+  for f in files {
+    c.arg(f);
+  }
+  c
+}
 
 impl LanguageSurface for RustSurface {
   fn name(&self) -> &'static str {
@@ -96,14 +112,7 @@ impl LanguageSurface for RustSurface {
             duration: start.elapsed(),
           };
         }
-        let mut c = create_tool_command("rustfmt");
-        if ctx.check_only {
-          c.arg("--check");
-        }
-        for f in files {
-          c.arg(f);
-        }
-        c
+        build_rustfmt_fallback_cmd(ctx.check_only, &files)
       };
 
     cmd.current_dir(&ctx.root);
@@ -228,7 +237,8 @@ impl LanguageSurface for RustSurface {
        tab_spaces = {}\n\
        max_width = {}\n\
        newline_style = \"{}\"\n\
-       use_small_heuristics = \"Default\"\n",
+       use_small_heuristics = \"Default\"\n\
+       edition = \"2024\"\n",
       ctx.lang_config.indent_size, ctx.lang_config.line_length, newline_style
     );
 
@@ -240,5 +250,119 @@ impl LanguageSurface for RustSurface {
       start,
       self.name(),
     )
+  }
+}
+
+#[cfg(test)]
+mod tests {
+  use super::*;
+  use crate::config::{ResolvedGlobalConfig, ResolvedLangConfig};
+  use tempfile::TempDir;
+
+  fn dummy_execution_context(
+    root: &Path,
+    check_only: bool,
+  ) -> ExecutionContext {
+    ExecutionContext {
+      root: root.to_path_buf(),
+      paths: vec![],
+      global_config: ResolvedGlobalConfig {
+        languages: None,
+        ignore_languages: None,
+        indent_size: 2,
+        line_length: 80,
+        end_of_line: "lf".to_string(),
+        charset: "utf-8".to_string(),
+        insert_final_newline: true,
+        trim_trailing_whitespace: true,
+        use_tabs: false,
+      },
+      lang_config: ResolvedLangConfig {
+        name: "rust".to_string(),
+        format_tool: None,
+        lint_tool: None,
+        indent_size: 2,
+        line_length: 80,
+        use_tabs: false,
+        prose_wrap: None,
+        enabled: true,
+        extra_args: vec![],
+        files: vec![],
+        exclude: vec![],
+      },
+      check_only,
+    }
+  }
+
+  #[test]
+  fn test_sync_config_generates_edition_2024() {
+    let temp = TempDir::new().unwrap();
+    let ctx = dummy_execution_context(temp.path(), false);
+    let surface = RustSurface;
+
+    let res = surface.sync_config(&ctx, false);
+    assert!(matches!(
+      res.status,
+      SurfaceStatus::ConfigSynced { created: true, .. }
+    ));
+
+    let config_path = temp.path().join(".rustfmt.toml");
+    assert!(config_path.is_file());
+
+    let content = std::fs::read_to_string(&config_path).unwrap();
+    assert!(content.contains("edition = \"2024\""));
+    assert!(content.contains("tab_spaces = 2"));
+    assert!(content.contains("max_width = 80"));
+    assert!(content.contains("newline_style = \"Unix\""));
+
+    // Check mode should pass when file is up-to-date
+    let check_ctx = dummy_execution_context(temp.path(), true);
+    let check_res = surface.sync_config(&check_ctx, true);
+    assert!(matches!(check_res.status, SurfaceStatus::Passed));
+  }
+
+  #[test]
+  fn test_rustfmt_fallback_command_args() {
+    let files = vec![PathBuf::from("src/main.rs"), PathBuf::from("src/lib.rs")];
+
+    // check_only = false
+    let cmd = build_rustfmt_fallback_cmd(false, &files);
+    let args: Vec<String> = cmd
+      .get_args()
+      .map(|a| a.to_string_lossy().into_owned())
+      .collect();
+
+    let edition_idx = args.iter().position(|a| a == "--edition");
+    assert!(
+      edition_idx.is_some(),
+      "--edition flag must be passed to rustfmt"
+    );
+    assert_eq!(
+      args.get(edition_idx.unwrap() + 1).map(|s| s.as_str()),
+      Some("2024"),
+      "edition value must be 2024"
+    );
+    assert!(!args.contains(&"--check".to_string()));
+    assert!(
+      args.contains(&"src/main.rs".to_string())
+        || args.contains(&"src\\main.rs".to_string())
+    );
+
+    // check_only = true
+    let cmd_check = build_rustfmt_fallback_cmd(true, &files);
+    let check_args: Vec<String> = cmd_check
+      .get_args()
+      .map(|a| a.to_string_lossy().into_owned())
+      .collect();
+
+    let check_edition_idx = check_args.iter().position(|a| a == "--edition");
+    assert!(check_edition_idx.is_some());
+    assert_eq!(
+      check_args
+        .get(check_edition_idx.unwrap() + 1)
+        .map(|s| s.as_str()),
+      Some("2024")
+    );
+    assert!(check_args.contains(&"--check".to_string()));
   }
 }
