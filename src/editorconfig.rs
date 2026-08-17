@@ -283,20 +283,28 @@ mod tests {
     assert!(ec.contains("[*]\ncharset = utf-8\nend_of_line = lf\ninsert_final_newline = true\ntrim_trailing_whitespace = true\nindent_style = tab\nindent_size = 4\nmax_line_length = 100"));
 
     // Rust is fixed to spaces
-    assert!(ec.contains("[*.rs]\nindent_style = space\nindent_size = 4\nmax_line_length = 100"));
+    assert!(ec.contains(
+      "[*.rs]\nindent_style = space\nindent_size = 4\nmax_line_length = 100"
+    ));
 
     // Python is configurable -> tab
-    assert!(ec.contains("[*.py]\nindent_style = tab\nindent_size = 4\nmax_line_length = 100"));
+    assert!(ec.contains(
+      "[*.py]\nindent_style = tab\nindent_size = 4\nmax_line_length = 100"
+    ));
 
     // JSON is configurable for tabs, but unsupported for max_line_length
     assert!(ec.contains("[*.json]\nindent_style = tab\nindent_size = 4\n"));
-    assert!(!ec.contains("[*.json]\nindent_style = tab\nindent_size = 4\nmax_line_length"));
+    assert!(!ec.contains(
+      "[*.json]\nindent_style = tab\nindent_size = 4\nmax_line_length"
+    ));
 
     // YAML is fixed to spaces
     assert!(ec.contains("[*.{yaml,yml}]\nindent_style = space\nindent_size = 4\nmax_line_length = 100"));
 
     // Typst is fixed to spaces
-    assert!(ec.contains("[*.typ]\nindent_style = space\nindent_size = 4\nmax_line_length = 100"));
+    assert!(ec.contains(
+      "[*.typ]\nindent_style = space\nindent_size = 4\nmax_line_length = 100"
+    ));
   }
 
   #[test]
@@ -317,12 +325,18 @@ use_tabs = true
 indent_size = 4
 line_length = 88
 "#;
-    let config = FormalityConfig::parse_str(toml_str, Path::new("formality.toml")).unwrap();
+    let config =
+      FormalityConfig::parse_str(toml_str, Path::new("formality.toml"))
+        .unwrap();
     let surfaces = all_surfaces();
     let ec = generate_editorconfig_from_config(&config, &surfaces);
 
     assert!(ec.contains("end_of_line = crlf"));
-    assert!(ec.contains("[*.rs]\nindent_style = space\nindent_size = 4\nmax_line_length = 100"));
-    assert!(ec.contains("[*.py]\nindent_style = tab\nindent_size = 4\nmax_line_length = 88"));
+    assert!(ec.contains(
+      "[*.rs]\nindent_style = space\nindent_size = 4\nmax_line_length = 100"
+    ));
+    assert!(ec.contains(
+      "[*.py]\nindent_style = tab\nindent_size = 4\nmax_line_length = 88"
+    ));
   }
 }
