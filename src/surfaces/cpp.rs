@@ -17,6 +17,9 @@ pub struct ClangFormatConfig {
   pub column_limit: usize,
   pub use_tab: String,
   pub line_ending: String,
+  pub pointer_alignment: String,
+  pub break_before_braces: String,
+  pub sort_includes: bool,
 }
 
 impl NativeConfig for ClangFormatConfig {
@@ -37,13 +40,28 @@ impl ClangFormatConfig {
         _ => "LF",
       };
 
+    let cpp_opts = ctx.lang_config.cpp.as_ref();
+    let based_on_style = cpp_opts
+      .and_then(|c| c.based_on_style.clone())
+      .unwrap_or_else(|| "LLVM".to_string());
+    let pointer_alignment = cpp_opts
+      .and_then(|c| c.pointer_alignment.clone())
+      .unwrap_or_else(|| "Left".to_string());
+    let break_before_braces = cpp_opts
+      .and_then(|c| c.break_before_braces.clone())
+      .unwrap_or_else(|| "Attach".to_string());
+    let sort_includes = cpp_opts.and_then(|c| c.sort_includes).unwrap_or(true);
+
     Self {
       language: "Cpp".to_string(),
-      based_on_style: "LLVM".to_string(),
+      based_on_style,
       indent_width: ctx.lang_config.indent_size,
       column_limit: ctx.lang_config.line_length,
       use_tab: use_tab.to_string(),
       line_ending: line_ending.to_string(),
+      pointer_alignment,
+      break_before_braces,
+      sort_includes,
     }
   }
 
@@ -721,6 +739,9 @@ mod tests {
       column_limit: 100,
       use_tab: "Never".to_string(),
       line_ending: "LF".to_string(),
+      pointer_alignment: "Left".to_string(),
+      break_before_braces: "Attach".to_string(),
+      sort_includes: true,
     };
     let rendered = cfg.render().unwrap();
     assert!(rendered.starts_with(crate::surfaces::AUTO_GENERATED_HEADER));
@@ -730,6 +751,9 @@ mod tests {
     assert!(rendered.contains("ColumnLimit: 100"));
     assert!(rendered.contains("UseTab: Never"));
     assert!(rendered.contains("LineEnding: LF"));
+    assert!(rendered.contains("PointerAlignment: Left"));
+    assert!(rendered.contains("BreakBeforeBraces: Attach"));
+    assert!(rendered.contains("SortIncludes: true"));
   }
 
   #[test]
@@ -760,5 +784,50 @@ mod tests {
         "-std=c++17".to_string(),
       ]
     );
+  }
+  #[test]
+  fn test_sync_config_with_custom_style_knobs() {
+    let dir = tempdir().unwrap();
+    let root = dir.path().to_path_buf();
+
+    let toml_str = r#"
+      [lang.cpp]
+      indent_size = 4
+      line_length = 120
+      use_tabs = false
+      based_on_style = "Google"
+      pointer_alignment = "Right"
+      break_before_braces = "Allman"
+      sort_includes = false
+    "#;
+    let cfg = FormalityConfig::parse_str(toml_str, Path::new("formality.toml"))
+      .unwrap();
+    let ctx = ExecutionContext {
+      root: root.clone(),
+      paths: Vec::new(),
+      global_config: cfg.resolve_global(),
+      lang_config: cfg.resolve_for_lang("cpp"),
+      check_only: false,
+    };
+
+    let surface = CppSurface;
+    let res = surface.sync_config(&ctx, false);
+    assert!(res.is_success());
+
+    let format_path = root.join(".clang-format");
+    assert!(format_path.is_file());
+
+    let format_content = std::fs::read_to_string(&format_path).unwrap();
+    assert!(format_content.contains("Language: Cpp"));
+    assert!(format_content.contains("BasedOnStyle: Google"));
+    assert!(format_content.contains("IndentWidth: 4"));
+    assert!(format_content.contains("ColumnLimit: 120"));
+    assert!(format_content.contains("UseTab: Never"));
+    assert!(format_content.contains("PointerAlignment: Right"));
+    assert!(format_content.contains("BreakBeforeBraces: Allman"));
+    assert!(format_content.contains("SortIncludes: false"));
+
+    let check_res = surface.sync_config(&ctx, true);
+    assert!(matches!(check_res.status, SurfaceStatus::Passed));
   }
 }
