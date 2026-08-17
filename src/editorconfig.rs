@@ -47,6 +47,10 @@ pub fn generate_editorconfig(
   out.push_str(AUTO_GENERATED_HEADER);
   out.push_str("root = true\n\n");
 
+  let global_indent_style = if global.use_tabs { "tab" } else { "space" };
+  let global_indent_size = global.indent_size;
+  let global_max_line_length = Some(global.line_length);
+
   // Global [*] section
   out.push_str("[*]\n");
   out.push_str(&format!(
@@ -65,11 +69,8 @@ pub fn generate_editorconfig(
     "trim_trailing_whitespace = {}\n",
     global.trim_trailing_whitespace
   ));
-  out.push_str(&format!(
-    "indent_style = {}\n",
-    if global.use_tabs { "tab" } else { "space" }
-  ));
-  out.push_str(&format!("indent_size = {}\n", global.indent_size));
+  out.push_str(&format!("indent_style = {}\n", global_indent_style));
+  out.push_str(&format!("indent_size = {}\n", global_indent_size));
   out.push_str(&format!("max_line_length = {}\n", global.line_length));
 
   // Collect ordered distinct surfaces
@@ -95,13 +96,7 @@ pub fn generate_editorconfig(
     let indent_style = match surface.facet_support(Facet::IndentTabs) {
       FacetSupport::Fixed("spaces") | FacetSupport::Fixed("space") => "space",
       FacetSupport::Fixed("tabs") | FacetSupport::Fixed("tab") => "tab",
-      _ => {
-        if global.use_tabs {
-          "tab"
-        } else {
-          "space"
-        }
-      }
+      _ => global_indent_style,
     };
 
     let indent_size = global.indent_size;
@@ -111,6 +106,14 @@ pub fn generate_editorconfig(
       } else {
         Some(global.line_length)
       };
+
+    let diverges = indent_style != global_indent_style
+      || indent_size != global_indent_size
+      || max_line_length != global_max_line_length;
+
+    if !diverges {
+      continue;
+    }
 
     out.push('\n');
     out.push_str(&glob);
@@ -136,6 +139,10 @@ pub fn generate_editorconfig_from_config(
   out.push_str(AUTO_GENERATED_HEADER);
   out.push_str("root = true\n\n");
 
+  let global_indent_style = if global.use_tabs { "tab" } else { "space" };
+  let global_indent_size = global.indent_size;
+  let global_max_line_length = Some(global.line_length);
+
   // Global [*] section
   out.push_str("[*]\n");
   out.push_str(&format!(
@@ -154,11 +161,8 @@ pub fn generate_editorconfig_from_config(
     "trim_trailing_whitespace = {}\n",
     global.trim_trailing_whitespace
   ));
-  out.push_str(&format!(
-    "indent_style = {}\n",
-    if global.use_tabs { "tab" } else { "space" }
-  ));
-  out.push_str(&format!("indent_size = {}\n", global.indent_size));
+  out.push_str(&format!("indent_style = {}\n", global_indent_style));
+  out.push_str(&format!("indent_size = {}\n", global_indent_size));
   out.push_str(&format!("max_line_length = {}\n", global.line_length));
 
   // Collect ordered distinct surfaces
@@ -202,6 +206,14 @@ pub fn generate_editorconfig_from_config(
       } else {
         Some(lang_cfg.line_length)
       };
+
+    let diverges = indent_style != global_indent_style
+      || indent_size != global_indent_size
+      || max_line_length != global_max_line_length;
+
+    if !diverges {
+      continue;
+    }
 
     out.push('\n');
     out.push_str(&glob);
@@ -258,15 +270,33 @@ mod tests {
     assert!(ec.contains("indent_size = 2"));
     assert!(ec.contains("max_line_length = 80"));
 
-    // Check all canonical globs
-    assert!(ec.contains("[*.rs]"));
-    assert!(ec.contains("[*.py]"));
-    assert!(ec.contains("[*.{c,cc,cpp,cxx,h,hh,hpp,hxx}]"));
-    assert!(ec.contains("[*.{yaml,yml}]"));
+    // Surfaces matching [*] baseline are omitted
+    assert!(!ec.contains("[*.rs]"));
+    assert!(!ec.contains("[*.py]"));
+    assert!(!ec.contains("[*.{c,cc,cpp,cxx,h,hh,hpp,hxx}]"));
+    assert!(!ec.contains("[*.{yaml,yml}]"));
+    assert!(!ec.contains("[*.toml]"));
+    assert!(!ec.contains("[*.md]"));
+    assert!(!ec.contains("[*.typ]"));
+
+    // JSON diverges due to unsupported line length
     assert!(ec.contains("[*.json]"));
-    assert!(ec.contains("[*.toml]"));
-    assert!(ec.contains("[*.md]"));
-    assert!(ec.contains("[*.typ]"));
+    assert!(ec.contains("[*.json]\nindent_style = space\nindent_size = 2\n"));
+    assert!(!ec.contains(
+      "[*.json]\nindent_style = space\nindent_size = 2\nmax_line_length"
+    ));
+
+    // When all provided surfaces match [*], only [*] is emitted
+    let matching_surfaces: Vec<Box<dyn LanguageSurface>> = vec![
+      Box::new(crate::surfaces::rust::RustSurface),
+      Box::new(crate::surfaces::toml::TomlSurface),
+      Box::new(crate::surfaces::markdown::MarkdownSurface),
+    ];
+    let ec_matching = generate_editorconfig(&global, &matching_surfaces);
+    assert!(ec_matching.contains("[*]"));
+    assert!(!ec_matching.contains("[*.rs]"));
+    assert!(!ec_matching.contains("[*.toml]"));
+    assert!(!ec_matching.contains("[*.md]"));
   }
 
   #[test]
@@ -284,26 +314,33 @@ mod tests {
     // Global has tab
     assert!(ec.contains("[*]\ncharset = utf-8\nend_of_line = lf\ninsert_final_newline = true\ntrim_trailing_whitespace = true\nindent_style = tab\nindent_size = 4\nmax_line_length = 100"));
 
-    // Rust is fixed to spaces
+    // Rust is fixed to spaces (diverges from tab)
     assert!(ec.contains(
       "[*.rs]\nindent_style = space\nindent_size = 4\nmax_line_length = 100"
     ));
 
-    // Python is configurable -> tab
-    assert!(ec.contains(
-      "[*.py]\nindent_style = tab\nindent_size = 4\nmax_line_length = 100"
-    ));
+    // Python is configurable -> tab (matches [*], omitted)
+    assert!(!ec.contains("[*.py]"));
 
-    // JSON is configurable for tabs, but unsupported for max_line_length
+    // C++ is configurable -> tab (matches [*], omitted)
+    assert!(!ec.contains("[*.{c,cc,cpp,cxx,h,hh,hpp,hxx}]"));
+
+    // JSON is configurable for tabs, but unsupported for max_line_length (diverges from 100)
     assert!(ec.contains("[*.json]\nindent_style = tab\nindent_size = 4\n"));
     assert!(!ec.contains(
       "[*.json]\nindent_style = tab\nindent_size = 4\nmax_line_length"
     ));
 
-    // YAML is fixed to spaces
+    // YAML is fixed to spaces (diverges from tab)
     assert!(ec.contains("[*.{yaml,yml}]\nindent_style = space\nindent_size = 4\nmax_line_length = 100"));
 
-    // Typst is fixed to spaces
+    // TOML is configurable -> tab (matches [*], omitted)
+    assert!(!ec.contains("[*.toml]"));
+
+    // Markdown is configurable -> tab (matches [*], omitted)
+    assert!(!ec.contains("[*.md]"));
+
+    // Typst is fixed to spaces (diverges from tab)
     assert!(ec.contains(
       "[*.typ]\nindent_style = space\nindent_size = 4\nmax_line_length = 100"
     ));
@@ -340,5 +377,15 @@ line_length = 88
     assert!(ec.contains(
       "[*.py]\nindent_style = tab\nindent_size = 4\nmax_line_length = 88"
     ));
+
+    // Non-diverging surfaces matching [*] are omitted
+    assert!(!ec.contains("[*.{c,cc,cpp,cxx,h,hh,hpp,hxx}]"));
+    assert!(!ec.contains("[*.{yaml,yml}]"));
+    assert!(!ec.contains("[*.toml]"));
+    assert!(!ec.contains("[*.md]"));
+    assert!(!ec.contains("[*.typ]"));
+
+    // JSON still diverges on unsupported max_line_length
+    assert!(ec.contains("[*.json]\nindent_style = space\nindent_size = 2\n"));
   }
 }
