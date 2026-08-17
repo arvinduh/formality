@@ -1,7 +1,7 @@
 use crate::config::FormalityConfig;
 use crate::surfaces::{
   LanguageSurface, ToolInfo, all_surfaces, create_tool_command,
-  detect_surfaces_smart,
+  detect_surfaces_smart, scan_unsupported_workspace_extensions,
 };
 use colored::Colorize;
 use std::collections::{HashMap, HashSet};
@@ -242,6 +242,36 @@ pub fn run_doctor(
         "languages = [...]".bold()
       );
     }
+  }
+
+  // Check for discovered unsupported workspace languages (Bucket C)
+  let unsupported_exts = scan_unsupported_workspace_extensions(root);
+  if !unsupported_exts.is_empty() {
+    println!(
+      "\n{}",
+      "──────────────────────────────────────────────────────────────────"
+        .dimmed()
+    );
+    println!(
+      "{}",
+      "Discovered Unsupported Languages in Workspace:".yellow().bold()
+    );
+    for (ext, count) in &unsupported_exts {
+      println!(
+        "  • '.{}' ({} file{}) — Not yet supported by formality",
+        ext.bold(),
+        count,
+        if *count == 1 { "" } else { "s" }
+      );
+    }
+    println!(
+      "    {} Request or vote for new language surfaces at:",
+      "Tip:".cyan().bold()
+    );
+    println!(
+      "         {}",
+      "https://github.com/arvinduh/formality/issues".bold()
+    );
   }
 
   // Auto-install mode
