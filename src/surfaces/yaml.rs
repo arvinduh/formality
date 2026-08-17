@@ -1,9 +1,9 @@
 use super::{
   ExecutionContext, LanguageSurface, SurfaceResult, SurfaceStatus, ToolInfo,
-  check_binary_exists, find_files_with_ext, markdown::sync_prettier_config,
+  check_binary_exists, create_tool_command, find_files_with_ext,
+  markdown::sync_prettier_config,
 };
 use std::path::Path;
-use std::process::Command;
 use std::time::Instant;
 
 pub struct YamlSurface;
@@ -34,14 +34,14 @@ impl LanguageSurface for YamlSurface {
       ToolInfo {
         binary: "prettier",
         description: "YAML formatter",
-        install_hint: "Install via: npm install -g prettier",
+        install_hint: "Install via: npm install -g prettier (or pnpm add -g prettier / brew install prettier / winget install Prettier.Prettier)",
         is_required_for_fmt: true,
         is_required_for_lint: false,
       },
       ToolInfo {
         binary: "yamllint",
         description: "YAML linter",
-        install_hint: "Install via: pip install yamllint (or brew install yamllint)",
+        install_hint: "Install via: pip install yamllint (or uv tool install yamllint / brew install yamllint / winget install yamllint)",
         is_required_for_fmt: false,
         is_required_for_lint: true,
       },
@@ -71,7 +71,7 @@ impl LanguageSurface for YamlSurface {
       };
     }
 
-    let mut cmd = Command::new("prettier");
+    let mut cmd = create_tool_command("prettier");
     if ctx.check_only {
       cmd.arg("--check");
     } else {
@@ -146,7 +146,7 @@ impl LanguageSurface for YamlSurface {
       };
     }
 
-    let mut cmd = Command::new("yamllint");
+    let mut cmd = create_tool_command("yamllint");
     if !ctx.paths.is_empty() {
       for f in &files {
         cmd.arg(f);

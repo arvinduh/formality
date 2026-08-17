@@ -1,0 +1,13 @@
+# Normalize line endings to LF in the repository regardless of platform or
+# local core.autocrlf settings. Windows installs of Git commonly ship with
+# core.autocrlf=true, which silently rewrites every checked-out text file to
+# CRLF; tools that snapshot raw working-copy bytes without applying Git's
+# clean/smudge filters (e.g. `jj`) then see every such file as "modified"
+# even with zero real edits. Forcing eol=lf here keeps the working tree and
+# the repository byte-for-byte consistent.
+* text=auto eol=lf
+
+# Preserve native line endings for assets where CRLF is meaningful/expected.
+*.bat text eol=crlf
+*.cmd text eol=crlf
+*.ps1 text eol=crlf

@@ -183,8 +183,13 @@ pub fn run_with_args(args: Cli) -> i32 {
     colored::control::set_override(true);
   }
 
-  update::check_for_updates();
+  let update_notifier = update::spawn_update_check();
+  let code = run_command_inner(args);
+  update::print_update_notice(update_notifier);
+  code
+}
 
+fn run_command_inner(args: Cli) -> i32 {
   let root = args.root.unwrap_or_else(|| {
     std::env::current_dir().unwrap_or_else(|_| PathBuf::from("."))
   });

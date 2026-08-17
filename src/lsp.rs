@@ -93,7 +93,7 @@ pub const CHILD_LSP_REGISTRY: &[ChildLsp] = &[
     surface: "typst",
     binary: "tinymist",
     args: &[],
-    install_hint: "cargo install tinymist  OR  npm install -g @myriaddreamin/tinymist",
+    install_hint: "cargo binstall tinymist  OR  npm install -g @myriaddreamin/tinymist  OR  brew install tinymist",
   },
   ChildLsp {
     surface: "yaml",
@@ -111,7 +111,7 @@ pub const CHILD_LSP_REGISTRY: &[ChildLsp] = &[
     surface: "toml",
     binary: "taplo",
     args: &["lsp", "stdio"],
-    install_hint: "cargo install taplo-cli --locked  OR  npm install -g @taplo/cli",
+    install_hint: "cargo binstall taplo-cli  OR  npm install -g @taplo/cli  OR  brew install taplo",
   },
 ];
 
