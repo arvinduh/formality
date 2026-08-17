@@ -631,7 +631,9 @@ pub fn find_files_with_ext(
 }
 
 pub fn simple_glob_match(pattern: &str, text: &str) -> bool {
-  glob_match_slices(pattern.as_bytes(), text.as_bytes())
+  let norm_pattern = pattern.replace('\\', "/");
+  let norm_text = text.replace('\\', "/");
+  glob_match_slices(norm_pattern.as_bytes(), norm_text.as_bytes())
 }
 
 fn glob_match_slices(pattern: &[u8], text: &[u8]) -> bool {
@@ -1385,11 +1387,35 @@ mod tests {
   #[test]
   fn test_simple_glob_match() {
     assert!(simple_glob_match("*.rs", "main.rs"));
+    assert!(!simple_glob_match("*.rs", "src/main.rs"));
+    assert!(!simple_glob_match("*.rs", "src\\main.rs"));
     assert!(simple_glob_match("src/*.rs", "src/main.rs"));
+    assert!(simple_glob_match("src/*.rs", "src/lib.rs"));
+    assert!(simple_glob_match("src/*.rs", "src\\lib.rs"));
+    assert!(simple_glob_match("src\\*.rs", "src/lib.rs"));
+    assert!(!simple_glob_match("src/*.rs", "src/sub/lib.rs"));
+    assert!(!simple_glob_match("src/*.rs", "src\\sub\\lib.rs"));
+    assert!(simple_glob_match("src/**/*.rs", "src/lib.rs"));
+    assert!(simple_glob_match("src/**/*.rs", "src\\lib.rs"));
+    assert!(simple_glob_match("src/**/*.rs", "src/sub/lib.rs"));
+    assert!(simple_glob_match("src/**/*.rs", "src\\sub\\lib.rs"));
+    assert!(simple_glob_match("src/**/*.rs", "src/gen/api.rs"));
     assert!(simple_glob_match("src/**/api.rs", "src/gen/api.rs"));
+    assert!(simple_glob_match("*.toml", "Cargo.toml"));
+    assert!(!simple_glob_match("*.toml", "src/Cargo.toml"));
+    assert!(simple_glob_match("target/*", "target/debug"));
+    assert!(simple_glob_match("target/*", "target\\debug"));
+    assert!(!simple_glob_match("target/*", "target/debug/app"));
+    assert!(!simple_glob_match("target/*", "target\\debug\\app"));
+    assert!(simple_glob_match("target/**", "target/debug/app"));
+    assert!(simple_glob_match("target/**", "target\\debug\\app"));
+    assert!(simple_glob_match("**/*.rs", "main.rs"));
+    assert!(simple_glob_match("**/*.rs", "src/lib.rs"));
+    assert!(simple_glob_match("**/*.rs", "src/sub/lib.rs"));
     assert!(simple_glob_match("test?.rs", "test1.rs"));
     assert!(!simple_glob_match("*.py", "main.rs"));
     assert!(!simple_glob_match("test?.rs", "test12.rs"));
+    assert!(!simple_glob_match("test?.rs", "test/a.rs"));
   }
 
   #[test]
