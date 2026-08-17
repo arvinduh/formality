@@ -47,6 +47,9 @@ every surface in parallel for near-instant feedback.
 | **TOML**           | `taplo`                 | `taplo`             | `taplo.toml`                             |
 | **Typst**          | `typstyle`              | `typstyle`          | CLI flags (`--column`)                   |
 
+> **Need a language not yet supported?**
+> Request or vote for new language surfaces on [GitHub Issues](https://github.com/arvinduh/formality/issues/new).
+
 ---
 
 ## Installation
@@ -209,16 +212,16 @@ prose_wrap = "always"
 Usage: fml [OPTIONS] <COMMAND>
 
 Commands:
-  fmt            Format source files across detected or specified surfaces
-  lint           Lint source files across detected or specified surfaces
-  sync           Sync native tool configs from canonical globals
-  doctor         Diagnose installed toolchains with install hints
-  install        Auto-install missing toolchains using system package managers
-  init           Scaffold a new formality.toml configuration
-  list-surfaces  List all supported surfaces and detection status
-  schema         Print the JSON Schema for formality.toml
-  lsp            Start the formality LSP server (stdio transport)
-  help           Print this message or the help of the given subcommand(s)
+  fmt      Format source files across detected or specified surfaces
+  lint     Lint source files across detected or specified surfaces
+  sync     Sync native tool configs from canonical globals
+  doctor   Diagnose installed toolchains with install hints
+  install  Auto-install missing toolchains using system package managers
+  init     Scaffold a new formality.toml configuration
+  list     List all supported surfaces and detection status
+  schema   Print the JSON Schema for formality.toml
+  lsp      Start the formality LSP server (stdio transport)
+  help     Print this message or the help of the given subcommand(s)
 
 Options:
   -c, --config <FILE>  Custom path to formality config

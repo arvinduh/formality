@@ -33,7 +33,7 @@ pub const FORMALITY_SCHEMA_JSON: &str = r#"{
       "properties": {
         "languages": {
           "type": "array",
-          "description": "Explicit allowlist of active languages. If specified, only these languages will be formatted or linted.",
+          "description": "Explicit allowlist of active languages. If specified, only these languages will be formatted or linted. Mutually exclusive with 'ignore_languages'.",
           "items": {
             "type": "string",
             "enum": [
@@ -50,7 +50,7 @@ pub const FORMALITY_SCHEMA_JSON: &str = r#"{
         },
         "ignore_languages": {
           "type": "array",
-          "description": "Languages to completely ignore and exclude from formatting, linting, and config syncing.",
+          "description": "Languages to completely ignore and exclude from formatting, linting, and config syncing. Mutually exclusive with 'languages'.",
           "items": {
             "type": "string",
             "enum": [
