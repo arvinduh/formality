@@ -113,6 +113,29 @@ impl DeclaresFacets for PythonSurface {
 
 pub const PYTHON_EXTENSIONS: &[&str] = &["py", "pyi"];
 
+pub fn build_ruff_import_sort_args(
+  files: &[PathBuf],
+  extra_args: &[String],
+) -> Vec<String> {
+  let mut args = vec![
+    "check".to_string(),
+    "--select".to_string(),
+    "I".to_string(),
+    "--fix".to_string(),
+  ];
+  if !files.is_empty() {
+    for f in files {
+      args.push(f.to_string_lossy().to_string());
+    }
+  } else {
+    args.push(".".to_string());
+  }
+  for arg in extra_args {
+    args.push(arg.clone());
+  }
+  args
+}
+
 pub fn build_ruff_check_args(
   files: &[PathBuf],
   fix: bool,
@@ -212,25 +235,86 @@ impl LanguageSurface for PythonSurface {
       return diff_check_via_tempcopy(
         &files,
         |scratch| {
-          let mut cmd = create_tool_command("ruff");
-          cmd.arg("format").arg(scratch);
-          cmd.args(&ctx.lang_config.extra_args);
-          cmd.current_dir(&ctx.root);
-          cmd.output()
+          let mut isort_cmd = create_tool_command("ruff");
+          isort_cmd
+            .arg("check")
+            .arg("--select")
+            .arg("I")
+            .arg("--fix")
+            .arg(scratch);
+          isort_cmd.args(&ctx.lang_config.extra_args);
+          isort_cmd.current_dir(&ctx.root);
+          let isort_out = isort_cmd.output()?;
+          if !isort_out.status.success() {
+            return Ok(isort_out);
+          }
+
+          let mut fmt_cmd = create_tool_command("ruff");
+          fmt_cmd.arg("format").arg(scratch);
+          fmt_cmd.args(&ctx.lang_config.extra_args);
+          fmt_cmd.current_dir(&ctx.root);
+          fmt_cmd.output()
         },
         self.name(),
         start,
       );
     }
 
-    let mut cmd = create_tool_command("ruff");
-    cmd.arg("format");
-
-    if !ctx.paths.is_empty()
+    let files_to_pass = if !ctx.paths.is_empty()
       || !ctx.lang_config.files.is_empty()
       || !ctx.lang_config.exclude.is_empty()
     {
-      for f in &files {
+      files.clone()
+    } else {
+      Vec::new()
+    };
+
+    let mut isort_cmd = create_tool_command("ruff");
+    isort_cmd.args(build_ruff_import_sort_args(
+      &files_to_pass,
+      &ctx.lang_config.extra_args,
+    ));
+    isort_cmd.current_dir(&ctx.root);
+
+    match isort_cmd.output() {
+      Ok(output) => {
+        if !output.status.success() {
+          let stderr = String::from_utf8_lossy(&output.stderr).to_string();
+          let stdout = String::from_utf8_lossy(&output.stdout).to_string();
+          let msg = if !stderr.trim().is_empty() {
+            stderr
+          } else if !stdout.trim().is_empty() {
+            stdout
+          } else {
+            "Import sorting issues found in Python files".to_string()
+          };
+
+          return SurfaceResult {
+            surface_name: self.name(),
+            status: SurfaceStatus::ViolationsFound {
+              message: msg,
+              diff: None,
+            },
+            duration: start.elapsed(),
+          };
+        }
+      }
+      Err(e) => {
+        return SurfaceResult {
+          surface_name: self.name(),
+          status: SurfaceStatus::ExecutionError {
+            message: format!("Failed to execute ruff import sorting: {}", e),
+          },
+          duration: start.elapsed(),
+        };
+      }
+    }
+
+    let mut cmd = create_tool_command("ruff");
+    cmd.arg("format");
+
+    if !files_to_pass.is_empty() {
+      for f in &files_to_pass {
         cmd.arg(f);
       }
     } else {
@@ -498,5 +582,80 @@ mod tests {
     let pyi_file = temp.path().join("types.pyi");
     std::fs::write(&pyi_file, "def foo(x: int) -> str: ...").unwrap();
     assert!(surface.detect(temp.path()));
+  }
+  #[test]
+  fn test_build_ruff_import_sort_args() {
+    let no_files = build_ruff_import_sort_args(&[], &[]);
+    assert_eq!(
+      no_files,
+      vec![
+        "check".to_string(),
+        "--select".to_string(),
+        "I".to_string(),
+        "--fix".to_string(),
+        ".".to_string(),
+      ]
+    );
+
+    let files = vec![PathBuf::from("a.py"), PathBuf::from("b.py")];
+    let extra = vec!["--isolated".to_string()];
+    let with_files = build_ruff_import_sort_args(&files, &extra);
+    assert_eq!(
+      with_files,
+      vec![
+        "check".to_string(),
+        "--select".to_string(),
+        "I".to_string(),
+        "--fix".to_string(),
+        "a.py".to_string(),
+        "b.py".to_string(),
+        "--isolated".to_string(),
+      ]
+    );
+  }
+
+  #[test]
+  fn test_python_format_with_import_sorting() {
+    if !check_binary_exists("ruff") {
+      return;
+    }
+    let temp = TempDir::new().unwrap();
+    let file = temp.path().join("test.py");
+    let unformatted = "import sys\nimport os\n\ndef   foo( ):\n  pass\n";
+    std::fs::write(&file, unformatted).unwrap();
+
+    let surface = PythonSurface;
+    let ctx_check = ExecutionContext {
+      root: temp.path().to_path_buf(),
+      paths: Vec::new(),
+      global_config: ResolvedGlobalConfig::default(),
+      lang_config: ResolvedLangConfig::new("python"),
+      check_only: true,
+    };
+
+    let check_res = surface.format(&ctx_check);
+    assert!(matches!(
+      check_res.status,
+      SurfaceStatus::ViolationsFound { .. }
+    ));
+
+    let ctx_fix = ExecutionContext {
+      root: temp.path().to_path_buf(),
+      paths: Vec::new(),
+      global_config: ResolvedGlobalConfig::default(),
+      lang_config: ResolvedLangConfig::new("python"),
+      check_only: false,
+    };
+
+    let fix_res = surface.format(&ctx_fix);
+    assert!(matches!(fix_res.status, SurfaceStatus::Passed));
+
+    let formatted = std::fs::read_to_string(&file).unwrap();
+    let os_idx = formatted.find("import os").unwrap();
+    let sys_idx = formatted.find("import sys").unwrap();
+    assert!(os_idx < sys_idx);
+
+    let check_clean = surface.format(&ctx_check);
+    assert!(matches!(check_clean.status, SurfaceStatus::Passed));
   }
 }
