@@ -10,11 +10,12 @@ use std::time::Instant;
 pub struct RustSurface;
 
 pub(crate) fn build_rustfmt_fallback_cmd(
+  edition: &str,
   check_only: bool,
   files: &[PathBuf],
 ) -> Command {
   let mut c = create_tool_command("rustfmt");
-  c.arg("--edition").arg("2024");
+  c.arg("--edition").arg(edition);
   if check_only {
     c.arg("--check");
   }
@@ -148,7 +149,7 @@ impl LanguageSurface for RustSurface {
         }
         c
       } else {
-        build_rustfmt_fallback_cmd(ctx.check_only, &files)
+        build_rustfmt_fallback_cmd(edition, ctx.check_only, &files)
       };
 
     cmd.args(&ctx.lang_config.extra_args);
@@ -246,7 +247,7 @@ impl LanguageSurface for RustSurface {
       Err(e) => SurfaceResult {
         surface_name: self.name(),
         status: SurfaceStatus::ExecutionError {
-          message: format!("Failed to execute cargo clippy: {}", e),
+          message: format!("Failed to execute clippy: {}", e),
         },
         duration: start.elapsed(),
       },
@@ -335,8 +336,8 @@ mod tests {
   #[test]
   fn test_sync_config_generates_edition_2024() {
     let temp = TempDir::new().unwrap();
-    let ctx = dummy_execution_context(temp.path(), false);
     let surface = RustSurface;
+    let ctx = dummy_execution_context(temp.path(), false);
 
     let res = surface.sync_config(&ctx, false);
     assert!(matches!(
@@ -364,7 +365,7 @@ mod tests {
     let files = vec![PathBuf::from("src/main.rs"), PathBuf::from("src/lib.rs")];
 
     // check_only = false
-    let cmd = build_rustfmt_fallback_cmd(false, &files);
+    let cmd = build_rustfmt_fallback_cmd("2024", false, &files);
     let args: Vec<String> = cmd
       .get_args()
       .map(|a| a.to_string_lossy().into_owned())
@@ -387,7 +388,7 @@ mod tests {
     );
 
     // check_only = true
-    let cmd_check = build_rustfmt_fallback_cmd(true, &files);
+    let cmd_check = build_rustfmt_fallback_cmd("2021", true, &files);
     let check_args: Vec<String> = cmd_check
       .get_args()
       .map(|a| a.to_string_lossy().into_owned())
@@ -399,7 +400,7 @@ mod tests {
       check_args
         .get(check_edition_idx.unwrap() + 1)
         .map(|s| s.as_str()),
-      Some("2024")
+      Some("2021")
     );
     assert!(check_args.contains(&"--check".to_string()));
   }

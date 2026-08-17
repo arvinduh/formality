@@ -86,6 +86,7 @@ impl LanguageSurface for MarkdownSurface {
             .arg("--parser")
             .arg("markdown")
             .arg(scratch);
+          cmd.args(&ctx.lang_config.extra_args);
           cmd.current_dir(&ctx.root);
           cmd.output()
         },

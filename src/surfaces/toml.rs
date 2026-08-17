@@ -76,6 +76,7 @@ impl LanguageSurface for TomlSurface {
           let content = std::fs::read(scratch)?;
           let mut cmd = create_tool_command("taplo");
           cmd.arg("format").arg("-");
+          cmd.args(&ctx.lang_config.extra_args);
           cmd.current_dir(&ctx.root);
           cmd.stdin(std::process::Stdio::piped());
           cmd.stdout(std::process::Stdio::piped());
