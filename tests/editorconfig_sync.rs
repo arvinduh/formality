@@ -21,27 +21,19 @@ fn test_editorconfig_generation_all_surfaces() {
   // [*] section check
   assert!(ec.contains("[*]\ncharset = utf-8\nend_of_line = lf\ninsert_final_newline = true\ntrim_trailing_whitespace = true\nindent_style = space\nindent_size = 2\nmax_line_length = 80"));
 
-  // Sections check
-  assert!(ec.contains(
-    "[*.rs]\nindent_style = space\nindent_size = 2\nmax_line_length = 80"
-  ));
-  assert!(ec.contains(
-    "[*.py]\nindent_style = space\nindent_size = 2\nmax_line_length = 80"
-  ));
-  assert!(ec.contains("[*.{c,cc,cpp,cxx,h,hh,hpp,hxx}]\nindent_style = space\nindent_size = 2\nmax_line_length = 80"));
-  assert!(ec.contains("[*.{yaml,yml}]\nindent_style = space\nindent_size = 2\nmax_line_length = 80"));
+  // Surfaces matching [*] baseline are omitted
+  assert!(!ec.contains("[*.rs]"));
+  assert!(!ec.contains("[*.py]"));
+  assert!(!ec.contains("[*.{c,cc,cpp,cxx,h,hh,hpp,hxx}]"));
+  assert!(!ec.contains("[*.{yaml,yml}]"));
+  assert!(!ec.contains("[*.toml]"));
+  assert!(!ec.contains("[*.md]"));
+  assert!(!ec.contains("[*.typ]"));
+
+  // JSON diverges due to unsupported line length
   assert!(ec.contains("[*.json]\nindent_style = space\nindent_size = 2\n"));
   assert!(!ec.contains(
     "[*.json]\nindent_style = space\nindent_size = 2\nmax_line_length"
-  ));
-  assert!(ec.contains(
-    "[*.toml]\nindent_style = space\nindent_size = 2\nmax_line_length = 80"
-  ));
-  assert!(ec.contains(
-    "[*.md]\nindent_style = space\nindent_size = 2\nmax_line_length = 80"
-  ));
-  assert!(ec.contains(
-    "[*.typ]\nindent_style = space\nindent_size = 2\nmax_line_length = 80"
   ));
 }
 
@@ -63,7 +55,7 @@ fn test_editorconfig_generation_customized_global_facets() {
   // Global [*]
   assert!(ec.contains("[*]\ncharset = utf-8\nend_of_line = crlf\ninsert_final_newline = false\ntrim_trailing_whitespace = false\nindent_style = tab\nindent_size = 4\nmax_line_length = 120"));
 
-  // Fixed spaces surfaces
+  // Fixed spaces surfaces (diverge from tab)
   assert!(ec.contains(
     "[*.rs]\nindent_style = space\nindent_size = 4\nmax_line_length = 120"
   ));
@@ -72,18 +64,14 @@ fn test_editorconfig_generation_customized_global_facets() {
     "[*.typ]\nindent_style = space\nindent_size = 4\nmax_line_length = 120"
   ));
 
-  // Configurable tabs surfaces
-  assert!(ec.contains(
-    "[*.py]\nindent_style = tab\nindent_size = 4\nmax_line_length = 120"
-  ));
-  assert!(ec.contains("[*.{c,cc,cpp,cxx,h,hh,hpp,hxx}]\nindent_style = tab\nindent_size = 4\nmax_line_length = 120"));
+  // Configurable tabs surfaces match [*] and are omitted
+  assert!(!ec.contains("[*.py]"));
+  assert!(!ec.contains("[*.{c,cc,cpp,cxx,h,hh,hpp,hxx}]"));
+  assert!(!ec.contains("[*.toml]"));
+  assert!(!ec.contains("[*.md]"));
+
+  // JSON is configurable for tabs, but unsupported for max_line_length (diverges from 120)
   assert!(ec.contains("[*.json]\nindent_style = tab\nindent_size = 4\n"));
-  assert!(ec.contains(
-    "[*.toml]\nindent_style = tab\nindent_size = 4\nmax_line_length = 120"
-  ));
-  assert!(ec.contains(
-    "[*.md]\nindent_style = tab\nindent_size = 4\nmax_line_length = 120"
-  ));
 }
 
 #[test]
@@ -132,7 +120,8 @@ fn test_editorconfig_sync_command_workflow() {
   );
   assert!(ec_content.contains("root = true"));
   assert!(ec_content.contains("[*]"));
-  assert!(ec_content.contains("[*.rs]"));
+  // In a default Rust project, rust settings match [*] baseline, so [*.rs] is omitted
+  assert!(!ec_content.contains("[*.rs]"));
 
   // 3. sync --check should now pass cleanly
   let check_clean = Cli {
@@ -228,4 +217,14 @@ line_length = 88
   assert!(ec.contains(
     "[*.py]\nindent_style = tab\nindent_size = 4\nmax_line_length = 88"
   ));
+
+  // Surfaces matching [*] baseline are omitted
+  assert!(!ec.contains("[*.{c,cc,cpp,cxx,h,hh,hpp,hxx}]"));
+  assert!(!ec.contains("[*.{yaml,yml}]"));
+  assert!(!ec.contains("[*.toml]"));
+  assert!(!ec.contains("[*.md]"));
+  assert!(!ec.contains("[*.typ]"));
+
+  // JSON still diverges on unsupported max_line_length
+  assert!(ec.contains("[*.json]\nindent_style = space\nindent_size = 2\n"));
 }
