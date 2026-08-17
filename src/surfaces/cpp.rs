@@ -7,6 +7,7 @@ use super::{
 use std::path::{Path, PathBuf};
 use std::time::Instant;
 
+#[derive(Debug, Default, Clone, Copy)]
 pub struct CppSurface;
 
 impl DeclaresFacets for CppSurface {
@@ -123,6 +124,14 @@ impl LanguageSurface for CppSurface {
 
   fn aliases(&self) -> &[&'static str] {
     &["c", "c++", "cxx"]
+  }
+
+  fn file_extensions(&self) -> &[&'static str] {
+    CPP_EXTENSIONS
+  }
+
+  fn clone_box(&self) -> Box<dyn LanguageSurface> {
+    Box::new(*self)
   }
 
   fn detect(&self, root: &Path) -> bool {
