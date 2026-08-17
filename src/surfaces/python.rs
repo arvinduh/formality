@@ -443,4 +443,17 @@ mod tests {
     assert!(rendered.contains("quote-style = \"single\""));
     assert!(rendered.contains("[lint]"));
   }
+  #[test]
+  fn test_python_surface_file_extensions_and_pyi_detection() {
+    let surface = PythonSurface;
+    assert_eq!(surface.file_extensions(), &["py", "pyi"]);
+
+    let temp = TempDir::new().unwrap();
+    assert!(!surface.detect(temp.path()));
+
+    // Create a .pyi stub file
+    let pyi_file = temp.path().join("types.pyi");
+    std::fs::write(&pyi_file, "def foo(x: int) -> str: ...").unwrap();
+    assert!(surface.detect(temp.path()));
+  }
 }
