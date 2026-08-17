@@ -216,11 +216,11 @@ fn test_sync_config_workflow() {
 }
 
 #[test]
-fn test_list_surfaces_command() {
+fn test_list_command() {
   let args = Cli {
     config: None,
     root: None,
-    command: Commands::ListSurfaces,
+    command: Commands::List,
   };
   let code = fml::run_with_args(args);
   assert_eq!(code, 0);

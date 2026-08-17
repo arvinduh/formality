@@ -310,14 +310,14 @@ fn run_command_inner(args: Cli) -> i32 {
       }
     }
 
-    Commands::ListSurfaces => {
+    Commands::List => {
       let detected = detect_surfaces_smart(&root, &config);
       let detected_names: Vec<&str> =
         detected.iter().map(|s| s.name()).collect();
 
       println!(
         "{} {}",
-        "fml surfaces".bold().cyan(),
+        "fml list".bold().cyan(),
         format!("({} supported)", all_surfaces().len()).dimmed()
       );
       println!(
@@ -353,6 +353,14 @@ fn run_command_inner(args: Cli) -> i32 {
         "  {} active, {} inactive\n",
         active_count.to_string().green().bold(),
         (all_surfaces().len() - active_count).to_string().dimmed()
+      );
+      println!(
+        "  {} Missing a language you need? Request or contribute a surface at:",
+        "Tip:".cyan().bold()
+      );
+      println!(
+        "       {}\n",
+        "https://github.com/arvinduh/formality/issues".dimmed()
       );
       0
     }
@@ -534,8 +542,8 @@ fn resolve_target_surfaces(
         selected.push(s);
       } else {
         return Err(format!(
-          "Unknown language surface: '{}'. Run 'fml list-surfaces' to see supported languages.",
-          name
+          "Unknown language surface: '{}'. Run 'fml list' to see supported languages.\nTo request support for '{}', open an issue at https://github.com/arvinduh/formality/issues",
+          name, name
         ));
       }
     }

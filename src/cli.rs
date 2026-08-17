@@ -120,8 +120,8 @@ pub enum Commands {
   },
 
   /// List all supported surfaces and indicate which are detected in this project
-  #[command(name = "list-surfaces")]
-  ListSurfaces,
+  #[command(name = "list")]
+  List,
 
   /// Output the JSON Schema for formality.toml to stdout or file
   Schema {
