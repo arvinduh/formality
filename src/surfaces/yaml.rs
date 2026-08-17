@@ -368,6 +368,57 @@ mod tests {
     assert!(rendered.contains("max: 120"));
     assert!(rendered.contains("spaces: 4"));
     assert!(rendered.contains("indent-sequences: true"));
+    assert!(rendered.contains("document-start: disable"));
+    assert!(rendered.contains("truthy: disable"));
+  }
+
+  #[test]
+  fn test_yamllint_config_from_context_rules_disabled_by_default() {
+    let temp = TempDir::new().unwrap();
+    let ctx = ExecutionContext {
+      root: temp.path().to_path_buf(),
+      paths: Vec::new(),
+      global_config: ResolvedGlobalConfig::default(),
+      lang_config: ResolvedLangConfig::new("yaml"),
+      check_only: false,
+    };
+    let cfg = YamllintConfig::from_context(&ctx);
+    assert_eq!(cfg.rules.document_start, YamllintRuleToggle::Disable);
+    assert_eq!(cfg.rules.truthy, YamllintRuleToggle::Disable);
+    assert_eq!(cfg.rules.indentation.indent_sequences, true);
+
+    let rendered = cfg.render().unwrap();
+    assert!(rendered.contains("document-start: disable"));
+    assert!(rendered.contains("truthy: disable"));
+    assert!(rendered.contains("indent-sequences: true"));
+  }
+
+  #[test]
+  fn test_yamllint_config_from_context_rules_enabled() {
+    let temp = TempDir::new().unwrap();
+    let mut lang_cfg = ResolvedLangConfig::new("yaml");
+    lang_cfg.yaml = Some(crate::config::YamlOptions {
+      indent_sequence: Some(false),
+      document_start: Some(true),
+      truthy: Some(true),
+    });
+
+    let ctx = ExecutionContext {
+      root: temp.path().to_path_buf(),
+      paths: Vec::new(),
+      global_config: ResolvedGlobalConfig::default(),
+      lang_config: lang_cfg,
+      check_only: false,
+    };
+    let cfg = YamllintConfig::from_context(&ctx);
+    assert_eq!(cfg.rules.document_start, YamllintRuleToggle::Enable);
+    assert_eq!(cfg.rules.truthy, YamllintRuleToggle::Enable);
+    assert_eq!(cfg.rules.indentation.indent_sequences, false);
+
+    let rendered = cfg.render().unwrap();
+    assert!(rendered.contains("document-start: enable"));
+    assert!(rendered.contains("truthy: enable"));
+    assert!(rendered.contains("indent-sequences: false"));
   }
 
   #[test]
