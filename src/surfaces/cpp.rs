@@ -110,7 +110,7 @@ impl LanguageSurface for CppSurface {
       || root.join("meson.build").is_file()
       || root.join(".clang-format").is_file()
       || root.join(".clang-tidy").is_file()
-      || !find_files_with_ext(root, CPP_EXTENSIONS, &[]).is_empty()
+      || !find_files_with_ext(root, CPP_EXTENSIONS, &[], &[], &[]).is_empty()
   }
 
   fn tool_info(
@@ -151,7 +151,13 @@ impl LanguageSurface for CppSurface {
       };
     }
 
-    let files = find_files_with_ext(&ctx.root, CPP_EXTENSIONS, &ctx.paths);
+    let files = find_files_with_ext(
+      &ctx.root,
+      CPP_EXTENSIONS,
+      &ctx.paths,
+      &ctx.lang_config.files,
+      &ctx.lang_config.exclude,
+    );
     if files.is_empty() {
       return SurfaceResult {
         surface_name: self.name(),
@@ -181,6 +187,7 @@ impl LanguageSurface for CppSurface {
       cmd.arg(f);
     }
 
+    cmd.args(&ctx.lang_config.extra_args);
     cmd.current_dir(&ctx.root);
 
     match cmd.output() {
@@ -237,7 +244,13 @@ impl LanguageSurface for CppSurface {
       };
     }
 
-    let files = find_files_with_ext(&ctx.root, CPP_EXTENSIONS, &ctx.paths);
+    let files = find_files_with_ext(
+      &ctx.root,
+      CPP_EXTENSIONS,
+      &ctx.paths,
+      &ctx.lang_config.files,
+      &ctx.lang_config.exclude,
+    );
     if files.is_empty() {
       return SurfaceResult {
         surface_name: self.name(),
@@ -257,7 +270,6 @@ impl LanguageSurface for CppSurface {
         cpp_files.push(f.clone());
       }
     }
-
     let groups: Vec<(Vec<PathBuf>, &'static str)> =
       [(c_files, "-std=c17"), (cpp_files, "-std=c++17")]
         .into_iter()
@@ -270,6 +282,7 @@ impl LanguageSurface for CppSurface {
       let mut cmd = create_tool_command("clang-tidy");
       let args = build_clang_tidy_args(&flist, fix, std_flag);
       cmd.args(&args);
+      cmd.args(&ctx.lang_config.extra_args);
       cmd.current_dir(&ctx.root);
 
       match cmd.output() {

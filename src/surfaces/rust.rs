@@ -35,7 +35,7 @@ impl LanguageSurface for RustSurface {
 
   fn detect(&self, root: &Path) -> bool {
     root.join("Cargo.toml").is_file()
-      || !find_files_with_ext(root, &["rs"], &[]).is_empty()
+      || !find_files_with_ext(root, &["rs"], &[], &[], &[]).is_empty()
   }
 
   fn tool_info(
@@ -81,7 +81,13 @@ impl LanguageSurface for RustSurface {
       };
     }
 
-    let files = find_files_with_ext(&ctx.root, &["rs"], &ctx.paths);
+    let files = find_files_with_ext(
+      &ctx.root,
+      &["rs"],
+      &ctx.paths,
+      &ctx.lang_config.files,
+      &ctx.lang_config.exclude,
+    );
     if files.is_empty() {
       return SurfaceResult {
         surface_name: self.name(),
@@ -118,6 +124,7 @@ impl LanguageSurface for RustSurface {
             c
           };
           c.arg(scratch);
+          c.args(&ctx.lang_config.extra_args);
           c.current_dir(&ctx.root);
           c.output()
         },
@@ -130,7 +137,10 @@ impl LanguageSurface for RustSurface {
       if check_binary_exists("cargo") && ctx.root.join("Cargo.toml").exists() {
         let mut c = create_tool_command("cargo");
         c.arg("fmt");
-        if !ctx.paths.is_empty() {
+        if !ctx.paths.is_empty()
+          || !ctx.lang_config.files.is_empty()
+          || !ctx.lang_config.exclude.is_empty()
+        {
           c.arg("--");
           for f in &files {
             c.arg(f);
@@ -141,6 +151,7 @@ impl LanguageSurface for RustSurface {
         build_rustfmt_fallback_cmd(ctx.check_only, &files)
       };
 
+    cmd.args(&ctx.lang_config.extra_args);
     cmd.current_dir(&ctx.root);
 
     match cmd.output() {
@@ -202,6 +213,7 @@ impl LanguageSurface for RustSurface {
       cmd.arg("--fix").arg("--allow-dirty").arg("--allow-staged");
     }
     cmd.arg("--all-targets").arg("--").arg("-D").arg("warnings");
+    cmd.args(&ctx.lang_config.extra_args);
     cmd.current_dir(&ctx.root);
 
     match cmd.output() {
