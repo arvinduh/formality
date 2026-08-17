@@ -5,6 +5,7 @@ pub mod doctor;
 pub mod facets;
 pub mod lsp;
 pub mod runner;
+pub mod schema;
 pub mod surfaces;
 pub mod table;
 pub mod update;
@@ -21,157 +22,7 @@ use surfaces::{
   get_surface_by_name,
 };
 
-/// The JSON Schema for formality.toml, embedded directly so the binary can
-/// emit it via `fml schema` and the release pipeline can regenerate
-/// `schema/formality.schema.json` without needing the file in the source tree.
-pub const FORMALITY_SCHEMA_JSON: &str = r#"{
-  "$schema": "http://json-schema.org/draft-07/schema#",
-  "title": "FormalityConfig",
-  "description": "Configuration schema for formality (fml) - Multi-language formatting & linting orchestrator",
-  "type": "object",
-  "properties": {
-    "global": {
-      "type": "object",
-      "description": "Shared universal formatting settings applied across all language surfaces unless overridden",
-      "properties": {
-        "languages": {
-          "type": "array",
-          "description": "Explicit allowlist of active languages. If specified, only these languages will be formatted or linted.",
-          "items": {
-            "type": "string",
-            "enum": [
-              "rust",
-              "python",
-              "cpp",
-              "markdown",
-              "yaml",
-              "json",
-              "toml",
-              "typst"
-            ]
-          }
-        },
-        "ignore_languages": {
-          "type": "array",
-          "description": "Languages to completely ignore and exclude from formatting, linting, and config syncing.",
-          "items": {
-            "type": "string",
-            "enum": [
-              "rust",
-              "python",
-              "cpp",
-              "markdown",
-              "yaml",
-              "json",
-              "toml",
-              "typst"
-            ]
-          }
-        },
-        "indent_size": {
-          "type": "integer",
-          "minimum": 1,
-          "default": 2,
-          "description": "Default indentation width in spaces"
-        },
-        "line_length": {
-          "type": "integer",
-          "minimum": 20,
-          "default": 80,
-          "description": "Default maximum line length / column limit"
-        },
-        "end_of_line": {
-          "type": "string",
-          "enum": ["lf", "crlf", "cr", "auto"],
-          "default": "lf",
-          "description": "Line termination style"
-        },
-        "charset": {
-          "type": "string",
-          "default": "utf-8",
-          "description": "Character encoding"
-        },
-        "insert_final_newline": {
-          "type": "boolean",
-          "default": true,
-          "description": "Ensure files end with a newline"
-        },
-        "trim_trailing_whitespace": {
-          "type": "boolean",
-          "default": true,
-          "description": "Trim trailing whitespace on all lines"
-        },
-        "use_tabs": {
-          "type": "boolean",
-          "default": false,
-          "description": "Use tabs instead of spaces for indentation"
-        }
-      },
-      "additionalProperties": false
-    },
-    "lang": {
-      "type": "object",
-      "description": "Language-specific surfaces and overrides",
-      "patternProperties": {
-        "^(rust|python|cpp|markdown|yaml|json|toml|typst|[a-zA-Z0-9_-]+)$": {
-          "type": "object",
-          "properties": {
-            "format_tool": {
-              "type": "string",
-              "description": "Formatter binary or tool name"
-            },
-            "lint_tool": {
-              "type": "string",
-              "description": "Linter binary or tool name"
-            },
-            "indent_size": {
-              "type": "integer",
-              "minimum": 1,
-              "description": "Override global indent size for this language"
-            },
-            "line_length": {
-              "type": "integer",
-              "minimum": 20,
-              "description": "Override global line length for this language"
-            },
-            "use_tabs": {
-              "type": "boolean",
-              "description": "Override tab indentation setting for this language"
-            },
-            "prose_wrap": {
-              "type": "string",
-              "enum": ["always", "never", "preserve"],
-              "description": "Prose wrapping rule for Markdown"
-            },
-            "enabled": {
-              "type": "boolean",
-              "default": true,
-              "description": "Enable or disable this surface"
-            },
-            "extra_args": {
-              "type": "array",
-              "items": { "type": "string" },
-              "description": "Extra CLI flags passed down directly to the underlying tool"
-            },
-            "files": {
-              "type": "array",
-              "items": { "type": "string" },
-              "description": "File patterns to include"
-            },
-            "exclude": {
-              "type": "array",
-              "items": { "type": "string" },
-              "description": "File patterns to exclude"
-            }
-          },
-          "additionalProperties": true
-        }
-      }
-    }
-  },
-  "additionalProperties": false
-}
-"#;
+pub use schema::generate_schema;
 
 pub fn run() -> i32 {
   let args = Cli::parse();
@@ -218,11 +69,12 @@ fn run_command_inner(args: Cli) -> i32 {
 
   match args.command {
     Commands::Schema { output } => {
+      let schema_json = generate_schema();
       if let Some(target_file) = output {
         if let Some(parent) = target_file.parent() {
           let _ = std::fs::create_dir_all(parent);
         }
-        match std::fs::write(&target_file, FORMALITY_SCHEMA_JSON) {
+        match std::fs::write(&target_file, &schema_json) {
           Ok(_) => {
             println!(
               "{} Wrote JSON Schema to {}",
@@ -242,7 +94,7 @@ fn run_command_inner(args: Cli) -> i32 {
           }
         }
       } else {
-        println!("{}", FORMALITY_SCHEMA_JSON);
+        println!("{}", schema_json);
         0
       }
     }
