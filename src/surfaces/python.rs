@@ -1,7 +1,7 @@
 use super::{
   ExecutionContext, LanguageSurface, SurfaceResult, SurfaceStatus, ToolInfo,
-  check_binary_exists, create_tool_command, find_files_with_ext,
-  sync_file_helper,
+  check_binary_exists, create_tool_command, diff_check_via_tempcopy,
+  find_files_with_ext, sync_file_helper,
 };
 use std::path::Path;
 use std::time::Instant;
@@ -54,11 +54,23 @@ impl LanguageSurface for PythonSurface {
       };
     }
 
+    if ctx.check_only {
+      let files = find_files_with_ext(&ctx.root, &["py"], &ctx.paths);
+      return diff_check_via_tempcopy(
+        &files,
+        |scratch| {
+          let mut cmd = create_tool_command("ruff");
+          cmd.arg("format").arg(scratch);
+          cmd.current_dir(&ctx.root);
+          cmd.output()
+        },
+        self.name(),
+        start,
+      );
+    }
+
     let mut cmd = create_tool_command("ruff");
     cmd.arg("format");
-    if ctx.check_only {
-      cmd.arg("--check");
-    }
 
     if !ctx.paths.is_empty() {
       for p in &ctx.paths {

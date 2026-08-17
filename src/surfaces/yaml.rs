@@ -1,7 +1,7 @@
 use super::{
   ExecutionContext, LanguageSurface, SurfaceResult, SurfaceStatus, ToolInfo,
-  check_binary_exists, create_tool_command, find_files_with_ext,
-  markdown::sync_prettier_config,
+  check_binary_exists, create_tool_command, diff_check_via_tempcopy,
+  find_files_with_ext, markdown::sync_prettier_config,
 };
 use std::path::Path;
 use std::time::Instant;
@@ -71,12 +71,22 @@ impl LanguageSurface for YamlSurface {
       };
     }
 
-    let mut cmd = create_tool_command("prettier");
     if ctx.check_only {
-      cmd.arg("--check");
-    } else {
-      cmd.arg("--write");
+      return diff_check_via_tempcopy(
+        &files,
+        |scratch| {
+          let mut cmd = create_tool_command("prettier");
+          cmd.arg("--write").arg("--parser").arg("yaml").arg(scratch);
+          cmd.current_dir(&ctx.root);
+          cmd.output()
+        },
+        self.name(),
+        start,
+      );
     }
+
+    let mut cmd = create_tool_command("prettier");
+    cmd.arg("--write");
 
     for f in &files {
       cmd.arg(f);
