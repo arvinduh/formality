@@ -68,8 +68,9 @@ impl NativeConfig for ClangTidyConfig {
 impl Default for ClangTidyConfig {
   fn default() -> Self {
     Self {
-      checks: "*,-fuchsia-*,-google-readability-todo,-llvm-header-guard,-llvmlibc-*"
-        .to_string(),
+      checks:
+        "*,-fuchsia-*,-google-readability-todo,-llvm-header-guard,-llvmlibc-*"
+          .to_string(),
       warnings_as_errors: "".to_string(),
       header_filter_regex: "".to_string(),
       format_style: "none".to_string(),
