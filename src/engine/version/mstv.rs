@@ -1,7 +1,7 @@
 //! Minimum Supported Tool Version (MSTV) registry: per-tool minimum
 //! versions, upgrade advice, and version-probing metadata.
 
-use super::core::Version;
+use super::Version;
 
 /// Minimum Supported Tool Version declarations for tools in the Formality fleet.
 pub const MSTV_RUSTFMT: Version = Version::new(1, 4, 0);

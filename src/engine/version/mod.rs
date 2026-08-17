@@ -4,18 +4,17 @@
 pub mod mstv;
 
 pub use mstv::{
-  MSTV_BIOME, MSTV_CHECKSTYLE, MSTV_CLANG_FORMAT, MSTV_CLANG_TIDY,
-  MSTV_CLIPPY, MSTV_GOFMT, MSTV_GOLANGCI_LINT, MSTV_KTFMT, MSTV_KTLINT,
-  MSTV_MARKDOWNLINT_CLI2, MSTV_PRETTIER, MSTV_RUFF, MSTV_RUSTFMT,
-  MSTV_TAPLO, MSTV_TYPSTYLE, MSTV_YAMLLINT, TOOL_MSTV_REGISTRY,
-  ToolMstvEntry, all_mstv_entries, get_tool_mstv_entry, tool_mstv_entry,
+  MSTV_BIOME, MSTV_CHECKSTYLE, MSTV_CLANG_FORMAT, MSTV_CLANG_TIDY, MSTV_CLIPPY,
+  MSTV_GOFMT, MSTV_GOLANGCI_LINT, MSTV_KTFMT, MSTV_KTLINT,
+  MSTV_MARKDOWNLINT_CLI2, MSTV_PRETTIER, MSTV_RUFF, MSTV_RUSTFMT, MSTV_TAPLO,
+  MSTV_TYPSTYLE, MSTV_YAMLLINT, TOOL_MSTV_REGISTRY, ToolMstvEntry,
+  all_mstv_entries, get_tool_mstv_entry, tool_mstv_entry,
 };
 
 use crate::surfaces::create_tool_command;
 use std::cmp::Ordering;
 use std::fmt;
 use std::str::FromStr;
-
 
 /// Represents a Semantic Version (SemVer) with optional prerelease identifier.
 #[derive(Debug, Clone, Eq, PartialEq, Hash)]
@@ -469,7 +468,6 @@ pub fn check_tool_compatibility(binary: &str, minimum: &Version) -> ToolStatus {
 
   CompatibilityPolicy::evaluate_with_raw(probed, raw, minimum)
 }
-
 
 #[cfg(test)]
 mod tests;
