@@ -50,9 +50,8 @@ impl NativeConfig for YamllintConfig {
 impl YamllintConfig {
   pub fn from_context(ctx: &ExecutionContext) -> Self {
     let yaml_opts = ctx.lang_config.yaml.as_ref();
-    let indent_sequences = yaml_opts
-      .and_then(|y| y.indent_sequence)
-      .unwrap_or(true);
+    let indent_sequences =
+      yaml_opts.and_then(|y| y.indent_sequence).unwrap_or(true);
     let document_start = match yaml_opts.and_then(|y| y.document_start) {
       Some(true) => YamllintRuleToggle::Enable,
       _ => YamllintRuleToggle::Disable,
