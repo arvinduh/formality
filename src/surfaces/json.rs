@@ -1,7 +1,7 @@
 use super::{
   ExecutionContext, LanguageSurface, SurfaceResult, SurfaceStatus, ToolInfo,
-  check_binary_exists, create_tool_command, find_files_with_ext,
-  markdown::sync_prettier_config,
+  check_binary_exists, create_tool_command, diff_check_via_tempcopy,
+  find_files_with_ext, markdown::sync_prettier_config,
 };
 use std::path::Path;
 use std::time::Instant;
@@ -20,7 +20,7 @@ impl LanguageSurface for JsonSurface {
   }
 
   fn detect(&self, root: &Path) -> bool {
-    !find_files_with_ext(root, JSON_EXTENSIONS, &[]).is_empty()
+    !find_files_with_ext(root, JSON_EXTENSIONS, &[], &[], &[]).is_empty()
   }
 
   fn tool_info(
@@ -50,7 +50,13 @@ impl LanguageSurface for JsonSurface {
       };
     }
 
-    let files = find_files_with_ext(&ctx.root, JSON_EXTENSIONS, &ctx.paths);
+    let files = find_files_with_ext(
+      &ctx.root,
+      JSON_EXTENSIONS,
+      &ctx.paths,
+      &ctx.lang_config.files,
+      &ctx.lang_config.exclude,
+    );
     if files.is_empty() {
       return SurfaceResult {
         surface_name: self.name(),
@@ -59,17 +65,33 @@ impl LanguageSurface for JsonSurface {
       };
     }
 
-    let mut cmd = create_tool_command("prettier");
     if ctx.check_only {
-      cmd.arg("--check");
-    } else {
-      cmd.arg("--write");
+      return diff_check_via_tempcopy(
+        &files,
+        |scratch| {
+          let parser = if scratch.to_string_lossy().contains(".jsonc.") {
+            "json5"
+          } else {
+            "json"
+          };
+          let mut cmd = create_tool_command("prettier");
+          cmd.arg("--write").arg("--parser").arg(parser).arg(scratch);
+          cmd.current_dir(&ctx.root);
+          cmd.output()
+        },
+        self.name(),
+        start,
+      );
     }
+
+    let mut cmd = create_tool_command("prettier");
+    cmd.arg("--write");
 
     for f in &files {
       cmd.arg(f);
     }
 
+    cmd.args(&ctx.lang_config.extra_args);
     cmd.current_dir(&ctx.root);
 
     match cmd.output() {

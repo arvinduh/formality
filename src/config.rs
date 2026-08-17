@@ -78,8 +78,8 @@ pub struct LangConfig {
   pub prose_wrap: Option<String>,
   pub enabled: Option<bool>,
   pub extra_args: Option<Vec<String>>,
-  pub files: Option<Vec<String>>,
-  pub exclude: Option<Vec<String>>,
+  pub files: Option<Vec<PathBuf>>,
+  pub exclude: Option<Vec<PathBuf>>,
 }
 
 impl LangConfig {
@@ -148,8 +148,8 @@ pub struct ResolvedLangConfig {
   pub prose_wrap: Option<String>,
   pub enabled: bool,
   pub extra_args: Vec<String>,
-  pub files: Vec<String>,
-  pub exclude: Vec<String>,
+  pub files: Vec<PathBuf>,
+  pub exclude: Vec<PathBuf>,
 }
 
 #[derive(Debug)]
@@ -559,5 +559,36 @@ mod tests {
     assert_eq!(md.indent_size, 2);
     assert_eq!(md.line_length, 100);
     assert_eq!(md.prose_wrap.as_deref(), Some("always"));
+  }
+
+  #[test]
+  fn test_lang_config_extra_args_files_and_exclude() {
+    let toml = r#"
+      [global]
+      indent_size = 2
+
+      [lang.rust]
+      extra_args = ["--verbose", "--", "-D", "clippy::all"]
+      files = ["src/lib.rs", "src/main.rs"]
+      exclude = ["tests/fixtures", "src/generated/**"]
+    "#;
+    let parsed =
+      FormalityConfig::parse_str(toml, Path::new("test.toml")).unwrap();
+    let rust = parsed.resolve_for_lang("rust");
+    assert_eq!(
+      rust.extra_args,
+      vec!["--verbose", "--", "-D", "clippy::all"]
+    );
+    assert_eq!(
+      rust.files,
+      vec![PathBuf::from("src/lib.rs"), PathBuf::from("src/main.rs")]
+    );
+    assert_eq!(
+      rust.exclude,
+      vec![
+        PathBuf::from("tests/fixtures"),
+        PathBuf::from("src/generated/**")
+      ]
+    );
   }
 }

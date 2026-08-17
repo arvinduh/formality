@@ -1,7 +1,7 @@
 use super::{
   ExecutionContext, LanguageSurface, SurfaceResult, SurfaceStatus, ToolInfo,
-  check_binary_exists, create_tool_command, find_files_with_ext,
-  sync_file_helper,
+  check_binary_exists, create_tool_command, diff_check_via_tempcopy,
+  find_files_with_ext, sync_file_helper,
 };
 use std::path::Path;
 use std::time::Instant;
@@ -22,7 +22,7 @@ impl LanguageSurface for TomlSurface {
   fn detect(&self, root: &Path) -> bool {
     root.join("taplo.toml").is_file()
       || root.join(".taplo.toml").is_file()
-      || !find_files_with_ext(root, TOML_EXTENSIONS, &[]).is_empty()
+      || !find_files_with_ext(root, TOML_EXTENSIONS, &[], &[], &[]).is_empty()
   }
 
   fn tool_info(
@@ -54,7 +54,13 @@ impl LanguageSurface for TomlSurface {
       };
     }
 
-    let files = find_files_with_ext(&ctx.root, TOML_EXTENSIONS, &ctx.paths);
+    let files = find_files_with_ext(
+      &ctx.root,
+      TOML_EXTENSIONS,
+      &ctx.paths,
+      &ctx.lang_config.files,
+      &ctx.lang_config.exclude,
+    );
     if files.is_empty() {
       return SurfaceResult {
         surface_name: self.name(),
@@ -63,16 +69,41 @@ impl LanguageSurface for TomlSurface {
       };
     }
 
+    if ctx.check_only {
+      return diff_check_via_tempcopy(
+        &files,
+        |scratch| {
+          let content = std::fs::read(scratch)?;
+          let mut cmd = create_tool_command("taplo");
+          cmd.arg("format").arg("-");
+          cmd.current_dir(&ctx.root);
+          cmd.stdin(std::process::Stdio::piped());
+          cmd.stdout(std::process::Stdio::piped());
+          cmd.stderr(std::process::Stdio::piped());
+          let mut child = cmd.spawn()?;
+          if let Some(mut stdin) = child.stdin.take() {
+            use std::io::Write;
+            stdin.write_all(&content)?;
+          }
+          let output = child.wait_with_output()?;
+          if output.status.success() {
+            std::fs::write(scratch, &output.stdout)?;
+          }
+          Ok(output)
+        },
+        self.name(),
+        start,
+      );
+    }
+
     let mut cmd = create_tool_command("taplo");
     cmd.arg("format");
-    if ctx.check_only {
-      cmd.arg("--check");
-    }
 
     for f in &files {
       cmd.arg(f);
     }
 
+    cmd.args(&ctx.lang_config.extra_args);
     cmd.current_dir(&ctx.root);
 
     match cmd.output() {
@@ -130,7 +161,13 @@ impl LanguageSurface for TomlSurface {
       };
     }
 
-    let files = find_files_with_ext(&ctx.root, TOML_EXTENSIONS, &ctx.paths);
+    let files = find_files_with_ext(
+      &ctx.root,
+      TOML_EXTENSIONS,
+      &ctx.paths,
+      &ctx.lang_config.files,
+      &ctx.lang_config.exclude,
+    );
     if files.is_empty() {
       return SurfaceResult {
         surface_name: self.name(),
@@ -146,6 +183,7 @@ impl LanguageSurface for TomlSurface {
       cmd.arg(f);
     }
 
+    cmd.args(&ctx.lang_config.extra_args);
     cmd.current_dir(&ctx.root);
 
     match cmd.output() {

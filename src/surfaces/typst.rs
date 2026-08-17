@@ -1,6 +1,7 @@
 use super::{
   ExecutionContext, LanguageSurface, SurfaceResult, SurfaceStatus, ToolInfo,
-  check_binary_exists, create_tool_command, find_files_with_ext,
+  check_binary_exists, create_tool_command, diff_check_via_tempcopy,
+  find_files_with_ext,
 };
 use std::path::Path;
 use std::time::Instant;
@@ -19,7 +20,7 @@ impl LanguageSurface for TypstSurface {
   }
 
   fn detect(&self, root: &Path) -> bool {
-    !find_files_with_ext(root, TYPST_EXTENSIONS, &[]).is_empty()
+    !find_files_with_ext(root, TYPST_EXTENSIONS, &[], &[], &[]).is_empty()
   }
 
   fn tool_info(
@@ -51,7 +52,13 @@ impl LanguageSurface for TypstSurface {
       };
     }
 
-    let files = find_files_with_ext(&ctx.root, TYPST_EXTENSIONS, &ctx.paths);
+    let files = find_files_with_ext(
+      &ctx.root,
+      TYPST_EXTENSIONS,
+      &ctx.paths,
+      &ctx.lang_config.files,
+      &ctx.lang_config.exclude,
+    );
     if files.is_empty() {
       return SurfaceResult {
         surface_name: self.name(),
@@ -60,20 +67,35 @@ impl LanguageSurface for TypstSurface {
       };
     }
 
+    if ctx.check_only {
+      return diff_check_via_tempcopy(
+        &files,
+        |scratch| {
+          let mut cmd = create_tool_command("typstyle");
+          cmd
+            .arg("--column")
+            .arg(ctx.lang_config.line_length.to_string())
+            .arg("-i")
+            .arg(scratch);
+          cmd.current_dir(&ctx.root);
+          cmd.output()
+        },
+        self.name(),
+        start,
+      );
+    }
+
     let mut cmd = create_tool_command("typstyle");
     cmd
       .arg("--column")
-      .arg(ctx.lang_config.line_length.to_string());
-    if ctx.check_only {
-      cmd.arg("--check");
-    } else {
-      cmd.arg("-i");
-    }
+      .arg(ctx.lang_config.line_length.to_string())
+      .arg("-i");
 
     for f in &files {
       cmd.arg(f);
     }
 
+    cmd.args(&ctx.lang_config.extra_args);
     cmd.current_dir(&ctx.root);
 
     match cmd.output() {
