@@ -138,7 +138,9 @@ fn test_init_command() {
 
   let content = fs::read_to_string(&config_file).unwrap();
   assert!(content.contains("[global]"));
-  assert!(content.contains("languages = [\"python\"]"));
+  // auto-detect mode: no hardcoded languages list
+  assert!(!content.contains("languages ="));
+  assert!(content.contains("indent_size = 2"));
 
   // 2. Test --hidden creates .formality.toml with --force
   let args_hidden = Cli {
@@ -438,6 +440,26 @@ fn test_ignore_languages_filtering() {
   assert!(!names.contains(&"markdown"));
   assert!(!names.contains(&"yaml"));
   assert!(!names.contains(&"json"));
+}
+
+#[test]
+fn test_autodetect_all_workspace_surfaces_by_default() {
+  let manifest_dir = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+  let poly_root = manifest_dir.join("tests/fixtures/polyglot_repo");
+
+  // Default config without explicit languages list — auto-detect mode
+  let config = fml::config::FormalityConfig::with_defaults();
+  assert_eq!(config.resolve_global().languages, None);
+
+  let detected = fml::surfaces::detect_surfaces_smart(&poly_root, &config);
+  let names: Vec<&str> = detected.iter().map(|s| s.name()).collect();
+
+  assert!(names.contains(&"rust"));
+  assert!(names.contains(&"python"));
+  assert!(names.contains(&"markdown"));
+  assert!(names.contains(&"toml"));
+  assert!(names.contains(&"yaml"));
+  assert!(names.contains(&"json"));
 }
 
 #[test]
