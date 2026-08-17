@@ -179,7 +179,12 @@ impl LanguageSurface for RustSurface {
         "2021"
       }
     } else {
-      "2024"
+      ctx
+        .lang_config
+        .rust
+        .as_ref()
+        .and_then(|r| r.edition.as_deref())
+        .unwrap_or("2021")
     };
 
     if ctx.check_only {
@@ -463,5 +468,32 @@ mod tests {
       Some("2021")
     );
     assert!(check_args.contains(&"--check".to_string()));
+  }
+  #[test]
+  fn test_rust_fallback_edition_without_cargo_toml() {
+    let temp = TempDir::new().unwrap();
+    // Without Cargo.toml and without explicit edition in config -> defaults to 2021
+    let ctx = dummy_execution_context(temp.path(), false);
+    let edition = ctx
+      .lang_config
+      .rust
+      .as_ref()
+      .and_then(|r| r.edition.as_deref())
+      .unwrap_or("2021");
+    assert_eq!(edition, "2021");
+
+    // With explicit edition in config -> resolves to configured edition
+    let mut ctx_configured = dummy_execution_context(temp.path(), false);
+    ctx_configured.lang_config.rust = Some(crate::config::RustOptions {
+      edition: Some("2018".to_string()),
+      version: None,
+    });
+    let edition_configured = ctx_configured
+      .lang_config
+      .rust
+      .as_ref()
+      .and_then(|r| r.edition.as_deref())
+      .unwrap_or("2021");
+    assert_eq!(edition_configured, "2018");
   }
 }
