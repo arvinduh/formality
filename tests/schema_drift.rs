@@ -25,8 +25,7 @@ fn test_schema_drift_check() {
       .expect("Generated schema should be valid JSON");
 
   assert_eq!(
-    committed_val,
-    generated_val,
+    committed_val, generated_val,
     "Schema drift detected! The committed formality.schema.json does not match generate_schema(). \
      Please run 'fml schema -o formality.schema.json' to update it."
   );
