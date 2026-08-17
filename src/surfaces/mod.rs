@@ -368,6 +368,9 @@ pub trait LanguageSurface: DeclaresFacets + Send + Sync {
   fn tool_info(&self, config: &ResolvedLangConfig) -> Vec<ToolInfo>;
   fn format(&self, ctx: &ExecutionContext) -> SurfaceResult;
   fn lint(&self, ctx: &ExecutionContext, fix: bool) -> SurfaceResult;
+  fn supports_lint_fix(&self) -> bool {
+    false
+  }
   fn sync_config(&self, ctx: &ExecutionContext, check: bool) -> SurfaceResult;
   fn clone_box(&self) -> Box<dyn LanguageSurface>;
 }
