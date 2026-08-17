@@ -24,7 +24,7 @@ clap = { version = "4.6.6", features = [
   "usage",
 ] }
 colored = "3.1.1"
-comfy-table = "7.1.4"
+comfy-table = "8.0.0"
 ignore = "0.4.33"
 rayon = "1.12.0"
 serde = { version = "1.0.229", features = ["derive"] }
