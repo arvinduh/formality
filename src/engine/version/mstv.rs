@@ -1,0 +1,165 @@
+//! Minimum Supported Tool Version (MSTV) registry: per-tool minimum
+//! versions, upgrade advice, and version-probing metadata.
+
+use super::core::Version;
+
+/// Minimum Supported Tool Version declarations for tools in the Formality fleet.
+pub const MSTV_RUSTFMT: Version = Version::new(1, 4, 0);
+pub const MSTV_CLIPPY: Version = Version::new(1, 65, 0);
+pub const MSTV_RUFF: Version = Version::new(0, 1, 0);
+pub const MSTV_CLANG_FORMAT: Version = Version::new(14, 0, 0);
+pub const MSTV_CLANG_TIDY: Version = Version::new(14, 0, 0);
+pub const MSTV_PRETTIER: Version = Version::new(2, 0, 0);
+pub const MSTV_TAPLO: Version = Version::new(0, 8, 0);
+pub const MSTV_MARKDOWNLINT_CLI2: Version = Version::new(0, 4, 0);
+pub const MSTV_TYPSTYLE: Version = Version::new(0, 11, 0);
+pub const MSTV_YAMLLINT: Version = Version::new(1, 20, 0);
+pub const MSTV_BIOME: Version = Version::new(1, 5, 0);
+pub const MSTV_CHECKSTYLE: Version = Version::new(10, 0, 0);
+pub const MSTV_KTFMT: Version = Version::new(0, 44, 0);
+pub const MSTV_KTLINT: Version = Version::new(1, 0, 0);
+pub const MSTV_GOFMT: Version = Version::new(1, 18, 0);
+pub const MSTV_GOLANGCI_LINT: Version = Version::new(1, 50, 0);
+
+/// Minimum Supported Tool Version entry with metadata, invocation arguments, regex, and upgrade advice.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ToolMstvEntry {
+  pub binary: &'static str,
+  pub min_version: Version,
+  pub version_args: &'static [&'static str],
+  pub regex: &'static str,
+  pub advice: &'static str,
+}
+
+pub const TOOL_MSTV_REGISTRY: &[ToolMstvEntry] = &[
+  ToolMstvEntry {
+    binary: "rustfmt",
+    min_version: MSTV_RUSTFMT,
+    version_args: &["--version"],
+    regex: r"rustfmt (\d+\.\d+\.\d+)",
+    advice: "Run 'rustup component add rustfmt' or 'rustup update'",
+  },
+  ToolMstvEntry {
+    binary: "clippy",
+    min_version: MSTV_CLIPPY,
+    version_args: &["--version"],
+    regex: r"clippy (\d+\.\d+\.\d+)",
+    advice: "Run 'rustup component add clippy' or 'rustup update'",
+  },
+  ToolMstvEntry {
+    binary: "ruff",
+    min_version: MSTV_RUFF,
+    version_args: &["--version"],
+    regex: r"ruff (\d+\.\d+\.\d+)",
+    advice: "Run 'pip install -U ruff' or 'brew install ruff'",
+  },
+  ToolMstvEntry {
+    binary: "clang-format",
+    min_version: MSTV_CLANG_FORMAT,
+    version_args: &["--version"],
+    regex: r"clang-format version (\d+\.\d+\.\d+)",
+    advice: "Install clang-format >= 14 via system package manager or LLVM toolchain",
+  },
+  ToolMstvEntry {
+    binary: "clang-tidy",
+    min_version: MSTV_CLANG_TIDY,
+    version_args: &["--version"],
+    regex: r"clang-tidy version (\d+\.\d+\.\d+)",
+    advice: "Install clang-tidy >= 14 via system package manager or LLVM toolchain",
+  },
+  ToolMstvEntry {
+    binary: "prettier",
+    min_version: MSTV_PRETTIER,
+    version_args: &["--version"],
+    regex: r"(\d+\.\d+\.\d+)",
+    advice: "Run 'npm install -g prettier' or 'brew install prettier'",
+  },
+  ToolMstvEntry {
+    binary: "taplo",
+    min_version: MSTV_TAPLO,
+    version_args: &["--version"],
+    regex: r"taplo (\d+\.\d+\.\d+)",
+    advice: "Run 'cargo binstall taplo-cli' or 'brew install taplo' or 'cargo install --locked taplo-cli'",
+  },
+  ToolMstvEntry {
+    binary: "markdownlint-cli2",
+    min_version: MSTV_MARKDOWNLINT_CLI2,
+    version_args: &["--version"],
+    regex: r"markdownlint-cli2 v?(\d+\.\d+\.\d+)",
+    advice: "Run 'npm install -g markdownlint-cli2' or 'brew install markdownlint-cli2'",
+  },
+  ToolMstvEntry {
+    binary: "typstyle",
+    min_version: MSTV_TYPSTYLE,
+    version_args: &["--version"],
+    regex: r"typstyle (\d+\.\d+\.\d+)",
+    advice: "Run 'cargo install --locked typstyle' or 'brew install typstyle'",
+  },
+  ToolMstvEntry {
+    binary: "yamllint",
+    min_version: MSTV_YAMLLINT,
+    version_args: &["--version"],
+    regex: r"yamllint (\d+\.\d+\.\d+)",
+    advice: "Run 'pip install -U yamllint' or 'brew install yamllint'",
+  },
+  ToolMstvEntry {
+    binary: "biome",
+    min_version: MSTV_BIOME,
+    version_args: &["--version"],
+    regex: r"(\d+\.\d+\.\d+)",
+    advice: "Run 'npm install -g @biomejs/biome' or 'brew install biome'",
+  },
+  ToolMstvEntry {
+    binary: "checkstyle",
+    min_version: MSTV_CHECKSTYLE,
+    version_args: &["--version"],
+    regex: r"Checkstyle version:? (\d+\.\d+(?:\.\d+)?)",
+    advice: "Run 'brew install checkstyle' or update your checkstyle jar",
+  },
+  ToolMstvEntry {
+    binary: "ktfmt",
+    min_version: MSTV_KTFMT,
+    version_args: &["--version"],
+    regex: r"ktfmt version (\d+\.\d+(?:\.\d+)?)",
+    advice: "Run 'brew install ktfmt'",
+  },
+  ToolMstvEntry {
+    binary: "ktlint",
+    min_version: MSTV_KTLINT,
+    version_args: &["--version"],
+    regex: r"(\d+\.\d+\.\d+)",
+    advice: "Run 'brew install ktlint'",
+  },
+  ToolMstvEntry {
+    binary: "gofmt",
+    min_version: MSTV_GOFMT,
+    version_args: &["--help"],
+    regex: r"go(\d+\.\d+(?:\.\d+)?)",
+    advice: "Update Go toolchain via https://go.dev/dl/",
+  },
+  ToolMstvEntry {
+    binary: "golangci-lint",
+    min_version: MSTV_GOLANGCI_LINT,
+    version_args: &["version"],
+    regex: r"golangci-lint has version (\d+\.\d+\.\d+)",
+    advice: "Run 'brew install golangci-lint' or update via https://golangci-lint.run",
+  },
+];
+
+pub fn get_tool_mstv_entry(binary: &str) -> Option<&'static ToolMstvEntry> {
+  let lookup_bin = match binary {
+    "clippy-driver" | "cargo-clippy" => "clippy",
+    other => other,
+  };
+  TOOL_MSTV_REGISTRY
+    .iter()
+    .find(|entry| entry.binary == lookup_bin)
+}
+
+pub fn tool_mstv_entry(binary: &str) -> Option<&'static ToolMstvEntry> {
+  get_tool_mstv_entry(binary)
+}
+
+pub fn all_mstv_entries() -> &'static [ToolMstvEntry] {
+  TOOL_MSTV_REGISTRY
+}
