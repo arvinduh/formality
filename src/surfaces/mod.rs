@@ -1,16 +1,17 @@
 pub mod cpp;
 pub mod json;
 pub mod markdown;
+pub mod native;
 pub mod python;
 pub mod rust;
 pub mod toml;
 pub mod typst;
 pub mod yaml;
-pub mod native;
 
 pub use native::{
   AUTO_GENERATED_HEADER, NativeConfig, render_native_config,
-  serialize_json_pretty, serialize_toml_with_header, serialize_yaml_with_header,
+  serialize_json_pretty, serialize_toml_with_header,
+  serialize_yaml_with_header,
 };
 
 use crate::config::{
