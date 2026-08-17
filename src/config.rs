@@ -1,3 +1,4 @@
+use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
 use std::fs;
@@ -8,7 +9,9 @@ pub const CONFIG_FILE_CANDIDATES: &[&str] =
   &["formality.toml", ".formality.toml"];
 
 /// Common layout facets configuring formatting layout across tools.
-#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(
+  Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize, JsonSchema,
+)]
 pub struct LayoutFacet {
   #[serde(skip_serializing_if = "Option::is_none")]
   pub indent_size: Option<usize>,
@@ -45,7 +48,9 @@ impl LayoutFacet {
 }
 
 /// Typed formatting and linting options for Rust.
-#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(
+  Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize, JsonSchema,
+)]
 pub struct RustOptions {
   #[serde(skip_serializing_if = "Option::is_none")]
   pub edition: Option<String>,
@@ -69,7 +74,9 @@ impl RustOptions {
 }
 
 /// Typed formatting and linting options for Python.
-#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(
+  Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize, JsonSchema,
+)]
 pub struct PythonOptions {
   #[serde(skip_serializing_if = "Option::is_none")]
   pub quote_style: Option<String>,
@@ -93,7 +100,9 @@ impl PythonOptions {
 }
 
 /// Typed formatting and linting options for C/C++.
-#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(
+  Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize, JsonSchema,
+)]
 pub struct CppOptions {
   #[serde(skip_serializing_if = "Option::is_none")]
   pub standard: Option<String>,
@@ -117,7 +126,9 @@ impl CppOptions {
 }
 
 /// Typed formatting and linting options for Markdown.
-#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(
+  Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize, JsonSchema,
+)]
 pub struct MarkdownOptions {
   #[serde(skip_serializing_if = "Option::is_none")]
   pub prose_wrap: Option<String>,
@@ -136,7 +147,9 @@ impl MarkdownOptions {
 }
 
 /// Typed formatting and linting options for YAML.
-#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(
+  Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize, JsonSchema,
+)]
 pub struct YamlOptions {
   #[serde(skip_serializing_if = "Option::is_none")]
   pub indent_sequence: Option<bool>,
@@ -155,7 +168,9 @@ impl YamlOptions {
 }
 
 /// Typed formatting and linting options for JSON.
-#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(
+  Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize, JsonSchema,
+)]
 pub struct JsonOptions {}
 
 impl JsonOptions {
@@ -167,7 +182,9 @@ impl JsonOptions {
 }
 
 /// Typed formatting and linting options for TOML.
-#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(
+  Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize, JsonSchema,
+)]
 pub struct TomlOptions {}
 
 impl TomlOptions {
@@ -179,7 +196,9 @@ impl TomlOptions {
 }
 
 /// Typed formatting and linting options for Typst.
-#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(
+  Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize, JsonSchema,
+)]
 pub struct TypstOptions {}
 
 impl TypstOptions {
@@ -190,7 +209,7 @@ impl TypstOptions {
   }
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 pub struct GlobalConfig {
   #[serde(skip_serializing_if = "Option::is_none")]
   pub languages: Option<Vec<String>>,
@@ -302,7 +321,9 @@ where
   }
   opts
 }
-#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
+#[derive(
+  Debug, Clone, Default, PartialEq, Serialize, Deserialize, JsonSchema,
+)]
 pub struct LangConfig {
   #[serde(skip_serializing_if = "Option::is_none")]
   pub format_tool: Option<String>,
@@ -343,8 +364,10 @@ pub struct LangConfig {
   #[serde(skip_serializing_if = "Option::is_none")]
   pub typst: Option<TypstOptions>,
   #[serde(skip_serializing_if = "Option::is_none")]
+  #[schemars(skip)]
   pub options: Option<toml::Value>,
   #[serde(default, flatten, skip_serializing_if = "BTreeMap::is_empty")]
+  #[schemars(skip)]
   pub extra: BTreeMap<String, toml::Value>,
 }
 
@@ -546,7 +569,9 @@ impl LangConfig {
   }
 }
 
-#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
+#[derive(
+  Debug, Clone, Default, PartialEq, Serialize, Deserialize, JsonSchema,
+)]
 pub struct FormalityConfig {
   #[serde(skip_serializing_if = "Option::is_none")]
   pub global: Option<GlobalConfig>,
