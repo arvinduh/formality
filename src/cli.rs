@@ -78,6 +78,29 @@ pub enum Commands {
     paths: Vec<PathBuf>,
   },
 
+  /// Automatically fix lint violations and reformat code
+  Fix {
+    /// Only fix files staged for git commit
+    #[arg(short = 's', long)]
+    staged: bool,
+
+    /// Only fix modified uncommitted files in git
+    #[arg(long)]
+    changed: bool,
+
+    /// Filter by specific language surface (e.g. rust, python, markdown)
+    #[arg(short = 'l', long = "lang", value_name = "LANG")]
+    lang: Vec<String>,
+
+    /// Auto-install any missing tool dependencies before fixing
+    #[arg(short = 'i', long)]
+    install: bool,
+
+    /// Optional paths or files to target
+    #[arg(value_name = "PATH")]
+    paths: Vec<PathBuf>,
+  },
+
   /// Sync native tool configs (.rustfmt.toml, ruff.toml, .clang-format, etc.) from canonical globals
   #[command(name = "sync", alias = "sync-config")]
   Sync {

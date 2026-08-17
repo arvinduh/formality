@@ -272,6 +272,39 @@ fn run_command_inner(args: Cli) -> i32 {
       )
     }
 
+    Commands::Fix {
+      staged,
+      changed,
+      lang,
+      install,
+      paths,
+    } => {
+      let target_paths = match resolve_git_paths(&root, staged, changed, paths)
+      {
+        Ok(p) => p,
+        Err(e) => {
+          eprintln!("{}", e.red().bold());
+          return 2;
+        }
+      };
+
+      let surfaces =
+        match resolve_target_surfaces(&root, &lang, &target_paths, &config) {
+          Ok(s) => s,
+          Err(e) => {
+            eprintln!("{}", e.red().bold());
+            return 2;
+          }
+        };
+
+      if install {
+        doctor::preflight_install(&surfaces, &config, false);
+        doctor::preflight_install(&surfaces, &config, true);
+      }
+
+      Runner::run(surfaces, &root, &target_paths, RunnerAction::Fix, &config)
+    }
+
     Commands::Lint {
       fix,
       staged,
