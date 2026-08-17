@@ -17,6 +17,9 @@ pub struct ClangFormatConfig {
   pub column_limit: usize,
   pub use_tab: String,
   pub line_ending: String,
+  pub pointer_alignment: String,
+  pub break_before_braces: String,
+  pub sort_includes: bool,
 }
 
 impl NativeConfig for ClangFormatConfig {
@@ -37,13 +40,30 @@ impl ClangFormatConfig {
         _ => "LF",
       };
 
+    let cpp_opts = ctx.lang_config.cpp.as_ref();
+    let based_on_style = cpp_opts
+      .and_then(|c| c.based_on_style.clone())
+      .unwrap_or_else(|| "LLVM".to_string());
+    let pointer_alignment = cpp_opts
+      .and_then(|c| c.pointer_alignment.clone())
+      .unwrap_or_else(|| "Left".to_string());
+    let break_before_braces = cpp_opts
+      .and_then(|c| c.break_before_braces.clone())
+      .unwrap_or_else(|| "Attach".to_string());
+    let sort_includes = cpp_opts
+      .and_then(|c| c.sort_includes)
+      .unwrap_or(true);
+
     Self {
       language: "Cpp".to_string(),
-      based_on_style: "LLVM".to_string(),
+      based_on_style,
       indent_width: ctx.lang_config.indent_size,
       column_limit: ctx.lang_config.line_length,
       use_tab: use_tab.to_string(),
       line_ending: line_ending.to_string(),
+      pointer_alignment,
+      break_before_braces,
+      sort_includes,
     }
   }
 
@@ -721,6 +741,9 @@ mod tests {
       column_limit: 100,
       use_tab: "Never".to_string(),
       line_ending: "LF".to_string(),
+      pointer_alignment: "Left".to_string(),
+      break_before_braces: "Attach".to_string(),
+      sort_includes: true,
     };
     let rendered = cfg.render().unwrap();
     assert!(rendered.starts_with(crate::surfaces::AUTO_GENERATED_HEADER));
@@ -730,6 +753,9 @@ mod tests {
     assert!(rendered.contains("ColumnLimit: 100"));
     assert!(rendered.contains("UseTab: Never"));
     assert!(rendered.contains("LineEnding: LF"));
+    assert!(rendered.contains("PointerAlignment: Left"));
+    assert!(rendered.contains("BreakBeforeBraces: Attach"));
+    assert!(rendered.contains("SortIncludes: true"));
   }
 
   #[test]
