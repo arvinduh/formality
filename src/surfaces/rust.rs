@@ -17,6 +17,10 @@ impl LanguageSurface for RustSurface {
     &["rs"]
   }
 
+  fn extensions(&self) -> &[&'static str] {
+    &["rs"]
+  }
+
   fn detect(&self, root: &Path) -> bool {
     root.join("Cargo.toml").is_file()
       || !find_files_with_ext(root, &["rs"], &[]).is_empty()

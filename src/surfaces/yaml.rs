@@ -19,6 +19,10 @@ impl LanguageSurface for YamlSurface {
     &["yml"]
   }
 
+  fn extensions(&self) -> &[&'static str] {
+    YAML_EXTENSIONS
+  }
+
   fn detect(&self, root: &Path) -> bool {
     root.join(".yamllint").is_file()
       || root.join(".yamllint.yaml").is_file()

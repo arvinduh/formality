@@ -19,6 +19,10 @@ impl LanguageSurface for CppSurface {
     &["c", "c++", "cxx"]
   }
 
+  fn extensions(&self) -> &[&'static str] {
+    CPP_EXTENSIONS
+  }
+
   fn detect(&self, root: &Path) -> bool {
     root.join("CMakeLists.txt").is_file()
       || root.join("Makefile").is_file()

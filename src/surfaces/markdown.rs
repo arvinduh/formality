@@ -19,6 +19,10 @@ impl LanguageSurface for MarkdownSurface {
     &["md"]
   }
 
+  fn extensions(&self) -> &[&'static str] {
+    MD_EXTENSIONS
+  }
+
   fn detect(&self, root: &Path) -> bool {
     root.join(".markdownlint.json").is_file()
       || root.join(".markdownlint.yaml").is_file()

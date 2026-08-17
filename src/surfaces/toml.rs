@@ -19,6 +19,10 @@ impl LanguageSurface for TomlSurface {
     &[]
   }
 
+  fn extensions(&self) -> &[&'static str] {
+    TOML_EXTENSIONS
+  }
+
   fn detect(&self, root: &Path) -> bool {
     root.join("taplo.toml").is_file()
       || root.join(".taplo.toml").is_file()

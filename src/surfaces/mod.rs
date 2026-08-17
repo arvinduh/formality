@@ -3,9 +3,15 @@ pub mod json;
 pub mod markdown;
 pub mod python;
 pub mod rust;
+pub mod taxonomy;
 pub mod toml;
 pub mod typst;
 pub mod yaml;
+
+pub use taxonomy::{
+  FileCategory, classify_file, get_supported_surface_for_ext,
+  is_non_code_extension, scan_unsupported_workspace_extensions,
+};
 
 use crate::config::{
   FormalityConfig, ResolvedGlobalConfig, ResolvedLangConfig,
@@ -353,6 +359,7 @@ pub trait LanguageSurface: Send + Sync {
   fn aliases(&self) -> &[&'static str] {
     &[]
   }
+  fn extensions(&self) -> &[&'static str];
   fn detect(&self, root: &Path) -> bool;
   fn tool_info(&self, config: &ResolvedLangConfig) -> Vec<ToolInfo>;
   fn format(&self, ctx: &ExecutionContext) -> SurfaceResult;

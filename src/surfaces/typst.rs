@@ -18,6 +18,10 @@ impl LanguageSurface for TypstSurface {
     &["typ"]
   }
 
+  fn extensions(&self) -> &[&'static str] {
+    TYPST_EXTENSIONS
+  }
+
   fn detect(&self, root: &Path) -> bool {
     !find_files_with_ext(root, TYPST_EXTENSIONS, &[]).is_empty()
   }

@@ -545,21 +545,7 @@ fn resolve_target_surfaces(
   if !paths.is_empty() {
     let mut active = Vec::new();
     for surface in all_surfaces() {
-      let matching = match surface.name() {
-        "rust" => find_files_with_ext(root, &["rs"], paths),
-        "python" => find_files_with_ext(root, &["py"], paths),
-        "cpp" => find_files_with_ext(
-          root,
-          &["c", "cpp", "cc", "cxx", "h", "hpp", "hxx"],
-          paths,
-        ),
-        "markdown" => find_files_with_ext(root, &["md", "markdown"], paths),
-        "yaml" => find_files_with_ext(root, &["yaml", "yml"], paths),
-        "json" => find_files_with_ext(root, &["json", "jsonc"], paths),
-        "toml" => find_files_with_ext(root, &["toml"], paths),
-        "typst" => find_files_with_ext(root, &["typ"], paths),
-        _ => Vec::new(),
-      };
+      let matching = find_files_with_ext(root, surface.extensions(), paths);
       if !matching.is_empty() {
         active.push(surface);
       }

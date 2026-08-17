@@ -17,6 +17,10 @@ impl LanguageSurface for PythonSurface {
     &["py"]
   }
 
+  fn extensions(&self) -> &[&'static str] {
+    &["py", "pyi"]
+  }
+
   fn detect(&self, root: &Path) -> bool {
     root.join("pyproject.toml").is_file()
       || root.join("requirements.txt").is_file()

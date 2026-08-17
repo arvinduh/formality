@@ -19,6 +19,10 @@ impl LanguageSurface for JsonSurface {
     &[]
   }
 
+  fn extensions(&self) -> &[&'static str] {
+    JSON_EXTENSIONS
+  }
+
   fn detect(&self, root: &Path) -> bool {
     !find_files_with_ext(root, JSON_EXTENSIONS, &[]).is_empty()
   }
