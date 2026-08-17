@@ -56,7 +56,7 @@ impl Runner {
     };
 
     // Execute surfaces concurrently
-    let results: Vec<SurfaceResult> = surfaces
+    let mut results: Vec<SurfaceResult> = surfaces
       .par_iter()
       .map(|surface| {
         let lang_config = config.resolve_for_lang(surface.name());
@@ -79,6 +79,12 @@ impl Runner {
         }
       })
       .collect();
+
+    if let RunnerAction::Sync { check } = action {
+      let editorconfig_res =
+        crate::editorconfig::sync_editorconfig(root, config, &surfaces, check);
+      results.push(editorconfig_res);
+    }
 
     let mut exit_code = 0;
     let mut pass_count = 0;
