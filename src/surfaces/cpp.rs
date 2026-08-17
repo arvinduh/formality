@@ -736,4 +736,25 @@ mod tests {
     assert!(rendered.contains("Checks:"));
     assert!(rendered.contains("FormatStyle: none"));
   }
+  #[test]
+  fn test_build_clang_tidy_args_with_fix_and_extra_args() {
+    let files = vec![PathBuf::from("src/app.cpp")];
+    let extra_args = vec![
+      "--checks=-*,llvm-*".to_string(),
+      "--warnings-as-errors=*".to_string(),
+    ];
+    let args = build_clang_tidy_args(&files, true, "-std=c++17", &extra_args);
+    assert_eq!(
+      args,
+      vec![
+        "-fix".to_string(),
+        "-fix-errors".to_string(),
+        "--checks=-*,llvm-*".to_string(),
+        "--warnings-as-errors=*".to_string(),
+        "src/app.cpp".to_string(),
+        "--".to_string(),
+        "-std=c++17".to_string(),
+      ]
+    );
+  }
 }
