@@ -354,92 +354,230 @@ pub trait LanguageSurface: DeclaresFacets + Send + Sync {
   fn aliases(&self) -> &[&'static str] {
     &[]
   }
+  fn file_extensions(&self) -> &[&'static str] {
+    &[]
+  }
   fn detect(&self, root: &Path) -> bool;
   fn tool_info(&self, config: &ResolvedLangConfig) -> Vec<ToolInfo>;
   fn format(&self, ctx: &ExecutionContext) -> SurfaceResult;
   fn lint(&self, ctx: &ExecutionContext, fix: bool) -> SurfaceResult;
   fn sync_config(&self, ctx: &ExecutionContext, check: bool) -> SurfaceResult;
+  fn clone_box(&self) -> Box<dyn LanguageSurface>;
+}
+
+impl Clone for Box<dyn LanguageSurface> {
+  fn clone(&self) -> Self {
+    self.clone_box()
+  }
+}
+
+/// A constructor function pointer for instantiating a boxed `LanguageSurface`.
+pub type SurfaceConstructor = fn() -> Box<dyn LanguageSurface>;
+
+/// Helper function to create a boxed instance of any `Default + LanguageSurface`.
+pub fn create_surface<S: LanguageSurface + Default + 'static>()
+-> Box<dyn LanguageSurface> {
+  Box::new(S::default())
+}
+
+/// Canonical table of default fleet surface constructors.
+pub static DEFAULT_SURFACE_CONSTRUCTORS: &[SurfaceConstructor] = &[
+  create_surface::<rust::RustSurface>,
+  create_surface::<python::PythonSurface>,
+  create_surface::<cpp::CppSurface>,
+  create_surface::<markdown::MarkdownSurface>,
+  create_surface::<yaml::YamlSurface>,
+  create_surface::<json::JsonSurface>,
+  create_surface::<toml::TomlSurface>,
+  create_surface::<typst::TypstSurface>,
+];
+
+/// Registry for managing, querying, and discovering language surfaces.
+#[derive(Clone)]
+pub struct SurfaceRegistry {
+  surfaces: Vec<Box<dyn LanguageSurface>>,
+}
+
+impl Default for SurfaceRegistry {
+  fn default() -> Self {
+    let mut reg = Self::empty();
+    reg.register_surface::<rust::RustSurface>();
+    reg.register_surface::<python::PythonSurface>();
+    reg.register_surface::<cpp::CppSurface>();
+    reg.register_surface::<markdown::MarkdownSurface>();
+    reg.register_surface::<yaml::YamlSurface>();
+    reg.register_surface::<json::JsonSurface>();
+    reg.register_surface::<toml::TomlSurface>();
+    reg.register_surface::<typst::TypstSurface>();
+    reg
+  }
+}
+
+impl SurfaceRegistry {
+  /// Creates an empty registry with no registered surfaces.
+  pub const fn empty() -> Self {
+    Self {
+      surfaces: Vec::new(),
+    }
+  }
+
+  /// Creates a registry pre-populated with the default fleet of 8 language surfaces.
+  pub fn new() -> Self {
+    Self::default()
+  }
+
+  /// Registers a concrete boxed surface instance in the registry.
+  pub fn register(&mut self, surface: Box<dyn LanguageSurface>) {
+    self.surfaces.push(surface);
+  }
+
+  /// Registers a surface type that implements `LanguageSurface` and `Default`.
+  pub fn register_surface<S: LanguageSurface + Default + 'static>(&mut self) {
+    self.surfaces.push(Box::new(S::default()));
+  }
+
+  /// Returns a slice of references to all registered surfaces.
+  pub fn surfaces(&self) -> &[Box<dyn LanguageSurface>] {
+    &self.surfaces
+  }
+
+  /// Returns cloned boxed instances of all registered language surfaces.
+  pub fn all_surfaces(&self) -> Vec<Box<dyn LanguageSurface>> {
+    self.surfaces.clone()
+  }
+
+  /// Looks up a surface by canonical name or alias (case-insensitive, trimmed).
+  pub fn get_surface_by_name(
+    &self,
+    name: &str,
+  ) -> Option<Box<dyn LanguageSurface>> {
+    let query = name.trim();
+    self
+      .surfaces
+      .iter()
+      .find(|s| {
+        s.name().eq_ignore_ascii_case(query)
+          || s.aliases().iter().any(|a| a.eq_ignore_ascii_case(query))
+      })
+      .cloned()
+  }
+
+  /// Resolves an alias or surface name to its canonical surface name (e.g. "rs" -> "rust").
+  pub fn resolve_canonical_name(
+    &self,
+    name_or_alias: &str,
+  ) -> Option<&'static str> {
+    let query = name_or_alias.trim();
+    self
+      .surfaces
+      .iter()
+      .find(|s| {
+        s.name().eq_ignore_ascii_case(query)
+          || s.aliases().iter().any(|a| a.eq_ignore_ascii_case(query))
+      })
+      .map(|s| s.name())
+  }
+
+  /// Returns the canonical names of all registered surfaces.
+  pub fn supported_languages(&self) -> Vec<&'static str> {
+    self.surfaces.iter().map(|s| s.name()).collect()
+  }
+
+  /// Returns the number of registered surfaces.
+  pub fn len(&self) -> usize {
+    self.surfaces.len()
+  }
+
+  /// Returns whether the registry is empty.
+  pub fn is_empty(&self) -> bool {
+    self.surfaces.is_empty()
+  }
+
+  /// Detects active surfaces within `root` based on filesystem heuristics.
+  pub fn detect_surfaces(&self, root: &Path) -> Vec<Box<dyn LanguageSurface>> {
+    self
+      .surfaces
+      .iter()
+      .filter(|s| s.detect(root))
+      .cloned()
+      .collect()
+  }
+
+  /// Performs smart detection respecting configuration allowlists and ignore rules.
+  pub fn detect_surfaces_smart(
+    &self,
+    root: &Path,
+    config: &FormalityConfig,
+  ) -> Vec<Box<dyn LanguageSurface>> {
+    let global = config.resolve_global();
+
+    let is_ignored = |name: &str, aliases: &[&'static str]| -> bool {
+      if let Some(ref ignores) = global.ignore_languages {
+        ignores.iter().any(|ig| {
+          ig.eq_ignore_ascii_case(name)
+            || aliases.iter().any(|a| a.eq_ignore_ascii_case(ig))
+        })
+      } else {
+        false
+      }
+    };
+
+    // 1. If explicit `languages` allowlist is defined, use that minus ignore_languages
+    if let Some(ref explicit_langs) = global.languages {
+      let mut selected = Vec::new();
+      for lang_name in explicit_langs {
+        if let Some(s) = self.get_surface_by_name(lang_name)
+          && !is_ignored(s.name(), s.aliases())
+        {
+          let resolved = config.resolve_for_lang(s.name());
+          if resolved.enabled {
+            selected.push(s);
+          }
+        }
+      }
+      return selected;
+    }
+
+    // 2. Otherwise auto-detect all project surfaces minus ignore_languages
+    self
+      .surfaces
+      .iter()
+      .filter(|surface| {
+        if is_ignored(surface.name(), surface.aliases()) {
+          return false;
+        }
+        let resolved = config.resolve_for_lang(surface.name());
+        if !resolved.enabled {
+          return false;
+        }
+        surface.detect(root)
+      })
+      .cloned()
+      .collect()
+  }
 }
 
 pub fn all_surfaces() -> Vec<Box<dyn LanguageSurface>> {
-  vec![
-    Box::new(rust::RustSurface),
-    Box::new(python::PythonSurface),
-    Box::new(cpp::CppSurface),
-    Box::new(markdown::MarkdownSurface),
-    Box::new(yaml::YamlSurface),
-    Box::new(json::JsonSurface),
-    Box::new(toml::TomlSurface),
-    Box::new(typst::TypstSurface),
-  ]
+  SurfaceRegistry::default().all_surfaces()
 }
 
-/// Smart surface discovery:
-/// 1. Prioritizes explicit `languages = [...]` allowlist if defined.
-/// 2. Filters out any `ignore_languages = [...]` blocklist.
-/// 3. Otherwise auto-detects active project surfaces (ignoring target/, fixtures/, etc.).
+pub fn detect_surfaces(root: &Path) -> Vec<Box<dyn LanguageSurface>> {
+  SurfaceRegistry::default().detect_surfaces(root)
+}
+
 pub fn detect_surfaces_smart(
   root: &Path,
   config: &FormalityConfig,
 ) -> Vec<Box<dyn LanguageSurface>> {
-  let global = config.resolve_global();
-
-  let is_ignored = |name: &str, aliases: &[&'static str]| -> bool {
-    if let Some(ref ignores) = global.ignore_languages {
-      ignores.iter().any(|ig| {
-        ig.eq_ignore_ascii_case(name)
-          || aliases.iter().any(|a| a.eq_ignore_ascii_case(ig))
-      })
-    } else {
-      false
-    }
-  };
-
-  // 1. If explicit `languages` allowlist is defined, use that minus ignore_languages
-  if let Some(ref explicit_langs) = global.languages {
-    let mut selected = Vec::new();
-    for lang_name in explicit_langs {
-      if let Some(s) = get_surface_by_name(lang_name)
-        && !is_ignored(s.name(), s.aliases())
-      {
-        let resolved = config.resolve_for_lang(s.name());
-        if resolved.enabled {
-          selected.push(s);
-        }
-      }
-    }
-    return selected;
-  }
-
-  // 2. Otherwise auto-detect all project surfaces minus ignore_languages
-  all_surfaces()
-    .into_iter()
-    .filter(|surface| {
-      if is_ignored(surface.name(), surface.aliases()) {
-        return false;
-      }
-      let resolved = config.resolve_for_lang(surface.name());
-      if !resolved.enabled {
-        return false;
-      }
-      surface.detect(root)
-    })
-    .collect()
-}
-
-pub fn detect_surfaces(root: &Path) -> Vec<Box<dyn LanguageSurface>> {
-  all_surfaces()
-    .into_iter()
-    .filter(|surface| surface.detect(root))
-    .collect()
+  SurfaceRegistry::default().detect_surfaces_smart(root, config)
 }
 
 pub fn get_surface_by_name(name: &str) -> Option<Box<dyn LanguageSurface>> {
-  let lower = name.to_lowercase();
-  all_surfaces().into_iter().find(|s| {
-    s.name().eq_ignore_ascii_case(&lower)
-      || s.aliases().iter().any(|a| a.eq_ignore_ascii_case(&lower))
-  })
+  SurfaceRegistry::default().get_surface_by_name(name)
+}
+
+pub fn resolve_canonical_name(name_or_alias: &str) -> Option<&'static str> {
+  SurfaceRegistry::default().resolve_canonical_name(name_or_alias)
 }
 
 /// Helper function to find matching files within a directory ignoring .git, target, node_modules, etc.
@@ -1265,5 +1403,156 @@ mod tests {
       .collect();
     assert!(args.contains(&"--verbose".to_string()));
     assert!(args.contains(&"--locked".to_string()));
+  }
+
+  #[test]
+  fn test_all_fleet_surfaces_present() {
+    let surfaces = all_surfaces();
+    assert_eq!(surfaces.len(), 8);
+
+    let names: Vec<&str> = surfaces.iter().map(|s| s.name()).collect();
+    let expected = [
+      "rust", "python", "cpp", "markdown", "yaml", "json", "toml", "typst",
+    ];
+    for exp in expected {
+      assert!(
+        names.contains(&exp),
+        "Surface '{}' missing from all_surfaces()",
+        exp
+      );
+    }
+  }
+
+  #[test]
+  fn test_get_surface_by_name_canonical_and_aliases() {
+    let test_cases = [
+      ("rust", "rust"),
+      ("rs", "rust"),
+      ("python", "python"),
+      ("py", "python"),
+      ("cpp", "cpp"),
+      ("c", "cpp"),
+      ("c++", "cpp"),
+      ("cxx", "cpp"),
+      ("markdown", "markdown"),
+      ("md", "markdown"),
+      ("yaml", "yaml"),
+      ("yml", "yaml"),
+      ("json", "json"),
+      ("toml", "toml"),
+      ("typst", "typst"),
+      ("typ", "typst"),
+    ];
+
+    for (query, canonical) in test_cases {
+      let surface = get_surface_by_name(query);
+      assert!(
+        surface.is_some(),
+        "Failed to resolve surface for query '{}'",
+        query
+      );
+      assert_eq!(
+        surface.unwrap().name(),
+        canonical,
+        "Query '{}' resolved to unexpected surface name",
+        query
+      );
+
+      // Verify resolve_canonical_name
+      assert_eq!(
+        resolve_canonical_name(query),
+        Some(canonical),
+        "resolve_canonical_name failed for '{}'",
+        query
+      );
+    }
+  }
+
+  #[test]
+  fn test_get_surface_by_name_case_insensitive() {
+    let variations = [
+      ("RUST", "rust"),
+      ("Rust", "rust"),
+      ("rS", "rust"),
+      ("RS", "rust"),
+      ("PYTHON", "python"),
+      ("Python", "python"),
+      ("Py", "python"),
+      ("PY", "python"),
+      ("CPP", "cpp"),
+      ("Cpp", "cpp"),
+      ("C++", "cpp"),
+      ("CXX", "cpp"),
+      ("Cxx", "cpp"),
+      ("C", "cpp"),
+      ("MARKDOWN", "markdown"),
+      ("Markdown", "markdown"),
+      ("MD", "markdown"),
+      ("Md", "markdown"),
+      ("YAML", "yaml"),
+      ("Yaml", "yaml"),
+      ("YML", "yaml"),
+      ("Yml", "yaml"),
+      ("JSON", "json"),
+      ("Json", "json"),
+      ("TOML", "toml"),
+      ("Toml", "toml"),
+      ("TYPST", "typst"),
+      ("Typst", "typst"),
+      ("TYP", "typst"),
+      ("Typ", "typst"),
+      ("  rust  ", "rust"),
+      ("  C++  ", "cpp"),
+    ];
+
+    for (query, canonical) in variations {
+      let surface = get_surface_by_name(query);
+      assert!(
+        surface.is_some(),
+        "Case-insensitive lookup failed for '{}'",
+        query
+      );
+      assert_eq!(surface.unwrap().name(), canonical);
+    }
+  }
+
+  #[test]
+  fn test_get_surface_by_name_nonexistent() {
+    assert!(get_surface_by_name("nonexistent").is_none());
+    assert!(get_surface_by_name("unknown_lang").is_none());
+    assert!(get_surface_by_name("").is_none());
+    assert!(resolve_canonical_name("unknown").is_none());
+  }
+
+  #[test]
+  fn test_custom_surface_registry() {
+    let mut reg = SurfaceRegistry::empty();
+    assert!(reg.is_empty());
+    assert_eq!(reg.len(), 0);
+    assert_eq!(reg.all_surfaces().len(), 0);
+
+    reg.register_surface::<rust::RustSurface>();
+    assert_eq!(reg.len(), 1);
+    assert!(!reg.is_empty());
+    assert!(reg.get_surface_by_name("rs").is_some());
+    assert!(reg.get_surface_by_name("python").is_none());
+
+    reg.register(Box::new(python::PythonSurface));
+    assert_eq!(reg.len(), 2);
+    assert!(reg.get_surface_by_name("py").is_some());
+
+    assert_eq!(reg.supported_languages(), vec!["rust", "python"]);
+  }
+
+  #[test]
+  fn test_surface_file_extensions() {
+    for surface in all_surfaces() {
+      let exts = surface.file_extensions();
+      assert!(
+        !exts.is_empty(),
+        "Surface '{}' has empty file extensions",
+        surface.name()
+      );
+    }
   }
 }
