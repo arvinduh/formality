@@ -50,9 +50,7 @@ impl ClangFormatConfig {
     let break_before_braces = cpp_opts
       .and_then(|c| c.break_before_braces.clone())
       .unwrap_or_else(|| "Attach".to_string());
-    let sort_includes = cpp_opts
-      .and_then(|c| c.sort_includes)
-      .unwrap_or(true);
+    let sort_includes = cpp_opts.and_then(|c| c.sort_includes).unwrap_or(true);
 
     Self {
       language: "Cpp".to_string(),
@@ -786,5 +784,49 @@ mod tests {
         "-std=c++17".to_string(),
       ]
     );
+  }
+  #[test]
+  fn test_sync_config_with_custom_style_knobs() {
+    let dir = tempdir().unwrap();
+    let root = dir.path().to_path_buf();
+
+    let toml_str = r#"
+      [lang.cpp]
+      indent_size = 4
+      line_length = 120
+      use_tabs = false
+      based_on_style = "Google"
+      pointer_alignment = "Right"
+      break_before_braces = "Allman"
+      sort_includes = false
+    "#;
+    let cfg = FormalityConfig::parse_str(toml_str, Path::new("formality.toml")).unwrap();
+    let ctx = ExecutionContext {
+      root: root.clone(),
+      paths: Vec::new(),
+      global_config: cfg.resolve_global(),
+      lang_config: cfg.resolve_for_lang("cpp"),
+      check_only: false,
+    };
+
+    let surface = CppSurface;
+    let res = surface.sync_config(&ctx, false);
+    assert!(res.is_success());
+
+    let format_path = root.join(".clang-format");
+    assert!(format_path.is_file());
+
+    let format_content = std::fs::read_to_string(&format_path).unwrap();
+    assert!(format_content.contains("Language: Cpp"));
+    assert!(format_content.contains("BasedOnStyle: Google"));
+    assert!(format_content.contains("IndentWidth: 4"));
+    assert!(format_content.contains("ColumnLimit: 120"));
+    assert!(format_content.contains("UseTab: Never"));
+    assert!(format_content.contains("PointerAlignment: Right"));
+    assert!(format_content.contains("BreakBeforeBraces: Allman"));
+    assert!(format_content.contains("SortIncludes: false"));
+
+    let check_res = surface.sync_config(&ctx, true);
+    assert!(matches!(check_res.status, SurfaceStatus::Passed));
   }
 }
