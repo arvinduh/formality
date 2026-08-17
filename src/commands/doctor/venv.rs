@@ -90,4 +90,3 @@ pub fn detect_virtualenv_with_env(
     source: VirtualEnvSource::None,
   }
 }
-

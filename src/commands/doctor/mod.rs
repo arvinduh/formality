@@ -11,6 +11,10 @@ pub use venv::{
 };
 
 use crate::config::FormalityConfig;
+use crate::engine::version::{
+  ToolStatus, Version, check_tool_compatibility, get_raw_tool_version,
+  minimum_supported_tool_version, probe_tool_version,
+};
 use crate::surfaces::{
   LanguageSurface, ToolInfo, all_surfaces, create_tool_command,
   detect_surfaces_smart,
@@ -18,13 +22,9 @@ use crate::surfaces::{
 use crate::ui::table::{
   Cell, Column, Layout, Palette, Row, Span, Style, Table, WidthPolicy, render,
 };
-use crate::engine::version::{
-  ToolStatus, Version, check_tool_compatibility, get_raw_tool_version,
-  minimum_supported_tool_version, probe_tool_version,
-};
 use colored::Colorize;
 use std::collections::{HashMap, HashSet};
-use std::path::{Path, PathBuf};
+use std::path::Path;
 
 /// Install a deduplicated list of missing tools.
 ///
@@ -451,7 +451,6 @@ pub fn run_doctor(
     2
   }
 }
-
 
 #[cfg(test)]
 mod tests;

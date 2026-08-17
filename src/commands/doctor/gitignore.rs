@@ -147,4 +147,3 @@ pub fn check_gitignore_hygiene(
     has_js,
   )
 }
-
