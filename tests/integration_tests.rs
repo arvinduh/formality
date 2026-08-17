@@ -442,6 +442,13 @@ fn test_ignore_languages_filtering() {
 
 #[test]
 fn test_fmt_python_import_sorting_lifecycle() {
+  if which::which("ruff").is_err() {
+    eprintln!(
+      "Skipping test_fmt_python_import_sorting_lifecycle: ruff not installed in PATH"
+    );
+    return;
+  }
+
   let temp = TempDir::new().unwrap();
   let root = temp.path().to_path_buf();
 
