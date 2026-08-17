@@ -1,23 +1,30 @@
 pub mod cli;
+pub mod commands;
 pub mod config;
-pub mod diff;
-pub mod doctor;
 pub mod editorconfig;
-pub mod facets;
-pub mod lsp;
-pub mod runner;
-pub mod schema;
+pub mod engine;
 pub mod surfaces;
-pub mod table;
-pub mod update;
-pub mod version;
+pub mod ui;
+
+// Backward-compatible top-level module aliases so existing `crate::foo::*`
+// and `fml::foo::*` paths (integration tests, external consumers) keep
+// working after the domain-driven `src/` reorganization.
+pub use commands::doctor;
+pub use commands::lsp;
+pub use config::facets;
+pub use config::schema;
+pub use engine::diff;
+pub use engine::runner;
+pub use engine::update;
+pub use engine::version;
+pub use ui::table;
 
 use clap::Parser;
 use cli::{Cli, Commands};
 use colored::Colorize;
 use config::{DEFAULT_CONFIG_FILE_NAME, FormalityConfig, find_project_config};
 pub use editorconfig::generate_editorconfig;
-use runner::{Runner, RunnerAction};
+use engine::{Runner, RunnerAction};
 use std::path::{Path, PathBuf};
 use surfaces::{
   LanguageSurface, all_surfaces, detect_surfaces_smart, find_files_with_ext,
@@ -172,15 +179,15 @@ fn run_command_inner(args: Cli) -> i32 {
       let detected_names: Vec<&str> =
         detected.iter().map(|s| s.name()).collect();
 
-      let mut surfaces_table = crate::table::Table::new(vec![
-        crate::table::Column::new(crate::table::Cell::text(""))
-          .width(crate::table::WidthPolicy::Fixed(12)),
-        crate::table::Column::new(crate::table::Cell::text(""))
-          .width(crate::table::WidthPolicy::Fixed(14)),
-        crate::table::Column::new(crate::table::Cell::text(""))
-          .width(crate::table::WidthPolicy::Auto),
+      let mut surfaces_table = crate::ui::table::Table::new(vec![
+        crate::ui::table::Column::new(crate::ui::table::Cell::text(""))
+          .width(crate::ui::table::WidthPolicy::Fixed(12)),
+        crate::ui::table::Column::new(crate::ui::table::Cell::text(""))
+          .width(crate::ui::table::WidthPolicy::Fixed(14)),
+        crate::ui::table::Column::new(crate::ui::table::Cell::text(""))
+          .width(crate::ui::table::WidthPolicy::Auto),
       ])
-      .layout(crate::table::Layout::compact().indent(2).padding(0, 1));
+      .layout(crate::ui::table::Layout::compact().indent(2).padding(0, 1));
 
       let mut active_count = 0;
       for surface in all_surfaces() {
@@ -188,14 +195,14 @@ fn run_command_inner(args: Cli) -> i32 {
         let (status_style, name_style, marker) = if is_detected {
           active_count += 1;
           (
-            crate::table::Style::Ok,
-            crate::table::Style::Strong,
+            crate::ui::table::Style::Ok,
+            crate::ui::table::Style::Strong,
             "[ACTIVE]  ",
           )
         } else {
           (
-            crate::table::Style::Dim,
-            crate::table::Style::Dim,
+            crate::ui::table::Style::Dim,
+            crate::ui::table::Style::Dim,
             "[INACTIVE]",
           )
         };
@@ -206,16 +213,19 @@ fn run_command_inner(args: Cli) -> i32 {
           String::new()
         };
 
-        surfaces_table.add_row(crate::table::Row::new(vec![
-          crate::table::Cell::styled(marker, status_style),
-          crate::table::Cell::styled(surface.name(), name_style),
-          crate::table::Cell::styled(aliases_str, crate::table::Style::Dim),
+        surfaces_table.add_row(crate::ui::table::Row::new(vec![
+          crate::ui::table::Cell::styled(marker, status_style),
+          crate::ui::table::Cell::styled(surface.name(), name_style),
+          crate::ui::table::Cell::styled(
+            aliases_str,
+            crate::ui::table::Style::Dim,
+          ),
         ]));
       }
 
-      let palette = crate::table::Palette::detect();
-      let rendered_table = crate::table::render(&surfaces_table, &palette);
-      let separator = crate::table::separator_for_content(&rendered_table);
+      let palette = crate::ui::table::Palette::detect();
+      let rendered_table = crate::ui::table::render(&surfaces_table, &palette);
+      let separator = crate::ui::table::separator_for_content(&rendered_table);
 
       println!(
         "{} {}",

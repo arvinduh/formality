@@ -15,11 +15,11 @@ pub use native::{
   serialize_yaml_with_header, sync_editorconfig,
 };
 
+pub use crate::config::facets::{DeclaresFacets, Facet, FacetSupport};
 use crate::config::{
   FormalityConfig, ResolvedGlobalConfig, ResolvedLangConfig,
 };
-use crate::diff::render_diff;
-pub use crate::facets::{DeclaresFacets, Facet, FacetSupport};
+use crate::engine::diff::render_diff;
 use std::path::{Path, PathBuf};
 use std::time::{Duration, Instant};
 
