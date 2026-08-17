@@ -142,4 +142,11 @@ pub enum Commands {
   /// The server auto-discovers the active surfaces and only spawns child
   /// LSP processes for languages present in the workspace.
   Lsp,
+
+  /// Render an opinionated semantic terminal table from JSON specification
+  Table {
+    /// Table specification JSON string (reads from stdin if omitted)
+    #[arg(long)]
+    json: Option<String>,
+  },
 }

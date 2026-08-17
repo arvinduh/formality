@@ -3,6 +3,9 @@ use crate::surfaces::{
   LanguageSurface, ToolInfo, all_surfaces, create_tool_command,
   detect_surfaces_smart,
 };
+use crate::table::{
+  Cell, Column, Layout, Palette, Row, Span, Style, Table, WidthPolicy, render,
+};
 use crate::version::{
   ToolStatus, Version, check_tool_compatibility, get_raw_tool_version,
   minimum_supported_tool_version, probe_tool_version,
@@ -162,6 +165,14 @@ pub fn run_doctor(
   let mut installed_unique_tools = HashSet::new();
   let mut outdated_unique_tools = HashSet::new();
 
+  let mut doctor_table = Table::new(vec![
+    Column::new(Cell::text("")).width(WidthPolicy::Fixed(8)),
+    Column::new(Cell::text("")).width(WidthPolicy::Fixed(20)),
+    Column::new(Cell::text("")).width(WidthPolicy::Fixed(10)),
+    Column::new(Cell::text("")).width(WidthPolicy::Auto),
+  ])
+  .layout(Layout::compact().indent(2).padding(0, 1));
+
   for surface in &surfaces {
     let resolved = config.resolve_for_lang(surface.name());
     let tools = surface.tool_info(&resolved);
@@ -209,25 +220,29 @@ pub fn run_doctor(
             Some(ToolStatus::Outdated { current, minimum }) => {
               outdated_unique_tools.insert(tool.binary);
               let v_info = format!(" (v{} < MSTV v{})", current, minimum);
-              println!(
-                "  {} {:<16} {:<10} {}{}",
-                "[WARN] ".yellow().bold(),
-                tool.binary.bold().yellow(),
-                surface.name().dimmed(),
-                path_str.dimmed(),
-                v_info.yellow().bold()
-              );
+              let row = Row::new(vec![
+                Cell::styled("[WARN] ", Style::Warn),
+                Cell::styled(tool.binary, Style::Warn),
+                Cell::styled(surface.name(), Style::Dim),
+                Cell::new(vec![
+                  Span::styled(path_str, Style::Dim),
+                  Span::styled(v_info, Style::Warn),
+                ]),
+              ]);
+              doctor_table.add_row(row);
             }
             Some(ToolStatus::Compatible { current, .. }) => {
               let v_info = format!(" (v{})", current);
-              println!(
-                "  {} {:<16} {:<10} {}{}",
-                "[READY]".green().bold(),
-                tool.binary.bold(),
-                surface.name().dimmed(),
-                path_str.dimmed(),
-                v_info.cyan()
-              );
+              let row = Row::new(vec![
+                Cell::styled("[READY]", Style::Ok),
+                Cell::styled(tool.binary, Style::Tool),
+                Cell::styled(surface.name(), Style::Dim),
+                Cell::new(vec![
+                  Span::styled(path_str, Style::Dim),
+                  Span::styled(v_info, Style::Info),
+                ]),
+              ]);
+              doctor_table.add_row(row);
             }
             _ => {
               let v_info = if let Some(ref v) = lookup.parsed_version {
@@ -237,28 +252,36 @@ pub fn run_doctor(
               } else {
                 String::new()
               };
-              println!(
-                "  {} {:<16} {:<10} {}{}",
-                "[READY]".green().bold(),
-                tool.binary.bold(),
-                surface.name().dimmed(),
-                path_str.dimmed(),
-                v_info.cyan()
-              );
+              let row = Row::new(vec![
+                Cell::styled("[READY]", Style::Ok),
+                Cell::styled(tool.binary, Style::Tool),
+                Cell::styled(surface.name(), Style::Dim),
+                Cell::new(vec![
+                  Span::styled(path_str, Style::Dim),
+                  Span::styled(v_info, Style::Info),
+                ]),
+              ]);
+              doctor_table.add_row(row);
             }
           }
         }
       } else if !missing_unique_tools.iter().any(|t| t.binary == tool.binary) {
         missing_unique_tools.push(tool.clone());
-        println!(
-          "  {} {:<16} {:<10} {}",
-          "[MISS] ".yellow().bold(),
-          tool.binary.bold().yellow(),
-          surface.name().dimmed(),
-          tool.description.dimmed()
-        );
+        let row = Row::new(vec![
+          Cell::styled("[MISS] ", Style::Warn),
+          Cell::styled(tool.binary, Style::Warn),
+          Cell::styled(surface.name(), Style::Dim),
+          Cell::styled(tool.description, Style::Dim),
+        ]);
+        doctor_table.add_row(row);
       }
     }
+  }
+
+  let palette = Palette::detect();
+  let rendered_table = render(&doctor_table, &palette);
+  if !rendered_table.is_empty() {
+    println!("{}", rendered_table);
   }
 
   // Check for unconfigured surfaces if explicit `languages` is set
