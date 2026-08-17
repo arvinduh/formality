@@ -1,0 +1,98 @@
+{
+  "name": "formality",
+  "displayName": "Formality",
+  "description": "One formatter and linter orchestrator across every language you touch",
+  "version": "0.1.0",
+  "publisher": "arvinduh",
+  "engines": {
+    "vscode": "^1.85.0"
+  },
+  "categories": [
+    "Formatters",
+    "Linters"
+  ],
+  "keywords": [
+    "format",
+    "lint",
+    "rust",
+    "python",
+    "cpp",
+    "markdown",
+    "yaml",
+    "json",
+    "toml",
+    "typst"
+  ],
+  "activationEvents": [
+    "onLanguage:rust",
+    "onLanguage:python",
+    "onLanguage:cpp",
+    "onLanguage:c",
+    "onLanguage:markdown",
+    "onLanguage:yaml",
+    "onLanguage:json",
+    "onLanguage:jsonc",
+    "onLanguage:toml",
+    "onLanguage:typst",
+    "onCommand:formality.formatWorkspace",
+    "onCommand:formality.lintWorkspace",
+    "onCommand:formality.lintFix",
+    "onCommand:formality.sync",
+    "onCommand:formality.doctor"
+  ],
+  "main": "./out/extension.js",
+  "contributes": {
+    "commands": [
+      {
+        "command": "formality.formatWorkspace",
+        "title": "Formality: Format Entire Workspace",
+        "category": "Formality"
+      },
+      {
+        "command": "formality.lintWorkspace",
+        "title": "Formality: Lint Entire Workspace",
+        "category": "Formality"
+      },
+      {
+        "command": "formality.lintFix",
+        "title": "Formality: Lint Workspace (Auto-Fix)",
+        "category": "Formality"
+      },
+      {
+        "command": "formality.sync",
+        "title": "Formality: Sync Native Configs",
+        "category": "Formality"
+      },
+      {
+        "command": "formality.doctor",
+        "title": "Formality: Run Toolchain Doctor",
+        "category": "Formality"
+      }
+    ],
+    "configuration": {
+      "title": "Formality",
+      "properties": {
+        "formality.executablePath": {
+          "type": "string",
+          "default": "fml",
+          "description": "Path to the fml binary (defaults to 'fml' in PATH)"
+        },
+        "formality.autoSyncOnConfigSave": {
+          "type": "boolean",
+          "default": true,
+          "description": "Automatically run 'fml sync' whenever formality.toml (or .formality.toml) is saved or created. Disable this if you prefer to run 'fml sync' manually or if native config files are managed outside of formality."
+        }
+      }
+    }
+  },
+  "scripts": {
+    "vscode:prepublish": "npm run compile",
+    "compile": "tsc -p ./",
+    "watch": "tsc -watch -p ./"
+  },
+  "devDependencies": {
+    "@types/node": "^20.11.0",
+    "@types/vscode": "^1.85.0",
+    "typescript": "^5.3.3"
+  }
+}
