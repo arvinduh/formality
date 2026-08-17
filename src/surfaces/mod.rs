@@ -944,7 +944,7 @@ mod tests {
 
     let start = Instant::now();
     let res = diff_check_via_tempcopy(
-      &[file.clone()],
+      std::slice::from_ref(&file),
       |_scratch| Ok(create_dummy_success_output()),
       "rust",
       start,
@@ -965,7 +965,7 @@ mod tests {
 
     let start = Instant::now();
     let res = diff_check_via_tempcopy(
-      &[file.clone()],
+      std::slice::from_ref(&file),
       |scratch| {
         std::fs::write(scratch, "fn main() {\n  let x = 1;\n}\n")?;
         Ok(create_dummy_success_output())
@@ -997,13 +997,8 @@ mod tests {
 
     let start = Instant::now();
     let res = diff_check_via_tempcopy(
-      &[file.clone()],
-      |_scratch| {
-        Err(std::io::Error::new(
-          std::io::ErrorKind::Other,
-          "mock execution error",
-        ))
-      },
+      std::slice::from_ref(&file),
+      |_scratch| Err(std::io::Error::other("mock execution error")),
       "rust",
       start,
     );
@@ -1024,7 +1019,7 @@ mod tests {
     let start = Instant::now();
     let _ = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
       diff_check_via_tempcopy(
-        &[file.clone()],
+        std::slice::from_ref(&file),
         |_scratch| {
           panic!("simulated panic inside run_in_place");
         },
