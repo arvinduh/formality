@@ -2,7 +2,7 @@ use super::{
   DeclaresFacets, ExecutionContext, Facet, FacetSupport, LanguageSurface,
   NativeConfig, SurfaceResult, SurfaceStatus, ToolInfo, check_binary_exists,
   create_tool_command, diff_check_via_tempcopy, find_files_with_ext,
-  serialize_yaml_with_header, sync_file_helper,
+  serialize_yaml_with_header, sync_file_helper, tool_missing_result,
 };
 use serde::{Deserialize, Serialize};
 use std::path::{Path, PathBuf};
@@ -270,16 +270,12 @@ impl LanguageSurface for CppSurface {
     let start = Instant::now();
 
     if !check_binary_exists("clang-format") {
-      return SurfaceResult {
-        surface_name: self.name(),
-        status: SurfaceStatus::ToolMissing {
-          binary: "clang-format".to_string(),
-          install_hint:
-            "sudo apt install clang-format / brew install clang-format / pip install clang-format / winget install LLVM.LLVM"
-              .to_string(),
-        },
-        duration: start.elapsed(),
-      };
+      return tool_missing_result(
+        self.name(),
+        start,
+        "clang-format",
+        "sudo apt install clang-format / brew install clang-format / pip install clang-format / winget install LLVM.LLVM",
+      );
     }
 
     let files = find_files_with_ext(
@@ -365,15 +361,12 @@ impl LanguageSurface for CppSurface {
     let start = Instant::now();
 
     if !check_binary_exists("clang-tidy") {
-      return SurfaceResult {
-        surface_name: self.name(),
-        status: SurfaceStatus::ToolMissing {
-          binary: "clang-tidy".to_string(),
-          install_hint: "sudo apt install clang-tidy / brew install llvm / winget install LLVM.LLVM"
-            .to_string(),
-        },
-        duration: start.elapsed(),
-      };
+      return tool_missing_result(
+        self.name(),
+        start,
+        "clang-tidy",
+        "sudo apt install clang-tidy / brew install llvm / winget install LLVM.LLVM",
+      );
     }
 
     let files = find_files_with_ext(

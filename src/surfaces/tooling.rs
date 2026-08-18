@@ -2,6 +2,9 @@
 //! chains for each supported CLI tool, binary-on-PATH detection, and
 //! Windows-aware `Command` construction.
 
+use super::{SurfaceResult, SurfaceStatus};
+use std::time::Instant;
+
 /// A package-manager-level way to install a CLI tool: knows how to detect
 /// its own availability and how to build the concrete installer command.
 /// Each tool below declares an ordered slice of these (prebuilt binary
@@ -285,6 +288,27 @@ pub(super) fn install_chain_for(
 
 pub fn check_binary_exists(binary: &str) -> bool {
   which::which(binary).is_ok()
+}
+
+/// Builds the `SurfaceResult` every surface returns from `format`/`lint` when
+/// a required tool binary is not on `PATH`. Every call site previously
+/// repeated this same `SurfaceResult { .. status: SurfaceStatus::ToolMissing
+/// { .. } .. }` struct literal by hand (~23 instances across the 12 language
+/// surfaces) — this is the single place that shape lives now.
+pub fn tool_missing_result(
+  surface_name: &'static str,
+  start: Instant,
+  binary: &str,
+  install_hint: &str,
+) -> SurfaceResult {
+  SurfaceResult {
+    surface_name,
+    status: SurfaceStatus::ToolMissing {
+      binary: binary.to_string(),
+      install_hint: install_hint.to_string(),
+    },
+    duration: start.elapsed(),
+  }
 }
 
 pub fn has_cargo_binstall() -> bool {
