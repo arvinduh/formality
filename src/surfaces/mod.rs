@@ -1,5 +1,6 @@
 pub mod cpp;
 pub mod go;
+pub mod java;
 pub mod javascript;
 pub mod json;
 pub mod kotlin;
@@ -269,6 +270,11 @@ const CLANG_TIDY_CHAIN: &[InstallMethod] = &[
   InstallMethod::Scoop("llvm"),
 ];
 
+const GOOGLE_JAVA_FORMAT_CHAIN: &[InstallMethod] =
+  &[InstallMethod::Brew("google-java-format")];
+
+const CHECKSTYLE_CHAIN: &[InstallMethod] = &[InstallMethod::Brew("checkstyle")];
+
 const RUSTFMT_CHAIN: &[InstallMethod] = &[InstallMethod::Rustup("rustfmt")];
 const CLIPPY_CHAIN: &[InstallMethod] = &[InstallMethod::Rustup("clippy")];
 
@@ -307,6 +313,8 @@ fn install_chain_for(binary: &str) -> Option<&'static [InstallMethod]> {
     "yamllint" => Some(YAMLLINT_CHAIN),
     "clang-format" => Some(CLANG_FORMAT_CHAIN),
     "clang-tidy" => Some(CLANG_TIDY_CHAIN),
+    "google-java-format" => Some(GOOGLE_JAVA_FORMAT_CHAIN),
+    "checkstyle" => Some(CHECKSTYLE_CHAIN),
     "rustfmt" => Some(RUSTFMT_CHAIN),
     "clippy-driver" => Some(CLIPPY_CHAIN),
     "goimports" => Some(GOIMPORTS_CHAIN),
@@ -438,6 +446,7 @@ pub static DEFAULT_SURFACE_CONSTRUCTORS: &[SurfaceConstructor] = &[
   create_surface::<rust::RustSurface>,
   create_surface::<python::PythonSurface>,
   create_surface::<cpp::CppSurface>,
+  create_surface::<java::JavaSurface>,
   create_surface::<go::GoSurface>,
   create_surface::<markdown::MarkdownSurface>,
   create_surface::<yaml::YamlSurface>,
@@ -460,6 +469,7 @@ impl Default for SurfaceRegistry {
     reg.register_surface::<rust::RustSurface>();
     reg.register_surface::<python::PythonSurface>();
     reg.register_surface::<cpp::CppSurface>();
+    reg.register_surface::<java::JavaSurface>();
     reg.register_surface::<go::GoSurface>();
     reg.register_surface::<markdown::MarkdownSurface>();
     reg.register_surface::<yaml::YamlSurface>();
@@ -1032,7 +1042,9 @@ pub fn diff_check_via_tempcopy(
     let scratch = if ext.is_empty() {
       original.with_extension("fml-check.tmp")
     } else {
-      original.with_extension(format!("{}.fml-check.tmp", ext))
+      let file_stem =
+        original.file_stem().and_then(|s| s.to_str()).unwrap_or("");
+      original.with_file_name(format!("{}.fml-check-tmp.{}", file_stem, ext))
     };
 
     if let Err(e) = std::fs::write(&scratch, &original_content) {
@@ -1175,7 +1187,9 @@ mod tests {
     assert!(matches!(res.status, SurfaceStatus::Passed));
 
     let ext = file.extension().unwrap().to_str().unwrap();
-    let scratch = file.with_extension(format!("{}.fml-check.tmp", ext));
+    let file_stem = file.file_stem().unwrap().to_str().unwrap();
+    let scratch =
+      file.with_file_name(format!("{}.fml-check-tmp.{}", file_stem, ext));
     assert!(!scratch.exists());
   }
 
@@ -1207,7 +1221,9 @@ mod tests {
     }
 
     let ext = file.extension().unwrap().to_str().unwrap();
-    let scratch = file.with_extension(format!("{}.fml-check.tmp", ext));
+    let file_stem = file.file_stem().unwrap().to_str().unwrap();
+    let scratch =
+      file.with_file_name(format!("{}.fml-check-tmp.{}", file_stem, ext));
     assert!(!scratch.exists());
   }
 
@@ -1228,7 +1244,9 @@ mod tests {
     assert!(matches!(res.status, SurfaceStatus::ExecutionError { .. }));
 
     let ext = file.extension().unwrap().to_str().unwrap();
-    let scratch = file.with_extension(format!("{}.fml-check.tmp", ext));
+    let file_stem = file.file_stem().unwrap().to_str().unwrap();
+    let scratch =
+      file.with_file_name(format!("{}.fml-check-tmp.{}", file_stem, ext));
     assert!(!scratch.exists());
   }
 
@@ -1251,7 +1269,9 @@ mod tests {
     }));
 
     let ext = file.extension().unwrap().to_str().unwrap();
-    let scratch = file.with_extension(format!("{}.fml-check.tmp", ext));
+    let file_stem = file.file_stem().unwrap().to_str().unwrap();
+    let scratch =
+      file.with_file_name(format!("{}.fml-check-tmp.{}", file_stem, ext));
     assert!(!scratch.exists());
   }
 
@@ -1268,6 +1288,8 @@ mod tests {
       "yamllint",
       "clang-format",
       "clang-tidy",
+      "google-java-format",
+      "checkstyle",
       "rustfmt",
       "clippy-driver",
       "goimports",
@@ -1502,13 +1524,14 @@ mod tests {
   #[test]
   fn test_all_fleet_surfaces_present() {
     let surfaces = all_surfaces();
-    assert_eq!(surfaces.len(), 11);
+    assert_eq!(surfaces.len(), 12);
 
     let names: Vec<&str> = surfaces.iter().map(|s| s.name()).collect();
     let expected = [
       "rust",
       "python",
       "cpp",
+      "java",
       "go",
       "markdown",
       "yaml",
@@ -1538,6 +1561,8 @@ mod tests {
       ("c", "cpp"),
       ("c++", "cpp"),
       ("cxx", "cpp"),
+      ("java", "java"),
+      ("jav", "java"),
       ("go", "go"),
       ("golang", "go"),
       ("markdown", "markdown"),
@@ -1599,6 +1624,9 @@ mod tests {
       ("CXX", "cpp"),
       ("Cxx", "cpp"),
       ("C", "cpp"),
+      ("JAVA", "java"),
+      ("Java", "java"),
+      ("JAV", "java"),
       ("MARKDOWN", "markdown"),
       ("Markdown", "markdown"),
       ("MD", "markdown"),
@@ -1673,6 +1701,7 @@ mod tests {
     assert!(rust::RustSurface.supports_lint_fix());
     assert!(python::PythonSurface.supports_lint_fix());
     assert!(cpp::CppSurface.supports_lint_fix());
+    assert!(!java::JavaSurface.supports_lint_fix());
     assert!(go::GoSurface.supports_lint_fix());
     assert!(!yaml::YamlSurface.supports_lint_fix());
     assert!(!toml::TomlSurface.supports_lint_fix());
@@ -1698,6 +1727,7 @@ mod tests {
       Box::new(toml::TomlSurface),
       Box::new(json::JsonSurface),
       Box::new(typst::TypstSurface),
+      Box::new(java::JavaSurface),
     ];
 
     for surface in unsupported_surfaces {
