@@ -581,3 +581,41 @@ fn test_generate_init_template_omits_languages() {
   let global = parsed.resolve_global();
   assert_eq!(global.languages, None);
 }
+
+#[test]
+fn test_generate_init_template_emits_commented_lang_stubs_for_detected() {
+  let template =
+    FormalityConfig::generate_init_template(&["rust", "python", "toml"]);
+
+  // Detected languages get a commented-out, ready-to-uncomment stub section
+  // each, in deterministic sorted order.
+  assert!(template.contains("# [lang.python]"));
+  assert!(template.contains("# [lang.rust]"));
+  assert!(template.contains("# [lang.toml]"));
+  let python_pos = template.find("# [lang.python]").unwrap();
+  let rust_pos = template.find("# [lang.rust]").unwrap();
+  let toml_pos = template.find("# [lang.toml]").unwrap();
+  assert!(python_pos < rust_pos);
+  assert!(rust_pos < toml_pos);
+
+  // A language that wasn't detected gets no stub.
+  assert!(!template.contains("[lang.go]"));
+
+  // Stubs are commented out, so the template still parses to an empty `lang`
+  // map — they must not silently activate any override.
+  let parsed =
+    FormalityConfig::parse_str(&template, Path::new("formality.toml")).unwrap();
+  assert!(parsed.lang.is_empty());
+}
+
+#[test]
+fn test_generate_init_template_dedupes_langs() {
+  let template = FormalityConfig::generate_init_template(&["rust", "rust"]);
+  assert_eq!(template.matches("[lang.rust]").count(), 1);
+}
+
+#[test]
+fn test_generate_init_template_no_detected_langs_matches_sample() {
+  let template = FormalityConfig::generate_init_template(&[]);
+  assert_eq!(template, FormalityConfig::generate_sample());
+}
