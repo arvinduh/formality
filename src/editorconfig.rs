@@ -1,5 +1,5 @@
+use crate::config::facets::{Facet, FacetSupport};
 use crate::config::{FormalityConfig, ResolvedGlobalConfig};
-use crate::facets::{Facet, FacetSupport};
 use crate::surfaces::{
   AUTO_GENERATED_HEADER, LanguageSurface, SurfaceResult, sync_file_helper,
 };
