@@ -619,3 +619,79 @@ fn test_generate_init_template_no_detected_langs_matches_sample() {
   let template = FormalityConfig::generate_init_template(&[]);
   assert_eq!(template, FormalityConfig::generate_sample());
 }
+
+#[test]
+fn test_unrecognized_lang_sections_flags_typo_but_not_valid_undetected() {
+  let registry = crate::surfaces::SurfaceRegistry::default();
+
+  // A genuine typo: "pythonn" is not a known surface name or alias.
+  let toml = r#"
+    [lang.pythonn]
+    indent_size = 4
+  "#;
+  let cfg =
+    FormalityConfig::parse_str(toml, Path::new("formality.toml")).unwrap();
+  assert_eq!(
+    cfg.unrecognized_lang_sections(&registry),
+    vec!["pythonn"],
+    "a typo'd section name should be flagged"
+  );
+
+  // A valid, recognized surface name that simply isn't active/detected in
+  // the current workspace (pre-configuring for a language not yet in use)
+  // must NOT be flagged — this is a legitimate, intentional override.
+  let toml = r#"
+    [lang.rust]
+    indent_size = 4
+  "#;
+  let cfg =
+    FormalityConfig::parse_str(toml, Path::new("formality.toml")).unwrap();
+  assert!(
+    cfg.unrecognized_lang_sections(&registry).is_empty(),
+    "a valid but undetected surface name should not be flagged"
+  );
+}
+
+#[test]
+fn test_unrecognized_lang_sections_handles_case_and_aliases() {
+  let registry = crate::surfaces::SurfaceRegistry::default();
+
+  // Canonical names are matched case-insensitively.
+  let toml = r#"
+    [lang.RUST]
+    indent_size = 4
+  "#;
+  let cfg =
+    FormalityConfig::parse_str(toml, Path::new("formality.toml")).unwrap();
+  assert!(
+    cfg.unrecognized_lang_sections(&registry).is_empty(),
+    "canonical names should resolve case-insensitively"
+  );
+
+  // Aliases (e.g. "py" for "python", "js" for "javascript") also resolve
+  // and must not be flagged.
+  let toml = r#"
+    [lang.py]
+    indent_size = 4
+  "#;
+  let cfg =
+    FormalityConfig::parse_str(toml, Path::new("formality.toml")).unwrap();
+  assert!(
+    cfg.unrecognized_lang_sections(&registry).is_empty(),
+    "known aliases should resolve to their canonical surface"
+  );
+
+  // Multiple unrecognized sections are all reported.
+  let toml = r#"
+    [lang.pythonn]
+    indent_size = 4
+
+    [lang.jaav]
+    indent_size = 4
+  "#;
+  let cfg =
+    FormalityConfig::parse_str(toml, Path::new("formality.toml")).unwrap();
+  let mut unrecognized = cfg.unrecognized_lang_sections(&registry);
+  unrecognized.sort_unstable();
+  assert_eq!(unrecognized, vec!["jaav", "pythonn"]);
+}
