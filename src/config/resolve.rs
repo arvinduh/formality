@@ -1,7 +1,7 @@
 use super::facets::LayoutFacet;
 use super::options::{
-  CppOptions, JsonOptions, MarkdownOptions, PythonOptions, RustOptions,
-  TomlOptions, TypstOptions, YamlOptions,
+  CppOptions, JavaScriptOptions, JsonOptions, MarkdownOptions, PythonOptions,
+  RustOptions, TomlOptions, TypstOptions, YamlOptions,
 };
 use super::{
   CONFIG_FILE_CANDIDATES, ConfigError, FormalityConfig, GlobalConfig,
@@ -127,6 +127,7 @@ impl FormalityConfig {
       "json" => (Some("prettier"), None),
       "toml" => (Some("taplo"), Some("taplo")),
       "typst" => (Some("typstyle"), Some("typstyle")),
+      "javascript" => (Some("biome"), Some("biome")),
       _ => (None, None),
     };
 
@@ -223,6 +224,15 @@ impl FormalityConfig {
       }
     });
 
+    let javascript =
+      lang_cfg.and_then(|l| l.javascript_options()).or_else(|| {
+        if lang_name == "javascript" {
+          Some(JavaScriptOptions::default())
+        } else {
+          None
+        }
+      });
+
     let extra = lang_cfg.map(|l| l.extra.clone()).unwrap_or_default();
 
     ResolvedLangConfig {
@@ -258,6 +268,7 @@ impl FormalityConfig {
       json,
       toml,
       typst,
+      javascript,
       extra,
     }
   }

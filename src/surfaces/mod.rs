@@ -1,4 +1,5 @@
 pub mod cpp;
+pub mod javascript;
 pub mod json;
 pub mod markdown;
 pub mod native;
@@ -217,6 +218,15 @@ const PRETTIER_CHAIN: &[InstallMethod] = &[
   InstallMethod::WingetName("Prettier.Prettier"),
 ];
 
+const BIOME_CHAIN: &[InstallMethod] = &[
+  InstallMethod::Npm("@biomejs/biome"),
+  InstallMethod::Pnpm("@biomejs/biome"),
+  InstallMethod::Yarn("@biomejs/biome"),
+  InstallMethod::Bun("@biomejs/biome"),
+  InstallMethod::Brew("biome"),
+  InstallMethod::Scoop("biome"),
+];
+
 const MARKDOWNLINT_CHAIN: &[InstallMethod] = &[
   InstallMethod::Npm("markdownlint-cli2"),
   InstallMethod::Pnpm("markdownlint-cli2"),
@@ -264,6 +274,7 @@ fn install_chain_for(binary: &str) -> Option<&'static [InstallMethod]> {
     "tinymist" => Some(TINYMIST_CHAIN),
     "ruff" => Some(RUFF_CHAIN),
     "prettier" => Some(PRETTIER_CHAIN),
+    "biome" => Some(BIOME_CHAIN),
     "markdownlint-cli2" | "markdownlint" => Some(MARKDOWNLINT_CHAIN),
     "yamllint" => Some(YAMLLINT_CHAIN),
     "clang-format" => Some(CLANG_FORMAT_CHAIN),
@@ -401,6 +412,7 @@ pub static DEFAULT_SURFACE_CONSTRUCTORS: &[SurfaceConstructor] = &[
   create_surface::<json::JsonSurface>,
   create_surface::<toml::TomlSurface>,
   create_surface::<typst::TypstSurface>,
+  create_surface::<javascript::JavaScriptSurface>,
 ];
 
 /// Registry for managing, querying, and discovering language surfaces.
@@ -420,6 +432,7 @@ impl Default for SurfaceRegistry {
     reg.register_surface::<json::JsonSurface>();
     reg.register_surface::<toml::TomlSurface>();
     reg.register_surface::<typst::TypstSurface>();
+    reg.register_surface::<javascript::JavaScriptSurface>();
     reg
   }
 }
@@ -432,7 +445,7 @@ impl SurfaceRegistry {
     }
   }
 
-  /// Creates a registry pre-populated with the default fleet of 8 language surfaces.
+  /// Creates a registry pre-populated with the default fleet of 9 language surfaces.
   pub fn new() -> Self {
     Self::default()
   }
@@ -1215,6 +1228,7 @@ mod tests {
       "tinymist",
       "ruff",
       "prettier",
+      "biome",
       "markdownlint-cli2",
       "yamllint",
       "clang-format",
@@ -1450,11 +1464,19 @@ mod tests {
   #[test]
   fn test_all_fleet_surfaces_present() {
     let surfaces = all_surfaces();
-    assert_eq!(surfaces.len(), 8);
+    assert_eq!(surfaces.len(), 9);
 
     let names: Vec<&str> = surfaces.iter().map(|s| s.name()).collect();
     let expected = [
-      "rust", "python", "cpp", "markdown", "yaml", "json", "toml", "typst",
+      "rust",
+      "python",
+      "cpp",
+      "markdown",
+      "yaml",
+      "json",
+      "toml",
+      "typst",
+      "javascript",
     ];
     for exp in expected {
       assert!(
@@ -1484,6 +1506,12 @@ mod tests {
       ("toml", "toml"),
       ("typst", "typst"),
       ("typ", "typst"),
+      ("javascript", "javascript"),
+      ("js", "javascript"),
+      ("ts", "javascript"),
+      ("typescript", "javascript"),
+      ("jsx", "javascript"),
+      ("tsx", "javascript"),
     ];
 
     for (query, canonical) in test_cases {
@@ -1543,6 +1571,12 @@ mod tests {
       ("Typst", "typst"),
       ("TYP", "typst"),
       ("Typ", "typst"),
+      ("JAVASCRIPT", "javascript"),
+      ("JavaScript", "javascript"),
+      ("JS", "javascript"),
+      ("Js", "javascript"),
+      ("TS", "javascript"),
+      ("Ts", "javascript"),
       ("  rust  ", "rust"),
       ("  C++  ", "cpp"),
     ];
@@ -1596,6 +1630,7 @@ mod tests {
     assert!(markdown::MarkdownSurface.supports_lint_fix());
     assert!(!json::JsonSurface.supports_lint_fix());
     assert!(!typst::TypstSurface.supports_lint_fix());
+    assert!(javascript::JavaScriptSurface.supports_lint_fix());
   }
 
   #[test]
