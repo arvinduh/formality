@@ -267,9 +267,11 @@ mod tests {
   fn test_json_format_ignores_lockfiles() {
     // package-lock.json / npm-shrinkwrap.json must never be reformatted:
     // find_files_with_ext + the filename filter should exclude them even
-    // when they are the only JSON files present, so format() reports
-    // Passed (no files to act on) regardless of whether prettier is
-    // installed.
+    // when they are the only JSON files present. `format()` checks
+    // `prettier`'s presence before it ever looks at the file list, so the
+    // *reachable* assertion is "no lockfile ever gets passed to prettier",
+    // not "Passed unconditionally" — branch on tool presence like every
+    // other prettier-backed test in this file.
     let temp = TempDir::new().unwrap();
     std::fs::write(temp.path().join("package-lock.json"), "{}").unwrap();
     std::fs::write(temp.path().join("npm-shrinkwrap.json"), "{}").unwrap();
@@ -277,7 +279,11 @@ mod tests {
     let surface = JsonSurface;
     let ctx = ctx_for(&temp, ResolvedLangConfig::new("json"));
     let res = surface.format(&ctx);
-    assert!(matches!(res.status, SurfaceStatus::Passed));
+    if check_binary_exists("prettier") {
+      assert!(matches!(res.status, SurfaceStatus::Passed));
+    } else {
+      assert!(matches!(res.status, SurfaceStatus::ToolMissing { .. }));
+    }
   }
 
   #[test]
