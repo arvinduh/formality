@@ -2,7 +2,7 @@ use super::{
   DeclaresFacets, ExecutionContext, Facet, FacetSupport, LanguageSurface,
   NativeConfig, SurfaceResult, SurfaceStatus, ToolInfo, check_binary_exists,
   create_tool_command, diff_check_via_tempcopy, find_files_with_ext,
-  serialize_json_pretty, sync_file_helper,
+  serialize_json_pretty, sync_file_helper, tool_missing_result,
 };
 use serde::{Deserialize, Serialize};
 use std::path::{Path, PathBuf};
@@ -266,14 +266,12 @@ impl LanguageSurface for JavaScriptSurface {
     let start = Instant::now();
 
     if !check_binary_exists("biome") {
-      return SurfaceResult {
-        surface_name: self.name(),
-        status: SurfaceStatus::ToolMissing {
-          binary: "biome".to_string(),
-          install_hint: "npm install -g @biomejs/biome".to_string(),
-        },
-        duration: start.elapsed(),
-      };
+      return tool_missing_result(
+        self.name(),
+        start,
+        "biome",
+        "npm install -g @biomejs/biome",
+      );
     }
 
     let files = find_files_with_ext(
@@ -367,14 +365,12 @@ impl LanguageSurface for JavaScriptSurface {
     let start = Instant::now();
 
     if !check_binary_exists("biome") {
-      return SurfaceResult {
-        surface_name: self.name(),
-        status: SurfaceStatus::ToolMissing {
-          binary: "biome".to_string(),
-          install_hint: "npm install -g @biomejs/biome".to_string(),
-        },
-        duration: start.elapsed(),
-      };
+      return tool_missing_result(
+        self.name(),
+        start,
+        "biome",
+        "npm install -g @biomejs/biome",
+      );
     }
 
     let files = find_files_with_ext(

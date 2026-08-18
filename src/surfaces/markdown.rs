@@ -2,7 +2,7 @@ use super::{
   DeclaresFacets, ExecutionContext, Facet, FacetSupport, LanguageSurface,
   NativeConfig, SurfaceResult, SurfaceStatus, ToolInfo, check_binary_exists,
   create_tool_command, diff_check_via_tempcopy, find_files_with_ext,
-  serialize_json_pretty, sync_file_helper,
+  serialize_json_pretty, sync_file_helper, tool_missing_result,
 };
 use serde::{Deserialize, Serialize};
 use std::path::{Path, PathBuf};
@@ -192,14 +192,12 @@ impl LanguageSurface for MarkdownSurface {
     let start = Instant::now();
 
     if !check_binary_exists("prettier") {
-      return SurfaceResult {
-        surface_name: self.name(),
-        status: SurfaceStatus::ToolMissing {
-          binary: "prettier".to_string(),
-          install_hint: "npm install -g prettier".to_string(),
-        },
-        duration: start.elapsed(),
-      };
+      return tool_missing_result(
+        self.name(),
+        start,
+        "prettier",
+        "npm install -g prettier",
+      );
     }
 
     let files = find_files_with_ext(
@@ -312,14 +310,12 @@ impl LanguageSurface for MarkdownSurface {
     } else if check_binary_exists("markdownlint") {
       "markdownlint"
     } else {
-      return SurfaceResult {
-        surface_name: self.name(),
-        status: SurfaceStatus::ToolMissing {
-          binary: "markdownlint-cli2".to_string(),
-          install_hint: "npm install -g markdownlint-cli2".to_string(),
-        },
-        duration: start.elapsed(),
-      };
+      return tool_missing_result(
+        self.name(),
+        start,
+        "markdownlint-cli2",
+        "npm install -g markdownlint-cli2",
+      );
     };
 
     let files = find_files_with_ext(

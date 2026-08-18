@@ -2,7 +2,7 @@ use super::{
   DeclaresFacets, ExecutionContext, Facet, FacetSupport, LanguageSurface,
   NativeConfig, SurfaceResult, SurfaceStatus, ToolInfo, check_binary_exists,
   create_tool_command, diff_check_via_tempcopy, find_files_with_ext,
-  serialize_toml_with_header, sync_file_helper,
+  serialize_toml_with_header, sync_file_helper, tool_missing_result,
 };
 use serde::{Deserialize, Serialize};
 use std::path::{Path, PathBuf};
@@ -202,14 +202,12 @@ impl LanguageSurface for PythonSurface {
     let start = Instant::now();
 
     if !check_binary_exists("ruff") {
-      return SurfaceResult {
-        surface_name: self.name(),
-        status: SurfaceStatus::ToolMissing {
-          binary: "ruff".to_string(),
-          install_hint: "pip install ruff".to_string(),
-        },
-        duration: start.elapsed(),
-      };
+      return tool_missing_result(
+        self.name(),
+        start,
+        "ruff",
+        "pip install ruff",
+      );
     }
 
     let files = find_files_with_ext(
@@ -363,14 +361,12 @@ impl LanguageSurface for PythonSurface {
     let start = Instant::now();
 
     if !check_binary_exists("ruff") {
-      return SurfaceResult {
-        surface_name: self.name(),
-        status: SurfaceStatus::ToolMissing {
-          binary: "ruff".to_string(),
-          install_hint: "pip install ruff".to_string(),
-        },
-        duration: start.elapsed(),
-      };
+      return tool_missing_result(
+        self.name(),
+        start,
+        "ruff",
+        "pip install ruff",
+      );
     }
 
     let files = find_files_with_ext(

@@ -2,7 +2,7 @@ use super::{
   DeclaresFacets, ExecutionContext, Facet, FacetSupport, LanguageSurface,
   SurfaceResult, SurfaceStatus, ToolInfo, check_binary_exists,
   create_tool_command, diff_check_via_tempcopy, find_files_with_ext,
-  markdown::sync_prettier_config,
+  markdown::sync_prettier_config, tool_missing_result,
 };
 use std::path::Path;
 use std::time::Instant;
@@ -66,14 +66,12 @@ impl LanguageSurface for JsonSurface {
     let start = Instant::now();
 
     if !check_binary_exists("prettier") {
-      return SurfaceResult {
-        surface_name: self.name(),
-        status: SurfaceStatus::ToolMissing {
-          binary: "prettier".to_string(),
-          install_hint: "npm install -g prettier".to_string(),
-        },
-        duration: start.elapsed(),
-      };
+      return tool_missing_result(
+        self.name(),
+        start,
+        "prettier",
+        "npm install -g prettier",
+      );
     }
 
     let files: Vec<std::path::PathBuf> = find_files_with_ext(

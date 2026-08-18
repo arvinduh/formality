@@ -2,6 +2,7 @@ use super::{
   DeclaresFacets, ExecutionContext, Facet, FacetSupport, LanguageSurface,
   SurfaceResult, SurfaceStatus, ToolInfo, check_binary_exists,
   create_tool_command, diff_check_via_tempcopy, find_files_with_ext,
+  tool_missing_result,
 };
 use std::path::Path;
 use std::time::Instant;
@@ -120,14 +121,12 @@ impl LanguageSurface for KotlinSurface {
     let start = Instant::now();
 
     if !check_binary_exists("ktlint") {
-      return SurfaceResult {
-        surface_name: self.name(),
-        status: SurfaceStatus::ToolMissing {
-          binary: "ktlint".to_string(),
-          install_hint: "brew install ktlint".to_string(),
-        },
-        duration: start.elapsed(),
-      };
+      return tool_missing_result(
+        self.name(),
+        start,
+        "ktlint",
+        "brew install ktlint",
+      );
     }
 
     let files = find_files_with_ext(
@@ -219,14 +218,12 @@ impl LanguageSurface for KotlinSurface {
     let start = Instant::now();
 
     if !check_binary_exists("ktlint") {
-      return SurfaceResult {
-        surface_name: self.name(),
-        status: SurfaceStatus::ToolMissing {
-          binary: "ktlint".to_string(),
-          install_hint: "brew install ktlint".to_string(),
-        },
-        duration: start.elapsed(),
-      };
+      return tool_missing_result(
+        self.name(),
+        start,
+        "ktlint",
+        "brew install ktlint",
+      );
     }
 
     let files = find_files_with_ext(

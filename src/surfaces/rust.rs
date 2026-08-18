@@ -2,7 +2,7 @@ use super::{
   DeclaresFacets, ExecutionContext, Facet, FacetSupport, LanguageSurface,
   NativeConfig, SurfaceResult, SurfaceStatus, ToolInfo, check_binary_exists,
   create_tool_command, diff_check_via_tempcopy, find_files_with_ext,
-  serialize_toml_with_header, sync_file_helper,
+  serialize_toml_with_header, sync_file_helper, tool_missing_result,
 };
 use serde::{Deserialize, Serialize};
 use std::path::{Path, PathBuf};
@@ -165,14 +165,12 @@ impl LanguageSurface for RustSurface {
     let start = Instant::now();
 
     if !check_binary_exists("cargo") && !check_binary_exists("rustfmt") {
-      return SurfaceResult {
-        surface_name: self.name(),
-        status: SurfaceStatus::ToolMissing {
-          binary: "cargo / rustfmt".to_string(),
-          install_hint: "Run: rustup component add rustfmt".to_string(),
-        },
-        duration: start.elapsed(),
-      };
+      return tool_missing_result(
+        self.name(),
+        start,
+        "cargo / rustfmt",
+        "Run: rustup component add rustfmt",
+      );
     }
 
     let files = find_files_with_ext(
@@ -296,14 +294,12 @@ impl LanguageSurface for RustSurface {
     let start = Instant::now();
 
     if !check_binary_exists("cargo") {
-      return SurfaceResult {
-        surface_name: self.name(),
-        status: SurfaceStatus::ToolMissing {
-          binary: "cargo".to_string(),
-          install_hint: "Install Rust via https://rustup.rs".to_string(),
-        },
-        duration: start.elapsed(),
-      };
+      return tool_missing_result(
+        self.name(),
+        start,
+        "cargo",
+        "Install Rust via https://rustup.rs",
+      );
     }
 
     let mut cmd = create_tool_command("cargo");
