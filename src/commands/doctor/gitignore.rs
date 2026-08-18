@@ -16,6 +16,7 @@ pub struct GitignoreHygieneReport {
 }
 
 /// Checks whether a specific pattern is ignored given `.gitignore` lines.
+#[must_use]
 pub fn is_pattern_ignored(lines: &[&str], entry: &str) -> bool {
   let normalized_entry = entry.trim_matches('/');
   for raw_line in lines {
@@ -41,6 +42,7 @@ pub fn is_pattern_ignored(lines: &[&str], entry: &str) -> bool {
 }
 
 /// Validates that cache/artifact directories for active language toolchains are ignored in `.gitignore`.
+#[must_use]
 pub fn check_gitignore_hygiene_content(
   gitignore_content: Option<&str>,
   has_python: bool,
@@ -106,6 +108,7 @@ pub fn check_gitignore_hygiene_content(
   }
 }
 
+#[must_use]
 pub fn check_gitignore_hygiene(
   root: &Path,
   surfaces: &[Box<dyn LanguageSurface>],

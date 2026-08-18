@@ -1,6 +1,7 @@
 use crate::config::FormalityConfig;
 
 /// Generates the JSON Schema for formality configuration dynamically using schemars.
+#[must_use]
 pub fn generate_schema() -> String {
   let schema = schemars::schema_for!(FormalityConfig);
   serde_json::to_string_pretty(&schema).unwrap_or_default()

@@ -51,6 +51,7 @@ impl Span {
     Self::new(text, style)
   }
 
+  #[must_use]
   pub fn display_width(&self) -> usize {
     self.text.as_str().width()
   }
@@ -116,6 +117,7 @@ pub struct Cell {
 }
 
 impl Cell {
+  #[must_use]
   pub fn new(spans: Vec<Span>) -> Self {
     Self {
       spans,
@@ -132,6 +134,7 @@ impl Cell {
     }
   }
 
+  #[must_use]
   pub fn span(span: Span) -> Self {
     Self {
       spans: vec![span],
@@ -148,15 +151,18 @@ impl Cell {
     }
   }
 
+  #[must_use]
   pub fn display_width(&self) -> usize {
-    self.spans.iter().map(|s| s.display_width()).sum()
+    self.spans.iter().map(Span::display_width).sum()
   }
 
+  #[must_use]
   pub fn align(mut self, align: Align) -> Self {
     self.align = Some(align);
     self
   }
 
+  #[must_use]
   pub fn overflow(mut self, overflow: Overflow) -> Self {
     self.overflow = Some(overflow);
     self
@@ -204,34 +210,40 @@ pub struct Palette {
 }
 
 impl Palette {
+  #[must_use]
   pub fn new(mode: PaletteMode) -> Self {
     Self { mode }
   }
 
+  #[must_use]
   pub fn none() -> Self {
     Self {
       mode: PaletteMode::None,
     }
   }
 
+  #[must_use]
   pub fn ansi16() -> Self {
     Self {
       mode: PaletteMode::Ansi16,
     }
   }
 
+  #[must_use]
   pub fn truecolor() -> Self {
     Self {
       mode: PaletteMode::Truecolor,
     }
   }
 
+  #[must_use]
   pub fn mode(&self) -> PaletteMode {
     self.mode
   }
 
   /// Automatically detect the terminal color capability, respecting standard
-  /// environment variables (NO_COLOR, FORCE_COLOR, CLICOLOR_FORCE, COLORTERM, TERM).
+  /// environment variables (`NO_COLOR`, `FORCE_COLOR`, `CLICOLOR_FORCE`, COLORTERM, TERM).
+  #[must_use]
   pub fn detect() -> Self {
     // 1. Respect NO_COLOR if set and non-empty
     if std::env::var("NO_COLOR").is_ok_and(|val| !val.is_empty()) {
@@ -261,6 +273,7 @@ impl Palette {
   }
 
   /// Get SGR opening and closing escapes for a given Style.
+  #[must_use]
   pub fn style_sgr(&self, style: Style) -> (&'static str, &'static str) {
     match self.mode {
       PaletteMode::None => ("", ""),
@@ -290,6 +303,7 @@ impl Palette {
   }
 
   /// Apply style escape codes to a text slice.
+  #[must_use]
   pub fn apply(&self, text: &str, style: Style) -> String {
     if text.is_empty() {
       return String::new();
@@ -298,7 +312,7 @@ impl Palette {
     if prefix.is_empty() && suffix.is_empty() {
       text.to_string()
     } else {
-      format!("{}{}{}", prefix, text, suffix)
+      format!("{prefix}{text}{suffix}")
     }
   }
 }
@@ -354,21 +368,25 @@ impl Column {
     }
   }
 
+  #[must_use]
   pub fn align(mut self, align: Align) -> Self {
     self.align = align;
     self
   }
 
+  #[must_use]
   pub fn width(mut self, width: WidthPolicy) -> Self {
     self.width = width;
     self
   }
 
+  #[must_use]
   pub fn overflow(mut self, overflow: Overflow) -> Self {
     self.overflow = overflow;
     self
   }
 
+  #[must_use]
   pub fn priority(mut self, priority: u8) -> Self {
     self.priority = priority;
     self
@@ -386,6 +404,7 @@ pub struct Row {
 }
 
 impl Row {
+  #[must_use]
   pub fn new(cells: Vec<Cell>) -> Self {
     Self {
       cells,
@@ -394,10 +413,12 @@ impl Row {
     }
   }
 
+  #[must_use]
   pub fn data(cells: Vec<Cell>) -> Self {
     Self::new(cells)
   }
 
+  #[must_use]
   pub fn rule() -> Self {
     Self {
       cells: Vec::new(),
@@ -406,6 +427,7 @@ impl Row {
     }
   }
 
+  #[must_use]
   pub fn blank() -> Self {
     Self {
       cells: Vec::new(),
@@ -422,6 +444,7 @@ impl Row {
     }
   }
 
+  #[must_use]
   pub fn max_height(mut self, height: usize) -> Self {
     self.max_height = Some(height);
     self
@@ -479,6 +502,7 @@ impl Default for Layout {
 }
 
 impl Layout {
+  #[must_use]
   pub fn compact() -> Self {
     Self {
       density: Density::Compact,
@@ -487,6 +511,7 @@ impl Layout {
     }
   }
 
+  #[must_use]
   pub fn comfortable() -> Self {
     Self {
       density: Density::Comfortable,
@@ -495,21 +520,25 @@ impl Layout {
     }
   }
 
+  #[must_use]
   pub fn max_width(mut self, width: u16) -> Self {
     self.max_width = width;
     self
   }
 
+  #[must_use]
   pub fn indent(mut self, indent: u16) -> Self {
     self.indent = indent;
     self
   }
 
+  #[must_use]
   pub fn padding(mut self, left: u16, right: u16) -> Self {
     self.padding = (left, right);
     self
   }
 
+  #[must_use]
   pub fn clamp_to_terminal(mut self, clamp: bool) -> Self {
     self.clamp_to_terminal = clamp;
     self

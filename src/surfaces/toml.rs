@@ -28,6 +28,7 @@ impl NativeConfig for TaploConfig {
 }
 
 impl TaploConfig {
+  #[must_use]
   pub fn from_context(ctx: &ExecutionContext) -> Self {
     let indent_spaces = if ctx.lang_config.use_tabs {
       "\t".to_string()
@@ -60,15 +61,15 @@ pub struct TomlSurface;
 impl DeclaresFacets for TomlSurface {
   fn facet_support(&self, facet: Facet) -> FacetSupport {
     match facet {
-      Facet::IndentTabs => FacetSupport::Configurable,
-      Facet::IndentWidth => FacetSupport::Configurable,
-      Facet::LineLength => FacetSupport::Configurable,
-      Facet::QuoteStyle => FacetSupport::Unsupported,
-      Facet::TrailingComma => FacetSupport::Unsupported,
-      Facet::ImportSort => FacetSupport::Unsupported,
-      Facet::ProseWrap => FacetSupport::Unsupported,
-      Facet::Edition => FacetSupport::Unsupported,
-      Facet::Standard => FacetSupport::Unsupported,
+      Facet::IndentTabs | Facet::IndentWidth | Facet::LineLength => {
+        FacetSupport::Configurable
+      }
+      Facet::QuoteStyle
+      | Facet::TrailingComma
+      | Facet::ImportSort
+      | Facet::ProseWrap
+      | Facet::Edition
+      | Facet::Standard => FacetSupport::Unsupported,
     }
   }
 }
@@ -208,7 +209,7 @@ impl LanguageSurface for TomlSurface {
       Err(e) => SurfaceResult {
         surface_name: self.name(),
         status: SurfaceStatus::ExecutionError {
-          message: format!("Failed to execute taplo: {}", e),
+          message: format!("Failed to execute taplo: {e}"),
         },
         duration: start.elapsed(),
       },
@@ -274,10 +275,10 @@ impl LanguageSurface for TomlSurface {
         } else {
           let stderr = String::from_utf8_lossy(&output.stderr).to_string();
           let stdout = String::from_utf8_lossy(&output.stdout).to_string();
-          let msg = if !stderr.trim().is_empty() {
-            stderr
-          } else {
+          let msg = if stderr.trim().is_empty() {
             stdout
+          } else {
+            stderr
           };
 
           SurfaceResult {
@@ -293,7 +294,7 @@ impl LanguageSurface for TomlSurface {
       Err(e) => SurfaceResult {
         surface_name: self.name(),
         status: SurfaceStatus::ExecutionError {
-          message: format!("Failed to execute taplo lint: {}", e),
+          message: format!("Failed to execute taplo lint: {e}"),
         },
         duration: start.elapsed(),
       },

@@ -78,6 +78,7 @@ impl NativeConfig for BiomeConfig {
 }
 
 impl BiomeConfig {
+  #[must_use]
   pub fn from_context(ctx: &ExecutionContext) -> Self {
     let indent_style = if ctx.lang_config.use_tabs {
       "tab"
@@ -160,15 +161,15 @@ pub struct JavaScriptSurface;
 impl DeclaresFacets for JavaScriptSurface {
   fn facet_support(&self, facet: Facet) -> FacetSupport {
     match facet {
-      Facet::IndentTabs => FacetSupport::Configurable,
-      Facet::IndentWidth => FacetSupport::Configurable,
-      Facet::LineLength => FacetSupport::Configurable,
-      Facet::QuoteStyle => FacetSupport::Configurable,
-      Facet::TrailingComma => FacetSupport::Configurable,
-      Facet::ImportSort => FacetSupport::Configurable,
-      Facet::ProseWrap => FacetSupport::Unsupported,
-      Facet::Edition => FacetSupport::Unsupported,
-      Facet::Standard => FacetSupport::Unsupported,
+      Facet::IndentTabs
+      | Facet::IndentWidth
+      | Facet::LineLength
+      | Facet::QuoteStyle
+      | Facet::TrailingComma
+      | Facet::ImportSort => FacetSupport::Configurable,
+      Facet::ProseWrap | Facet::Edition | Facet::Standard => {
+        FacetSupport::Unsupported
+      }
     }
   }
 }
@@ -180,6 +181,7 @@ pub const JS_TS_EXTENSIONS: &[&str] =
 /// with the linter disabled so this step only applies formatting and (per
 /// `biome.json`'s `organizeImports.enabled`) import sorting — never lint fixes.
 /// Linting itself is handled separately by `lint()`.
+#[must_use]
 pub fn build_biome_format_args(
   files: &[PathBuf],
   extra_args: &[String],
@@ -189,17 +191,18 @@ pub fn build_biome_format_args(
     "--write".to_string(),
     "--linter-enabled=false".to_string(),
   ];
-  if !files.is_empty() {
+  if files.is_empty() {
+    args.push(".".to_string());
+  } else {
     for f in files {
       args.push(f.to_string_lossy().to_string());
     }
-  } else {
-    args.push(".".to_string());
   }
   args.extend(extra_args.iter().cloned());
   args
 }
 
+#[must_use]
 pub fn build_biome_lint_args(
   files: &[PathBuf],
   fix: bool,
@@ -209,12 +212,12 @@ pub fn build_biome_lint_args(
   if fix {
     args.push("--write".to_string());
   }
-  if !files.is_empty() {
+  if files.is_empty() {
+    args.push(".".to_string());
+  } else {
     for f in files {
       args.push(f.to_string_lossy().to_string());
     }
-  } else {
-    args.push(".".to_string());
   }
   args.extend(extra_args.iter().cloned());
   args
@@ -354,7 +357,7 @@ impl LanguageSurface for JavaScriptSurface {
       Err(e) => SurfaceResult {
         surface_name: self.name(),
         status: SurfaceStatus::ExecutionError {
-          message: format!("Failed to execute biome check: {}", e),
+          message: format!("Failed to execute biome check: {e}"),
         },
         duration: start.elapsed(),
       },
@@ -416,10 +419,10 @@ impl LanguageSurface for JavaScriptSurface {
         } else {
           let stderr = String::from_utf8_lossy(&output.stderr).to_string();
           let stdout = String::from_utf8_lossy(&output.stdout).to_string();
-          let msg = if !stderr.trim().is_empty() {
-            stderr
-          } else {
+          let msg = if stderr.trim().is_empty() {
             stdout
+          } else {
+            stderr
           };
 
           SurfaceResult {
@@ -435,7 +438,7 @@ impl LanguageSurface for JavaScriptSurface {
       Err(e) => SurfaceResult {
         surface_name: self.name(),
         status: SurfaceStatus::ExecutionError {
-          message: format!("Failed to execute biome lint: {}", e),
+          message: format!("Failed to execute biome lint: {e}"),
         },
         duration: start.elapsed(),
       },

@@ -109,7 +109,7 @@ fn test_version_ordering() {
   assert!(v1_4_1 < v1_5_0);
   assert!(v1_5_0 < v2_0_0);
   assert!(v1_4_0 <= v1_4_0);
-  assert!(v1_4_0 == v1_4_0);
+  assert_eq!(v1_4_0, v1_4_0);
 
   let v1_0_0 = Version::new(1, 0, 0);
   let v1_0_0_alpha = Version::with_prerelease(1, 0, 0, "alpha");
@@ -356,7 +356,7 @@ fn test_compatibility_policy_evaluation() {
   );
   assert_eq!(
     status_ok.to_string(),
-    format!("Compatible ({} >= MSTV {})", v_ok, min)
+    format!("Compatible ({v_ok} >= MSTV {min})")
   );
 
   let v_old = Version::new(1, 3, 9);
@@ -372,7 +372,7 @@ fn test_compatibility_policy_evaluation() {
   );
   assert_eq!(
     status_old.to_string(),
-    format!("Outdated ({} < MSTV {})", v_old, min)
+    format!("Outdated ({v_old} < MSTV {min})")
   );
 
   let status_none = CompatibilityPolicy::evaluate(None, &min);

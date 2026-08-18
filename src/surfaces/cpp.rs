@@ -27,6 +27,7 @@ impl NativeConfig for ClangFormatConfig {
 }
 
 impl ClangFormatConfig {
+  #[must_use]
   pub fn from_context(ctx: &ExecutionContext) -> Self {
     let use_tab = if ctx.lang_config.use_tabs {
       "Always"
@@ -89,14 +90,15 @@ impl Default for ClangTidyConfig {
       checks:
         "*,-fuchsia-*,-google-readability-todo,-llvm-header-guard,-llvmlibc-*"
           .to_string(),
-      warnings_as_errors: "".to_string(),
-      header_filter_regex: "".to_string(),
+      warnings_as_errors: String::new(),
+      header_filter_regex: String::new(),
       format_style: "none".to_string(),
     }
   }
 }
 
 impl ClangTidyConfig {
+  #[must_use]
   pub fn from_context(_ctx: &ExecutionContext) -> Self {
     Self::default()
   }
@@ -112,15 +114,15 @@ pub struct CppSurface;
 impl DeclaresFacets for CppSurface {
   fn facet_support(&self, facet: Facet) -> FacetSupport {
     match facet {
-      Facet::IndentTabs => FacetSupport::Configurable,
-      Facet::IndentWidth => FacetSupport::Configurable,
-      Facet::LineLength => FacetSupport::Configurable,
-      Facet::QuoteStyle => FacetSupport::Unsupported,
-      Facet::TrailingComma => FacetSupport::Unsupported,
-      Facet::ImportSort => FacetSupport::Configurable,
-      Facet::ProseWrap => FacetSupport::Unsupported,
-      Facet::Edition => FacetSupport::Unsupported,
-      Facet::Standard => FacetSupport::Configurable,
+      Facet::IndentTabs
+      | Facet::IndentWidth
+      | Facet::LineLength
+      | Facet::ImportSort
+      | Facet::Standard => FacetSupport::Configurable,
+      Facet::QuoteStyle
+      | Facet::TrailingComma
+      | Facet::ProseWrap
+      | Facet::Edition => FacetSupport::Unsupported,
     }
   }
 }
@@ -136,6 +138,7 @@ HeaderFilterRegex: ''
 FormatStyle: none
 ";
 
+#[must_use]
 pub fn is_cpp_extension(ext: &str) -> bool {
   matches!(
     ext.to_ascii_lowercase().as_str(),
@@ -143,6 +146,7 @@ pub fn is_cpp_extension(ext: &str) -> bool {
   )
 }
 
+#[must_use]
 pub fn is_c_extension(ext: &str) -> bool {
   ext.eq_ignore_ascii_case("c")
 }
@@ -194,6 +198,7 @@ pub fn std_flag_for_file(file: &Path, all_files: &[PathBuf]) -> &'static str {
   }
 }
 
+#[must_use]
 pub fn build_clang_tidy_args(
   files: &[PathBuf],
   fix: bool,
@@ -350,7 +355,7 @@ impl LanguageSurface for CppSurface {
       Err(e) => SurfaceResult {
         surface_name: self.name(),
         status: SurfaceStatus::ExecutionError {
-          message: format!("Failed to execute clang-format: {}", e),
+          message: format!("Failed to execute clang-format: {e}"),
         },
         duration: start.elapsed(),
       },
@@ -425,7 +430,7 @@ impl LanguageSurface for CppSurface {
           return SurfaceResult {
             surface_name: self.name(),
             status: SurfaceStatus::ExecutionError {
-              message: format!("Failed to execute clang-tidy: {}", e),
+              message: format!("Failed to execute clang-tidy: {e}"),
             },
             duration: start.elapsed(),
           };
@@ -444,10 +449,10 @@ impl LanguageSurface for CppSurface {
       for output in failed_outputs {
         let stderr = String::from_utf8_lossy(&output.stderr).to_string();
         let stdout = String::from_utf8_lossy(&output.stdout).to_string();
-        let msg = if !stderr.trim().is_empty() {
-          stderr
-        } else {
+        let msg = if stderr.trim().is_empty() {
           stdout
+        } else {
+          stderr
         };
         if !msg.trim().is_empty() {
           msgs.push(msg);
@@ -517,6 +522,7 @@ impl LanguageSurface for CppSurface {
   }
 }
 
+#[must_use]
 pub fn sync_clang_tidy_config(
   ctx: &ExecutionContext,
   check: bool,

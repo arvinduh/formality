@@ -35,6 +35,7 @@ impl Default for SurfaceRegistry {
 
 impl SurfaceRegistry {
   /// Creates an empty registry with no registered surfaces.
+  #[must_use]
   pub const fn empty() -> Self {
     Self {
       surfaces: Vec::new(),
@@ -42,6 +43,7 @@ impl SurfaceRegistry {
   }
 
   /// Creates a registry pre-populated with the default fleet of 12 language surfaces.
+  #[must_use]
   pub fn new() -> Self {
     Self::default()
   }
@@ -57,16 +59,19 @@ impl SurfaceRegistry {
   }
 
   /// Returns a slice of references to all registered surfaces.
+  #[must_use]
   pub fn surfaces(&self) -> &[Box<dyn LanguageSurface>] {
     &self.surfaces
   }
 
   /// Returns cloned boxed instances of all registered language surfaces.
+  #[must_use]
   pub fn all_surfaces(&self) -> Vec<Box<dyn LanguageSurface>> {
     self.surfaces.clone()
   }
 
   /// Looks up a surface by canonical name or alias (case-insensitive, trimmed).
+  #[must_use]
   pub fn get_surface_by_name(
     &self,
     name: &str,
@@ -83,6 +88,7 @@ impl SurfaceRegistry {
   }
 
   /// Resolves an alias or surface name to its canonical surface name (e.g. "rs" -> "rust").
+  #[must_use]
   pub fn resolve_canonical_name(
     &self,
     name_or_alias: &str,
@@ -99,21 +105,25 @@ impl SurfaceRegistry {
   }
 
   /// Returns the canonical names of all registered surfaces.
+  #[must_use]
   pub fn supported_languages(&self) -> Vec<&'static str> {
     self.surfaces.iter().map(|s| s.name()).collect()
   }
 
   /// Returns the number of registered surfaces.
+  #[must_use]
   pub fn len(&self) -> usize {
     self.surfaces.len()
   }
 
   /// Returns whether the registry is empty.
+  #[must_use]
   pub fn is_empty(&self) -> bool {
     self.surfaces.is_empty()
   }
 
   /// Detects active surfaces within `root` based on filesystem heuristics.
+  #[must_use]
   pub fn detect_surfaces(&self, root: &Path) -> Vec<Box<dyn LanguageSurface>> {
     self
       .surfaces
@@ -124,6 +134,7 @@ impl SurfaceRegistry {
   }
 
   /// Performs smart detection respecting configuration allowlists and ignore rules.
+  #[must_use]
   pub fn detect_surfaces_smart(
     &self,
     root: &Path,
@@ -177,14 +188,17 @@ impl SurfaceRegistry {
   }
 }
 
+#[must_use]
 pub fn all_surfaces() -> Vec<Box<dyn LanguageSurface>> {
   SurfaceRegistry::default().all_surfaces()
 }
 
+#[must_use]
 pub fn detect_surfaces(root: &Path) -> Vec<Box<dyn LanguageSurface>> {
   SurfaceRegistry::default().detect_surfaces(root)
 }
 
+#[must_use]
 pub fn detect_surfaces_smart(
   root: &Path,
   config: &FormalityConfig,
@@ -192,10 +206,12 @@ pub fn detect_surfaces_smart(
   SurfaceRegistry::default().detect_surfaces_smart(root, config)
 }
 
+#[must_use]
 pub fn get_surface_by_name(name: &str) -> Option<Box<dyn LanguageSurface>> {
   SurfaceRegistry::default().get_surface_by_name(name)
 }
 
+#[must_use]
 pub fn resolve_canonical_name(name_or_alias: &str) -> Option<&'static str> {
   SurfaceRegistry::default().resolve_canonical_name(name_or_alias)
 }

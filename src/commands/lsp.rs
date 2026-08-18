@@ -42,7 +42,13 @@
 use colored::Colorize;
 use std::path::PathBuf;
 use tower_lsp::jsonrpc::Result as LspResult;
-use tower_lsp::lsp_types::*;
+use tower_lsp::lsp_types::{
+  Diagnostic, DiagnosticSeverity, DidOpenTextDocumentParams,
+  DidSaveTextDocumentParams, DocumentFormattingParams, InitializeParams,
+  InitializeResult, InitializedParams, MessageType, OneOf, Position, Range,
+  ServerCapabilities, ServerInfo, TextDocumentIdentifier,
+  TextDocumentSyncCapability, TextDocumentSyncKind, TextEdit,
+};
 use tower_lsp::{Client, LanguageServer, LspService, Server};
 
 /// Capabilities that the formality LSP layer adds or overrides on top of what
@@ -130,6 +136,7 @@ pub const CHILD_LSP_REGISTRY: &[ChildLsp] = &[
 ];
 
 /// Returns the child LSP descriptor for a given surface, if one is registered.
+#[must_use]
 pub fn child_lsp_for_surface(surface: &str) -> Option<&'static ChildLsp> {
   CHILD_LSP_REGISTRY
     .iter()
@@ -213,8 +220,10 @@ impl LanguageServer for FormalityLsp {
     // Detect active surfaces and log which child LSPs are available.
     if let Some(root) = self.root.lock().await.clone() {
       let config = crate::config::FormalityConfig::load_layered(Some(&root))
-        .map(|(c, _)| c)
-        .unwrap_or_else(|_| crate::config::FormalityConfig::with_defaults());
+        .map_or_else(
+          |_| crate::config::FormalityConfig::with_defaults(),
+          |(c, _)| c,
+        );
 
       let detected = crate::surfaces::detect_surfaces_smart(&root, &config);
       for surface in &detected {
@@ -278,7 +287,10 @@ impl LanguageServer for FormalityLsp {
     let path = params.text_document.uri.to_file_path().unwrap_or_default();
 
     let root = self.root.lock().await.clone().unwrap_or_else(|| {
-      path.parent().map(|p| p.to_path_buf()).unwrap_or_default()
+      path
+        .parent()
+        .map(std::path::Path::to_path_buf)
+        .unwrap_or_default()
     });
 
     // Read the current file content so we can diff it after formatting.
@@ -312,8 +324,7 @@ impl LanguageServer for FormalityLsp {
         }
         // Return a single whole-document replacement edit.
         let line_count = before.lines().count() as u32;
-        let last_col =
-          before.lines().last().map(|l| l.len() as u32).unwrap_or(0);
+        let last_col = before.lines().last().map_or(0, |l| l.len() as u32);
         Ok(Some(vec![TextEdit {
           range: Range {
             start: Position {
@@ -359,7 +370,10 @@ impl LanguageServer for FormalityLsp {
   async fn did_save(&self, params: DidSaveTextDocumentParams) {
     let path = params.text_document.uri.to_file_path().unwrap_or_default();
     let root = self.root.lock().await.clone().unwrap_or_else(|| {
-      path.parent().map(|p| p.to_path_buf()).unwrap_or_default()
+      path
+        .parent()
+        .map(std::path::Path::to_path_buf)
+        .unwrap_or_default()
     });
     let uri = params.text_document.uri.clone();
 
@@ -426,6 +440,10 @@ impl LanguageServer for FormalityLsp {
 /// Start the formality LSP server on stdio.
 ///
 /// Blocks until the client disconnects. Intended to be called from `fml lsp`.
+///
+/// # Panics
+///
+/// Panics if the underlying Tokio runtime fails to initialize.
 pub fn run_lsp_server(root: Option<std::path::PathBuf>) {
   // Print a startup banner to stderr (not stdout — that's the LSP channel).
   eprintln!(

@@ -40,11 +40,13 @@ use surfaces::{
 
 pub use schema::generate_schema;
 
+#[must_use]
 pub fn run() -> i32 {
   let args = Cli::parse();
   run_with_args(args)
 }
 
+#[must_use]
 pub fn run_with_args(args: Cli) -> i32 {
   if std::env::var("FORCE_COLOR").is_ok()
     || std::env::var("CLICOLOR_FORCE").is_ok()
@@ -91,7 +93,7 @@ fn run_command_inner(args: Cli) -> i32 {
           let _ = std::fs::create_dir_all(parent);
         }
         match std::fs::write(&target_file, &schema_json) {
-          Ok(_) => {
+          Ok(()) => {
             println!(
               "{} Wrote JSON Schema to {}",
               "[OK]".green().bold(),
@@ -110,7 +112,7 @@ fn run_command_inner(args: Cli) -> i32 {
           }
         }
       } else {
-        println!("{}", schema_json);
+        println!("{schema_json}");
         0
       }
     }
@@ -160,7 +162,7 @@ fn run_command_inner(args: Cli) -> i32 {
       let template = FormalityConfig::generate_init_template(&detected_names);
 
       match std::fs::write(&target, template) {
-        Ok(_) => {
+        Ok(()) => {
           println!(
             "{} Initialized {} with {} detected surface(s).",
             "[OK]".green().bold(),
@@ -214,10 +216,10 @@ fn run_command_inner(args: Cli) -> i32 {
           )
         };
 
-        let aliases_str = if !surface.aliases().is_empty() {
-          format!("aliases: {}", surface.aliases().join(", "))
-        } else {
+        let aliases_str = if surface.aliases().is_empty() {
           String::new()
+        } else {
+          format!("aliases: {}", surface.aliases().join(", "))
         };
 
         surfaces_table.add_row(crate::ui::table::Row::new(vec![
@@ -241,7 +243,7 @@ fn run_command_inner(args: Cli) -> i32 {
       );
       println!("{}", separator.dimmed());
       if !rendered_table.is_empty() {
-        println!("{}", rendered_table);
+        println!("{rendered_table}");
       }
       println!("{}", separator.dimmed());
       println!(
@@ -279,7 +281,7 @@ fn run_command_inner(args: Cli) -> i32 {
         };
 
       if install {
-        doctor::preflight_install(&surfaces, &config, true);
+        let _ = doctor::preflight_install(&surfaces, &config, true);
       }
 
       Runner::run(
@@ -317,8 +319,8 @@ fn run_command_inner(args: Cli) -> i32 {
         };
 
       if install {
-        doctor::preflight_install(&surfaces, &config, false);
-        doctor::preflight_install(&surfaces, &config, true);
+        let _ = doctor::preflight_install(&surfaces, &config, false);
+        let _ = doctor::preflight_install(&surfaces, &config, true);
       }
 
       Runner::run(surfaces, &root, &target_paths, RunnerAction::Fix, &config)
@@ -351,7 +353,7 @@ fn run_command_inner(args: Cli) -> i32 {
         };
 
       if install {
-        doctor::preflight_install(&surfaces, &config, false);
+        let _ = doctor::preflight_install(&surfaces, &config, false);
       }
 
       Runner::run(
@@ -397,7 +399,7 @@ fn run_command_inner(args: Cli) -> i32 {
       };
       match table::render_json(&json_str) {
         Ok(rendered) => {
-          print!("{}", rendered);
+          print!("{rendered}");
           0
         }
         Err(e) => {
@@ -481,8 +483,7 @@ fn resolve_target_surfaces(
         selected.push(s);
       } else {
         return Err(format!(
-          "Unknown language surface: '{}'. Run 'fml list-surfaces' to see supported languages.",
-          name
+          "Unknown language surface: '{name}'. Run 'fml list-surfaces' to see supported languages."
         ));
       }
     }

@@ -23,8 +23,7 @@ fn test_all_fleet_surfaces_present() {
   for exp in expected {
     assert!(
       names.contains(&exp),
-      "Surface '{}' missing from all_surfaces()",
-      exp
+      "Surface '{exp}' missing from all_surfaces()"
     );
   }
 }
@@ -66,22 +65,19 @@ fn test_get_surface_by_name_canonical_and_aliases() {
     let surface = get_surface_by_name(query);
     assert!(
       surface.is_some(),
-      "Failed to resolve surface for query '{}'",
-      query
+      "Failed to resolve surface for query '{query}'"
     );
     assert_eq!(
       surface.unwrap().name(),
       canonical,
-      "Query '{}' resolved to unexpected surface name",
-      query
+      "Query '{query}' resolved to unexpected surface name"
     );
 
     // Verify resolve_canonical_name
     assert_eq!(
       resolve_canonical_name(query),
       Some(canonical),
-      "resolve_canonical_name failed for '{}'",
-      query
+      "resolve_canonical_name failed for '{query}'"
     );
   }
 }
@@ -140,8 +136,7 @@ fn test_get_surface_by_name_case_insensitive() {
     let surface = get_surface_by_name(query);
     assert!(
       surface.is_some(),
-      "Case-insensitive lookup failed for '{}'",
-      query
+      "Case-insensitive lookup failed for '{query}'"
     );
     assert_eq!(surface.unwrap().name(), canonical);
   }

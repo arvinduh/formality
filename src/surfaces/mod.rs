@@ -115,6 +115,7 @@ pub struct SurfaceResult {
 }
 
 impl SurfaceResult {
+  #[must_use]
   pub fn is_success(&self) -> bool {
     matches!(
       self.status,
@@ -124,6 +125,7 @@ impl SurfaceResult {
     )
   }
 
+  #[must_use]
   pub fn is_violation(&self) -> bool {
     matches!(
       self.status,
@@ -133,6 +135,7 @@ impl SurfaceResult {
     )
   }
 
+  #[must_use]
   pub fn is_error(&self) -> bool {
     matches!(
       self.status,

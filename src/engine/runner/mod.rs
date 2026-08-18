@@ -18,6 +18,7 @@ pub enum RunnerAction {
 pub struct Runner;
 
 impl Runner {
+  #[must_use]
   pub fn run(
     surfaces: Vec<Box<dyn LanguageSurface>>,
     root: &Path,
@@ -110,10 +111,10 @@ impl Runner {
             global_config: global_config.clone(),
             lang_config,
             check_only: match action {
-              RunnerAction::Format { check } => check,
-              RunnerAction::Lint { .. } => false,
-              RunnerAction::Sync { check } => check,
-              RunnerAction::Fix => false,
+              RunnerAction::Format { check } | RunnerAction::Sync { check } => {
+                check
+              }
+              RunnerAction::Lint { .. } | RunnerAction::Fix => false,
             },
           };
 
@@ -183,9 +184,9 @@ impl Runner {
         SurfaceStatus::ConfigSynced { file, created } => {
           pass_count += 1;
           let detail = if *created {
-            format!("Created {}", file)
+            format!("Created {file}")
           } else {
-            format!("Synced {}", file)
+            format!("Synced {file}")
           };
           runner_table.add_row(crate::ui::table::Row::new(vec![
             crate::ui::table::Cell::styled(
@@ -222,7 +223,7 @@ impl Runner {
               crate::ui::table::Style::Strong,
             ),
             crate::ui::table::Cell::styled(
-              format!("{} out of sync", file),
+              format!("{file} out of sync"),
               crate::ui::table::Style::Warn,
             ),
             crate::ui::table::Cell::styled(
@@ -234,8 +235,7 @@ impl Runner {
           diagnostics.push((
             res.surface_name.to_string(),
             format!(
-              "Native config '{}' drifted from formality.toml:\n{}",
-              file, diff
+              "Native config '{file}' drifted from formality.toml:\n{diff}"
             ),
           ));
         }
@@ -254,7 +254,7 @@ impl Runner {
               crate::ui::table::Style::Strong,
             ),
             crate::ui::table::Cell::styled(
-              format!("{} is manually managed", file),
+              format!("{file} is manually managed"),
               crate::ui::table::Style::Warn,
             ),
             crate::ui::table::Cell::styled(
@@ -312,7 +312,7 @@ impl Runner {
               crate::ui::table::Style::Strong,
             ),
             crate::ui::table::Cell::styled(
-              format!("Missing binary: {}", binary),
+              format!("Missing binary: {binary}"),
               crate::ui::table::Style::Warn,
             ),
             crate::ui::table::Cell::styled(
@@ -324,8 +324,7 @@ impl Runner {
           diagnostics.push((
             res.surface_name.to_string(),
             format!(
-              "Missing tool binary '{}'.\n  Install hint: {}",
-              binary, install_hint
+              "Missing tool binary '{binary}'.\n  Install hint: {install_hint}"
             ),
           ));
         }
@@ -394,7 +393,7 @@ impl Runner {
     );
     println!("{}", separator.dimmed());
     if !rendered_table.is_empty() {
-      println!("{}", rendered_table);
+      println!("{rendered_table}");
     }
 
     if !diagnostics.is_empty() {
@@ -403,7 +402,7 @@ impl Runner {
       for (surface, detail) in diagnostics {
         println!("\n  {} {}", "::".cyan().bold(), surface.bold().magenta());
         for line in detail.lines() {
-          println!("    {}", line);
+          println!("    {line}");
         }
       }
     }
@@ -411,15 +410,10 @@ impl Runner {
     println!("{}", separator.dimmed());
     let mut parts = Vec::new();
     if pass_count > 0 {
-      parts.push(format!("{} passed", pass_count).green().bold().to_string());
+      parts.push(format!("{pass_count} passed").green().bold().to_string());
     }
     if violation_count > 0 {
-      parts.push(
-        format!("{} failed", violation_count)
-          .red()
-          .bold()
-          .to_string(),
-      );
+      parts.push(format!("{violation_count} failed").red().bold().to_string());
     }
     if tool_missing_count > 0 {
       parts.push(
@@ -472,9 +466,8 @@ fn combine_fix_results(
       SurfaceStatus::ExecutionError { message: m2 },
     ) => SurfaceStatus::ExecutionError {
       message: format!(
-        "{}
-{}",
-        m1, m2
+        "{m1}
+{m2}"
       ),
     },
     (SurfaceStatus::ExecutionError { message }, _)
@@ -513,15 +506,13 @@ fn combine_fix_results(
       },
     ) => {
       let combined_msg = format!(
-        "{}
-{}",
-        m1, m2
+        "{m1}
+{m2}"
       );
       let combined_diff = match (d1, d2) {
         (Some(a), Some(b)) => Some(format!(
-          "{}
-{}",
-          a, b
+          "{a}
+{b}"
         )),
         (Some(a), None) | (None, Some(a)) => Some(a),
         (None, None) => None,
@@ -547,9 +538,11 @@ fn combine_fix_results(
     }
 
     // 5. Passed (both passed, or one passed and one was skipped)
-    (SurfaceStatus::Passed, SurfaceStatus::Passed)
-    | (SurfaceStatus::Passed, SurfaceStatus::Skipped { .. })
-    | (SurfaceStatus::Skipped { .. }, SurfaceStatus::Passed) => {
+    (
+      SurfaceStatus::Passed | SurfaceStatus::Skipped { .. },
+      SurfaceStatus::Passed,
+    )
+    | (SurfaceStatus::Passed, SurfaceStatus::Skipped { .. }) => {
       SurfaceStatus::Passed
     }
 
@@ -564,7 +557,7 @@ fn combine_fix_results(
       SurfaceStatus::Skipped { reason: r1 },
       SurfaceStatus::Skipped { reason: r2 },
     ) => SurfaceStatus::Skipped {
-      reason: format!("{}; {}", r1, r2),
+      reason: format!("{r1}; {r2}"),
     },
   };
 
@@ -579,7 +572,7 @@ fn combine_fix_results(
 fn normalize_diagnostics(raw: &str) -> String {
   let cleaned_lines: Vec<&str> = raw
     .lines()
-    .map(|l| l.trim_end())
+    .map(str::trim_end)
     .filter(|l| {
       let trimmed = l.trim();
       !trimmed.is_empty()
