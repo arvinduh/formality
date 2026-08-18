@@ -206,6 +206,177 @@ fn test_doctor_table_rendering_consistency() {
 }
 
 #[test]
+fn test_strip_ansi_escapes_removes_sgr_codes_only() {
+  let styled = "\x1b[1;32mPASS\x1b[0m plain \x1b[38;2;80;150;240mtext\x1b[0m";
+  assert_eq!(strip_ansi_escapes(styled), "PASS plain text");
+
+  // Text with no escapes at all is returned unchanged.
+  assert_eq!(strip_ansi_escapes("no escapes here"), "no escapes here");
+
+  // The stripper is a simple state machine, not a full ANSI parser: once it
+  // sees ESC it swallows everything up to and including the *next* literal
+  // 'm' character, wherever that occurs — including inside plain text after
+  // an unterminated escape (here, the 'm' in "unterminated" itself closes
+  // the escape state). It must not panic or loop forever either way.
+  assert_eq!(
+    strip_ansi_escapes("before\x1b[unterminated"),
+    "beforeinated"
+  );
+}
+
+#[test]
+fn test_max_line_display_width_ignores_ansi_and_counts_cjk() {
+  let ansi_pal = Palette::ansi16();
+  let colored = ansi_pal.apply("PASS", Style::Ok);
+  // Display width must be measured on the visible text (4), not the
+  // escape-code-inflated byte length.
+  assert_eq!(max_line_display_width(&colored), 4);
+
+  let multiline = "short\nlonger line\n\u{4f60}\u{597d}"; // CJK pair = width 4
+  assert_eq!(max_line_display_width(multiline), 11); // "longer line"
+
+  assert_eq!(max_line_display_width(""), 0);
+}
+
+#[test]
+fn test_separator_line_explicit_width_vs_zero_fallback() {
+  let explicit = separator_line(10);
+  assert_eq!(explicit.chars().count(), 10);
+  assert!(explicit.chars().all(|c| c == '\u{2500}'));
+
+  // width == 0 falls back to detect_terminal_width(), which is always
+  // clamped into [40, 160] regardless of environment.
+  let fallback = separator_line(0);
+  assert!(fallback.chars().count() >= 40);
+  assert!(fallback.chars().count() <= 160);
+}
+
+#[test]
+fn test_render_json_invalid_json_returns_error() {
+  let result = render_json("{ not valid json");
+  assert!(result.is_err());
+
+  let result_wrong_shape = render_json(r#"{"columns": "should be an array"}"#);
+  assert!(result_wrong_shape.is_err());
+}
+
+#[test]
+fn test_width_policy_min_max_range_pct_all_render() {
+  // Only WidthPolicy::Fixed had rendering coverage; Min/Max/Range/Pct map
+  // to distinct comfy_table::ColumnConstraint arms that were previously
+  // untested and could silently regress (e.g. swapped Min/Max) without any
+  // test failing.
+  let mut table = Table::new(vec![
+    Column::new("Min").width(WidthPolicy::Min(6)),
+    Column::new("Max").width(WidthPolicy::Max(20)),
+    Column::new("Range").width(WidthPolicy::Range(4, 30)),
+    Column::new("Pct").width(WidthPolicy::Pct(25)),
+  ]);
+  table.add_row(Row::new(vec![
+    Cell::text("a"),
+    Cell::text("bb"),
+    Cell::text("ccc"),
+    Cell::text("dddd"),
+  ]));
+
+  let rendered = render(&table, &Palette::none());
+  assert!(rendered.contains("Min"));
+  assert!(rendered.contains("Max"));
+  assert!(rendered.contains("Range"));
+  assert!(rendered.contains("Pct"));
+  assert!(!rendered.is_empty());
+}
+
+#[test]
+fn test_align_center_applies_to_header_and_cell() {
+  let mut table = Table::new(vec![
+    Column::new("Centered")
+      .align(Align::Center)
+      .width(WidthPolicy::Fixed(20)),
+  ]);
+  table.add_row(Row::new(vec![Cell::text("mid")]));
+
+  let rendered = render(&table, &Palette::none());
+  // comfy-table pads centered content with leading spaces on both sides;
+  // assert the value is present and the line is not left-flush (i.e. some
+  // leading whitespace precedes it), distinguishing it from Align::Left.
+  let content_line = rendered
+    .lines()
+    .find(|l| l.contains("mid"))
+    .expect("row must render");
+  assert!(content_line.starts_with(' '));
+}
+
+#[test]
+fn test_cell_level_overflow_overrides_column_overflow() {
+  // A Cell's own `overflow` must take precedence over its Column's
+  // overflow policy — this per-cell override path had no coverage.
+  let mut table = Table::new(vec![
+    Column::new("Col").width(WidthPolicy::Fixed(10)).overflow(
+      Overflow::Truncate {
+        suffix: "...".to_string(),
+      },
+    ),
+  ]);
+  table.add_row(Row::new(vec![
+    Cell::text("this text is definitely too long").overflow(Overflow::Clip),
+  ]));
+
+  let rendered = render(&table, &Palette::none());
+  // Clip must not introduce the column's "..." suffix.
+  assert!(!rendered.contains("..."));
+}
+
+#[test]
+fn test_truncate_suffix_wider_than_column_width_does_not_panic() {
+  // Edge case: the truncation suffix itself is wider than the available
+  // column width (after padding is subtracted). The internal
+  // `truncate_spans` helper must degrade gracefully (truncate the suffix
+  // itself) instead of underflowing `max_width - suffix_width` and
+  // panicking. Exercised through the public render() API since
+  // truncate_spans is a private implementation detail of this module.
+  let mut table = Table::new(vec![
+    Column::new("Col").width(WidthPolicy::Fixed(3)).overflow(
+      Overflow::Truncate {
+        suffix: "...".to_string(),
+      },
+    ),
+  ]);
+  table.add_row(Row::new(vec![Cell::text("hello world")]));
+
+  // Must not panic; a bounded, well-formed string comes out.
+  let rendered = render(&table, &Palette::none());
+  assert!(!rendered.is_empty());
+}
+
+#[test]
+fn test_layout_comfortable_and_density_variant() {
+  let layout = Layout::comfortable();
+  assert_eq!(layout.density, Density::Comfortable);
+
+  let mut table =
+    Table::new(vec![Column::new("A"), Column::new("B")]).layout(layout);
+  table.add_row(Row::new(vec![Cell::text("x"), Cell::text("y")]));
+
+  let rendered = render(&table, &Palette::none());
+  assert!(rendered.contains('x'));
+  assert!(rendered.contains('y'));
+}
+
+#[test]
+fn test_row_with_fewer_cells_than_columns_renders_blank_gaps() {
+  // A Row shorter than the table's column count must render an empty cell
+  // for the missing columns rather than panicking on an out-of-bounds
+  // index (row.cells.get(i) returning None).
+  let table =
+    Table::new(vec![Column::new("A"), Column::new("B"), Column::new("C")])
+      .with_row(Row::new(vec![Cell::text("only-a")]));
+
+  let rendered = render(&table, &Palette::none());
+  assert!(rendered.contains("only-a"));
+}
+
+#[test]
 fn test_dynamic_separator_and_width_alignment() {
   let mut table = Table::new(vec![
     Column::new("Status").width(WidthPolicy::Fixed(8)),

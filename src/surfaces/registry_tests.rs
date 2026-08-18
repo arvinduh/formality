@@ -171,6 +171,126 @@ fn test_custom_surface_registry() {
 }
 
 #[test]
+fn test_detect_surfaces_finds_active_languages_only() {
+  // detect_surfaces() had no direct test at all — only the smart-detection
+  // variant's building blocks were exercised transitively via other tests.
+  let temp = tempfile::TempDir::new().unwrap();
+  let root = temp.path();
+  std::fs::write(root.join("main.rs"), "fn main() {}").unwrap();
+  std::fs::write(root.join("script.py"), "print(1)").unwrap();
+
+  let reg = SurfaceRegistry::default();
+  let detected = reg.detect_surfaces(root);
+  let names: Vec<&str> = detected.iter().map(|s| s.name()).collect();
+
+  assert!(names.contains(&"rust"));
+  assert!(names.contains(&"python"));
+  // A language with no matching files/markers in the workspace must not be
+  // detected as active.
+  assert!(!names.contains(&"kotlin"));
+}
+
+#[test]
+fn test_detect_surfaces_smart_explicit_allowlist_minus_ignore() {
+  use crate::config::FormalityConfig;
+
+  let temp = tempfile::TempDir::new().unwrap();
+  let root = temp.path();
+  // Files present for all three, but only rust/python are in the
+  // allowlist and go is separately ignore_languages'd.
+  std::fs::write(root.join("main.rs"), "fn main() {}").unwrap();
+  std::fs::write(root.join("script.py"), "print(1)").unwrap();
+  std::fs::write(root.join("main.go"), "package main").unwrap();
+
+  let toml = r#"
+    [global]
+    languages = ["rust", "python", "go"]
+    ignore_languages = ["go"]
+  "#;
+  let config =
+    FormalityConfig::parse_str(toml, std::path::Path::new("test.toml"))
+      .unwrap();
+
+  let reg = SurfaceRegistry::default();
+  let selected = reg.detect_surfaces_smart(root, &config);
+  let names: Vec<&str> = selected.iter().map(|s| s.name()).collect();
+
+  assert_eq!(names.len(), 2);
+  assert!(names.contains(&"rust"));
+  assert!(names.contains(&"python"));
+  assert!(
+    !names.contains(&"go"),
+    "go should be excluded by ignore_languages even though it's in the allowlist"
+  );
+}
+
+#[test]
+fn test_detect_surfaces_smart_explicit_allowlist_respects_disabled_lang() {
+  use crate::config::FormalityConfig;
+
+  let temp = tempfile::TempDir::new().unwrap();
+  let root = temp.path();
+  std::fs::write(root.join("main.rs"), "fn main() {}").unwrap();
+
+  // rust is in the allowlist but explicitly disabled via [lang.rust].
+  let toml = r#"
+    [global]
+    languages = ["rust"]
+
+    [lang.rust]
+    enabled = false
+  "#;
+  let config =
+    FormalityConfig::parse_str(toml, std::path::Path::new("test.toml"))
+      .unwrap();
+
+  let reg = SurfaceRegistry::default();
+  let selected = reg.detect_surfaces_smart(root, &config);
+  assert!(
+    selected.is_empty(),
+    "an explicitly disabled language must not be selected even when allowlisted"
+  );
+}
+
+#[test]
+fn test_detect_surfaces_smart_auto_detect_respects_ignore_and_disabled() {
+  use crate::config::FormalityConfig;
+
+  let temp = tempfile::TempDir::new().unwrap();
+  let root = temp.path();
+  std::fs::write(root.join("main.rs"), "fn main() {}").unwrap();
+  std::fs::write(root.join("script.py"), "print(1)").unwrap();
+  std::fs::write(root.join("Cargo.toml"), "[package]\nname=\"x\"").unwrap();
+
+  // No explicit `languages` allowlist: auto-detect, but ignore python and
+  // disable toml.
+  let toml = r#"
+    [global]
+    ignore_languages = ["python"]
+
+    [lang.toml]
+    enabled = false
+  "#;
+  let config =
+    FormalityConfig::parse_str(toml, std::path::Path::new("test.toml"))
+      .unwrap();
+
+  let reg = SurfaceRegistry::default();
+  let selected = reg.detect_surfaces_smart(root, &config);
+  let names: Vec<&str> = selected.iter().map(|s| s.name()).collect();
+
+  assert!(names.contains(&"rust"));
+  assert!(
+    !names.contains(&"python"),
+    "python should be excluded by ignore_languages"
+  );
+  assert!(
+    !names.contains(&"toml"),
+    "toml should be excluded by enabled = false even though Cargo.toml is present"
+  );
+}
+
+#[test]
 fn test_surface_file_extensions() {
   for surface in all_surfaces() {
     let exts = surface.file_extensions();

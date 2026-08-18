@@ -653,6 +653,77 @@ fn test_unrecognized_lang_sections_flags_typo_but_not_valid_undetected() {
 }
 
 #[test]
+fn test_load_file_missing_path_yields_io_error() {
+  let missing = Path::new("this/path/definitely/does/not/exist.toml");
+  let err = FormalityConfig::load_file(missing).unwrap_err();
+  assert!(matches!(err, ConfigError::Io { .. }));
+  let msg = err.to_string();
+  assert!(msg.contains("Failed to read config file at"));
+  assert!(msg.contains("exist.toml"));
+}
+
+#[test]
+fn test_parse_str_malformed_toml_yields_parse_error() {
+  // Missing closing bracket / invalid TOML syntax.
+  let bad_toml = "[global\nindent_size = 2";
+  let err = FormalityConfig::parse_str(bad_toml, Path::new("formality.toml"))
+    .unwrap_err();
+  assert!(matches!(err, ConfigError::Parse { .. }));
+  let msg = err.to_string();
+  assert!(msg.contains("Failed to parse config file at"));
+  assert!(msg.contains("formality.toml"));
+}
+
+#[test]
+fn test_config_error_invalid_display() {
+  let err = ConfigError::Invalid("something is wrong".to_string());
+  assert_eq!(err.to_string(), "Invalid config: something is wrong");
+}
+
+#[test]
+fn test_java_aosp_style_defaults_indent_width_to_four() {
+  // Java's indent_width is conditionally Fixed: google-java-format's
+  // --aosp flag pins it to 4 spaces (vs. 2 for the default Google style),
+  // resolved via `[lang.java] style` rather than a plain constant (see
+  // docs/facet-rosetta.md, JavaSurface::facet_support). Neither the AOSP
+  // branch nor its interaction with an explicit indent_size override had
+  // any test coverage.
+  let toml = r#"
+      [lang.java]
+      style = "aosp"
+    "#;
+  let parsed =
+    FormalityConfig::parse_str(toml, Path::new("test.toml")).unwrap();
+  let java = parsed.resolve_for_lang("java");
+  assert_eq!(java.indent_size, 4);
+
+  // Default (Google) style keeps the ordinary global-inherited indent_size.
+  let toml_google = r#"
+      [lang.java]
+      style = "google"
+    "#;
+  let parsed_google =
+    FormalityConfig::parse_str(toml_google, Path::new("test.toml")).unwrap();
+  let java_google = parsed_google.resolve_for_lang("java");
+  assert_eq!(java_google.indent_size, 2);
+
+  // No [lang.java] section at all: not AOSP, so global default applies.
+  let default_java = FormalityConfig::with_defaults().resolve_for_lang("java");
+  assert_eq!(default_java.indent_size, 2);
+
+  // An explicit indent_size override always wins over the AOSP inference.
+  let toml_explicit = r#"
+      [lang.java]
+      style = "aosp"
+      indent_size = 8
+    "#;
+  let parsed_explicit =
+    FormalityConfig::parse_str(toml_explicit, Path::new("test.toml")).unwrap();
+  let java_explicit = parsed_explicit.resolve_for_lang("java");
+  assert_eq!(java_explicit.indent_size, 8);
+}
+
+#[test]
 fn test_unrecognized_lang_sections_handles_case_and_aliases() {
   let registry = crate::surfaces::SurfaceRegistry::default();
 

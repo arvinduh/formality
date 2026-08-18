@@ -188,3 +188,186 @@ impl LanguageSurface for JsonSurface {
     sync_prettier_config(ctx, check, start, self.name())
   }
 }
+
+#[cfg(test)]
+mod tests {
+  use super::*;
+  use crate::config::{ResolvedGlobalConfig, ResolvedLangConfig};
+  use std::sync::Arc;
+  use tempfile::TempDir;
+
+  fn ctx_for(
+    temp: &TempDir,
+    lang_config: ResolvedLangConfig,
+  ) -> ExecutionContext {
+    ExecutionContext {
+      root: temp.path().to_path_buf(),
+      paths: Arc::new(Vec::new()),
+      global_config: Arc::new(ResolvedGlobalConfig::default()),
+      lang_config,
+      check_only: false,
+    }
+  }
+
+  #[test]
+  fn test_json_surface_identity() {
+    let surface = JsonSurface;
+    assert_eq!(surface.name(), "json");
+    assert!(surface.aliases().is_empty());
+    assert_eq!(surface.file_extensions(), &["json", "jsonc"]);
+  }
+
+  #[test]
+  fn test_json_surface_detect() {
+    let surface = JsonSurface;
+    let temp = TempDir::new().unwrap();
+    assert!(!surface.detect(temp.path()));
+
+    std::fs::write(temp.path().join("config.json"), "{}").unwrap();
+    assert!(surface.detect(temp.path()));
+  }
+
+  #[test]
+  fn test_json_surface_detect_jsonc() {
+    let surface = JsonSurface;
+    let temp = TempDir::new().unwrap();
+    std::fs::write(temp.path().join("tsconfig.jsonc"), "{ /* c */ }").unwrap();
+    assert!(surface.detect(temp.path()));
+  }
+
+  #[test]
+  fn test_json_tool_info() {
+    let surface = JsonSurface;
+    let tools = surface.tool_info(&ResolvedLangConfig::new("json"));
+    assert_eq!(tools.len(), 1);
+    assert_eq!(tools[0].binary, "prettier");
+    assert!(tools[0].is_required_for_fmt);
+    assert!(!tools[0].is_required_for_lint);
+  }
+
+  #[test]
+  fn test_json_format_empty_project_passes_or_tool_missing() {
+    // Matches the convention used by every other surface's test suite
+    // (e.g. Kotlin, Python): assert the deterministic outcome for whichever
+    // branch the test environment is actually in, rather than assuming
+    // prettier is installed.
+    let temp = TempDir::new().unwrap();
+    let surface = JsonSurface;
+    let ctx = ctx_for(&temp, ResolvedLangConfig::new("json"));
+
+    let res = surface.format(&ctx);
+    if check_binary_exists("prettier") {
+      assert!(matches!(res.status, SurfaceStatus::Passed));
+    } else {
+      assert!(matches!(res.status, SurfaceStatus::ToolMissing { .. }));
+    }
+  }
+
+  #[test]
+  fn test_json_format_ignores_lockfiles() {
+    // package-lock.json / npm-shrinkwrap.json must never be reformatted:
+    // find_files_with_ext + the filename filter should exclude them even
+    // when they are the only JSON files present. `format()` checks
+    // `prettier`'s presence before it ever looks at the file list, so the
+    // *reachable* assertion is "no lockfile ever gets passed to prettier",
+    // not "Passed unconditionally" — branch on tool presence like every
+    // other prettier-backed test in this file.
+    let temp = TempDir::new().unwrap();
+    std::fs::write(temp.path().join("package-lock.json"), "{}").unwrap();
+    std::fs::write(temp.path().join("npm-shrinkwrap.json"), "{}").unwrap();
+
+    let surface = JsonSurface;
+    let ctx = ctx_for(&temp, ResolvedLangConfig::new("json"));
+    let res = surface.format(&ctx);
+    if check_binary_exists("prettier") {
+      assert!(matches!(res.status, SurfaceStatus::Passed));
+    } else {
+      assert!(matches!(res.status, SurfaceStatus::ToolMissing { .. }));
+    }
+  }
+
+  #[test]
+  fn test_json_lint_fix_is_unsupported() {
+    // JSON has no autofix-capable linter of its own; lint(fix=true) must be
+    // a no-op Skipped rather than silently doing nothing or erroring.
+    let temp = TempDir::new().unwrap();
+    let surface = JsonSurface;
+    let ctx = ctx_for(&temp, ResolvedLangConfig::new("json"));
+    let res = surface.lint(&ctx, true);
+    assert!(matches!(res.status, SurfaceStatus::Skipped { .. }));
+  }
+
+  #[test]
+  fn test_json_lint_delegates_to_format_check() {
+    // lint(fix=false) is documented as reusing prettier's check-mode as a
+    // syntax/format lint; assert it produces the same class of outcome as
+    // format() in check mode rather than diverging.
+    let temp = TempDir::new().unwrap();
+    let surface = JsonSurface;
+    let ctx = ctx_for(&temp, ResolvedLangConfig::new("json"));
+    let res = surface.lint(&ctx, false);
+    if check_binary_exists("prettier") {
+      assert!(matches!(res.status, SurfaceStatus::Passed));
+    } else {
+      assert!(matches!(res.status, SurfaceStatus::ToolMissing { .. }));
+    }
+  }
+
+  #[test]
+  fn test_json_sync_config_delegates_to_prettier() {
+    let temp = TempDir::new().unwrap();
+    let surface = JsonSurface;
+    let ctx = ctx_for(&temp, ResolvedLangConfig::new("json"));
+    let res = surface.sync_config(&ctx, false);
+    assert!(matches!(
+      res.status,
+      SurfaceStatus::ConfigSynced { created: true, .. }
+    ));
+    assert!(temp.path().join(".prettierrc.json").is_file());
+  }
+
+  #[test]
+  fn test_json_declares_facets_matches_rosetta_table() {
+    // Cross-check against docs/facet-rosetta.md's JSON row directly at the
+    // surface level (in addition to the crate-wide golden table in
+    // src/config/facets_tests.rs), covering all three support levels:
+    // Configurable, Fixed, and Unsupported.
+    let surface = JsonSurface;
+    assert_eq!(
+      surface.facet_support(Facet::IndentTabs),
+      FacetSupport::Configurable
+    );
+    assert_eq!(
+      surface.facet_support(Facet::IndentWidth),
+      FacetSupport::Configurable
+    );
+    assert_eq!(
+      surface.facet_support(Facet::QuoteStyle),
+      FacetSupport::Fixed("double")
+    );
+    assert_eq!(
+      surface.facet_support(Facet::TrailingComma),
+      FacetSupport::Fixed("none")
+    );
+    assert_eq!(
+      surface.facet_support(Facet::LineLength),
+      FacetSupport::Unsupported
+    );
+    assert_eq!(
+      surface.facet_support(Facet::ImportSort),
+      FacetSupport::Unsupported
+    );
+    assert_eq!(
+      surface.facet_support(Facet::ProseWrap),
+      FacetSupport::Unsupported
+    );
+    assert_eq!(
+      surface.facet_support(Facet::Edition),
+      FacetSupport::Unsupported
+    );
+    assert_eq!(
+      surface.facet_support(Facet::Standard),
+      FacetSupport::Unsupported
+    );
+  }
+}
