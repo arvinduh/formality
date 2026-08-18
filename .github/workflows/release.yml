@@ -9,6 +9,34 @@ permissions:
   contents: write
 
 jobs:
+  changelog:
+    name: Generate Changelog
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v7
+        with:
+          # git-cliff needs full history (and tags) to build the changelog,
+          # not just the single commit the tag points at.
+          fetch-depth: 0
+
+      - name: Generate changelog for this release
+        uses: orhun/git-cliff-action@v4
+        id: git-cliff
+        with:
+          config: cliff.toml
+          args: --latest --strip header
+        env:
+          OUTPUT: CHANGELOG.md
+
+      - name: Publish changelog as release notes and asset
+        uses: softprops/action-gh-release@v3
+        with:
+          files: CHANGELOG.md
+          body_path: CHANGELOG.md
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
   build-release:
     name: Build Binary (${{ matrix.target }})
     runs-on: ${{ matrix.os }}
