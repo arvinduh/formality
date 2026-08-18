@@ -41,6 +41,7 @@ every surface in parallel for near-instant feedback.
 | **Rust**           | `cargo fmt` / `rustfmt` | `clippy`            | `.rustfmt.toml`                          |
 | **Python**         | `ruff format`           | `ruff check`        | `ruff.toml`                              |
 | **C / C++**        | `clang-format`          | `clang-tidy`        | `.clang-format`                          |
+| **Java**           | `google-java-format`    | `checkstyle`        | `checkstyle.xml`                         |
 | **Markdown**       | `prettier`              | `markdownlint-cli2` | `.markdownlint.json`, `.prettierrc.json` |
 | **YAML**           | `prettier`              | `yamllint`          | `.prettierrc.json`                       |
 | **JSON**           | `prettier`              | `prettier`          | `.prettierrc.json`                       |

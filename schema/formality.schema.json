@@ -122,6 +122,16 @@
         }
       }
     },
+    "JavaOptions": {
+      "description": "Typed formatting and linting options for Java.",
+      "type": "object",
+      "properties": {
+        "style": {
+          "description": "Formatting style used by google-java-format: \"google\" (default,\n2-space indent) or \"aosp\" (4-space indent).",
+          "type": ["string", "null"]
+        }
+      }
+    },
     "JavaScriptOptions": {
       "description": "Typed formatting and linting options for JavaScript/TypeScript (Biome).",
       "type": "object",
@@ -199,6 +209,16 @@
           "type": ["integer", "null"],
           "format": "uint",
           "minimum": 0
+        },
+        "java": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/JavaOptions"
+            },
+            {
+              "type": "null"
+            }
+          ]
         },
         "javascript": {
           "anyOf": [

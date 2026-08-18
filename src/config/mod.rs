@@ -5,9 +5,9 @@ pub mod schema;
 
 pub use facets::LayoutFacet;
 pub use options::{
-  CppOptions, GoOptions, JavaScriptOptions, JsonOptions, KotlinOptions,
-  MarkdownOptions, PythonOptions, RustOptions, TomlOptions, TypstOptions,
-  YamlOptions,
+  CppOptions, GoOptions, JavaOptions, JavaScriptOptions, JsonOptions,
+  KotlinOptions, MarkdownOptions, PythonOptions, RustOptions, TomlOptions,
+  TypstOptions, YamlOptions,
 };
 pub use resolve::{find_project_config, find_user_config};
 pub use schema::generate_schema;
@@ -171,6 +171,11 @@ pub struct LangConfig {
   pub python: Option<PythonOptions>,
   #[serde(skip_serializing_if = "Option::is_none")]
   pub cpp: Option<CppOptions>,
+  // NOTE: `java` is intentionally kept as its own clearly-scoped block,
+  // alphabetically between `cpp` and `markdown`, to keep merges with
+  // sibling language-surface additions (JS/TS, Go, Kotlin) low-conflict.
+  #[serde(skip_serializing_if = "Option::is_none")]
+  pub java: Option<JavaOptions>,
   #[serde(skip_serializing_if = "Option::is_none")]
   pub go: Option<GoOptions>,
   #[serde(skip_serializing_if = "Option::is_none")]
@@ -253,6 +258,13 @@ impl LangConfig {
         our_cpp.merge(other_cpp);
       } else {
         self.cpp = Some(other_cpp);
+      }
+    }
+    if let Some(other_java) = other.java {
+      if let Some(ref mut our_java) = self.java {
+        our_java.merge(other_java);
+      } else {
+        self.java = Some(other_java);
       }
     }
     if let Some(other_go) = other.go {
@@ -346,6 +358,16 @@ impl LangConfig {
       &self.extra,
       |cur, other| cur.merge(other),
       |c| c.is_empty(),
+    )
+  }
+
+  pub fn java_options(&self) -> Option<JavaOptions> {
+    extract_options(
+      self.java.clone(),
+      &self.options,
+      &self.extra,
+      |cur, other| cur.merge(other),
+      |j| j.is_empty(),
     )
   }
 
@@ -492,6 +514,7 @@ pub struct ResolvedLangConfig {
   pub rust: Option<RustOptions>,
   pub python: Option<PythonOptions>,
   pub cpp: Option<CppOptions>,
+  pub java: Option<JavaOptions>,
   pub go: Option<GoOptions>,
   pub markdown: Option<MarkdownOptions>,
   pub yaml: Option<YamlOptions>,
