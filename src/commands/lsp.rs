@@ -26,6 +26,7 @@
 /// | rust     | `rust-analyzer`           | rustup component add    |
 /// | python   | `pyright-langserver`      | npm / pip               |
 /// | cpp      | `clangd`                  | apt / brew / llvm.org   |
+/// | go       | `gopls`                   | go install               |
 /// | typst    | `tinymist` / `typst-lsp`  | cargo / npm             |
 /// | markdown | none (diagnostics only)   | —                       |
 /// | yaml     | `yaml-language-server`    | npm                     |
@@ -89,6 +90,12 @@ pub const CHILD_LSP_REGISTRY: &[ChildLsp] = &[
     binary: "clangd",
     args: &[],
     install_hint: "sudo apt install clangd  OR  brew install llvm",
+  },
+  ChildLsp {
+    surface: "go",
+    binary: "gopls",
+    args: &[],
+    install_hint: "go install golang.org/x/tools/gopls@latest",
   },
   ChildLsp {
     surface: "typst",

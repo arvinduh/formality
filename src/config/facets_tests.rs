@@ -47,7 +47,7 @@ fn test_facet_support_helpers() {
 #[test]
 fn test_all_surfaces_reporting_engine() {
   let surfaces = all_surfaces();
-  assert_eq!(surfaces.len(), 9);
+  assert_eq!(surfaces.len(), 11);
 
   let result = validate_all_surfaces_reporting(&surfaces);
   assert!(result.is_ok(), "Errors: {:?}", result.err());

@@ -167,6 +167,36 @@ impl JavaScriptOptions {
   }
 }
 
+/// Typed formatting and linting options for Go.
+#[derive(
+  Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize, JsonSchema,
+)]
+pub struct GoOptions {
+  /// Prefix(es) passed to `goimports -local` so first-party imports are
+  /// grouped separately from third-party ones (e.g. "example.com/myorg").
+  #[serde(skip_serializing_if = "Option::is_none")]
+  pub local_prefixes: Option<String>,
+  /// Linters to enable in the generated `.golangci.yml`. Defaults to
+  /// golangci-lint's own well-known default set when unset.
+  #[serde(skip_serializing_if = "Option::is_none")]
+  pub linters: Option<Vec<String>>,
+}
+
+impl GoOptions {
+  pub fn merge(&mut self, other: GoOptions) {
+    if other.local_prefixes.is_some() {
+      self.local_prefixes = other.local_prefixes;
+    }
+    if other.linters.is_some() {
+      self.linters = other.linters;
+    }
+  }
+
+  pub fn is_empty(&self) -> bool {
+    self.local_prefixes.is_none() && self.linters.is_none()
+  }
+}
+
 /// Typed formatting and linting options for Markdown.
 #[derive(
   Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize, JsonSchema,
@@ -257,6 +287,26 @@ pub struct TypstOptions {}
 
 impl TypstOptions {
   pub fn merge(&mut self, _other: TypstOptions) {}
+
+  pub fn is_empty(&self) -> bool {
+    true
+  }
+}
+
+/// Typed formatting and linting options for Kotlin.
+///
+/// Kotlin's tooling (ktlint) reads layout facets (indent size, line length,
+/// etc.) exclusively from `.editorconfig` rather than a dedicated config
+/// file, so this struct is intentionally empty for now — it exists to keep
+/// Kotlin consistent with the rest of the fleet's per-language options
+/// wiring and as a home for future knobs (e.g. `ktlint_code_style`).
+#[derive(
+  Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize, JsonSchema,
+)]
+pub struct KotlinOptions {}
+
+impl KotlinOptions {
+  pub fn merge(&mut self, _other: KotlinOptions) {}
 
   pub fn is_empty(&self) -> bool {
     true

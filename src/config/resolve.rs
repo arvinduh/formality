@@ -1,7 +1,8 @@
 use super::facets::LayoutFacet;
 use super::options::{
-  CppOptions, JavaScriptOptions, JsonOptions, MarkdownOptions, PythonOptions,
-  RustOptions, TomlOptions, TypstOptions, YamlOptions,
+  CppOptions, GoOptions, JavaScriptOptions, JsonOptions, KotlinOptions,
+  MarkdownOptions, PythonOptions, RustOptions, TomlOptions, TypstOptions,
+  YamlOptions,
 };
 use super::{
   CONFIG_FILE_CANDIDATES, ConfigError, FormalityConfig, GlobalConfig,
@@ -122,12 +123,14 @@ impl FormalityConfig {
       "rust" => (Some("cargo-fmt"), Some("clippy")),
       "python" => (Some("ruff-format"), Some("ruff-check")),
       "cpp" => (Some("clang-format"), Some("clang-tidy")),
+      "go" => (Some("goimports"), Some("golangci-lint")),
       "markdown" => (Some("prettier"), Some("markdownlint")),
       "yaml" => (Some("prettier"), Some("yamllint")),
       "json" => (Some("prettier"), None),
       "toml" => (Some("taplo"), Some("taplo")),
       "typst" => (Some("typstyle"), Some("typstyle")),
       "javascript" => (Some("biome"), Some("biome")),
+      "kotlin" => (Some("ktlint"), Some("ktlint")),
       _ => (None, None),
     };
 
@@ -177,6 +180,14 @@ impl FormalityConfig {
     let cpp = lang_cfg.and_then(|l| l.cpp_options()).or_else(|| {
       if lang_name == "cpp" {
         Some(CppOptions::default())
+      } else {
+        None
+      }
+    });
+
+    let go = lang_cfg.and_then(|l| l.go_options()).or_else(|| {
+      if lang_name == "go" {
+        Some(GoOptions::default())
       } else {
         None
       }
@@ -233,6 +244,14 @@ impl FormalityConfig {
         }
       });
 
+    let kotlin = lang_cfg.and_then(|l| l.kotlin_options()).or_else(|| {
+      if lang_name == "kotlin" {
+        Some(KotlinOptions::default())
+      } else {
+        None
+      }
+    });
+
     let extra = lang_cfg.map(|l| l.extra.clone()).unwrap_or_default();
 
     ResolvedLangConfig {
@@ -263,12 +282,14 @@ impl FormalityConfig {
       rust,
       python,
       cpp,
+      go,
       markdown,
       yaml,
       json,
       toml,
       typst,
       javascript,
+      kotlin,
       extra,
     }
   }

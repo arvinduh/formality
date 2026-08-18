@@ -105,8 +105,47 @@
         }
       }
     },
+    "GoOptions": {
+      "description": "Typed formatting and linting options for Go.",
+      "type": "object",
+      "properties": {
+        "linters": {
+          "description": "Linters to enable in the generated `.golangci.yml`. Defaults to\ngolangci-lint's own well-known default set when unset.",
+          "type": ["array", "null"],
+          "items": {
+            "type": "string"
+          }
+        },
+        "local_prefixes": {
+          "description": "Prefix(es) passed to `goimports -local` so first-party imports are\ngrouped separately from third-party ones (e.g. \"example.com/myorg\").",
+          "type": ["string", "null"]
+        }
+      }
+    },
+    "JavaScriptOptions": {
+      "description": "Typed formatting and linting options for JavaScript/TypeScript (Biome).",
+      "type": "object",
+      "properties": {
+        "organize_imports": {
+          "type": ["boolean", "null"]
+        },
+        "quote_style": {
+          "type": ["string", "null"]
+        },
+        "semicolons": {
+          "type": ["string", "null"]
+        },
+        "trailing_comma": {
+          "type": ["string", "null"]
+        }
+      }
+    },
     "JsonOptions": {
       "description": "Typed formatting and linting options for JSON.",
+      "type": "object"
+    },
+    "KotlinOptions": {
+      "description": "Typed formatting and linting options for Kotlin.\n\nKotlin's tooling (ktlint) reads layout facets (indent size, line length,\netc.) exclusively from `.editorconfig` rather than a dedicated config\nfile, so this struct is intentionally empty for now — it exists to keep\nKotlin consistent with the rest of the fleet's per-language options\nwiring and as a home for future knobs (e.g. `ktlint_code_style`).",
       "type": "object"
     },
     "LangConfig": {
@@ -146,15 +185,45 @@
         "format_tool": {
           "type": ["string", "null"]
         },
+        "go": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/GoOptions"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
         "indent_size": {
           "type": ["integer", "null"],
           "format": "uint",
           "minimum": 0
         },
+        "javascript": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/JavaScriptOptions"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
         "json": {
           "anyOf": [
             {
               "$ref": "#/$defs/JsonOptions"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "kotlin": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/KotlinOptions"
             },
             {
               "type": "null"
