@@ -381,9 +381,42 @@ impl FormalityConfig {
     out
   }
 
-  /// Generates standard template for `fml init` versioned to current package release.
-  pub fn generate_init_template(_detected_langs: &[&str]) -> String {
-    Self::generate_sample()
+  /// Generates standard template for `fml init` versioned to current package
+  /// release, customized with commented-out `[lang.<name>]` stub sections for
+  /// each surface detected in the workspace.
+  ///
+  /// The stubs stay commented out deliberately: `fml` auto-detects and
+  /// formats every surface with sane defaults out of the box (see #68), so
+  /// `generate_sample()`'s `[global]` block alone is a fully working config.
+  /// The per-language stubs exist purely as discoverable, ready-to-uncomment
+  /// starting points that show users *which* languages were found and *what*
+  /// they can override, without silently constraining or hardcoding
+  /// anything the way an active `languages = [...]` list would.
+  pub fn generate_init_template(detected_langs: &[&str]) -> String {
+    let mut out = Self::generate_sample();
+
+    if detected_langs.is_empty() {
+      return out;
+    }
+
+    // Deduplicate and sort for deterministic, readable output regardless of
+    // detection order.
+    let mut langs: Vec<&str> = detected_langs.to_vec();
+    langs.sort_unstable();
+    langs.dedup();
+
+    out.push_str(
+      "\n# Detected language surfaces below. Uncomment a section to override\n\
+       # its defaults (indent_size, line_length, format_tool, lint_tool, ...).\n\
+       # Leave commented out to keep using formality's built-in defaults.\n",
+    );
+    for lang in langs {
+      out.push_str(&format!("\n# [lang.{lang}]\n"));
+      out.push_str("# indent_size = 2\n");
+      out.push_str("# line_length = 80\n");
+    }
+
+    out
   }
 }
 pub fn find_project_config(start_dir: &Path) -> Option<PathBuf> {
