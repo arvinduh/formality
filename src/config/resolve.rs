@@ -131,10 +131,28 @@ impl FormalityConfig {
       _ => (None, None),
     };
 
+    // Java's indent width is dictated by the configured google-java-format
+    // style (Google = 2, AOSP = 4) when the user hasn't explicitly pinned
+    // `indent_size` themselves. Resolving it here — the single source of
+    // truth `ResolvedLangConfig::indent_size` — is what keeps the generated
+    // `checkstyle.xml` and `.editorconfig` in agreement; see
+    // `JavaSurface::facet_support` (Configurable, not Fixed) and
+    // `CheckstyleConfig::from_context`, both of which just read this value.
+    let java_style_is_aosp = lang_name == "java"
+      && lang_cfg
+        .and_then(|l| l.java_options())
+        .and_then(|j| j.style)
+        .as_deref()
+        == Some("aosp");
+
     let indent_size = lang_cfg
       .and_then(|l| l.indent_size)
       .or_else(|| lang_layout.and_then(|l| l.indent_size))
-      .unwrap_or(global.indent_size);
+      .unwrap_or(if java_style_is_aosp {
+        4
+      } else {
+        global.indent_size
+      });
 
     let line_length = lang_cfg
       .and_then(|l| l.line_length)

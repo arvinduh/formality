@@ -9,9 +9,14 @@ use std::path::Path;
 use std::time::Instant;
 
 /// Typed configuration for Checkstyle, rendered as a Checkstyle XML module
-/// tree. Deliberately mirrors what `google-java-format` actually enforces
-/// (2-space indentation, 100-column lines) rather than the user's generic
-/// layout facets, so that `fml fmt` output always passes `fml lint`
+/// tree. `indent_size` is read from `ResolvedLangConfig::indent_size` — the
+/// same value `fml sync` uses to generate `.editorconfig` — rather than
+/// being recomputed locally, so `checkstyle.xml` and `.editorconfig` can
+/// never disagree on indentation. `resolve_for_lang` is what actually
+/// derives that value from the configured `style` (Google = 2, AOSP = 4)
+/// when the user hasn't pinned `indent_size` themselves. `line_length` is
+/// hardcoded to 100 (google-java-format's fixed column limit; there is no
+/// knob to change it), so `fml fmt` output always passes `fml lint`
 /// immediately afterward ("Smart Format").
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct CheckstyleConfig {
@@ -27,16 +32,16 @@ impl NativeConfig for CheckstyleConfig {
 
 impl CheckstyleConfig {
   pub fn from_context(ctx: &ExecutionContext) -> Self {
-    let java_opts = ctx.lang_config.java.as_ref();
-    let aosp = java_opts.and_then(|j| j.style.as_deref()) == Some("aosp");
-    let indent_size = if aosp { 4 } else { 2 };
-
     Self {
       // google-java-format enforces a fixed 100-column limit; there is no
       // knob to change it, so the generated lint config mirrors that rather
       // than the user's generic `line_length` facet.
       line_length: 100,
-      indent_size,
+      // Already resolved from the configured `style` (Google = 2, AOSP = 4)
+      // by `FormalityConfig::resolve_for_lang` — reusing it here (instead of
+      // recomputing from `style` locally) is what keeps this in agreement
+      // with the generated `.editorconfig`.
+      indent_size: ctx.lang_config.indent_size,
       check_unused_imports: true,
       check_import_order: true,
     }
@@ -89,9 +94,14 @@ impl DeclaresFacets for JavaSurface {
     match facet {
       // google-java-format never uses tabs.
       Facet::IndentTabs => FacetSupport::Fixed("spaces"),
-      // Indentation is dictated by the chosen style (Google = 2, AOSP = 4),
-      // not freely configurable per-project.
-      Facet::IndentWidth => FacetSupport::Fixed("2"),
+      // Indentation width is configurable, but not freely: it tracks the
+      // configured `style` (Google = 2, AOSP = 4) via
+      // `FormalityConfig::resolve_for_lang`, or an explicit `indent_size`
+      // override. There is no single value to report as Fixed, so this is
+      // Configurable — `.editorconfig` and `checkstyle.xml` both read the
+      // same resolved `ResolvedLangConfig::indent_size`, so they can never
+      // disagree.
+      Facet::IndentWidth => FacetSupport::Configurable,
       // google-java-format hardcodes a 100-column limit; there is no flag
       // to change it.
       Facet::LineLength => FacetSupport::Fixed("100"),
@@ -401,7 +411,7 @@ impl LanguageSurface for JavaSurface {
 #[cfg(test)]
 mod tests {
   use super::*;
-  use crate::config::{JavaOptions, ResolvedGlobalConfig, ResolvedLangConfig};
+  use crate::config::{ResolvedGlobalConfig, ResolvedLangConfig};
   use tempfile::TempDir;
 
   #[test]
@@ -413,7 +423,7 @@ mod tests {
     );
     assert_eq!(
       surface.facet_support(Facet::IndentWidth),
-      FacetSupport::Fixed("2")
+      FacetSupport::Configurable
     );
     assert_eq!(
       surface.facet_support(Facet::LineLength),
@@ -476,10 +486,20 @@ mod tests {
   #[test]
   fn test_checkstyle_config_from_context_aosp_style() {
     let temp = TempDir::new().unwrap();
-    let mut lang_cfg = ResolvedLangConfig::new("java");
-    lang_cfg.java = Some(JavaOptions {
-      style: Some("aosp".to_string()),
-    });
+    // Go through real config parsing + resolve_for_lang (not a hand-built
+    // ResolvedLangConfig) so this exercises the same indent_size derivation
+    // `fml sync` actually uses.
+    let toml_str = r#"
+      [lang.java]
+      style = "aosp"
+    "#;
+    let cfg = crate::config::FormalityConfig::parse_str(
+      toml_str,
+      Path::new("formality.toml"),
+    )
+    .unwrap();
+    let lang_cfg = cfg.resolve_for_lang("java");
+    assert_eq!(lang_cfg.indent_size, 4);
 
     let ctx = ExecutionContext {
       root: temp.path().to_path_buf(),
@@ -489,9 +509,59 @@ mod tests {
       check_only: false,
     };
 
-    let cfg = CheckstyleConfig::from_context(&ctx);
-    assert_eq!(cfg.indent_size, 4);
-    assert_eq!(cfg.line_length, 100);
+    let checkstyle_cfg = CheckstyleConfig::from_context(&ctx);
+    assert_eq!(checkstyle_cfg.indent_size, 4);
+    assert_eq!(checkstyle_cfg.line_length, 100);
+  }
+
+  /// Regression test for the AOSP indent-width contradiction: `fml sync`
+  /// must generate `checkstyle.xml` (basicOffset) and `.editorconfig`
+  /// (indent_size) with the *same* indent width for `[*.java]`, whatever
+  /// `style` is configured. Previously `checkstyle.xml` derived 4 from
+  /// `style = "aosp"` while `.editorconfig` always emitted a hardcoded 2.
+  #[test]
+  fn test_aosp_style_editorconfig_and_checkstyle_agree() {
+    let toml_str = r#"
+      [lang.java]
+      style = "aosp"
+    "#;
+    let cfg = crate::config::FormalityConfig::parse_str(
+      toml_str,
+      Path::new("formality.toml"),
+    )
+    .unwrap();
+    let lang_cfg = cfg.resolve_for_lang("java");
+
+    let temp = TempDir::new().unwrap();
+    let ctx = ExecutionContext {
+      root: temp.path().to_path_buf(),
+      paths: Vec::new(),
+      global_config: cfg.resolve_global(),
+      lang_config: lang_cfg,
+      check_only: false,
+    };
+
+    let checkstyle_indent = CheckstyleConfig::from_context(&ctx).indent_size;
+
+    let surfaces: Vec<Box<dyn LanguageSurface>> = vec![Box::new(JavaSurface)];
+    let editorconfig_content =
+      crate::editorconfig::generate_editorconfig_from_config(&cfg, &surfaces);
+    // Extract the `[*.java]` section's indent_size line.
+    let java_section = editorconfig_content
+      .split("[*.java]")
+      .nth(1)
+      .expect("expected a [*.java] section since indent diverges from global");
+    let editorconfig_indent: usize = java_section
+      .lines()
+      .find_map(|l| l.strip_prefix("indent_size = "))
+      .expect("expected an indent_size line in the [*.java] section")
+      .trim()
+      .parse()
+      .unwrap();
+
+    assert_eq!(checkstyle_indent, 4);
+    assert_eq!(editorconfig_indent, 4);
+    assert_eq!(checkstyle_indent, editorconfig_indent);
   }
 
   #[test]
