@@ -223,3 +223,23 @@ impl TypstOptions {
     true
   }
 }
+
+/// Typed formatting and linting options for Kotlin.
+///
+/// Kotlin's tooling (ktlint) reads layout facets (indent size, line length,
+/// etc.) exclusively from `.editorconfig` rather than a dedicated config
+/// file, so this struct is intentionally empty for now — it exists to keep
+/// Kotlin consistent with the rest of the fleet's per-language options
+/// wiring and as a home for future knobs (e.g. `ktlint_code_style`).
+#[derive(
+  Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize, JsonSchema,
+)]
+pub struct KotlinOptions {}
+
+impl KotlinOptions {
+  pub fn merge(&mut self, _other: KotlinOptions) {}
+
+  pub fn is_empty(&self) -> bool {
+    true
+  }
+}
