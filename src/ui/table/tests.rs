@@ -319,8 +319,7 @@ fn test_cell_level_overflow_overrides_column_overflow() {
     ),
   ]);
   table.add_row(Row::new(vec![
-    Cell::text("this text is definitely too long")
-      .overflow(Overflow::Clip),
+    Cell::text("this text is definitely too long").overflow(Overflow::Clip),
   ]));
 
   let rendered = render(&table, &Palette::none());
@@ -369,12 +368,9 @@ fn test_row_with_fewer_cells_than_columns_renders_blank_gaps() {
   // A Row shorter than the table's column count must render an empty cell
   // for the missing columns rather than panicking on an out-of-bounds
   // index (row.cells.get(i) returning None).
-  let table = Table::new(vec![
-    Column::new("A"),
-    Column::new("B"),
-    Column::new("C"),
-  ])
-  .with_row(Row::new(vec![Cell::text("only-a")]));
+  let table =
+    Table::new(vec![Column::new("A"), Column::new("B"), Column::new("C")])
+      .with_row(Row::new(vec![Cell::text("only-a")]));
 
   let rendered = render(&table, &Palette::none());
   assert!(rendered.contains("only-a"));

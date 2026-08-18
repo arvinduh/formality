@@ -666,9 +666,8 @@ fn test_load_file_missing_path_yields_io_error() {
 fn test_parse_str_malformed_toml_yields_parse_error() {
   // Missing closing bracket / invalid TOML syntax.
   let bad_toml = "[global\nindent_size = 2";
-  let err =
-    FormalityConfig::parse_str(bad_toml, Path::new("formality.toml"))
-      .unwrap_err();
+  let err = FormalityConfig::parse_str(bad_toml, Path::new("formality.toml"))
+    .unwrap_err();
   assert!(matches!(err, ConfigError::Parse { .. }));
   let msg = err.to_string();
   assert!(msg.contains("Failed to parse config file at"));
@@ -719,8 +718,7 @@ fn test_java_aosp_style_defaults_indent_width_to_four() {
       indent_size = 8
     "#;
   let parsed_explicit =
-    FormalityConfig::parse_str(toml_explicit, Path::new("test.toml"))
-      .unwrap();
+    FormalityConfig::parse_str(toml_explicit, Path::new("test.toml")).unwrap();
   let java_explicit = parsed_explicit.resolve_for_lang("java");
   assert_eq!(java_explicit.indent_size, 8);
 }

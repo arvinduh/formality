@@ -460,7 +460,10 @@ fn test_compatibility_policy_check_mstv() {
 
   // A tool with no MSTV registry entry must yield None, not panic or
   // fall back to some default minimum.
-  assert_eq!(CompatibilityPolicy::check_mstv("totally-unknown-tool"), None);
+  assert_eq!(
+    CompatibilityPolicy::check_mstv("totally-unknown-tool"),
+    None
+  );
 }
 
 #[test]
