@@ -10,7 +10,7 @@ use std::time::Instant;
 pub const EDITORCONFIG_FILE_NAME: &str = ".editorconfig";
 
 const CANONICAL_FLEET_ORDER: &[&str] = &[
-  "rust", "python", "cpp", "yaml", "json", "toml", "markdown", "typst",
+  "rust", "python", "cpp", "java", "yaml", "json", "toml", "markdown", "typst",
 ];
 
 /// Returns the standard EditorConfig section glob for a known or custom surface.
@@ -19,6 +19,7 @@ pub fn glob_for_surface(surface: &dyn LanguageSurface) -> String {
     "rust" => "[*.rs]".to_string(),
     "python" => "[*.py]".to_string(),
     "cpp" => "[*.{c,cc,cpp,cxx,h,hh,hpp,hxx}]".to_string(),
+    "java" => "[*.java]".to_string(),
     "yaml" => "[*.{yaml,yml}]".to_string(),
     "json" => "[*.json]".to_string(),
     "toml" => "[*.toml]".to_string(),
@@ -99,13 +100,15 @@ pub fn generate_editorconfig(
       _ => global_indent_style,
     };
 
-    let indent_size = global.indent_size;
-    let max_line_length =
-      if surface.facet_support(Facet::LineLength).is_unsupported() {
-        None
-      } else {
-        Some(global.line_length)
-      };
+    let indent_size = match surface.facet_support(Facet::IndentWidth) {
+      FacetSupport::Fixed(v) => v.parse().unwrap_or(global.indent_size),
+      _ => global.indent_size,
+    };
+    let max_line_length = match surface.facet_support(Facet::LineLength) {
+      FacetSupport::Unsupported => None,
+      FacetSupport::Fixed(v) => v.parse().ok().or(Some(global.line_length)),
+      FacetSupport::Configurable => Some(global.line_length),
+    };
 
     let diverges = indent_style != global_indent_style
       || indent_size != global_indent_size
@@ -199,13 +202,15 @@ pub fn generate_editorconfig_from_config(
       }
     };
 
-    let indent_size = lang_cfg.indent_size;
-    let max_line_length =
-      if surface.facet_support(Facet::LineLength).is_unsupported() {
-        None
-      } else {
-        Some(lang_cfg.line_length)
-      };
+    let indent_size = match surface.facet_support(Facet::IndentWidth) {
+      FacetSupport::Fixed(v) => v.parse().unwrap_or(lang_cfg.indent_size),
+      _ => lang_cfg.indent_size,
+    };
+    let max_line_length = match surface.facet_support(Facet::LineLength) {
+      FacetSupport::Unsupported => None,
+      FacetSupport::Fixed(v) => v.parse().ok().or(Some(lang_cfg.line_length)),
+      FacetSupport::Configurable => Some(lang_cfg.line_length),
+    };
 
     let diverges = indent_style != global_indent_style
       || indent_size != global_indent_size

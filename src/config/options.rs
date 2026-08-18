@@ -128,6 +128,29 @@ impl CppOptions {
   }
 }
 
+/// Typed formatting and linting options for Java.
+#[derive(
+  Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize, JsonSchema,
+)]
+pub struct JavaOptions {
+  /// Formatting style used by google-java-format: "google" (default,
+  /// 2-space indent) or "aosp" (4-space indent).
+  #[serde(skip_serializing_if = "Option::is_none")]
+  pub style: Option<String>,
+}
+
+impl JavaOptions {
+  pub fn merge(&mut self, other: JavaOptions) {
+    if other.style.is_some() {
+      self.style = other.style;
+    }
+  }
+
+  pub fn is_empty(&self) -> bool {
+    self.style.is_none()
+  }
+}
+
 /// Typed formatting and linting options for Markdown.
 #[derive(
   Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize, JsonSchema,

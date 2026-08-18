@@ -1,4 +1,5 @@
 pub mod cpp;
+pub mod java;
 pub mod json;
 pub mod markdown;
 pub mod native;
@@ -250,6 +251,11 @@ const CLANG_TIDY_CHAIN: &[InstallMethod] = &[
   InstallMethod::Scoop("llvm"),
 ];
 
+const GOOGLE_JAVA_FORMAT_CHAIN: &[InstallMethod] =
+  &[InstallMethod::Brew("google-java-format")];
+
+const CHECKSTYLE_CHAIN: &[InstallMethod] = &[InstallMethod::Brew("checkstyle")];
+
 const RUSTFMT_CHAIN: &[InstallMethod] = &[InstallMethod::Rustup("rustfmt")];
 const CLIPPY_CHAIN: &[InstallMethod] = &[InstallMethod::Rustup("clippy")];
 
@@ -268,6 +274,8 @@ fn install_chain_for(binary: &str) -> Option<&'static [InstallMethod]> {
     "yamllint" => Some(YAMLLINT_CHAIN),
     "clang-format" => Some(CLANG_FORMAT_CHAIN),
     "clang-tidy" => Some(CLANG_TIDY_CHAIN),
+    "google-java-format" => Some(GOOGLE_JAVA_FORMAT_CHAIN),
+    "checkstyle" => Some(CHECKSTYLE_CHAIN),
     "rustfmt" => Some(RUSTFMT_CHAIN),
     "clippy-driver" => Some(CLIPPY_CHAIN),
     _ => None,
@@ -396,6 +404,7 @@ pub static DEFAULT_SURFACE_CONSTRUCTORS: &[SurfaceConstructor] = &[
   create_surface::<rust::RustSurface>,
   create_surface::<python::PythonSurface>,
   create_surface::<cpp::CppSurface>,
+  create_surface::<java::JavaSurface>,
   create_surface::<markdown::MarkdownSurface>,
   create_surface::<yaml::YamlSurface>,
   create_surface::<json::JsonSurface>,
@@ -415,6 +424,7 @@ impl Default for SurfaceRegistry {
     reg.register_surface::<rust::RustSurface>();
     reg.register_surface::<python::PythonSurface>();
     reg.register_surface::<cpp::CppSurface>();
+    reg.register_surface::<java::JavaSurface>();
     reg.register_surface::<markdown::MarkdownSurface>();
     reg.register_surface::<yaml::YamlSurface>();
     reg.register_surface::<json::JsonSurface>();
@@ -1219,6 +1229,8 @@ mod tests {
       "yamllint",
       "clang-format",
       "clang-tidy",
+      "google-java-format",
+      "checkstyle",
       "rustfmt",
       "clippy-driver",
     ];
@@ -1450,11 +1462,12 @@ mod tests {
   #[test]
   fn test_all_fleet_surfaces_present() {
     let surfaces = all_surfaces();
-    assert_eq!(surfaces.len(), 8);
+    assert_eq!(surfaces.len(), 9);
 
     let names: Vec<&str> = surfaces.iter().map(|s| s.name()).collect();
     let expected = [
-      "rust", "python", "cpp", "markdown", "yaml", "json", "toml", "typst",
+      "rust", "python", "cpp", "java", "markdown", "yaml", "json", "toml",
+      "typst",
     ];
     for exp in expected {
       assert!(
@@ -1476,6 +1489,8 @@ mod tests {
       ("c", "cpp"),
       ("c++", "cpp"),
       ("cxx", "cpp"),
+      ("java", "java"),
+      ("jav", "java"),
       ("markdown", "markdown"),
       ("md", "markdown"),
       ("yaml", "yaml"),
@@ -1527,6 +1542,9 @@ mod tests {
       ("CXX", "cpp"),
       ("Cxx", "cpp"),
       ("C", "cpp"),
+      ("JAVA", "java"),
+      ("Java", "java"),
+      ("JAV", "java"),
       ("MARKDOWN", "markdown"),
       ("Markdown", "markdown"),
       ("MD", "markdown"),
@@ -1591,6 +1609,7 @@ mod tests {
     assert!(rust::RustSurface.supports_lint_fix());
     assert!(python::PythonSurface.supports_lint_fix());
     assert!(cpp::CppSurface.supports_lint_fix());
+    assert!(!java::JavaSurface.supports_lint_fix());
     assert!(!yaml::YamlSurface.supports_lint_fix());
     assert!(!toml::TomlSurface.supports_lint_fix());
     assert!(markdown::MarkdownSurface.supports_lint_fix());
@@ -1613,6 +1632,7 @@ mod tests {
       Box::new(toml::TomlSurface),
       Box::new(json::JsonSurface),
       Box::new(typst::TypstSurface),
+      Box::new(java::JavaSurface),
     ];
 
     for surface in unsupported_surfaces {

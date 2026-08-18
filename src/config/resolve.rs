@@ -1,7 +1,7 @@
 use super::facets::LayoutFacet;
 use super::options::{
-  CppOptions, JsonOptions, MarkdownOptions, PythonOptions, RustOptions,
-  TomlOptions, TypstOptions, YamlOptions,
+  CppOptions, JavaOptions, JsonOptions, MarkdownOptions, PythonOptions,
+  RustOptions, TomlOptions, TypstOptions, YamlOptions,
 };
 use super::{
   CONFIG_FILE_CANDIDATES, ConfigError, FormalityConfig, GlobalConfig,
@@ -122,6 +122,7 @@ impl FormalityConfig {
       "rust" => (Some("cargo-fmt"), Some("clippy")),
       "python" => (Some("ruff-format"), Some("ruff-check")),
       "cpp" => (Some("clang-format"), Some("clang-tidy")),
+      "java" => (Some("google-java-format"), Some("checkstyle")),
       "markdown" => (Some("prettier"), Some("markdownlint")),
       "yaml" => (Some("prettier"), Some("yamllint")),
       "json" => (Some("prettier"), None),
@@ -176,6 +177,14 @@ impl FormalityConfig {
     let cpp = lang_cfg.and_then(|l| l.cpp_options()).or_else(|| {
       if lang_name == "cpp" {
         Some(CppOptions::default())
+      } else {
+        None
+      }
+    });
+
+    let java = lang_cfg.and_then(|l| l.java_options()).or_else(|| {
+      if lang_name == "java" {
+        Some(JavaOptions::default())
       } else {
         None
       }
@@ -253,6 +262,7 @@ impl FormalityConfig {
       rust,
       python,
       cpp,
+      java,
       markdown,
       yaml,
       json,
