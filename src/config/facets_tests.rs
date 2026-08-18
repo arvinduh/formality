@@ -62,225 +62,235 @@ fn test_all_surfaces_reporting_engine() {
   }
 }
 
+/// Golden-value coverage for every cell of the facet rosetta table in
+/// `docs/facet-rosetta.md`: all 12 language surfaces x all 9 canonical
+/// facets. This is the audit fixture for issue #100 — the previous version
+/// of this test spot-checked only 8 of the 12 surfaces and only a handful of
+/// facets per surface, silently trusting the `Unsupported` default arms for
+/// everything else. Every `(surface, facet)` cell below is asserted
+/// explicitly against the documented table so a change to any surface's
+/// `facet_support` (or the table drifting out of sync with the code) shows
+/// up as a failing assertion instead of an untested edge.
 #[test]
 fn test_surface_facet_declarations() {
+  use Facet::{
+    Edition, ImportSort, IndentTabs, IndentWidth, LineLength, ProseWrap,
+    QuoteStyle, Standard, TrailingComma,
+  };
+  use FacetSupport::{Configurable, Fixed, Unsupported};
+
   let surfaces = all_surfaces();
+  let get = |name: &str| {
+    surfaces
+      .iter()
+      .find(|s| s.name() == name)
+      .unwrap_or_else(|| panic!("surface '{name}' not registered"))
+  };
 
-  // 1. RustSurface
-  let rust = surfaces.iter().find(|s| s.name() == "rust").unwrap();
+  // (surface name, [indent_tabs, indent_width, line_length, quote_style,
+  //  trailing_comma, import_sort, prose_wrap, edition, standard])
+  // matches the rosetta table row-for-row in docs/facet-rosetta.md.
+  let golden: &[(&str, [FacetSupport; 9])] = &[
+    (
+      "rust",
+      [
+        Fixed("spaces"),
+        Configurable,
+        Configurable,
+        Unsupported,
+        Unsupported,
+        Configurable,
+        Unsupported,
+        Configurable,
+        Unsupported,
+      ],
+    ),
+    (
+      "python",
+      [
+        Configurable,
+        Configurable,
+        Configurable,
+        Configurable,
+        Unsupported,
+        Configurable,
+        Unsupported,
+        Unsupported,
+        Unsupported,
+      ],
+    ),
+    (
+      "cpp",
+      [
+        Configurable,
+        Configurable,
+        Configurable,
+        Unsupported,
+        Unsupported,
+        Configurable,
+        Unsupported,
+        Unsupported,
+        Configurable,
+      ],
+    ),
+    (
+      "java",
+      [
+        Fixed("spaces"),
+        Configurable,
+        Fixed("100"),
+        Unsupported,
+        Unsupported,
+        Configurable,
+        Unsupported,
+        Unsupported,
+        Configurable,
+      ],
+    ),
+    (
+      "go",
+      [
+        Fixed("tab"),
+        Unsupported,
+        Unsupported,
+        Unsupported,
+        Unsupported,
+        Configurable,
+        Unsupported,
+        Unsupported,
+        Unsupported,
+      ],
+    ),
+    (
+      "markdown",
+      [
+        Configurable,
+        Configurable,
+        Configurable,
+        Unsupported,
+        Unsupported,
+        Unsupported,
+        Configurable,
+        Unsupported,
+        Unsupported,
+      ],
+    ),
+    (
+      "yaml",
+      [
+        Fixed("spaces"),
+        Configurable,
+        Configurable,
+        Configurable,
+        Unsupported,
+        Unsupported,
+        Configurable,
+        Unsupported,
+        Unsupported,
+      ],
+    ),
+    (
+      "json",
+      [
+        Configurable,
+        Configurable,
+        Unsupported,
+        Fixed("double"),
+        Fixed("none"),
+        Unsupported,
+        Unsupported,
+        Unsupported,
+        Unsupported,
+      ],
+    ),
+    (
+      "toml",
+      [
+        Configurable,
+        Configurable,
+        Configurable,
+        Unsupported,
+        Unsupported,
+        Unsupported,
+        Unsupported,
+        Unsupported,
+        Unsupported,
+      ],
+    ),
+    (
+      "typst",
+      [
+        Fixed("spaces"),
+        Configurable,
+        Configurable,
+        Unsupported,
+        Unsupported,
+        Unsupported,
+        Unsupported,
+        Unsupported,
+        Unsupported,
+      ],
+    ),
+    (
+      "javascript",
+      [
+        Configurable,
+        Configurable,
+        Configurable,
+        Configurable,
+        Configurable,
+        Configurable,
+        Unsupported,
+        Unsupported,
+        Unsupported,
+      ],
+    ),
+    (
+      "kotlin",
+      [
+        Fixed("spaces"),
+        Configurable,
+        Configurable,
+        Fixed("double"),
+        Configurable,
+        Configurable,
+        Unsupported,
+        Unsupported,
+        Unsupported,
+      ],
+    ),
+  ];
+
+  let facet_order = [
+    IndentTabs,
+    IndentWidth,
+    LineLength,
+    QuoteStyle,
+    TrailingComma,
+    ImportSort,
+    ProseWrap,
+    Edition,
+    Standard,
+  ];
+
   assert_eq!(
-    rust.facet_support(Facet::IndentTabs),
-    FacetSupport::Fixed("spaces")
-  );
-  assert_eq!(
-    rust.facet_support(Facet::IndentWidth),
-    FacetSupport::Configurable
-  );
-  assert_eq!(
-    rust.facet_support(Facet::LineLength),
-    FacetSupport::Configurable
-  );
-  assert_eq!(
-    rust.facet_support(Facet::ImportSort),
-    FacetSupport::Configurable
-  );
-  assert_eq!(
-    rust.facet_support(Facet::Edition),
-    FacetSupport::Configurable
-  );
-  assert_eq!(
-    rust.facet_support(Facet::QuoteStyle),
-    FacetSupport::Unsupported
-  );
-  assert_eq!(
-    rust.facet_support(Facet::ProseWrap),
-    FacetSupport::Unsupported
-  );
-  assert_eq!(
-    rust.facet_support(Facet::TrailingComma),
-    FacetSupport::Unsupported
-  );
-  assert_eq!(
-    rust.facet_support(Facet::Standard),
-    FacetSupport::Unsupported
+    golden.len(),
+    12,
+    "golden table must cover all 12 language surfaces"
   );
 
-  // 2. PythonSurface
-  let python = surfaces.iter().find(|s| s.name() == "python").unwrap();
-  assert_eq!(
-    python.facet_support(Facet::QuoteStyle),
-    FacetSupport::Configurable
-  );
-  assert_eq!(
-    python.facet_support(Facet::LineLength),
-    FacetSupport::Configurable
-  );
-  assert_eq!(
-    python.facet_support(Facet::IndentWidth),
-    FacetSupport::Configurable
-  );
-  assert_eq!(
-    python.facet_support(Facet::IndentTabs),
-    FacetSupport::Configurable
-  );
-  assert_eq!(
-    python.facet_support(Facet::ImportSort),
-    FacetSupport::Configurable
-  );
-  assert_eq!(
-    python.facet_support(Facet::ProseWrap),
-    FacetSupport::Unsupported
-  );
-  assert_eq!(
-    python.facet_support(Facet::Edition),
-    FacetSupport::Unsupported
-  );
-  assert_eq!(
-    python.facet_support(Facet::Standard),
-    FacetSupport::Unsupported
-  );
-
-  // 3. CppSurface
-  let cpp = surfaces.iter().find(|s| s.name() == "cpp").unwrap();
-  assert_eq!(
-    cpp.facet_support(Facet::Standard),
-    FacetSupport::Configurable
-  );
-  assert_eq!(
-    cpp.facet_support(Facet::IndentWidth),
-    FacetSupport::Configurable
-  );
-  assert_eq!(
-    cpp.facet_support(Facet::LineLength),
-    FacetSupport::Configurable
-  );
-  assert_eq!(
-    cpp.facet_support(Facet::IndentTabs),
-    FacetSupport::Configurable
-  );
-  assert_eq!(
-    cpp.facet_support(Facet::ImportSort),
-    FacetSupport::Configurable
-  );
-  assert_eq!(
-    cpp.facet_support(Facet::QuoteStyle),
-    FacetSupport::Unsupported
-  );
-
-  // 4. MarkdownSurface
-  let md = surfaces.iter().find(|s| s.name() == "markdown").unwrap();
-  assert_eq!(
-    md.facet_support(Facet::ProseWrap),
-    FacetSupport::Configurable
-  );
-  assert_eq!(
-    md.facet_support(Facet::LineLength),
-    FacetSupport::Configurable
-  );
-  assert_eq!(
-    md.facet_support(Facet::IndentWidth),
-    FacetSupport::Configurable
-  );
-  assert_eq!(
-    md.facet_support(Facet::IndentTabs),
-    FacetSupport::Configurable
-  );
-  assert_eq!(
-    md.facet_support(Facet::QuoteStyle),
-    FacetSupport::Unsupported
-  );
-
-  // 5. YamlSurface
-  let yaml = surfaces.iter().find(|s| s.name() == "yaml").unwrap();
-  assert_eq!(
-    yaml.facet_support(Facet::IndentTabs),
-    FacetSupport::Fixed("spaces")
-  );
-  assert_eq!(
-    yaml.facet_support(Facet::IndentWidth),
-    FacetSupport::Configurable
-  );
-  assert_eq!(
-    yaml.facet_support(Facet::LineLength),
-    FacetSupport::Configurable
-  );
-  assert_eq!(
-    yaml.facet_support(Facet::QuoteStyle),
-    FacetSupport::Configurable
-  );
-  assert_eq!(
-    yaml.facet_support(Facet::ProseWrap),
-    FacetSupport::Configurable
-  );
-  assert_eq!(
-    yaml.facet_support(Facet::TrailingComma),
-    FacetSupport::Unsupported
-  );
-
-  // 6. JsonSurface
-  let json = surfaces.iter().find(|s| s.name() == "json").unwrap();
-  assert_eq!(
-    json.facet_support(Facet::IndentWidth),
-    FacetSupport::Configurable
-  );
-  assert_eq!(
-    json.facet_support(Facet::IndentTabs),
-    FacetSupport::Configurable
-  );
-  assert_eq!(
-    json.facet_support(Facet::QuoteStyle),
-    FacetSupport::Fixed("double")
-  );
-  assert_eq!(
-    json.facet_support(Facet::TrailingComma),
-    FacetSupport::Fixed("none")
-  );
-  assert_eq!(
-    json.facet_support(Facet::ImportSort),
-    FacetSupport::Unsupported
-  );
-  assert_eq!(
-    json.facet_support(Facet::ProseWrap),
-    FacetSupport::Unsupported
-  );
-
-  // 7. TomlSurface
-  let toml = surfaces.iter().find(|s| s.name() == "toml").unwrap();
-  assert_eq!(
-    toml.facet_support(Facet::IndentWidth),
-    FacetSupport::Configurable
-  );
-  assert_eq!(
-    toml.facet_support(Facet::LineLength),
-    FacetSupport::Configurable
-  );
-  assert_eq!(
-    toml.facet_support(Facet::IndentTabs),
-    FacetSupport::Configurable
-  );
-  assert_eq!(
-    toml.facet_support(Facet::QuoteStyle),
-    FacetSupport::Unsupported
-  );
-
-  // 8. TypstSurface
-  let typst = surfaces.iter().find(|s| s.name() == "typst").unwrap();
-  assert_eq!(
-    typst.facet_support(Facet::LineLength),
-    FacetSupport::Configurable
-  );
-  assert_eq!(
-    typst.facet_support(Facet::IndentWidth),
-    FacetSupport::Configurable
-  );
-  assert_eq!(
-    typst.facet_support(Facet::IndentTabs),
-    FacetSupport::Fixed("spaces")
-  );
-  assert_eq!(
-    typst.facet_support(Facet::QuoteStyle),
-    FacetSupport::Unsupported
-  );
+  for (surface_name, expected_row) in golden {
+    let surface = get(surface_name);
+    for (facet, expected) in facet_order.iter().zip(expected_row.iter()) {
+      assert_eq!(
+        surface.facet_support(*facet),
+        *expected,
+        "surface '{surface_name}' facet {facet:?}: expected {expected:?} \
+         per docs/facet-rosetta.md, got {:?}",
+        surface.facet_support(*facet)
+      );
+    }
+  }
 }
 
 #[test]

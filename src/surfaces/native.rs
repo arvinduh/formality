@@ -145,4 +145,47 @@ mod tests {
     let json_out = render_native_config(&json_cfg, true).unwrap();
     assert!(json_out.contains("\"tab_width\": 4"));
   }
+
+  #[derive(Debug, Serialize, Deserialize, PartialEq, Eq)]
+  struct DummyClangConfig {
+    based_on_style: String,
+  }
+
+  impl NativeConfig for DummyClangConfig {
+    // .clang-format/.clang-tidy carry no .yaml/.yml extension at all, yet
+    // are YAML-formatted files — render_native_config special-cases any
+    // FILE_NAME containing "clang" to dispatch to the YAML serializer
+    // rather than falling through to the TOML default. This branch had no
+    // test coverage at all.
+    const FILE_NAME: &'static str = ".clang-format";
+  }
+
+  #[test]
+  fn test_render_native_config_clang_filename_dispatches_to_yaml() {
+    let cfg = DummyClangConfig {
+      based_on_style: "Google".to_string(),
+    };
+    let out = render_native_config(&cfg, false).unwrap();
+    assert!(out.starts_with(AUTO_GENERATED_HEADER));
+    // YAML rendering uses `key: value`, not TOML's `key = value`.
+    assert!(out.contains("based_on_style: Google"));
+    assert!(!out.contains("based_on_style = "));
+  }
+
+  #[test]
+  fn test_serialize_yaml_with_header_strips_leading_document_marker() {
+    // serde_yaml prefixes output with a `---` document marker; strip_prefix
+    // + reformat must fold the header in ahead of it rather than leaving
+    // a bare `---` line floating before the AUTO_GENERATED_HEADER comment.
+    let cfg = DummyYamlConfig {
+      rules: vec!["x".to_string()],
+    };
+    let output = serialize_yaml_with_header(&cfg).unwrap();
+    // The header comment must come first, and there must be at most one
+    // "---" document marker line if serde_yaml emits one at all — the
+    // point of the strip_prefix logic is to avoid ever emitting the marker
+    // sandwiched *between* two copies of the header content.
+    assert!(output.starts_with(AUTO_GENERATED_HEADER));
+    assert!(output.matches("---").count() <= 1);
+  }
 }
