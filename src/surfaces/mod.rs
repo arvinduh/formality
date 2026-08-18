@@ -465,7 +465,7 @@ impl SurfaceRegistry {
     }
   }
 
-  /// Creates a registry pre-populated with the default fleet of 9 language surfaces.
+  /// Creates a registry pre-populated with the default fleet of 12 language surfaces.
   pub fn new() -> Self {
     Self::default()
   }

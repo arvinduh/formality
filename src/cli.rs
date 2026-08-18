@@ -7,7 +7,7 @@ use std::path::PathBuf;
   author,
   version,
   about = "One CLI to format, lint, and sync configs across all languages",
-  long_about = "formality (fml) orchestrates the best-in-class formatters and linters across Rust, Python, C/C++, Java, Markdown, YAML, JSON, TOML, and Typst using a single canonical config."
+  long_about = "formality (fml) orchestrates the best-in-class formatters and linters across Rust, Python, C/C++, Java, Go, JavaScript/TypeScript, Kotlin, Markdown, YAML, JSON, TOML, and Typst using a single canonical config."
 )]
 pub struct Cli {
   /// Custom path to formality config (formality.toml / .formality.toml)
