@@ -24,8 +24,8 @@ fn test_surface_supports_lint_fix() {
 fn test_unsupported_lint_fix_returns_skipped() {
   let dummy_ctx = ExecutionContext {
     root: PathBuf::from("."),
-    paths: Vec::new(),
-    global_config: ResolvedGlobalConfig::default(),
+    paths: Arc::new(Vec::new()),
+    global_config: Arc::new(ResolvedGlobalConfig::default()),
     lang_config: ResolvedLangConfig::new("dummy"),
     check_only: false,
   };

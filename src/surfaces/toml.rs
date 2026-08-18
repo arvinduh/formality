@@ -337,6 +337,7 @@ impl LanguageSurface for TomlSurface {
 mod tests {
   use super::*;
   use crate::config::ResolvedGlobalConfig;
+  use std::sync::Arc;
   use tempfile::TempDir;
 
   #[test]
@@ -401,8 +402,8 @@ mod tests {
 
     let ctx = ExecutionContext {
       root: temp.path().to_path_buf(),
-      paths: Vec::new(),
-      global_config: ResolvedGlobalConfig::default(),
+      paths: Arc::new(Vec::new()),
+      global_config: Arc::new(ResolvedGlobalConfig::default()),
       lang_config: lang_cfg,
       check_only: false,
     };

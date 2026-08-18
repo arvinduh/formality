@@ -562,6 +562,7 @@ pub fn sync_clang_tidy_config(
 mod tests {
   use super::*;
   use crate::config::FormalityConfig;
+  use std::sync::Arc;
   use tempfile::tempdir;
 
   #[test]
@@ -702,8 +703,8 @@ mod tests {
     let cfg = FormalityConfig::default();
     let ctx = ExecutionContext {
       root: root.clone(),
-      paths: Vec::new(),
-      global_config: cfg.resolve_global(),
+      paths: Arc::new(Vec::new()),
+      global_config: Arc::new(cfg.resolve_global()),
       lang_config: cfg.resolve_for_lang("cpp"),
       check_only: false,
     };
@@ -801,8 +802,8 @@ mod tests {
       .unwrap();
     let ctx = ExecutionContext {
       root: root.clone(),
-      paths: Vec::new(),
-      global_config: cfg.resolve_global(),
+      paths: Arc::new(Vec::new()),
+      global_config: Arc::new(cfg.resolve_global()),
       lang_config: cfg.resolve_for_lang("cpp"),
       check_only: false,
     };

@@ -400,6 +400,7 @@ impl LanguageSurface for RustSurface {
 mod tests {
   use super::*;
   use crate::config::{ResolvedGlobalConfig, ResolvedLangConfig};
+  use std::sync::Arc;
   use tempfile::TempDir;
 
   fn dummy_execution_context(
@@ -408,8 +409,8 @@ mod tests {
   ) -> ExecutionContext {
     ExecutionContext {
       root: root.to_path_buf(),
-      paths: vec![],
-      global_config: ResolvedGlobalConfig::default(),
+      paths: Arc::new(vec![]),
+      global_config: Arc::new(ResolvedGlobalConfig::default()),
       lang_config: ResolvedLangConfig::new("rust"),
       check_only,
     }
