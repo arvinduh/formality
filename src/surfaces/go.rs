@@ -11,6 +11,7 @@ use std::time::Instant;
 /// Default set of linters enabled in the generated `.golangci.yml` — matches
 /// golangci-lint's own well-known default set so `fml`-managed projects don't
 /// silently diverge from what most Go developers already expect.
+#[must_use]
 pub fn default_go_linters() -> Vec<String> {
   vec![
     "errcheck".to_string(),
@@ -66,14 +67,14 @@ impl DeclaresFacets for GoSurface {
       // space-indentation mode. This is a non-negotiable language rule, not
       // a per-project style choice.
       Facet::IndentTabs => FacetSupport::Fixed("tab"),
-      Facet::IndentWidth => FacetSupport::Unsupported,
-      Facet::LineLength => FacetSupport::Unsupported,
-      Facet::QuoteStyle => FacetSupport::Unsupported,
-      Facet::TrailingComma => FacetSupport::Unsupported,
       Facet::ImportSort => FacetSupport::Configurable,
-      Facet::ProseWrap => FacetSupport::Unsupported,
-      Facet::Edition => FacetSupport::Unsupported,
-      Facet::Standard => FacetSupport::Unsupported,
+      Facet::IndentWidth
+      | Facet::LineLength
+      | Facet::QuoteStyle
+      | Facet::TrailingComma
+      | Facet::ProseWrap
+      | Facet::Edition
+      | Facet::Standard => FacetSupport::Unsupported,
     }
   }
 }
@@ -85,6 +86,7 @@ pub const GO_EXTENSIONS: &[&str] = &["go"];
 /// scoped the run (specific paths, a `files` allowlist, or an `exclude`
 /// list); otherwise defer to golangci-lint's own project-wide package
 /// resolution via `./...`.
+#[must_use]
 pub fn build_golangci_lint_args(
   files: &[PathBuf],
   fix: bool,
@@ -94,12 +96,12 @@ pub fn build_golangci_lint_args(
   if fix {
     args.push("--fix".to_string());
   }
-  if !files.is_empty() {
+  if files.is_empty() {
+    args.push("./...".to_string());
+  } else {
     for f in files {
       args.push(f.to_string_lossy().to_string());
     }
-  } else {
-    args.push("./...".to_string());
   }
   args.extend(extra_args.iter().cloned());
   args
@@ -269,7 +271,7 @@ impl LanguageSurface for GoSurface {
         return SurfaceResult {
           surface_name: self.name(),
           status: SurfaceStatus::ExecutionError {
-            message: format!("Failed to execute gofmt: {}", e),
+            message: format!("Failed to execute gofmt: {e}"),
           },
           duration: start.elapsed(),
         };
@@ -319,7 +321,7 @@ impl LanguageSurface for GoSurface {
       Err(e) => SurfaceResult {
         surface_name: self.name(),
         status: SurfaceStatus::ExecutionError {
-          message: format!("Failed to execute goimports: {}", e),
+          message: format!("Failed to execute goimports: {e}"),
         },
         duration: start.elapsed(),
       },
@@ -381,10 +383,10 @@ impl LanguageSurface for GoSurface {
         } else {
           let stderr = String::from_utf8_lossy(&output.stderr).to_string();
           let stdout = String::from_utf8_lossy(&output.stdout).to_string();
-          let msg = if !stdout.trim().is_empty() {
-            stdout
-          } else {
+          let msg = if stdout.trim().is_empty() {
             stderr
+          } else {
+            stdout
           };
 
           SurfaceResult {
@@ -400,7 +402,7 @@ impl LanguageSurface for GoSurface {
       Err(e) => SurfaceResult {
         surface_name: self.name(),
         status: SurfaceStatus::ExecutionError {
-          message: format!("Failed to execute golangci-lint: {}", e),
+          message: format!("Failed to execute golangci-lint: {e}"),
         },
         duration: start.elapsed(),
       },

@@ -44,8 +44,7 @@ fn test_palette_styling_none_vs_ansi16_vs_truecolor() {
     let applied = none_pal.apply("text", s);
     assert_eq!(
       applied, "text",
-      "Style {:?} should have no SGR in None mode",
-      s
+      "Style {s:?} should have no SGR in None mode"
     );
   }
 

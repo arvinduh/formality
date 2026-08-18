@@ -3,7 +3,8 @@
 
 use std::path::{Path, PathBuf};
 
-/// Helper function to find matching files within a directory ignoring .git, target, node_modules, etc.
+/// Helper function to find matching files within a directory ignoring .git, target, `node_modules`, etc.
+#[must_use]
 pub fn find_files_with_ext(
   root: &Path,
   extensions: &[&str],
@@ -19,7 +20,9 @@ pub fn find_files_with_ext(
     &[]
   };
 
-  let raw_files = if !targets.is_empty() {
+  let raw_files = if targets.is_empty() {
+    walk_dir_ext(root, extensions)
+  } else {
     let mut out = Vec::new();
     for p in targets {
       let full_p = if p.is_absolute() {
@@ -39,8 +42,6 @@ pub fn find_files_with_ext(
       }
     }
     out
-  } else {
-    walk_dir_ext(root, extensions)
   };
 
   if exclude.is_empty() {
@@ -53,6 +54,7 @@ pub fn find_files_with_ext(
   }
 }
 
+#[must_use]
 pub fn simple_glob_match(pattern: &str, text: &str) -> bool {
   let norm_pattern = pattern.replace('\\', "/");
   let norm_text = text.replace('\\', "/");
@@ -108,6 +110,7 @@ fn glob_match_slices(pattern: &[u8], text: &[u8]) -> bool {
   false
 }
 
+#[must_use]
 pub fn is_excluded(path: &Path, root: &Path, exclude: &[PathBuf]) -> bool {
   if exclude.is_empty() {
     return false;
@@ -135,8 +138,7 @@ pub fn is_excluded(path: &Path, root: &Path, exclude: &[PathBuf]) -> bool {
     }
 
     // 2. Relative prefix, exact relative string match, or directory match
-    if rel_str == ex_trimmed || rel_str.starts_with(&format!("{}/", ex_trimmed))
-    {
+    if rel_str == ex_trimmed || rel_str.starts_with(&format!("{ex_trimmed}/")) {
       return true;
     }
 

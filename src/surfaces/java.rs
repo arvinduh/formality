@@ -31,6 +31,7 @@ impl NativeConfig for CheckstyleConfig {
 }
 
 impl CheckstyleConfig {
+  #[must_use]
   pub fn from_context(ctx: &ExecutionContext) -> Self {
     Self {
       // google-java-format enforces a fixed 100-column limit; there is no
@@ -47,6 +48,7 @@ impl CheckstyleConfig {
     }
   }
 
+  #[must_use]
   pub fn render(&self) -> String {
     let import_order_module = if self.check_import_order {
       "\n    <module name=\"ImportOrder\">\n      <property name=\"ordered\" value=\"true\"/>\n      <property name=\"separated\" value=\"true\"/>\n    </module>"
@@ -90,6 +92,10 @@ impl CheckstyleConfig {
 pub struct JavaSurface;
 
 impl DeclaresFacets for JavaSurface {
+  // IndentWidth and Standard both resolve to `Configurable`, but each carries
+  // its own load-bearing rationale comment explaining *why* — merging the
+  // arms via an or-pattern would bury one comment under the other's variant.
+  #[allow(clippy::match_same_arms)]
   fn facet_support(&self, facet: Facet) -> FacetSupport {
     match facet {
       // google-java-format never uses tabs.
@@ -105,14 +111,14 @@ impl DeclaresFacets for JavaSurface {
       // google-java-format hardcodes a 100-column limit; there is no flag
       // to change it.
       Facet::LineLength => FacetSupport::Fixed("100"),
-      Facet::QuoteStyle => FacetSupport::Unsupported,
-      Facet::TrailingComma => FacetSupport::Unsupported,
       // Import organization/sorting happens automatically as part of
       // `google-java-format --replace`, and is checked via Checkstyle's
       // ImportOrder/UnusedImports modules.
       Facet::ImportSort => FacetSupport::Configurable,
-      Facet::ProseWrap => FacetSupport::Unsupported,
-      Facet::Edition => FacetSupport::Unsupported,
+      Facet::QuoteStyle
+      | Facet::TrailingComma
+      | Facet::ProseWrap
+      | Facet::Edition => FacetSupport::Unsupported,
       // Google vs AOSP style, surfaced via `[lang.java] style = "aosp"`.
       Facet::Standard => FacetSupport::Configurable,
     }
@@ -277,7 +283,7 @@ impl LanguageSurface for JavaSurface {
       Err(e) => SurfaceResult {
         surface_name: self.name(),
         status: SurfaceStatus::ExecutionError {
-          message: format!("Failed to execute google-java-format: {}", e),
+          message: format!("Failed to execute google-java-format: {e}"),
         },
         duration: start.elapsed(),
       },
@@ -376,7 +382,7 @@ impl LanguageSurface for JavaSurface {
       Err(e) => SurfaceResult {
         surface_name: self.name(),
         status: SurfaceStatus::ExecutionError {
-          message: format!("Failed to execute checkstyle: {}", e),
+          message: format!("Failed to execute checkstyle: {e}"),
         },
         duration: start.elapsed(),
       },
@@ -508,7 +514,7 @@ mod tests {
 
   /// Regression test for the AOSP indent-width contradiction: `fml sync`
   /// must generate `checkstyle.xml` (basicOffset) and `.editorconfig`
-  /// (indent_size) with the *same* indent width for `[*.java]`, whatever
+  /// (`indent_size`) with the *same* indent width for `[*.java]`, whatever
   /// `style` is configured. Previously `checkstyle.xml` derived 4 from
   /// `style = "aosp"` while `.editorconfig` always emitted a hardcoded 2.
   #[test]

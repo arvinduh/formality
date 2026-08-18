@@ -24,6 +24,7 @@ impl NativeConfig for RustfmtConfig {
 }
 
 impl RustfmtConfig {
+  #[must_use]
   pub fn from_context(ctx: &ExecutionContext) -> Self {
     let newline_style = match ctx.lang_config.indent_size {
       _ if ctx.global_config.end_of_line.eq_ignore_ascii_case("crlf") => {
@@ -62,18 +63,19 @@ impl DeclaresFacets for RustSurface {
   fn facet_support(&self, facet: Facet) -> FacetSupport {
     match facet {
       Facet::IndentTabs => FacetSupport::Fixed("spaces"),
-      Facet::IndentWidth => FacetSupport::Configurable,
-      Facet::LineLength => FacetSupport::Configurable,
-      Facet::QuoteStyle => FacetSupport::Unsupported,
-      Facet::TrailingComma => FacetSupport::Unsupported,
-      Facet::ImportSort => FacetSupport::Configurable,
-      Facet::ProseWrap => FacetSupport::Unsupported,
-      Facet::Edition => FacetSupport::Configurable,
-      Facet::Standard => FacetSupport::Unsupported,
+      Facet::IndentWidth
+      | Facet::LineLength
+      | Facet::ImportSort
+      | Facet::Edition => FacetSupport::Configurable,
+      Facet::QuoteStyle
+      | Facet::TrailingComma
+      | Facet::ProseWrap
+      | Facet::Standard => FacetSupport::Unsupported,
     }
   }
 }
 
+#[must_use]
 pub fn build_clippy_args(fix: bool, extra_args: &[String]) -> Vec<String> {
   let mut args = vec!["clippy".to_string()];
   if fix {
@@ -283,7 +285,7 @@ impl LanguageSurface for RustSurface {
       Err(e) => SurfaceResult {
         surface_name: self.name(),
         status: SurfaceStatus::ExecutionError {
-          message: format!("Failed to execute cargo fmt / rustfmt: {}", e),
+          message: format!("Failed to execute cargo fmt / rustfmt: {e}"),
         },
         duration: start.elapsed(),
       },
@@ -317,10 +319,10 @@ impl LanguageSurface for RustSurface {
         } else {
           let stderr = String::from_utf8_lossy(&output.stderr).to_string();
           let stdout = String::from_utf8_lossy(&output.stdout).to_string();
-          let msg = if !stderr.trim().is_empty() {
-            stderr
-          } else {
+          let msg = if stderr.trim().is_empty() {
             stdout
+          } else {
+            stderr
           };
 
           SurfaceResult {
@@ -336,7 +338,7 @@ impl LanguageSurface for RustSurface {
       Err(e) => SurfaceResult {
         surface_name: self.name(),
         status: SurfaceStatus::ExecutionError {
-          message: format!("Failed to execute clippy: {}", e),
+          message: format!("Failed to execute clippy: {e}"),
         },
         duration: start.elapsed(),
       },
@@ -491,7 +493,9 @@ mod tests {
       "--edition flag must be passed to rustfmt"
     );
     assert_eq!(
-      args.get(edition_idx.unwrap() + 1).map(|s| s.as_str()),
+      args
+        .get(edition_idx.unwrap() + 1)
+        .map(std::string::String::as_str),
       Some("2024"),
       "edition value must be 2024"
     );
@@ -513,7 +517,7 @@ mod tests {
     assert_eq!(
       check_args
         .get(check_edition_idx.unwrap() + 1)
-        .map(|s| s.as_str()),
+        .map(std::string::String::as_str),
       Some("2021")
     );
     assert!(check_args.contains(&"--check".to_string()));

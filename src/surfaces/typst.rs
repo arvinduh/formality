@@ -14,14 +14,13 @@ impl DeclaresFacets for TypstSurface {
   fn facet_support(&self, facet: Facet) -> FacetSupport {
     match facet {
       Facet::IndentTabs => FacetSupport::Fixed("spaces"),
-      Facet::IndentWidth => FacetSupport::Configurable,
-      Facet::LineLength => FacetSupport::Configurable,
-      Facet::QuoteStyle => FacetSupport::Unsupported,
-      Facet::TrailingComma => FacetSupport::Unsupported,
-      Facet::ImportSort => FacetSupport::Unsupported,
-      Facet::ProseWrap => FacetSupport::Unsupported,
-      Facet::Edition => FacetSupport::Unsupported,
-      Facet::Standard => FacetSupport::Unsupported,
+      Facet::IndentWidth | Facet::LineLength => FacetSupport::Configurable,
+      Facet::QuoteStyle
+      | Facet::TrailingComma
+      | Facet::ImportSort
+      | Facet::ProseWrap
+      | Facet::Edition
+      | Facet::Standard => FacetSupport::Unsupported,
     }
   }
 }
@@ -153,7 +152,7 @@ impl LanguageSurface for TypstSurface {
       Err(e) => SurfaceResult {
         surface_name: self.name(),
         status: SurfaceStatus::ExecutionError {
-          message: format!("Failed to execute typstyle: {}", e),
+          message: format!("Failed to execute typstyle: {e}"),
         },
         duration: start.elapsed(),
       },

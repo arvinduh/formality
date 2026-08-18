@@ -17,6 +17,7 @@ pub struct Table {
 }
 
 impl Table {
+  #[must_use]
   pub fn new(columns: Vec<Column>) -> Self {
     Self {
       columns,
@@ -25,6 +26,7 @@ impl Table {
     }
   }
 
+  #[must_use]
   pub fn empty() -> Self {
     Self::default()
   }
@@ -34,16 +36,19 @@ impl Table {
     self
   }
 
+  #[must_use]
   pub fn with_row(mut self, row: Row) -> Self {
     self.rows.push(row);
     self
   }
 
+  #[must_use]
   pub fn layout(mut self, layout: Layout) -> Self {
     self.layout = layout;
     self
   }
 
+  #[must_use]
   pub fn render(&self, palette: &Palette) -> String {
     render(self, palette)
   }
@@ -154,6 +159,7 @@ fn to_comfy_align(align: Align) -> comfy_table::CellAlignment {
 }
 
 /// Render a semantic Table specification into a formatted string using comfy-table.
+#[must_use]
 pub fn render(spec: &Table, palette: &Palette) -> String {
   let mut table = comfy_table::Table::new();
   table.load_style(comfy_table::presets::NOTHING.header_separator(
@@ -200,19 +206,15 @@ pub fn render(spec: &Table, palette: &Palette) -> String {
         for i in 0..num_cols {
           let cell = row.cells.get(i);
           let col = spec.columns.get(i);
-          let col_overflow =
-            col.map(|c| &c.overflow).unwrap_or(&Overflow::Wrap);
-          let col_align = col.map(|c| c.align).unwrap_or(Align::Left);
+          let col_overflow = col.map_or(&Overflow::Wrap, |c| &c.overflow);
+          let col_align = col.map_or(Align::Left, |c| c.align);
 
           let (content, align) = if let Some(c) = cell {
             let max_w = if let Some(col_spec) = col {
               let padding_w =
                 (spec.layout.padding.0 + spec.layout.padding.1) as usize;
               match col_spec.width {
-                WidthPolicy::Fixed(w) => {
-                  Some((w as usize).saturating_sub(padding_w))
-                }
-                WidthPolicy::Max(w) => {
+                WidthPolicy::Fixed(w) | WidthPolicy::Max(w) => {
                   Some((w as usize).saturating_sub(padding_w))
                 }
                 WidthPolicy::Range(_, max) => {
@@ -303,7 +305,7 @@ pub fn render(spec: &Table, palette: &Palette) -> String {
         }
         WidthPolicy::Pct(pct) => {
           comfy_col.set_constraint(comfy_table::ColumnConstraint::Absolute(
-            comfy_table::Width::Percentage(pct as u16),
+            comfy_table::Width::Percentage(u16::from(pct)),
           ));
         }
       }
@@ -342,7 +344,7 @@ pub fn render(spec: &Table, palette: &Palette) -> String {
         if line.trim().is_empty() {
           String::new()
         } else {
-          format!("{}{}", indent_str, line)
+          format!("{indent_str}{line}")
         }
       })
       .collect::<Vec<_>>()
@@ -353,6 +355,7 @@ pub fn render(spec: &Table, palette: &Palette) -> String {
 }
 
 /// Strips ANSI SGR escape sequences from a string.
+#[must_use]
 pub fn strip_ansi_escapes(s: &str) -> String {
   let mut result = String::with_capacity(s.len());
   let mut in_escape = false;
@@ -372,6 +375,7 @@ pub fn strip_ansi_escapes(s: &str) -> String {
 
 /// Measures the maximum visual character display width across all lines in a string,
 /// ignoring ANSI escape codes and accounting for multi-byte/CJK Unicode width.
+#[must_use]
 pub fn max_line_display_width(s: &str) -> usize {
   s.lines()
     .map(|line| {
@@ -383,6 +387,7 @@ pub fn max_line_display_width(s: &str) -> usize {
 }
 
 /// Detects the active terminal column width (clamped to [40, 160]), defaulting to 80 when stdout is not a TTY.
+#[must_use]
 pub fn detect_terminal_width() -> u16 {
   use std::io::IsTerminal;
   if std::io::stdout().is_terminal()
@@ -395,6 +400,7 @@ pub fn detect_terminal_width() -> u16 {
 }
 
 /// Returns a horizontal rule line of `─` matching the specified width.
+#[must_use]
 pub fn separator_line(width: usize) -> String {
   let w = if width == 0 {
     detect_terminal_width() as usize
@@ -405,6 +411,7 @@ pub fn separator_line(width: usize) -> String {
 }
 
 /// Returns a horizontal rule line of `─` matching the maximum visual width of the provided content.
+#[must_use]
 pub fn separator_for_content(content: &str) -> String {
   let w = max_line_display_width(content);
   let final_w = if w > 0 {

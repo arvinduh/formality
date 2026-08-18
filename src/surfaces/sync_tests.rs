@@ -36,8 +36,7 @@ fn test_diff_check_via_tempcopy_clean() {
 
   let ext = file.extension().unwrap().to_str().unwrap();
   let file_stem = file.file_stem().unwrap().to_str().unwrap();
-  let scratch =
-    file.with_file_name(format!("{}.fml-check-tmp.{}", file_stem, ext));
+  let scratch = file.with_file_name(format!("{file_stem}.fml-check-tmp.{ext}"));
   assert!(!scratch.exists());
 }
 
@@ -65,13 +64,12 @@ fn test_diff_check_via_tempcopy_with_diff() {
       assert!(diff_str.contains("dirty.rs"));
       assert!(diff_str.contains("(formatted)"));
     }
-    other => panic!("Expected ViolationsFound, got {:?}", other),
+    other => panic!("Expected ViolationsFound, got {other:?}"),
   }
 
   let ext = file.extension().unwrap().to_str().unwrap();
   let file_stem = file.file_stem().unwrap().to_str().unwrap();
-  let scratch =
-    file.with_file_name(format!("{}.fml-check-tmp.{}", file_stem, ext));
+  let scratch = file.with_file_name(format!("{file_stem}.fml-check-tmp.{ext}"));
   assert!(!scratch.exists());
 }
 
@@ -93,8 +91,7 @@ fn test_diff_check_via_tempcopy_raii_cleanup_on_error() {
 
   let ext = file.extension().unwrap().to_str().unwrap();
   let file_stem = file.file_stem().unwrap().to_str().unwrap();
-  let scratch =
-    file.with_file_name(format!("{}.fml-check-tmp.{}", file_stem, ext));
+  let scratch = file.with_file_name(format!("{file_stem}.fml-check-tmp.{ext}"));
   assert!(!scratch.exists());
 }
 
@@ -118,7 +115,6 @@ fn test_diff_check_via_tempcopy_raii_cleanup_on_panic() {
 
   let ext = file.extension().unwrap().to_str().unwrap();
   let file_stem = file.file_stem().unwrap().to_str().unwrap();
-  let scratch =
-    file.with_file_name(format!("{}.fml-check-tmp.{}", file_stem, ext));
+  let scratch = file.with_file_name(format!("{file_stem}.fml-check-tmp.{ext}"));
   assert!(!scratch.exists());
 }
