@@ -9,6 +9,13 @@ pub mod ui;
 // Backward-compatible top-level module aliases so existing `crate::foo::*`
 // and `fml::foo::*` paths (integration tests, external consumers) keep
 // working after the domain-driven `src/` reorganization.
+//
+// These aliases are a compatibility shim only: internal code in this crate
+// always spells out the canonical, structural path (e.g.
+// `crate::ui::table`, `crate::engine::version`) rather than the shortened
+// alias, even where the alias would resolve to the same item. Keeping that
+// distinction consistent means the alias list can eventually be trimmed or
+// deprecated without touching any internal call site.
 pub use commands::doctor;
 pub use commands::lsp;
 pub use config::facets;
