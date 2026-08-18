@@ -86,9 +86,7 @@ pub fn build_clippy_args(fix: bool, extra_args: &[String]) -> Vec<String> {
   args.push("--".to_string());
   args.push("-D".to_string());
   args.push("warnings".to_string());
-  for arg in extra_args {
-    args.push(arg.clone());
-  }
+  args.extend(extra_args.iter().cloned());
   args
 }
 

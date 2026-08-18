@@ -205,9 +205,7 @@ pub fn build_clang_tidy_args(
     args.push("-fix".to_string());
     args.push("-fix-errors".to_string());
   }
-  for arg in extra_args {
-    args.push(arg.clone());
-  }
+  args.extend(extra_args.iter().cloned());
   for f in files {
     args.push(f.to_string_lossy().to_string());
   }

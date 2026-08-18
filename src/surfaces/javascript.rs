@@ -196,9 +196,7 @@ pub fn build_biome_format_args(
   } else {
     args.push(".".to_string());
   }
-  for arg in extra_args {
-    args.push(arg.clone());
-  }
+  args.extend(extra_args.iter().cloned());
   args
 }
 
@@ -218,9 +216,7 @@ pub fn build_biome_lint_args(
   } else {
     args.push(".".to_string());
   }
-  for arg in extra_args {
-    args.push(arg.clone());
-  }
+  args.extend(extra_args.iter().cloned());
   args
 }
 
