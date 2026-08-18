@@ -2,7 +2,7 @@ use super::{
   DeclaresFacets, ExecutionContext, Facet, FacetSupport, LanguageSurface,
   NativeConfig, SurfaceResult, SurfaceStatus, ToolInfo, check_binary_exists,
   create_tool_command, diff_check_via_tempcopy, find_files_with_ext,
-  sync_file_helper,
+  sync_file_helper, tool_missing_result,
 };
 use serde::{Deserialize, Serialize};
 use std::path::Path;
@@ -185,16 +185,12 @@ impl LanguageSurface for JavaSurface {
     let start = Instant::now();
 
     if !check_binary_exists("google-java-format") {
-      return SurfaceResult {
-        surface_name: self.name(),
-        status: SurfaceStatus::ToolMissing {
-          binary: "google-java-format".to_string(),
-          install_hint:
-            "brew install google-java-format / download the all-deps jar from https://github.com/google/google-java-format/releases"
-              .to_string(),
-        },
-        duration: start.elapsed(),
-      };
+      return tool_missing_result(
+        self.name(),
+        start,
+        "google-java-format",
+        "brew install google-java-format / download the all-deps jar from https://github.com/google/google-java-format/releases",
+      );
     }
 
     let files = find_files_with_ext(
@@ -303,16 +299,12 @@ impl LanguageSurface for JavaSurface {
     }
 
     if !check_binary_exists("checkstyle") {
-      return SurfaceResult {
-        surface_name: self.name(),
-        status: SurfaceStatus::ToolMissing {
-          binary: "checkstyle".to_string(),
-          install_hint:
-            "brew install checkstyle / download from https://checkstyle.org"
-              .to_string(),
-        },
-        duration: start.elapsed(),
-      };
+      return tool_missing_result(
+        self.name(),
+        start,
+        "checkstyle",
+        "brew install checkstyle / download from https://checkstyle.org",
+      );
     }
 
     let files = find_files_with_ext(

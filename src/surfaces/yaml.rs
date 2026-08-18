@@ -3,6 +3,7 @@ use super::{
   NativeConfig, SurfaceResult, SurfaceStatus, ToolInfo, check_binary_exists,
   create_tool_command, diff_check_via_tempcopy, find_files_with_ext,
   markdown::sync_prettier_config, serialize_yaml_with_header,
+  tool_missing_result,
 };
 use serde::{Deserialize, Serialize};
 use std::path::Path;
@@ -153,14 +154,12 @@ impl LanguageSurface for YamlSurface {
     let start = Instant::now();
 
     if !check_binary_exists("prettier") {
-      return SurfaceResult {
-        surface_name: self.name(),
-        status: SurfaceStatus::ToolMissing {
-          binary: "prettier".to_string(),
-          install_hint: "npm install -g prettier".to_string(),
-        },
-        duration: start.elapsed(),
-      };
+      return tool_missing_result(
+        self.name(),
+        start,
+        "prettier",
+        "npm install -g prettier",
+      );
     }
 
     let files = find_files_with_ext(
@@ -257,14 +256,12 @@ impl LanguageSurface for YamlSurface {
     }
 
     if !check_binary_exists("yamllint") {
-      return SurfaceResult {
-        surface_name: self.name(),
-        status: SurfaceStatus::ToolMissing {
-          binary: "yamllint".to_string(),
-          install_hint: "pip install yamllint".to_string(),
-        },
-        duration: start.elapsed(),
-      };
+      return tool_missing_result(
+        self.name(),
+        start,
+        "yamllint",
+        "pip install yamllint",
+      );
     }
 
     let files = find_files_with_ext(

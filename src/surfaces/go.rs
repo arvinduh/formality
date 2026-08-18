@@ -2,7 +2,7 @@ use super::{
   DeclaresFacets, ExecutionContext, Facet, FacetSupport, LanguageSurface,
   NativeConfig, SurfaceResult, SurfaceStatus, ToolInfo, check_binary_exists,
   create_tool_command, diff_check_via_tempcopy, find_files_with_ext,
-  serialize_yaml_with_header, sync_file_helper,
+  serialize_yaml_with_header, sync_file_helper, tool_missing_result,
 };
 use serde::{Deserialize, Serialize};
 use std::path::PathBuf;
@@ -167,28 +167,21 @@ impl LanguageSurface for GoSurface {
     let start = Instant::now();
 
     if !check_binary_exists("gofmt") {
-      return SurfaceResult {
-        surface_name: self.name(),
-        status: SurfaceStatus::ToolMissing {
-          binary: "gofmt".to_string(),
-          install_hint:
-            "Ships with the Go toolchain: install Go from https://go.dev/dl/"
-              .to_string(),
-        },
-        duration: start.elapsed(),
-      };
+      return tool_missing_result(
+        self.name(),
+        start,
+        "gofmt",
+        "Ships with the Go toolchain: install Go from https://go.dev/dl/",
+      );
     }
 
     if !check_binary_exists("goimports") {
-      return SurfaceResult {
-        surface_name: self.name(),
-        status: SurfaceStatus::ToolMissing {
-          binary: "goimports".to_string(),
-          install_hint: "go install golang.org/x/tools/cmd/goimports@latest"
-            .to_string(),
-        },
-        duration: start.elapsed(),
-      };
+      return tool_missing_result(
+        self.name(),
+        start,
+        "goimports",
+        "go install golang.org/x/tools/cmd/goimports@latest",
+      );
     }
 
     let files = find_files_with_ext(
@@ -337,15 +330,12 @@ impl LanguageSurface for GoSurface {
     let start = Instant::now();
 
     if !check_binary_exists("golangci-lint") {
-      return SurfaceResult {
-        surface_name: self.name(),
-        status: SurfaceStatus::ToolMissing {
-          binary: "golangci-lint".to_string(),
-          install_hint: "brew install golangci-lint / go install github.com/golangci/golangci-lint/v2/cmd/golangci-lint@latest"
-            .to_string(),
-        },
-        duration: start.elapsed(),
-      };
+      return tool_missing_result(
+        self.name(),
+        start,
+        "golangci-lint",
+        "brew install golangci-lint / go install github.com/golangci/golangci-lint/v2/cmd/golangci-lint@latest",
+      );
     }
 
     let files = find_files_with_ext(

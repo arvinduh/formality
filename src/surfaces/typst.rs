@@ -2,6 +2,7 @@ use super::{
   DeclaresFacets, ExecutionContext, Facet, FacetSupport, LanguageSurface,
   SurfaceResult, SurfaceStatus, ToolInfo, check_binary_exists,
   create_tool_command, diff_check_via_tempcopy, find_files_with_ext,
+  tool_missing_result,
 };
 use std::path::Path;
 use std::time::Instant;
@@ -65,16 +66,12 @@ impl LanguageSurface for TypstSurface {
     let start = Instant::now();
 
     if !check_binary_exists("typstyle") {
-      return SurfaceResult {
-        surface_name: self.name(),
-        status: SurfaceStatus::ToolMissing {
-          binary: "typstyle".to_string(),
-          install_hint:
-            "cargo binstall typstyle / brew install typstyle / winget install typstyle / cargo install typstyle --locked"
-              .to_string(),
-        },
-        duration: start.elapsed(),
-      };
+      return tool_missing_result(
+        self.name(),
+        start,
+        "typstyle",
+        "cargo binstall typstyle / brew install typstyle / winget install typstyle / cargo install typstyle --locked",
+      );
     }
 
     let files = find_files_with_ext(
