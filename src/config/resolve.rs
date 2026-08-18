@@ -8,6 +8,7 @@ use super::{
   CONFIG_FILE_CANDIDATES, ConfigError, FormalityConfig, GlobalConfig,
   ResolvedGlobalConfig, ResolvedLangConfig,
 };
+use crate::surfaces::SurfaceRegistry;
 use std::collections::BTreeMap;
 use std::fmt::Write as _;
 use std::fs;
@@ -354,6 +355,30 @@ impl FormalityConfig {
       kotlin,
       extra,
     }
+  }
+
+  /// Returns the raw `[lang.X]` section names from this config whose `X`
+  /// does not match any known surface's canonical name or alias, as
+  /// registered in `registry`.
+  ///
+  /// This intentionally does *not* flag section names that are valid
+  /// surface names/aliases but simply aren't detected/active in the
+  /// current workspace (e.g. `[lang.rust]` in a Python-only repo) — that
+  /// is a legitimate pre-configuration for a language the user expects to
+  /// add later, not a mistake. It only flags names that don't resolve to
+  /// *any* registered surface at all, which is almost always a typo (e.g.
+  /// `[lang.pythonn]`).
+  #[must_use]
+  pub fn unrecognized_lang_sections(
+    &self,
+    registry: &SurfaceRegistry,
+  ) -> Vec<&str> {
+    self
+      .lang
+      .keys()
+      .filter(|name| registry.resolve_canonical_name(name).is_none())
+      .map(std::string::String::as_str)
+      .collect()
   }
 
   /// Loads configuration with layered resolution:

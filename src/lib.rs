@@ -85,6 +85,8 @@ fn run_command_inner(args: Cli) -> i32 {
     }
   }
 
+  warn_unrecognized_lang_sections(&config);
+
   match args.command {
     Commands::Schema { output } => {
       let schema_json = generate_schema();
@@ -408,6 +410,37 @@ fn run_command_inner(args: Cli) -> i32 {
         }
       }
     }
+  }
+}
+
+/// Warns (non-fatal, to stderr) about any `[lang.X]` sections in the
+/// resolved config whose `X` isn't a recognized surface name or alias —
+/// almost always a typo (e.g. `[lang.pythonn]`) that would otherwise be
+/// silently ignored, leaving the user's override never applied and no
+/// signal as to why. Runs once at config-load time so every subcommand
+/// benefits, mirroring the `Unknown language surface` error already given
+/// for an unrecognized `--lang` CLI flag value.
+///
+/// Deliberately does not flag a section that names a real surface which
+/// simply isn't detected/active in the current workspace (e.g.
+/// `[lang.rust]` in a Python-only repo) — that's a valid
+/// pre-configuration, not a mistake.
+fn warn_unrecognized_lang_sections(config: &FormalityConfig) {
+  let registry = surfaces::SurfaceRegistry::default();
+  let unrecognized = config.unrecognized_lang_sections(&registry);
+  if unrecognized.is_empty() {
+    return;
+  }
+
+  for name in unrecognized {
+    eprintln!(
+      "{} Unrecognized language section '[lang.{}]' in formality.toml — \
+       this override will not be applied. Run '{}' to see supported \
+       languages.",
+      "[WARN]".yellow().bold(),
+      name.bold(),
+      "fml list-surfaces".cyan()
+    );
   }
 }
 
