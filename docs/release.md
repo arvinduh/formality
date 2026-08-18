@@ -1,0 +1,136 @@
+# Release Procedure
+
+This document describes how a release of `fml` is cut once the project starts
+publishing versioned releases. It is not describing something that happens
+today: the crate is intentionally pinned at `0.1.0` pre-release for now (see
+`Cargo.toml` and `editors/vscode/package.json`, which are kept in lockstep by
+`tests/version_lockstep.rs`). The tooling that will eventually own bumping that
+version is tracked separately; this document only covers the mechanics that
+already exist — changelog generation, tagging, and publishing — so they are
+ready to use once version bumps begin.
+
+## Overview
+
+Releases are cut from `main` and are driven by
+[Conventional Commits](https://www.conventionalcommits.org/). Every commit
+merged to `main` should follow the `<type>(<scope>): <description>` format
+already used throughout this repository's history (see `git log`). This lets
+[git-cliff](https://git-cliff.org/) derive a structured changelog directly from
+commit messages, and lets a future automated version-bump tool infer the correct
+semver bump (`feat` -> minor, `fix` -> patch, `!`/`BREAKING CHANGE` -> major).
+
+## Prerequisites
+
+- [`git-cliff`](https://git-cliff.org/) installed locally for previewing
+  changelog output:
+
+  ```sh
+  cargo install git-cliff --locked
+  ```
+
+  (CI does not require a local install — the workflow below runs it via the
+  `orhun/git-cliff-action` GitHub Action.)
+
+- Push access to `main` and permission to push tags.
+- The commit history on `main` since the last tag should already follow
+  Conventional Commits — `git cliff --unreleased` will silently skip anything
+  that doesn't parse, so a noisy changelog usually means a commit message needs
+  fixing before tagging, not after.
+
+## Steps
+
+1. **Confirm `main` is releasable.**
+
+   ```sh
+   git checkout main
+   git pull
+   cargo test --lib -q
+   cargo clippy -q
+   cargo run -q -- fmt --check
+   cargo run -q -- sync --check
+   cargo run -q -- lint
+   ```
+
+2. **Bump the version.**
+
+   Update `version` in `Cargo.toml` and `editors/vscode/package.json` together
+   (they must stay identical — `tests/version_lockstep.rs` enforces this).
+   Follow semver based on the changes since the last tag: any `feat` commit
+   means at least a minor bump, any breaking change means a major bump,
+   otherwise a patch bump. Commit this as its own
+   `chore(release): bump version to vX.Y.Z` commit.
+
+3. **Preview the changelog.**
+
+   ```sh
+   git cliff --unreleased --tag vX.Y.Z
+   ```
+
+   Review the output for accuracy. If a commit is miscategorized, that usually
+   means its type/scope prefix was wrong — fix it going forward rather than
+   trying to edit history.
+
+4. **Generate and commit the changelog.**
+
+   ```sh
+   git cliff --tag vX.Y.Z --output CHANGELOG.md
+   git add CHANGELOG.md
+   git commit -m "chore(release): update changelog for vX.Y.Z"
+   git push origin main
+   ```
+
+5. **Tag the release.**
+
+   ```sh
+   git tag -a vX.Y.Z -m "vX.Y.Z"
+   git push origin vX.Y.Z
+   ```
+
+   Pushing the tag triggers `.github/workflows/release.yml`, which:
+
+   - Builds the `fml` binary for Linux (x86_64, aarch64), macOS (x86_64,
+     aarch64), and Windows (x86_64) and uploads each archive to the GitHub
+     Release.
+   - Builds the VS Code extension `.vsix` package.
+   - Generates `schema/formality.schema.json` from the built binary.
+   - Generates the release-scoped changelog section via `git-cliff` and attaches
+     it as `CHANGELOG.md` on the release, and uses it as the GitHub Release
+     body.
+   - Uploads the `.vsix` and the JSON schema as release assets.
+
+6. **Verify the published release.**
+
+   Check the [Releases page](https://github.com/arvinduh/formality/releases) for
+   the new tag: confirm all five platform archives, the `.vsix`, and
+   `schema/formality.schema.json` are attached, and that the release notes look
+   correct.
+
+7. **Announce / update references.**
+
+   If anything (docs, `#:schema` directives in example `formality.toml` files,
+   install instructions) references a specific release URL or version number,
+   update those references to point at the new tag.
+
+## Changelog conventions
+
+`cliff.toml` at the repository root controls how `git-cliff` groups and formats
+commits. Commit types map to changelog sections as follows:
+
+| Commit type      | Changelog section        |
+| ---------------- | ------------------------ |
+| `feat`           | Features                 |
+| `fix`            | Bug Fixes                |
+| `perf`           | Performance              |
+| `refactor`       | Refactor                 |
+| `doc`/`docs`     | Documentation            |
+| `style`          | Styling                  |
+| `test`           | Testing                  |
+| `build`          | Build                    |
+| `ci`             | CI/CD                    |
+| `chore(release)` | (omitted from changelog) |
+| `chore`          | Miscellaneous            |
+| `revert`         | Reverts                  |
+
+Commits that don't match a Conventional Commits prefix are skipped when
+generating the changelog, so keeping commit messages conventional is what keeps
+the changelog useful.
