@@ -1,4 +1,4 @@
-//! Tool version detection: SemVer parsing, MSRV/MSTV compatibility tables,
+//! Tool version detection: `SemVer` parsing, MSRV/MSTV compatibility tables,
 //! and CLI version probing.
 
 pub mod mstv;
@@ -16,7 +16,7 @@ use std::cmp::Ordering;
 use std::fmt;
 use std::str::FromStr;
 
-/// Represents a Semantic Version (SemVer) with optional prerelease identifier.
+/// Represents a Semantic Version (`SemVer`) with optional prerelease identifier.
 #[derive(Debug, Clone, Eq, PartialEq, Hash)]
 pub struct Version {
   pub major: u64,
@@ -27,6 +27,7 @@ pub struct Version {
 
 impl Version {
   /// Create a new `Version` without prerelease metadata.
+  #[must_use]
   pub const fn new(major: u64, minor: u64, patch: u64) -> Self {
     Self {
       major,
@@ -52,6 +53,7 @@ impl Version {
   }
 
   /// Parse a version string directly or extract it from a tool output banner.
+  #[must_use]
   pub fn parse(input: &str) -> Option<Self> {
     let trimmed = input.trim();
     if trimmed.is_empty() {
@@ -66,6 +68,7 @@ impl Version {
   }
 
   /// Extract the first valid semantic version from a multi-token text string.
+  #[must_use]
   pub fn extract(input: &str) -> Option<Self> {
     for token in input.split_whitespace() {
       if let Some(v) = parse_single_token(token) {
@@ -210,36 +213,42 @@ impl fmt::Display for Version {
 impl FromStr for Version {
   type Err = String;
   fn from_str(s: &str) -> Result<Self, Self::Err> {
-    Self::parse(s).ok_or_else(|| format!("Invalid semantic version: '{}'", s))
+    Self::parse(s).ok_or_else(|| format!("Invalid semantic version: '{s}'"))
   }
 }
 
 /// Returns the Minimum Supported Tool Version (MSTV) for a given tool binary, if defined.
+#[must_use]
 pub fn minimum_supported_tool_version(binary: &str) -> Option<Version> {
   get_tool_mstv_entry(binary).map(|e| e.min_version.clone())
 }
 
 /// Alias for `minimum_supported_tool_version`.
+#[must_use]
 pub fn get_mstv(binary: &str) -> Option<Version> {
   minimum_supported_tool_version(binary)
 }
 
 /// Retrieve upgrade advice for a given tool binary.
+#[must_use]
 pub fn get_upgrade_advice(binary: &str) -> Option<&'static str> {
   get_tool_mstv_entry(binary).map(|e| e.advice)
 }
 
 /// Alias for `get_upgrade_advice`.
+#[must_use]
 pub fn tool_upgrade_advice(binary: &str) -> Option<&'static str> {
   get_upgrade_advice(binary)
 }
 
 /// Retrieve version query arguments for a tool binary.
+#[must_use]
 pub fn tool_version_args(binary: &str) -> Option<&'static [&'static str]> {
   get_tool_mstv_entry(binary).map(|e| e.version_args)
 }
 
 /// Probe a tool's version by invoking its CLI (`--version` / `-v`) and parsing the output.
+#[must_use]
 pub fn probe_tool_version(binary: &str) -> Option<Version> {
   let raw_output = get_raw_tool_version(binary)?;
   let mut ver = Version::extract(&raw_output)?;
@@ -263,32 +272,30 @@ pub fn probe_tool_version(binary: &str) -> Option<Version> {
 }
 
 /// Retrieve the raw output line from executing the tool with `--version` or `-v`.
+#[must_use]
 pub fn get_raw_tool_version(binary: &str) -> Option<String> {
-  let output = match binary {
-    "clippy" => {
-      if let Ok(out) = create_tool_command("clippy-driver")
-        .arg("--version")
-        .output()
-      {
-        if out.status.success() {
-          Some(out)
-        } else {
-          create_tool_command("cargo")
-            .args(["clippy", "--version"])
-            .output()
-            .ok()
-        }
+  let output = if binary == "clippy" {
+    if let Ok(out) = create_tool_command("clippy-driver")
+      .arg("--version")
+      .output()
+    {
+      if out.status.success() {
+        Some(out)
       } else {
         create_tool_command("cargo")
           .args(["clippy", "--version"])
           .output()
           .ok()
       }
+    } else {
+      create_tool_command("cargo")
+        .args(["clippy", "--version"])
+        .output()
+        .ok()
     }
-    _ => {
-      let args = tool_version_args(binary).unwrap_or(&["--version"]);
-      create_tool_command(binary).args(args).output().ok()
-    }
+  } else {
+    let args = tool_version_args(binary).unwrap_or(&["--version"]);
+    create_tool_command(binary).args(args).output().ok()
   }?;
 
   if output.status.success() || (binary == "gofmt" && !output.stderr.is_empty())
@@ -350,18 +357,22 @@ pub enum ToolStatus {
 }
 
 impl ToolStatus {
+  #[must_use]
   pub fn is_compatible(&self) -> bool {
     matches!(self, ToolStatus::Compatible { .. })
   }
 
+  #[must_use]
   pub fn is_outdated(&self) -> bool {
     matches!(self, ToolStatus::Outdated { .. })
   }
 
+  #[must_use]
   pub fn is_not_found(&self) -> bool {
     matches!(self, ToolStatus::NotFound)
   }
 
+  #[must_use]
   pub fn is_unknown_version(&self) -> bool {
     matches!(self, ToolStatus::UnknownVersion(_))
   }
@@ -371,10 +382,10 @@ impl fmt::Display for ToolStatus {
   fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
     match self {
       ToolStatus::Compatible { current, minimum } => {
-        write!(f, "Compatible ({} >= MSTV {})", current, minimum)
+        write!(f, "Compatible ({current} >= MSTV {minimum})")
       }
       ToolStatus::Outdated { current, minimum } => {
-        write!(f, "Outdated ({} < MSTV {})", current, minimum)
+        write!(f, "Outdated ({current} < MSTV {minimum})")
       }
       ToolStatus::NotFound => write!(f, "Not Found"),
       ToolStatus::UnknownVersion(raw) => {
@@ -389,15 +400,18 @@ impl fmt::Display for ToolStatus {
 pub struct CompatibilityPolicy;
 
 impl CompatibilityPolicy {
+  #[must_use]
   pub fn check(binary: &str, minimum: &Version) -> ToolStatus {
     check_tool_compatibility(binary, minimum)
   }
 
+  #[must_use]
   pub fn check_mstv(binary: &str) -> Option<ToolStatus> {
     let min = minimum_supported_tool_version(binary)?;
     Some(Self::check(binary, &min))
   }
 
+  #[must_use]
   pub fn evaluate(current: Option<&Version>, minimum: &Version) -> ToolStatus {
     match current {
       Some(curr) => {
@@ -417,6 +431,7 @@ impl CompatibilityPolicy {
     }
   }
 
+  #[must_use]
   pub fn evaluate_with_raw(
     current: Option<Version>,
     raw_output: Option<String>,
@@ -445,6 +460,7 @@ impl CompatibilityPolicy {
 }
 
 /// Check the compatibility status of an installed tool against a minimum required version.
+#[must_use]
 pub fn check_tool_compatibility(binary: &str, minimum: &Version) -> ToolStatus {
   if which::which(binary).is_err() {
     if binary == "clippy" {

@@ -95,13 +95,13 @@ fn test_is_pattern_ignored_pyc_alias() {
 
 #[test]
 fn test_check_gitignore_hygiene_all_satisfied() {
-  let gitignore = r#"
+  let gitignore = r"
 /target/
 .ruff_cache/
 __pycache__/
 .pytest_cache/
 node_modules/
-"#;
+";
   let report = check_gitignore_hygiene_content(
     Some(gitignore),
     true, // has_python
@@ -114,9 +114,9 @@ node_modules/
 
 #[test]
 fn test_check_gitignore_hygiene_missing_entries() {
-  let gitignore = r#"
+  let gitignore = r"
 target/
-"#;
+";
   let report = check_gitignore_hygiene_content(
     Some(gitignore),
     true, // has_python

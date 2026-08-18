@@ -331,63 +331,69 @@ impl LangConfig {
     }
   }
 
+  #[must_use]
   pub fn rust_options(&self) -> Option<RustOptions> {
     extract_options(
       self.rust.clone(),
       &self.options,
       &self.extra,
-      |cur, other| cur.merge(other),
-      |r| r.is_empty(),
+      options::RustOptions::merge,
+      options::RustOptions::is_empty,
     )
   }
 
+  #[must_use]
   pub fn python_options(&self) -> Option<PythonOptions> {
     extract_options(
       self.python.clone(),
       &self.options,
       &self.extra,
-      |cur, other| cur.merge(other),
-      |p| p.is_empty(),
+      options::PythonOptions::merge,
+      options::PythonOptions::is_empty,
     )
   }
 
+  #[must_use]
   pub fn cpp_options(&self) -> Option<CppOptions> {
     extract_options(
       self.cpp.clone(),
       &self.options,
       &self.extra,
-      |cur, other| cur.merge(other),
-      |c| c.is_empty(),
+      options::CppOptions::merge,
+      options::CppOptions::is_empty,
     )
   }
 
+  #[must_use]
   pub fn java_options(&self) -> Option<JavaOptions> {
     extract_options(
       self.java.clone(),
       &self.options,
       &self.extra,
-      |cur, other| cur.merge(other),
-      |j| j.is_empty(),
+      options::JavaOptions::merge,
+      options::JavaOptions::is_empty,
     )
   }
 
+  #[must_use]
   pub fn go_options(&self) -> Option<GoOptions> {
     extract_options(
       self.go.clone(),
       &self.options,
       &self.extra,
-      |cur, other| cur.merge(other),
-      |g| g.is_empty(),
+      options::GoOptions::merge,
+      options::GoOptions::is_empty,
     )
   }
 
+  #[must_use]
   pub fn markdown_options(&self) -> Option<MarkdownOptions> {
     let mut opts = extract_options(
       self.markdown.clone(),
       &self.options,
       &self.extra,
-      |cur, other| cur.merge(other),
-      |m| m.is_empty(),
+      options::MarkdownOptions::merge,
+      options::MarkdownOptions::is_empty,
     );
     if opts.is_none() {
       if let Some(ref pw) = self.prose_wrap {
@@ -405,62 +411,68 @@ impl LangConfig {
     opts
   }
 
+  #[must_use]
   pub fn yaml_options(&self) -> Option<YamlOptions> {
     extract_options(
       self.yaml.clone(),
       &self.options,
       &self.extra,
-      |cur, other| cur.merge(other),
-      |y| y.is_empty(),
+      options::YamlOptions::merge,
+      options::YamlOptions::is_empty,
     )
   }
 
+  #[must_use]
   pub fn json_options(&self) -> Option<JsonOptions> {
     extract_options(
       self.json.clone(),
       &self.options,
       &self.extra,
-      |cur, other| cur.merge(other),
+      options::JsonOptions::merge,
       |_| false,
     )
   }
 
+  #[must_use]
   pub fn toml_options(&self) -> Option<TomlOptions> {
     extract_options(
       self.toml.clone(),
       &self.options,
       &self.extra,
-      |cur, other| cur.merge(other),
+      options::TomlOptions::merge,
       |_| false,
     )
   }
 
+  #[must_use]
   pub fn typst_options(&self) -> Option<TypstOptions> {
     extract_options(
       self.typst.clone(),
       &self.options,
       &self.extra,
-      |cur, other| cur.merge(other),
+      options::TypstOptions::merge,
       |_| false,
     )
   }
 
+  #[must_use]
   pub fn javascript_options(&self) -> Option<JavaScriptOptions> {
     extract_options(
       self.javascript.clone(),
       &self.options,
       &self.extra,
-      |cur, other| cur.merge(other),
-      |j| j.is_empty(),
+      options::JavaScriptOptions::merge,
+      options::JavaScriptOptions::is_empty,
     )
   }
 
+  #[must_use]
   pub fn kotlin_options(&self) -> Option<KotlinOptions> {
     extract_options(
       self.kotlin.clone(),
       &self.options,
       &self.extra,
-      |cur, other| cur.merge(other),
+      options::KotlinOptions::merge,
       |_| false,
     )
   }
@@ -527,6 +539,7 @@ pub struct ResolvedLangConfig {
 }
 
 impl ResolvedLangConfig {
+  #[must_use]
   pub fn new(name: &str) -> Self {
     FormalityConfig::with_defaults().resolve_for_lang(name)
   }
@@ -564,7 +577,7 @@ impl std::fmt::Display for ConfigError {
           source
         )
       }
-      ConfigError::Invalid(msg) => write!(f, "Invalid config: {}", msg),
+      ConfigError::Invalid(msg) => write!(f, "Invalid config: {msg}"),
     }
   }
 }

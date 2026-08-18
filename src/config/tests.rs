@@ -522,12 +522,12 @@ fn test_language_options_merge_units() {
 
 #[test]
 fn test_yaml_options_document_start_and_truthy_rules() {
-  let toml = r#"
+  let toml = r"
       [lang.yaml]
       indent_sequence = true
       document_start = false
       truthy = true
-    "#;
+    ";
   let parsed =
     FormalityConfig::parse_str(toml, Path::new("test.toml")).unwrap();
   let yaml = parsed.resolve_for_lang("yaml");

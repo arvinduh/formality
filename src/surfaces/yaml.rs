@@ -49,6 +49,7 @@ impl NativeConfig for YamllintConfig {
 }
 
 impl YamllintConfig {
+  #[must_use]
   pub fn from_context(ctx: &ExecutionContext) -> Self {
     let yaml_opts = ctx.lang_config.yaml.as_ref();
     let indent_sequences =
@@ -90,14 +91,14 @@ impl DeclaresFacets for YamlSurface {
   fn facet_support(&self, facet: Facet) -> FacetSupport {
     match facet {
       Facet::IndentTabs => FacetSupport::Fixed("spaces"),
-      Facet::IndentWidth => FacetSupport::Configurable,
-      Facet::LineLength => FacetSupport::Configurable,
-      Facet::QuoteStyle => FacetSupport::Configurable,
-      Facet::TrailingComma => FacetSupport::Unsupported,
-      Facet::ImportSort => FacetSupport::Unsupported,
-      Facet::ProseWrap => FacetSupport::Configurable,
-      Facet::Edition => FacetSupport::Unsupported,
-      Facet::Standard => FacetSupport::Unsupported,
+      Facet::IndentWidth
+      | Facet::LineLength
+      | Facet::QuoteStyle
+      | Facet::ProseWrap => FacetSupport::Configurable,
+      Facet::TrailingComma
+      | Facet::ImportSort
+      | Facet::Edition
+      | Facet::Standard => FacetSupport::Unsupported,
     }
   }
 }
@@ -234,7 +235,7 @@ impl LanguageSurface for YamlSurface {
       Err(e) => SurfaceResult {
         surface_name: self.name(),
         status: SurfaceStatus::ExecutionError {
-          message: format!("Failed to execute prettier: {}", e),
+          message: format!("Failed to execute prettier: {e}"),
         },
         duration: start.elapsed(),
       },
@@ -305,10 +306,10 @@ impl LanguageSurface for YamlSurface {
         } else {
           let stderr = String::from_utf8_lossy(&output.stderr).to_string();
           let stdout = String::from_utf8_lossy(&output.stdout).to_string();
-          let msg = if !stderr.trim().is_empty() {
-            stderr
-          } else {
+          let msg = if stderr.trim().is_empty() {
             stdout
+          } else {
+            stderr
           };
 
           SurfaceResult {
@@ -324,7 +325,7 @@ impl LanguageSurface for YamlSurface {
       Err(e) => SurfaceResult {
         surface_name: self.name(),
         status: SurfaceStatus::ExecutionError {
-          message: format!("Failed to execute yamllint: {}", e),
+          message: format!("Failed to execute yamllint: {e}"),
         },
         duration: start.elapsed(),
       },

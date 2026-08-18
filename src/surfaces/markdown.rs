@@ -23,6 +23,7 @@ impl NativeConfig for PrettierConfig {
 }
 
 impl PrettierConfig {
+  #[must_use]
   pub fn from_context(ctx: &ExecutionContext) -> Self {
     let eol = match ctx.global_config.end_of_line.to_lowercase().as_str() {
       "crlf" => "crlf",
@@ -71,6 +72,7 @@ impl NativeConfig for MarkdownlintConfig {
 }
 
 impl MarkdownlintConfig {
+  #[must_use]
   pub fn from_context(ctx: &ExecutionContext) -> Self {
     Self {
       comment: MarkdownlintComment {
@@ -90,6 +92,7 @@ impl MarkdownlintConfig {
   }
 }
 
+#[must_use]
 pub fn build_markdownlint_args(
   files: &[PathBuf],
   fix: bool,
@@ -106,6 +109,7 @@ pub fn build_markdownlint_args(
   args
 }
 
+#[must_use]
 pub fn build_prettier_fmt_args(
   files: &[PathBuf],
   extra_args: &[String],
@@ -124,15 +128,15 @@ pub struct MarkdownSurface;
 impl DeclaresFacets for MarkdownSurface {
   fn facet_support(&self, facet: Facet) -> FacetSupport {
     match facet {
-      Facet::IndentTabs => FacetSupport::Configurable,
-      Facet::IndentWidth => FacetSupport::Configurable,
-      Facet::LineLength => FacetSupport::Configurable,
-      Facet::QuoteStyle => FacetSupport::Unsupported,
-      Facet::TrailingComma => FacetSupport::Unsupported,
-      Facet::ImportSort => FacetSupport::Unsupported,
-      Facet::ProseWrap => FacetSupport::Configurable,
-      Facet::Edition => FacetSupport::Unsupported,
-      Facet::Standard => FacetSupport::Unsupported,
+      Facet::IndentTabs
+      | Facet::IndentWidth
+      | Facet::LineLength
+      | Facet::ProseWrap => FacetSupport::Configurable,
+      Facet::QuoteStyle
+      | Facet::TrailingComma
+      | Facet::ImportSort
+      | Facet::Edition
+      | Facet::Standard => FacetSupport::Unsupported,
     }
   }
 }
@@ -295,7 +299,7 @@ impl LanguageSurface for MarkdownSurface {
       Err(e) => SurfaceResult {
         surface_name: self.name(),
         status: SurfaceStatus::ExecutionError {
-          message: format!("Failed to execute prettier: {}", e),
+          message: format!("Failed to execute prettier: {e}"),
         },
         duration: start.elapsed(),
       },
@@ -352,10 +356,10 @@ impl LanguageSurface for MarkdownSurface {
         } else {
           let stderr = String::from_utf8_lossy(&output.stderr).to_string();
           let stdout = String::from_utf8_lossy(&output.stdout).to_string();
-          let msg = if !stderr.trim().is_empty() {
-            stderr
-          } else {
+          let msg = if stderr.trim().is_empty() {
             stdout
+          } else {
+            stderr
           };
 
           SurfaceResult {
@@ -371,7 +375,7 @@ impl LanguageSurface for MarkdownSurface {
       Err(e) => SurfaceResult {
         surface_name: self.name(),
         status: SurfaceStatus::ExecutionError {
-          message: format!("Failed to execute {}: {}", binary, e),
+          message: format!("Failed to execute {binary}: {e}"),
         },
         duration: start.elapsed(),
       },
@@ -416,6 +420,7 @@ impl LanguageSurface for MarkdownSurface {
   }
 }
 
+#[must_use]
 pub fn sync_prettier_config(
   ctx: &ExecutionContext,
   check: bool,

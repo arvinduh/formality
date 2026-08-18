@@ -16,7 +16,7 @@ pub fn serialize_toml_with_header<T: Serialize>(
   val: &T,
 ) -> Result<String, toml::ser::Error> {
   let toml_str = toml::to_string_pretty(val)?;
-  Ok(format!("{}{}", AUTO_GENERATED_HEADER, toml_str))
+  Ok(format!("{AUTO_GENERATED_HEADER}{toml_str}"))
 }
 
 /// Serializes a struct to YAML and prepends the standard formality auto-generated warning header.
@@ -25,11 +25,11 @@ pub fn serialize_yaml_with_header<T: Serialize>(
 ) -> Result<String, serde_yaml::Error> {
   let yaml_str = serde_yaml::to_string(val)?;
   let body = if let Some(stripped) = yaml_str.strip_prefix("---\n") {
-    format!("---\n{}", stripped)
+    format!("---\n{stripped}")
   } else {
     yaml_str
   };
-  Ok(format!("{}{}", AUTO_GENERATED_HEADER, body))
+  Ok(format!("{AUTO_GENERATED_HEADER}{body}"))
 }
 
 /// Serializes a struct to pretty-formatted JSON with trailing newline.

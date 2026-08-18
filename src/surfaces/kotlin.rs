@@ -16,18 +16,18 @@ impl DeclaresFacets for KotlinSurface {
       // ktlint's default (official) code style enforces 4-space indentation
       // and does not offer a tab-based mode.
       Facet::IndentTabs => FacetSupport::Fixed("spaces"),
-      Facet::IndentWidth => FacetSupport::Configurable,
-      Facet::LineLength => FacetSupport::Configurable,
       // ktlint's standard ruleset enforces double-quoted strings.
       Facet::QuoteStyle => FacetSupport::Fixed("double"),
-      Facet::TrailingComma => FacetSupport::Configurable,
       // "Smart Format": `ktlint -F` organizes/sorts imports as part of the
       // same pass that reformats code, so this always runs together with
       // format().
-      Facet::ImportSort => FacetSupport::Configurable,
-      Facet::ProseWrap => FacetSupport::Unsupported,
-      Facet::Edition => FacetSupport::Unsupported,
-      Facet::Standard => FacetSupport::Unsupported,
+      Facet::IndentWidth
+      | Facet::LineLength
+      | Facet::TrailingComma
+      | Facet::ImportSort => FacetSupport::Configurable,
+      Facet::ProseWrap | Facet::Edition | Facet::Standard => {
+        FacetSupport::Unsupported
+      }
     }
   }
 }
@@ -36,18 +36,19 @@ pub const KOTLIN_EXTENSIONS: &[&str] = &["kt", "kts"];
 
 /// Builds the argument list for an in-place ktlint format ("Smart Format")
 /// invocation: `-F` fixes both style violations and import order in one pass.
+#[must_use]
 pub fn build_ktlint_format_args(
   files: &[std::path::PathBuf],
   extra_args: &[String],
 ) -> Vec<String> {
   let mut args = vec!["-F".to_string()];
-  if !files.is_empty() {
+  if files.is_empty() {
+    args.push("**/*.kt".to_string());
+    args.push("**/*.kts".to_string());
+  } else {
     for f in files {
       args.push(f.to_string_lossy().to_string());
     }
-  } else {
-    args.push("**/*.kt".to_string());
-    args.push("**/*.kts".to_string());
   }
   args.extend(extra_args.iter().cloned());
   args
@@ -56,6 +57,7 @@ pub fn build_ktlint_format_args(
 /// Builds the argument list for a ktlint lint invocation. When `fix` is set
 /// this is equivalent to the "Smart Format" pass (`-F`), since ktlint has no
 /// separate autofix mode distinct from formatting.
+#[must_use]
 pub fn build_ktlint_lint_args(
   files: &[std::path::PathBuf],
   fix: bool,
@@ -65,13 +67,13 @@ pub fn build_ktlint_lint_args(
   if fix {
     args.push("-F".to_string());
   }
-  if !files.is_empty() {
+  if files.is_empty() {
+    args.push("**/*.kt".to_string());
+    args.push("**/*.kts".to_string());
+  } else {
     for f in files {
       args.push(f.to_string_lossy().to_string());
     }
-  } else {
-    args.push("**/*.kt".to_string());
-    args.push("**/*.kts".to_string());
   }
   args.extend(extra_args.iter().cloned());
   args
@@ -207,7 +209,7 @@ impl LanguageSurface for KotlinSurface {
       Err(e) => SurfaceResult {
         surface_name: self.name(),
         status: SurfaceStatus::ExecutionError {
-          message: format!("Failed to execute ktlint -F: {}", e),
+          message: format!("Failed to execute ktlint -F: {e}"),
         },
         duration: start.elapsed(),
       },
@@ -269,10 +271,10 @@ impl LanguageSurface for KotlinSurface {
         } else {
           let stderr = String::from_utf8_lossy(&output.stderr).to_string();
           let stdout = String::from_utf8_lossy(&output.stdout).to_string();
-          let msg = if !stderr.trim().is_empty() {
-            stderr
-          } else {
+          let msg = if stderr.trim().is_empty() {
             stdout
+          } else {
+            stderr
           };
 
           SurfaceResult {
@@ -288,7 +290,7 @@ impl LanguageSurface for KotlinSurface {
       Err(e) => SurfaceResult {
         surface_name: self.name(),
         status: SurfaceStatus::ExecutionError {
-          message: format!("Failed to execute ktlint: {}", e),
+          message: format!("Failed to execute ktlint: {e}"),
         },
         duration: start.elapsed(),
       },

@@ -18,6 +18,7 @@ pub struct VirtualEnvInfo {
 }
 
 /// Look for Python interpreter binary inside a virtual environment directory.
+#[must_use]
 pub fn find_venv_interpreter(venv_path: &Path) -> Option<PathBuf> {
   let candidates = [
     venv_path.join("Scripts").join("python.exe"),
@@ -44,6 +45,7 @@ pub fn detect_virtualenv(root: &Path) -> VirtualEnvInfo {
   )
 }
 
+#[must_use]
 pub fn detect_virtualenv_with_env(
   root: &Path,
   env_var: Option<PathBuf>,

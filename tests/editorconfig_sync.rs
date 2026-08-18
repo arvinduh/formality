@@ -186,7 +186,7 @@ fn test_editorconfig_with_per_language_overrides() {
   let temp = TempDir::new().unwrap();
   let root = temp.path().to_path_buf();
 
-  let toml_content = r#"
+  let toml_content = r"
 [global]
 indent_size = 2
 line_length = 80
@@ -199,7 +199,7 @@ line_length = 100
 use_tabs = true
 indent_size = 4
 line_length = 88
-"#;
+";
   fs::write(root.join("formality.toml"), toml_content).unwrap();
   fs::write(root.join("main.rs"), "fn main() {}").unwrap();
   fs::write(root.join("app.py"), "print('hello')").unwrap();

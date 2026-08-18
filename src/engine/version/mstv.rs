@@ -146,6 +146,7 @@ pub const TOOL_MSTV_REGISTRY: &[ToolMstvEntry] = &[
   },
 ];
 
+#[must_use]
 pub fn get_tool_mstv_entry(binary: &str) -> Option<&'static ToolMstvEntry> {
   let lookup_bin = match binary {
     "clippy-driver" | "cargo-clippy" => "clippy",
@@ -156,6 +157,7 @@ pub fn get_tool_mstv_entry(binary: &str) -> Option<&'static ToolMstvEntry> {
     .find(|entry| entry.binary == lookup_bin)
 }
 
+#[must_use]
 pub fn all_mstv_entries() -> &'static [ToolMstvEntry] {
   TOOL_MSTV_REGISTRY
 }

@@ -62,7 +62,7 @@ impl InstallMethod {
 
   pub(super) fn command(&self) -> (String, Vec<String>) {
     fn strs(v: &[&str]) -> Vec<String> {
-      v.iter().map(|s| s.to_string()).collect()
+      v.iter().map(std::string::ToString::to_string).collect()
     }
     match self {
       InstallMethod::CargoBinstall(pkg) => {
@@ -286,6 +286,7 @@ pub(super) fn install_chain_for(
   }
 }
 
+#[must_use]
 pub fn check_binary_exists(binary: &str) -> bool {
   which::which(binary).is_ok()
 }
@@ -295,6 +296,7 @@ pub fn check_binary_exists(binary: &str) -> bool {
 /// repeated this same `SurfaceResult { .. status: SurfaceStatus::ToolMissing
 /// { .. } .. }` struct literal by hand (~23 instances across the 12 language
 /// surfaces) — this is the single place that shape lives now.
+#[must_use]
 pub fn tool_missing_result(
   surface_name: &'static str,
   start: Instant,
@@ -311,12 +313,14 @@ pub fn tool_missing_result(
   }
 }
 
+#[must_use]
 pub fn has_cargo_binstall() -> bool {
   check_binary_exists("cargo") && check_binary_exists("cargo-binstall")
 }
 
 /// Creates a `Command` with proper handling for Windows batch files (.cmd/.bat)
 /// such as `npm`, `pnpm`, `yarn`, `npx`, and globally installed node CLIs.
+#[must_use]
 pub fn create_tool_command(binary: &str) -> std::process::Command {
   #[cfg(windows)]
   {

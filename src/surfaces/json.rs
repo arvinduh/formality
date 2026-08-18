@@ -13,15 +13,14 @@ pub struct JsonSurface;
 impl DeclaresFacets for JsonSurface {
   fn facet_support(&self, facet: Facet) -> FacetSupport {
     match facet {
-      Facet::IndentTabs => FacetSupport::Configurable,
-      Facet::IndentWidth => FacetSupport::Configurable,
-      Facet::LineLength => FacetSupport::Unsupported,
+      Facet::IndentTabs | Facet::IndentWidth => FacetSupport::Configurable,
       Facet::QuoteStyle => FacetSupport::Fixed("double"),
       Facet::TrailingComma => FacetSupport::Fixed("none"),
-      Facet::ImportSort => FacetSupport::Unsupported,
-      Facet::ProseWrap => FacetSupport::Unsupported,
-      Facet::Edition => FacetSupport::Unsupported,
-      Facet::Standard => FacetSupport::Unsupported,
+      Facet::LineLength
+      | Facet::ImportSort
+      | Facet::ProseWrap
+      | Facet::Edition
+      | Facet::Standard => FacetSupport::Unsupported,
     }
   }
 }
@@ -157,7 +156,7 @@ impl LanguageSurface for JsonSurface {
       Err(e) => SurfaceResult {
         surface_name: self.name(),
         status: SurfaceStatus::ExecutionError {
-          message: format!("Failed to execute prettier: {}", e),
+          message: format!("Failed to execute prettier: {e}"),
         },
         duration: start.elapsed(),
       },

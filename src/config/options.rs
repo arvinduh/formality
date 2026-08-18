@@ -22,6 +22,7 @@ impl RustOptions {
     }
   }
 
+  #[must_use]
   pub fn is_empty(&self) -> bool {
     self.edition.is_none() && self.version.is_none()
   }
@@ -48,6 +49,7 @@ impl PythonOptions {
     }
   }
 
+  #[must_use]
   pub fn is_empty(&self) -> bool {
     self.quote_style.is_none() && self.target_version.is_none()
   }
@@ -118,6 +120,7 @@ impl CppOptions {
     }
   }
 
+  #[must_use]
   pub fn is_empty(&self) -> bool {
     self.standard.is_none()
       && self.column_limit.is_none()
@@ -146,6 +149,7 @@ impl JavaOptions {
     }
   }
 
+  #[must_use]
   pub fn is_empty(&self) -> bool {
     self.style.is_none()
   }
@@ -182,6 +186,7 @@ impl JavaScriptOptions {
     }
   }
 
+  #[must_use]
   pub fn is_empty(&self) -> bool {
     self.quote_style.is_none()
       && self.trailing_comma.is_none()
@@ -215,6 +220,7 @@ impl GoOptions {
     }
   }
 
+  #[must_use]
   pub fn is_empty(&self) -> bool {
     self.local_prefixes.is_none() && self.linters.is_none()
   }
@@ -236,6 +242,7 @@ impl MarkdownOptions {
     }
   }
 
+  #[must_use]
   pub fn is_empty(&self) -> bool {
     self.prose_wrap.is_none()
   }
@@ -267,6 +274,7 @@ impl YamlOptions {
     }
   }
 
+  #[must_use]
   pub fn is_empty(&self) -> bool {
     self.indent_sequence.is_none()
       && self.document_start.is_none()
@@ -283,6 +291,7 @@ pub struct JsonOptions {}
 impl JsonOptions {
   pub fn merge(&mut self, _other: JsonOptions) {}
 
+  #[must_use]
   pub fn is_empty(&self) -> bool {
     true
   }
@@ -297,6 +306,7 @@ pub struct TomlOptions {}
 impl TomlOptions {
   pub fn merge(&mut self, _other: TomlOptions) {}
 
+  #[must_use]
   pub fn is_empty(&self) -> bool {
     true
   }
@@ -311,6 +321,7 @@ pub struct TypstOptions {}
 impl TypstOptions {
   pub fn merge(&mut self, _other: TypstOptions) {}
 
+  #[must_use]
   pub fn is_empty(&self) -> bool {
     true
   }
@@ -331,6 +342,7 @@ pub struct KotlinOptions {}
 impl KotlinOptions {
   pub fn merge(&mut self, _other: KotlinOptions) {}
 
+  #[must_use]
   pub fn is_empty(&self) -> bool {
     true
   }

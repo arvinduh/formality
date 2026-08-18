@@ -4,6 +4,7 @@ use crate::surfaces::{
   AUTO_GENERATED_HEADER, LanguageSurface, SurfaceResult, sync_file_helper,
 };
 use std::collections::HashSet;
+use std::fmt::Write as _;
 use std::path::Path;
 use std::time::Instant;
 
@@ -24,7 +25,7 @@ const CANONICAL_FLEET_ORDER: &[&str] = &[
   "kotlin",
 ];
 
-/// Returns the standard EditorConfig section glob for a known or custom surface.
+/// Returns the standard `EditorConfig` section glob for a known or custom surface.
 pub fn glob_for_surface(surface: &dyn LanguageSurface) -> String {
   match surface.name() {
     "rust" => "[*.rs]".to_string(),
@@ -54,6 +55,7 @@ pub fn glob_for_surface(surface: &dyn LanguageSurface) -> String {
 
 /// Synthesizes a portable root `.editorconfig` file combining `ResolvedGlobalConfig`
 /// and the provided language surfaces' `LayoutFacet` settings.
+#[must_use]
 pub fn generate_editorconfig(
   global: &ResolvedGlobalConfig,
   surfaces: &[Box<dyn LanguageSurface>],
@@ -68,25 +70,25 @@ pub fn generate_editorconfig(
 
   // Global [*] section
   out.push_str("[*]\n");
-  out.push_str(&format!(
-    "charset = {}\n",
-    global.charset.to_ascii_lowercase()
-  ));
-  out.push_str(&format!(
-    "end_of_line = {}\n",
+  let _ = writeln!(out, "charset = {}", global.charset.to_ascii_lowercase());
+  let _ = writeln!(
+    out,
+    "end_of_line = {}",
     global.end_of_line.to_ascii_lowercase()
-  ));
-  out.push_str(&format!(
-    "insert_final_newline = {}\n",
+  );
+  let _ = writeln!(
+    out,
+    "insert_final_newline = {}",
     global.insert_final_newline
-  ));
-  out.push_str(&format!(
-    "trim_trailing_whitespace = {}\n",
+  );
+  let _ = writeln!(
+    out,
+    "trim_trailing_whitespace = {}",
     global.trim_trailing_whitespace
-  ));
-  out.push_str(&format!("indent_style = {}\n", global_indent_style));
-  out.push_str(&format!("indent_size = {}\n", global_indent_size));
-  out.push_str(&format!("max_line_length = {}\n", global.line_length));
+  );
+  let _ = writeln!(out, "indent_style = {global_indent_style}");
+  let _ = writeln!(out, "indent_size = {global_indent_size}");
+  let _ = writeln!(out, "max_line_length = {}", global.line_length);
 
   // Collect ordered distinct surfaces
   let mut seen = HashSet::new();
@@ -109,8 +111,8 @@ pub fn generate_editorconfig(
   for surface in ordered_surfaces {
     let glob = glob_for_surface(surface.as_ref());
     let indent_style = match surface.facet_support(Facet::IndentTabs) {
-      FacetSupport::Fixed("spaces") | FacetSupport::Fixed("space") => "space",
-      FacetSupport::Fixed("tabs") | FacetSupport::Fixed("tab") => "tab",
+      FacetSupport::Fixed("spaces" | "space") => "space",
+      FacetSupport::Fixed("tabs" | "tab") => "tab",
       _ => global_indent_style,
     };
 
@@ -135,10 +137,10 @@ pub fn generate_editorconfig(
     out.push('\n');
     out.push_str(&glob);
     out.push('\n');
-    out.push_str(&format!("indent_style = {}\n", indent_style));
-    out.push_str(&format!("indent_size = {}\n", indent_size));
+    let _ = writeln!(out, "indent_style = {indent_style}");
+    let _ = writeln!(out, "indent_size = {indent_size}");
     if let Some(mll) = max_line_length {
-      out.push_str(&format!("max_line_length = {}\n", mll));
+      let _ = writeln!(out, "max_line_length = {mll}");
     }
   }
 
@@ -147,6 +149,7 @@ pub fn generate_editorconfig(
 
 /// Synthesizes `.editorconfig` from a full `FormalityConfig`, honoring per-language
 /// overrides in addition to global defaults and layout facet capabilities.
+#[must_use]
 pub fn generate_editorconfig_from_config(
   config: &FormalityConfig,
   surfaces: &[Box<dyn LanguageSurface>],
@@ -162,25 +165,25 @@ pub fn generate_editorconfig_from_config(
 
   // Global [*] section
   out.push_str("[*]\n");
-  out.push_str(&format!(
-    "charset = {}\n",
-    global.charset.to_ascii_lowercase()
-  ));
-  out.push_str(&format!(
-    "end_of_line = {}\n",
+  let _ = writeln!(out, "charset = {}", global.charset.to_ascii_lowercase());
+  let _ = writeln!(
+    out,
+    "end_of_line = {}",
     global.end_of_line.to_ascii_lowercase()
-  ));
-  out.push_str(&format!(
-    "insert_final_newline = {}\n",
+  );
+  let _ = writeln!(
+    out,
+    "insert_final_newline = {}",
     global.insert_final_newline
-  ));
-  out.push_str(&format!(
-    "trim_trailing_whitespace = {}\n",
+  );
+  let _ = writeln!(
+    out,
+    "trim_trailing_whitespace = {}",
     global.trim_trailing_whitespace
-  ));
-  out.push_str(&format!("indent_style = {}\n", global_indent_style));
-  out.push_str(&format!("indent_size = {}\n", global_indent_size));
-  out.push_str(&format!("max_line_length = {}\n", global.line_length));
+  );
+  let _ = writeln!(out, "indent_style = {global_indent_style}");
+  let _ = writeln!(out, "indent_size = {global_indent_size}");
+  let _ = writeln!(out, "max_line_length = {}", global.line_length);
 
   // Collect ordered distinct surfaces
   let mut seen = HashSet::new();
@@ -205,8 +208,8 @@ pub fn generate_editorconfig_from_config(
     let lang_cfg = config.resolve_for_lang(surface.name());
 
     let indent_style = match surface.facet_support(Facet::IndentTabs) {
-      FacetSupport::Fixed("spaces") | FacetSupport::Fixed("space") => "space",
-      FacetSupport::Fixed("tabs") | FacetSupport::Fixed("tab") => "tab",
+      FacetSupport::Fixed("spaces" | "space") => "space",
+      FacetSupport::Fixed("tabs" | "tab") => "tab",
       _ => {
         if lang_cfg.use_tabs {
           "tab"
@@ -237,10 +240,10 @@ pub fn generate_editorconfig_from_config(
     out.push('\n');
     out.push_str(&glob);
     out.push('\n');
-    out.push_str(&format!("indent_style = {}\n", indent_style));
-    out.push_str(&format!("indent_size = {}\n", indent_size));
+    let _ = writeln!(out, "indent_style = {indent_style}");
+    let _ = writeln!(out, "indent_size = {indent_size}");
     if let Some(mll) = max_line_length {
-      out.push_str(&format!("max_line_length = {}\n", mll));
+      let _ = writeln!(out, "max_line_length = {mll}");
     }
   }
 
@@ -248,6 +251,7 @@ pub fn generate_editorconfig_from_config(
 }
 
 /// Helper function to sync `.editorconfig` at the repository root.
+#[must_use]
 pub fn sync_editorconfig(
   root: &Path,
   config: &FormalityConfig,

@@ -9,10 +9,12 @@ use super::{
   ResolvedGlobalConfig, ResolvedLangConfig,
 };
 use std::collections::BTreeMap;
+use std::fmt::Write as _;
 use std::fs;
 use std::path::{Path, PathBuf};
 
 impl FormalityConfig {
+  #[must_use]
   pub fn empty() -> Self {
     Self {
       global: None,
@@ -20,6 +22,7 @@ impl FormalityConfig {
     }
   }
 
+  #[must_use]
   pub fn with_defaults() -> Self {
     Self {
       global: Some(GlobalConfig::default()),
@@ -61,6 +64,7 @@ impl FormalityConfig {
     }
   }
 
+  #[must_use]
   pub fn resolve_global(&self) -> ResolvedGlobalConfig {
     let base = GlobalConfig::default();
     let current = self.global.as_ref();
@@ -114,6 +118,7 @@ impl FormalityConfig {
     }
   }
 
+  #[must_use]
   pub fn resolve_for_lang(&self, lang_name: &str) -> ResolvedLangConfig {
     let global = self.resolve_global();
     let lang_cfg = self.lang.get(lang_name);
@@ -144,7 +149,7 @@ impl FormalityConfig {
     // `CheckstyleConfig::from_context`, both of which just read this value.
     let java_style_is_aosp = lang_name == "java"
       && lang_cfg
-        .and_then(|l| l.java_options())
+        .and_then(super::LangConfig::java_options)
         .and_then(|j| j.style)
         .as_deref()
         == Some("aosp");
@@ -180,90 +185,117 @@ impl FormalityConfig {
       prose_wrap: prose_wrap.clone(),
     };
 
-    let rust = lang_cfg.and_then(|l| l.rust_options()).or_else(|| {
-      if lang_name == "rust" {
-        Some(RustOptions::default())
-      } else {
-        None
-      }
-    });
+    let rust =
+      lang_cfg
+        .and_then(super::LangConfig::rust_options)
+        .or_else(|| {
+          if lang_name == "rust" {
+            Some(RustOptions::default())
+          } else {
+            None
+          }
+        });
 
-    let python = lang_cfg.and_then(|l| l.python_options()).or_else(|| {
-      if lang_name == "python" {
-        Some(PythonOptions::default())
-      } else {
-        None
-      }
-    });
+    let python = lang_cfg
+      .and_then(super::LangConfig::python_options)
+      .or_else(|| {
+        if lang_name == "python" {
+          Some(PythonOptions::default())
+        } else {
+          None
+        }
+      });
 
-    let cpp = lang_cfg.and_then(|l| l.cpp_options()).or_else(|| {
-      if lang_name == "cpp" {
-        Some(CppOptions::default())
-      } else {
-        None
-      }
-    });
+    let cpp = lang_cfg
+      .and_then(super::LangConfig::cpp_options)
+      .or_else(|| {
+        if lang_name == "cpp" {
+          Some(CppOptions::default())
+        } else {
+          None
+        }
+      });
 
-    let java = lang_cfg.and_then(|l| l.java_options()).or_else(|| {
-      if lang_name == "java" {
-        Some(JavaOptions::default())
-      } else {
-        None
-      }
-    });
+    let java =
+      lang_cfg
+        .and_then(super::LangConfig::java_options)
+        .or_else(|| {
+          if lang_name == "java" {
+            Some(JavaOptions::default())
+          } else {
+            None
+          }
+        });
 
-    let go = lang_cfg.and_then(|l| l.go_options()).or_else(|| {
-      if lang_name == "go" {
-        Some(GoOptions::default())
-      } else {
-        None
-      }
-    });
+    let go = lang_cfg
+      .and_then(super::LangConfig::go_options)
+      .or_else(|| {
+        if lang_name == "go" {
+          Some(GoOptions::default())
+        } else {
+          None
+        }
+      });
 
-    let markdown = lang_cfg.and_then(|l| l.markdown_options()).or_else(|| {
-      if lang_name == "markdown" {
-        Some(MarkdownOptions {
-          prose_wrap: prose_wrap.clone(),
-        })
-      } else {
-        None
-      }
-    });
+    let markdown = lang_cfg
+      .and_then(super::LangConfig::markdown_options)
+      .or_else(|| {
+        if lang_name == "markdown" {
+          Some(MarkdownOptions {
+            prose_wrap: prose_wrap.clone(),
+          })
+        } else {
+          None
+        }
+      });
 
-    let yaml = lang_cfg.and_then(|l| l.yaml_options()).or_else(|| {
-      if lang_name == "yaml" {
-        Some(YamlOptions::default())
-      } else {
-        None
-      }
-    });
+    let yaml =
+      lang_cfg
+        .and_then(super::LangConfig::yaml_options)
+        .or_else(|| {
+          if lang_name == "yaml" {
+            Some(YamlOptions::default())
+          } else {
+            None
+          }
+        });
 
-    let json = lang_cfg.and_then(|l| l.json_options()).or_else(|| {
-      if lang_name == "json" {
-        Some(JsonOptions::default())
-      } else {
-        None
-      }
-    });
+    let json =
+      lang_cfg
+        .and_then(super::LangConfig::json_options)
+        .or_else(|| {
+          if lang_name == "json" {
+            Some(JsonOptions::default())
+          } else {
+            None
+          }
+        });
 
-    let toml = lang_cfg.and_then(|l| l.toml_options()).or_else(|| {
-      if lang_name == "toml" {
-        Some(TomlOptions::default())
-      } else {
-        None
-      }
-    });
+    let toml =
+      lang_cfg
+        .and_then(super::LangConfig::toml_options)
+        .or_else(|| {
+          if lang_name == "toml" {
+            Some(TomlOptions::default())
+          } else {
+            None
+          }
+        });
 
-    let typst = lang_cfg.and_then(|l| l.typst_options()).or_else(|| {
-      if lang_name == "typst" {
-        Some(TypstOptions::default())
-      } else {
-        None
-      }
-    });
+    let typst =
+      lang_cfg
+        .and_then(super::LangConfig::typst_options)
+        .or_else(|| {
+          if lang_name == "typst" {
+            Some(TypstOptions::default())
+          } else {
+            None
+          }
+        });
 
-    let javascript =
-      lang_cfg.and_then(|l| l.javascript_options()).or_else(|| {
+    let javascript = lang_cfg
+      .and_then(super::LangConfig::javascript_options)
+      .or_else(|| {
         if lang_name == "javascript" {
           Some(JavaScriptOptions::default())
         } else {
@@ -271,13 +303,15 @@ impl FormalityConfig {
         }
       });
 
-    let kotlin = lang_cfg.and_then(|l| l.kotlin_options()).or_else(|| {
-      if lang_name == "kotlin" {
-        Some(KotlinOptions::default())
-      } else {
-        None
-      }
-    });
+    let kotlin = lang_cfg
+      .and_then(super::LangConfig::kotlin_options)
+      .or_else(|| {
+        if lang_name == "kotlin" {
+          Some(KotlinOptions::default())
+        } else {
+          None
+        }
+      });
 
     let extra = lang_cfg.map(|l| l.extra.clone()).unwrap_or_default();
 
@@ -285,10 +319,10 @@ impl FormalityConfig {
       name: lang_name.to_string(),
       format_tool: lang_cfg
         .and_then(|l| l.format_tool.clone())
-        .or_else(|| default_fmt.map(|s| s.to_string())),
+        .or_else(|| default_fmt.map(std::string::ToString::to_string)),
       lint_tool: lang_cfg
         .and_then(|l| l.lint_tool.clone())
-        .or_else(|| default_lint.map(|s| s.to_string())),
+        .or_else(|| default_lint.map(std::string::ToString::to_string)),
       indent_size,
       line_length,
       use_tabs,
@@ -359,6 +393,7 @@ impl FormalityConfig {
   /// Generates sample configuration template versioned to current package release.
   /// Omits hardcoded `languages = [...]` so `fml` uses built-in auto-detection across
   /// all workspace surfaces by default.
+  #[must_use]
   pub fn generate_sample() -> String {
     let mut out = String::new();
     out.push_str("# formality configuration file\n");
@@ -366,10 +401,11 @@ impl FormalityConfig {
     // Reference the schema from the versioned GitHub Release asset — never
     // from a raw git branch URL — so users are always pinned to a specific
     // release rather than an ever-changing main branch.
-    out.push_str(&format!(
+    let _ = write!(
+      out,
       "#:schema https://github.com/arvinduh/formality/releases/download/v{}/formality.schema.json\n\n",
       env!("CARGO_PKG_VERSION")
-    ));
+    );
     out.push_str("[global]\n");
     out.push_str("indent_size = 2\n");
     out.push_str("line_length = 80\n");
@@ -392,6 +428,7 @@ impl FormalityConfig {
   /// starting points that show users *which* languages were found and *what*
   /// they can override, without silently constraining or hardcoding
   /// anything the way an active `languages = [...]` list would.
+  #[must_use]
   pub fn generate_init_template(detected_langs: &[&str]) -> String {
     let mut out = Self::generate_sample();
 
@@ -411,7 +448,7 @@ impl FormalityConfig {
        # Leave commented out to keep using formality's built-in defaults.\n",
     );
     for lang in langs {
-      out.push_str(&format!("\n# [lang.{lang}]\n"));
+      let _ = write!(out, "\n# [lang.{lang}]\n");
       out.push_str("# indent_size = 2\n");
       out.push_str("# line_length = 80\n");
     }
@@ -419,6 +456,7 @@ impl FormalityConfig {
     out
   }
 }
+#[must_use]
 pub fn find_project_config(start_dir: &Path) -> Option<PathBuf> {
   let mut current = if start_dir.is_file() {
     start_dir.parent()?.to_path_buf()
@@ -448,6 +486,7 @@ pub fn find_project_config(start_dir: &Path) -> Option<PathBuf> {
 }
 
 /// Finds the global user configuration across Linux, macOS, and Windows.
+#[must_use]
 pub fn find_user_config() -> Option<PathBuf> {
   // 1. XDG_CONFIG_HOME (Linux / Custom Unix)
   if let Ok(xdg_config) = std::env::var("XDG_CONFIG_HOME") {

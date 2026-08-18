@@ -38,6 +38,7 @@ impl NativeConfig for RuffConfig {
 }
 
 impl RuffConfig {
+  #[must_use]
   pub fn from_context(ctx: &ExecutionContext) -> Self {
     let indent_style = if ctx.lang_config.use_tabs {
       "tab"
@@ -98,21 +99,22 @@ pub struct PythonSurface;
 impl DeclaresFacets for PythonSurface {
   fn facet_support(&self, facet: Facet) -> FacetSupport {
     match facet {
-      Facet::IndentTabs => FacetSupport::Configurable,
-      Facet::IndentWidth => FacetSupport::Configurable,
-      Facet::LineLength => FacetSupport::Configurable,
-      Facet::QuoteStyle => FacetSupport::Configurable,
-      Facet::TrailingComma => FacetSupport::Unsupported,
-      Facet::ImportSort => FacetSupport::Configurable,
-      Facet::ProseWrap => FacetSupport::Unsupported,
-      Facet::Edition => FacetSupport::Unsupported,
-      Facet::Standard => FacetSupport::Unsupported,
+      Facet::IndentTabs
+      | Facet::IndentWidth
+      | Facet::LineLength
+      | Facet::QuoteStyle
+      | Facet::ImportSort => FacetSupport::Configurable,
+      Facet::TrailingComma
+      | Facet::ProseWrap
+      | Facet::Edition
+      | Facet::Standard => FacetSupport::Unsupported,
     }
   }
 }
 
 pub const PYTHON_EXTENSIONS: &[&str] = &["py", "pyi"];
 
+#[must_use]
 pub fn build_ruff_import_sort_args(
   files: &[PathBuf],
   extra_args: &[String],
@@ -123,17 +125,18 @@ pub fn build_ruff_import_sort_args(
     "I".to_string(),
     "--fix".to_string(),
   ];
-  if !files.is_empty() {
+  if files.is_empty() {
+    args.push(".".to_string());
+  } else {
     for f in files {
       args.push(f.to_string_lossy().to_string());
     }
-  } else {
-    args.push(".".to_string());
   }
   args.extend(extra_args.iter().cloned());
   args
 }
 
+#[must_use]
 pub fn build_ruff_check_args(
   files: &[PathBuf],
   fix: bool,
@@ -143,12 +146,12 @@ pub fn build_ruff_check_args(
   if fix {
     args.push("--fix".to_string());
   }
-  if !files.is_empty() {
+  if files.is_empty() {
+    args.push(".".to_string());
+  } else {
     for f in files {
       args.push(f.to_string_lossy().to_string());
     }
-  } else {
-    args.push(".".to_string());
   }
   args.extend(extra_args.iter().cloned());
   args
@@ -297,7 +300,7 @@ impl LanguageSurface for PythonSurface {
         return SurfaceResult {
           surface_name: self.name(),
           status: SurfaceStatus::ExecutionError {
-            message: format!("Failed to execute ruff import sorting: {}", e),
+            message: format!("Failed to execute ruff import sorting: {e}"),
           },
           duration: start.elapsed(),
         };
@@ -307,12 +310,12 @@ impl LanguageSurface for PythonSurface {
     let mut cmd = create_tool_command("ruff");
     cmd.arg("format");
 
-    if !files_to_pass.is_empty() {
+    if files_to_pass.is_empty() {
+      cmd.arg(".");
+    } else {
       for f in &files_to_pass {
         cmd.arg(f);
       }
-    } else {
-      cmd.arg(".");
     }
 
     cmd.args(&ctx.lang_config.extra_args);
@@ -350,7 +353,7 @@ impl LanguageSurface for PythonSurface {
       Err(e) => SurfaceResult {
         surface_name: self.name(),
         status: SurfaceStatus::ExecutionError {
-          message: format!("Failed to execute ruff format: {}", e),
+          message: format!("Failed to execute ruff format: {e}"),
         },
         duration: start.elapsed(),
       },
@@ -412,10 +415,10 @@ impl LanguageSurface for PythonSurface {
         } else {
           let stderr = String::from_utf8_lossy(&output.stderr).to_string();
           let stdout = String::from_utf8_lossy(&output.stdout).to_string();
-          let msg = if !stderr.trim().is_empty() {
-            stderr
-          } else {
+          let msg = if stderr.trim().is_empty() {
             stdout
+          } else {
+            stderr
           };
 
           SurfaceResult {
@@ -431,7 +434,7 @@ impl LanguageSurface for PythonSurface {
       Err(e) => SurfaceResult {
         surface_name: self.name(),
         status: SurfaceStatus::ExecutionError {
-          message: format!("Failed to execute ruff check: {}", e),
+          message: format!("Failed to execute ruff check: {e}"),
         },
         duration: start.elapsed(),
       },
