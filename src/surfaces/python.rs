@@ -130,9 +130,7 @@ pub fn build_ruff_import_sort_args(
   } else {
     args.push(".".to_string());
   }
-  for arg in extra_args {
-    args.push(arg.clone());
-  }
+  args.extend(extra_args.iter().cloned());
   args
 }
 
@@ -152,9 +150,7 @@ pub fn build_ruff_check_args(
   } else {
     args.push(".".to_string());
   }
-  for arg in extra_args {
-    args.push(arg.clone());
-  }
+  args.extend(extra_args.iter().cloned());
   args
 }
 

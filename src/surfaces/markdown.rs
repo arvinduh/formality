@@ -102,9 +102,7 @@ pub fn build_markdownlint_args(
   for f in files {
     args.push(f.to_string_lossy().to_string());
   }
-  for arg in extra_args {
-    args.push(arg.clone());
-  }
+  args.extend(extra_args.iter().cloned());
   args
 }
 
@@ -116,9 +114,7 @@ pub fn build_prettier_fmt_args(
   for f in files {
     args.push(f.to_string_lossy().to_string());
   }
-  for arg in extra_args {
-    args.push(arg.clone());
-  }
+  args.extend(extra_args.iter().cloned());
   args
 }
 

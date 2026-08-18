@@ -8,7 +8,7 @@ pub use mstv::{
   MSTV_GOFMT, MSTV_GOLANGCI_LINT, MSTV_KTFMT, MSTV_KTLINT,
   MSTV_MARKDOWNLINT_CLI2, MSTV_PRETTIER, MSTV_RUFF, MSTV_RUSTFMT, MSTV_TAPLO,
   MSTV_TYPSTYLE, MSTV_YAMLLINT, TOOL_MSTV_REGISTRY, ToolMstvEntry,
-  all_mstv_entries, get_tool_mstv_entry, tool_mstv_entry,
+  all_mstv_entries, get_tool_mstv_entry,
 };
 
 use crate::surfaces::create_tool_command;
@@ -237,11 +237,6 @@ pub fn tool_upgrade_advice(binary: &str) -> Option<&'static str> {
 /// Retrieve version query arguments for a tool binary.
 pub fn tool_version_args(binary: &str) -> Option<&'static [&'static str]> {
   get_tool_mstv_entry(binary).map(|e| e.version_args)
-}
-
-/// Retrieve the version extraction regex for a tool binary.
-pub fn tool_version_regex(binary: &str) -> Option<&'static str> {
-  get_tool_mstv_entry(binary).map(|e| e.regex)
 }
 
 /// Probe a tool's version by invoking its CLI (`--version` / `-v`) and parsing the output.
