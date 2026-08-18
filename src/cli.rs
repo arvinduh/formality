@@ -53,7 +53,7 @@ pub enum Commands {
 
   /// Lint source files across detected or specified surfaces
   Lint {
-    /// Automatically apply available lint fixes
+    /// Automatically apply available lint fixes (does not reformat; see `fml fix` for lint+format together)
     #[arg(long)]
     fix: bool,
 
@@ -78,7 +78,7 @@ pub enum Commands {
     paths: Vec<PathBuf>,
   },
 
-  /// Automatically fix lint violations and reformat code
+  /// Automatically fix lint violations and reformat code (equivalent to `fml lint --fix` followed by `fml fmt`)
   Fix {
     /// Only fix files staged for git commit
     #[arg(short = 's', long)]
