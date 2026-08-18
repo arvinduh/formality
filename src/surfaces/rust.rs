@@ -302,6 +302,25 @@ impl LanguageSurface for RustSurface {
       );
     }
 
+    // clippy requires a Cargo manifest to build against; without one, cargo
+    // fails immediately with "could not find `Cargo.toml`" which is an
+    // environment/setup problem, not a lint violation in the code. Surface
+    // it as an actionable execution error instead of `Violations found`.
+    if !ctx.root.join("Cargo.toml").exists() {
+      return SurfaceResult {
+        surface_name: self.name(),
+        status: SurfaceStatus::ExecutionError {
+          message: format!(
+            "No Cargo.toml found in {} (or any parent directory). `cargo \
+             clippy` needs a Cargo manifest to lint against — run `cargo \
+             init` here, or point --root at the crate/workspace root.",
+            ctx.root.display()
+          ),
+        },
+        duration: start.elapsed(),
+      };
+    }
+
     let mut cmd = create_tool_command("cargo");
     cmd.args(build_clippy_args(fix, &ctx.lang_config.extra_args));
     cmd.current_dir(&ctx.root);
@@ -391,6 +410,25 @@ mod tests {
       global_config: ResolvedGlobalConfig::default(),
       lang_config: ResolvedLangConfig::new("rust"),
       check_only,
+    }
+  }
+
+  #[test]
+  fn test_lint_without_cargo_toml_is_execution_error_not_violation() {
+    let temp = TempDir::new().unwrap();
+    // No Cargo.toml written — mirrors a bare `.rs` file with no crate manifest.
+    let surface = RustSurface;
+    let ctx = dummy_execution_context(temp.path(), false);
+
+    let res = surface.lint(&ctx, false);
+    match res.status {
+      SurfaceStatus::ExecutionError { message } => {
+        assert!(message.contains("Cargo.toml"));
+      }
+      other => panic!(
+        "expected ExecutionError for missing Cargo.toml, got {:?}",
+        other
+      ),
     }
   }
 
