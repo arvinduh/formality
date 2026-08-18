@@ -6,6 +6,12 @@
 single canonical configuration (`formality.toml` or `.formality.toml`), running
 every surface in parallel for near-instant feedback.
 
+**Further reading**: [Facet Rosetta](docs/facet-rosetta.md) (the canonical
+cross-language config vocabulary) ·
+[Language Surface Guides](docs/language-surfaces.md) (per-surface tools, config,
+and behavior) · [Adding a New Surface](docs/new-surface-guide.md) ·
+[`fml table` Spec](docs/table-spec.md) · [Release Procedure](docs/release.md)
+
 ---
 
 ## Key features
@@ -36,17 +42,26 @@ every surface in parallel for near-instant feedback.
 
 ## Supported surfaces
 
-| Language / Surface | Formatter               | Linter              | Managed native config                    |
-| :----------------- | :---------------------- | :------------------ | :--------------------------------------- |
-| **Rust**           | `cargo fmt` / `rustfmt` | `clippy`            | `.rustfmt.toml`                          |
-| **Python**         | `ruff format`           | `ruff check`        | `ruff.toml`                              |
-| **C / C++**        | `clang-format`          | `clang-tidy`        | `.clang-format`                          |
-| **Java**           | `google-java-format`    | `checkstyle`        | `checkstyle.xml`                         |
-| **Markdown**       | `prettier`              | `markdownlint-cli2` | `.markdownlint.json`, `.prettierrc.json` |
-| **YAML**           | `prettier`              | `yamllint`          | `.prettierrc.json`                       |
-| **JSON**           | `prettier`              | `prettier`          | `.prettierrc.json`                       |
-| **TOML**           | `taplo`                 | `taplo`             | `taplo.toml`                             |
-| **Typst**          | `typstyle`              | `typstyle`          | CLI flags (`--column`)                   |
+| Language / Surface  | Formatter                               | Linter                   | Managed native config                    |
+| :------------------ | :-------------------------------------- | :----------------------- | :--------------------------------------- |
+| **Rust**            | `cargo fmt` / `rustfmt`                 | `clippy`                 | `.rustfmt.toml`                          |
+| **Python**          | `ruff check --fix` -> `ruff format`     | `ruff check`             | `ruff.toml`                              |
+| **C / C++**         | `clang-format`                          | `clang-tidy`             | `.clang-format`                          |
+| **Java**            | `google-java-format`                    | `checkstyle`             | `checkstyle.xml`                         |
+| **Go**              | `goimports` / `gofmt -s`                | `golangci-lint`          | `.golangci.yml`                          |
+| **JavaScript / TS** | `biome format` + organize imports       | `biome lint`             | `biome.json`                             |
+| **Kotlin**          | `ktlint -F`                             | `ktlint`                 | `.editorconfig`                          |
+| **Markdown**        | `markdownlint-cli2 --fix` -> `prettier` | `markdownlint-cli2`      | `.markdownlint.json`, `.prettierrc.json` |
+| **YAML**            | `prettier`                              | `yamllint`               | `.prettierrc.json`                       |
+| **JSON**            | `prettier`                              | `prettier`               | `.prettierrc.json`                       |
+| **TOML**            | `taplo`                                 | `taplo`                  | `taplo.toml`                             |
+| **Typst**           | `typstyle`                              | _(LSP diagnostics only)_ | CLI flags (`--column`)                   |
+
+The full facet-by-facet breakdown of what's configurable, fixed, or unsupported
+per surface lives in [docs/facet-rosetta.md](docs/facet-rosetta.md). Per-surface
+tool details, Smart Format behavior, and `[lang.<name>]` options are documented
+in [docs/language-surfaces.md](docs/language-surfaces.md). Want to add a 13th
+surface? See [docs/new-surface-guide.md](docs/new-surface-guide.md).
 
 ---
 
@@ -151,7 +166,19 @@ fml lint --install
 
 # Run linters with auto-fix
 fml lint --fix
+
+# Composite pipeline: lint --fix, then reformat, across all active surfaces
+# in one command (useful as a single "clean everything up" entrypoint)
+fml fix
 ```
+
+`fml fix` is a two-stage composite: it first runs `lint(fix: true)` (so semantic
+autofixes like unused-import removal land first), then runs `format()` (so the
+result is guaranteed to be in the canonical formatted state) — see
+[docs/language-surfaces.md](docs/language-surfaces.md) for which surfaces have a
+real lint auto-fix mode (`supports_lint_fix()`) versus which only reformat under
+`fml fix` because their linter is diagnostics-only (e.g. Java's `checkstyle`,
+YAML's `yamllint`, TOML's `taplo lint`).
 
 ---
 
@@ -212,6 +239,7 @@ Usage: fml [OPTIONS] <COMMAND>
 Commands:
   fmt            Format source files across detected or specified surfaces
   lint           Lint source files across detected or specified surfaces
+  fix            Composite pipeline: lint --fix, then fmt, across all active surfaces
   sync           Sync native tool configs from canonical globals
   doctor         Diagnose installed toolchains with install hints
   install        Auto-install missing toolchains using system package managers
@@ -219,6 +247,7 @@ Commands:
   list-surfaces  List all supported surfaces and detection status
   schema         Print the JSON Schema for formality.toml
   lsp            Start the formality LSP server (stdio transport)
+  table          Render an opinionated semantic terminal table from JSON specification
   help           Print this message or the help of the given subcommand(s)
 
 Options:
@@ -230,20 +259,25 @@ Options:
 
 ### Key flags
 
-| Command      | Flag        | Description                                                 |
-| :----------- | :---------- | :---------------------------------------------------------- |
-| `fml fmt`    | `--check`   | Exit 1 if any file would be reformatted (CI safe)           |
-| `fml fmt`    | `--install` | Auto-install missing tools for active surfaces, then format |
-| `fml fmt`    | `--staged`  | Operate only on `git diff --cached` files                   |
-| `fml fmt`    | `--changed` | Operate only on `git diff` (unstaged) files                 |
-| `fml fmt`    | `--lang`    | Filter to a specific surface, e.g. `--lang rust`            |
-| `fml lint`   | `--fix`     | Apply auto-fixes where the tool supports it                 |
-| `fml lint`   | `--install` | Auto-install missing tools for active surfaces, then lint   |
-| `fml sync`   | `--check`   | Exit 1 if any native config is out of sync                  |
-| `fml doctor` | `--all`     | Show all surfaces, not just active ones                     |
-| `fml doctor` | `--install` | Auto-install all missing toolchains                         |
-| `fml init`   | `--force`   | Overwrite an existing config file                           |
-| `fml init`   | `--hidden`  | Write `.formality.toml` instead of `formality.toml`         |
+| Command      | Flag        | Description                                                                                    |
+| :----------- | :---------- | :--------------------------------------------------------------------------------------------- |
+| `fml fmt`    | `--check`   | Exit 1 if any file would be reformatted (CI safe)                                              |
+| `fml fmt`    | `--install` | Auto-install missing tools for active surfaces, then format                                    |
+| `fml fmt`    | `--staged`  | Operate only on `git diff --cached` files                                                      |
+| `fml fmt`    | `--changed` | Operate only on `git diff` (unstaged) files                                                    |
+| `fml fmt`    | `--lang`    | Filter to a specific surface, e.g. `--lang rust`                                               |
+| `fml lint`   | `--fix`     | Apply auto-fixes where the tool supports it                                                    |
+| `fml lint`   | `--install` | Auto-install missing tools for active surfaces, then lint                                      |
+| `fml fix`    | `--staged`  | Operate only on `git diff --cached` files                                                      |
+| `fml fix`    | `--changed` | Operate only on `git diff` (unstaged) files                                                    |
+| `fml fix`    | `--lang`    | Filter to a specific surface                                                                   |
+| `fml fix`    | `--install` | Auto-install missing tools for active surfaces, then fix                                       |
+| `fml sync`   | `--check`   | Exit 1 if any native config is out of sync                                                     |
+| `fml doctor` | `--all`     | Show all surfaces, not just active ones                                                        |
+| `fml doctor` | `--install` | Auto-install all missing toolchains                                                            |
+| `fml init`   | `--force`   | Overwrite an existing config file                                                              |
+| `fml init`   | `--hidden`  | Write `.formality.toml` instead of `formality.toml`                                            |
+| `fml table`  | `--json`    | Table spec JSON string (reads stdin if omitted) — see [docs/table-spec.md](docs/table-spec.md) |
 
 ---
 
