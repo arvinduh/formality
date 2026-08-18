@@ -34,18 +34,8 @@ impl Table {
     self
   }
 
-  pub fn add_rows(&mut self, rows: impl IntoIterator<Item = Row>) -> &mut Self {
-    self.rows.extend(rows);
-    self
-  }
-
   pub fn with_row(mut self, row: Row) -> Self {
     self.rows.push(row);
-    self
-  }
-
-  pub fn with_rows(mut self, rows: impl IntoIterator<Item = Row>) -> Self {
-    self.rows.extend(rows);
     self
   }
 

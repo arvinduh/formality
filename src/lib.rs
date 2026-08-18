@@ -430,18 +430,24 @@ fn resolve_git_paths(
   Ok(explicit_paths)
 }
 
-pub fn get_git_staged_files(root: &Path) -> Result<Vec<PathBuf>, String> {
-  let output = std::process::Command::new("git")
-    .arg("diff")
-    .arg("--name-only")
-    .arg("--cached")
-    .arg("--diff-filter=ACMR")
-    .current_dir(root)
+fn get_git_diff_files(
+  root: &Path,
+  staged: bool,
+  error_context: &str,
+) -> Result<Vec<PathBuf>, String> {
+  let mut cmd = std::process::Command::new("git");
+  cmd.arg("diff").arg("--name-only");
+  if staged {
+    cmd.arg("--cached");
+  }
+  cmd.arg("--diff-filter=ACMR").current_dir(root);
+
+  let output = cmd
     .output()
-    .map_err(|e| format!("Failed to execute git: {}", e))?;
+    .map_err(|e| format!("Failed to execute git: {e}"))?;
 
   if !output.status.success() {
-    return Err("Failed to query git staged files.".to_string());
+    return Err(format!("Failed to query git {error_context} files."));
   }
 
   let stdout = String::from_utf8_lossy(&output.stdout);
@@ -454,27 +460,12 @@ pub fn get_git_staged_files(root: &Path) -> Result<Vec<PathBuf>, String> {
   Ok(files)
 }
 
+pub fn get_git_staged_files(root: &Path) -> Result<Vec<PathBuf>, String> {
+  get_git_diff_files(root, true, "staged")
+}
+
 pub fn get_git_changed_files(root: &Path) -> Result<Vec<PathBuf>, String> {
-  let output = std::process::Command::new("git")
-    .arg("diff")
-    .arg("--name-only")
-    .arg("--diff-filter=ACMR")
-    .current_dir(root)
-    .output()
-    .map_err(|e| format!("Failed to execute git: {}", e))?;
-
-  if !output.status.success() {
-    return Err("Failed to query git changed files.".to_string());
-  }
-
-  let stdout = String::from_utf8_lossy(&output.stdout);
-  let files: Vec<PathBuf> = stdout
-    .lines()
-    .map(|l| root.join(l.trim()))
-    .filter(|p| p.is_file())
-    .collect();
-
-  Ok(files)
+  get_git_diff_files(root, false, "changed")
 }
 
 fn resolve_target_surfaces(

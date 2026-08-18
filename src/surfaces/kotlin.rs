@@ -48,9 +48,7 @@ pub fn build_ktlint_format_args(
     args.push("**/*.kt".to_string());
     args.push("**/*.kts".to_string());
   }
-  for arg in extra_args {
-    args.push(arg.clone());
-  }
+  args.extend(extra_args.iter().cloned());
   args
 }
 
@@ -74,9 +72,7 @@ pub fn build_ktlint_lint_args(
     args.push("**/*.kt".to_string());
     args.push("**/*.kts".to_string());
   }
-  for arg in extra_args {
-    args.push(arg.clone());
-  }
+  args.extend(extra_args.iter().cloned());
   args
 }
 
