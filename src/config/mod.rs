@@ -5,8 +5,8 @@ pub mod schema;
 
 pub use facets::LayoutFacet;
 pub use options::{
-  CppOptions, JsonOptions, MarkdownOptions, PythonOptions, RustOptions,
-  TomlOptions, TypstOptions, YamlOptions,
+  CppOptions, GoOptions, JsonOptions, MarkdownOptions, PythonOptions,
+  RustOptions, TomlOptions, TypstOptions, YamlOptions,
 };
 pub use resolve::{find_project_config, find_user_config};
 pub use schema::generate_schema;
@@ -171,6 +171,8 @@ pub struct LangConfig {
   #[serde(skip_serializing_if = "Option::is_none")]
   pub cpp: Option<CppOptions>,
   #[serde(skip_serializing_if = "Option::is_none")]
+  pub go: Option<GoOptions>,
+  #[serde(skip_serializing_if = "Option::is_none")]
   pub markdown: Option<MarkdownOptions>,
   #[serde(skip_serializing_if = "Option::is_none")]
   pub yaml: Option<YamlOptions>,
@@ -248,6 +250,13 @@ impl LangConfig {
         self.cpp = Some(other_cpp);
       }
     }
+    if let Some(other_go) = other.go {
+      if let Some(ref mut our_go) = self.go {
+        our_go.merge(other_go);
+      } else {
+        self.go = Some(other_go);
+      }
+    }
     if let Some(other_md) = other.markdown {
       if let Some(ref mut our_md) = self.markdown {
         our_md.merge(other_md);
@@ -318,6 +327,16 @@ impl LangConfig {
       &self.extra,
       |cur, other| cur.merge(other),
       |c| c.is_empty(),
+    )
+  }
+
+  pub fn go_options(&self) -> Option<GoOptions> {
+    extract_options(
+      self.go.clone(),
+      &self.options,
+      &self.extra,
+      |cur, other| cur.merge(other),
+      |g| g.is_empty(),
     )
   }
 
@@ -434,6 +453,7 @@ pub struct ResolvedLangConfig {
   pub rust: Option<RustOptions>,
   pub python: Option<PythonOptions>,
   pub cpp: Option<CppOptions>,
+  pub go: Option<GoOptions>,
   pub markdown: Option<MarkdownOptions>,
   pub yaml: Option<YamlOptions>,
   pub json: Option<JsonOptions>,
