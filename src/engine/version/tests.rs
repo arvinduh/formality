@@ -392,6 +392,96 @@ fn test_compatibility_policy_evaluation() {
 }
 
 #[test]
+fn test_compatibility_policy_mstv_boundary_is_compatible() {
+  // A tool at exactly the MSTV boundary (current == minimum) must be
+  // Compatible, not Outdated — the `>=` comparison in `evaluate`/
+  // `evaluate_with_raw` was previously only exercised with strictly
+  // greater/lesser versions, leaving the equality edge untested.
+  let min = Version::new(1, 4, 0);
+  let exact = Version::new(1, 4, 0);
+
+  let status = CompatibilityPolicy::evaluate(Some(&exact), &min);
+  assert!(status.is_compatible());
+  assert!(!status.is_outdated());
+  assert_eq!(
+    status,
+    ToolStatus::Compatible {
+      current: exact.clone(),
+      minimum: min.clone()
+    }
+  );
+
+  let status_raw = CompatibilityPolicy::evaluate_with_raw(
+    Some(exact.clone()),
+    Some("rustfmt 1.4.0".to_string()),
+    &min,
+  );
+  assert!(status_raw.is_compatible());
+
+  // One patch below the boundary must be Outdated.
+  let just_below = Version::new(1, 3, 9);
+  let status_below = CompatibilityPolicy::evaluate(Some(&just_below), &min);
+  assert!(status_below.is_outdated());
+}
+
+#[test]
+fn test_compatibility_policy_evaluate_with_raw_none_paths() {
+  let min = Version::new(1, 0, 0);
+
+  // Neither a parsed version nor raw output at all: NotFound.
+  let status_neither = CompatibilityPolicy::evaluate_with_raw(None, None, &min);
+  assert!(status_neither.is_not_found());
+
+  // Raw output present but empty/whitespace-only: still NotFound, not
+  // UnknownVersion — an empty banner carries no diagnostic value.
+  let status_blank =
+    CompatibilityPolicy::evaluate_with_raw(None, Some("   ".to_string()), &min);
+  assert!(status_blank.is_not_found());
+
+  // A parsed current version takes precedence over raw output entirely,
+  // even when both are present.
+  let status_both = CompatibilityPolicy::evaluate_with_raw(
+    Some(Version::new(2, 0, 0)),
+    Some("garbage banner text".to_string()),
+    &min,
+  );
+  assert!(status_both.is_compatible());
+}
+
+#[test]
+fn test_compatibility_policy_check_mstv() {
+  // A tool with a registered MSTV: check_mstv should short-circuit to
+  // check() using the registry's minimum version. We can't assert a
+  // specific outcome without knowing whether rustfmt is installed in the
+  // test environment, but the call must not panic and must return the
+  // registry-backed variant (never silently None for a known tool name).
+  let result = CompatibilityPolicy::check_mstv("rustfmt");
+  assert!(result.is_some());
+
+  // A tool with no MSTV registry entry must yield None, not panic or
+  // fall back to some default minimum.
+  assert_eq!(CompatibilityPolicy::check_mstv("totally-unknown-tool"), None);
+}
+
+#[test]
+fn test_get_tool_mstv_entry_clippy_aliases_resolve_to_same_entry() {
+  // clippy-driver / cargo-clippy are alternate binary names for the same
+  // logical "clippy" tool; get_tool_mstv_entry must alias them to the
+  // single `clippy` registry entry rather than treating them as unknown.
+  let canonical = get_tool_mstv_entry("clippy").expect("clippy registered");
+  let via_driver =
+    get_tool_mstv_entry("clippy-driver").expect("clippy-driver aliases");
+  let via_cargo =
+    get_tool_mstv_entry("cargo-clippy").expect("cargo-clippy aliases");
+
+  assert_eq!(canonical.binary, "clippy");
+  assert_eq!(via_driver.binary, "clippy");
+  assert_eq!(via_cargo.binary, "clippy");
+  assert_eq!(canonical.min_version, via_driver.min_version);
+  assert_eq!(canonical.min_version, via_cargo.min_version);
+}
+
+#[test]
 fn test_from_str_trait() {
   let parsed: Result<Version, _> = "3.5.1".parse();
   assert_eq!(parsed, Ok(Version::new(3, 5, 1)));

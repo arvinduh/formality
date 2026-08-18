@@ -203,7 +203,10 @@ mod tests {
   use std::sync::Arc;
   use tempfile::TempDir;
 
-  fn ctx_for(temp: &TempDir, lang_config: ResolvedLangConfig) -> ExecutionContext {
+  fn ctx_for(
+    temp: &TempDir,
+    lang_config: ResolvedLangConfig,
+  ) -> ExecutionContext {
     ExecutionContext {
       root: temp.path().to_path_buf(),
       paths: Arc::new(Vec::new()),

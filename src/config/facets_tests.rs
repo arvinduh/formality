@@ -261,11 +261,17 @@ fn test_surface_facet_declarations() {
     ),
   ];
 
-  let facet_order =
-    [
-      IndentTabs, IndentWidth, LineLength, QuoteStyle, TrailingComma,
-      ImportSort, ProseWrap, Edition, Standard,
-    ];
+  let facet_order = [
+    IndentTabs,
+    IndentWidth,
+    LineLength,
+    QuoteStyle,
+    TrailingComma,
+    ImportSort,
+    ProseWrap,
+    Edition,
+    Standard,
+  ];
 
   assert_eq!(
     golden.len(),
