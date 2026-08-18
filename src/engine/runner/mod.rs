@@ -141,18 +141,18 @@ impl Runner {
 
     let mut diagnostics: Vec<(String, String)> = Vec::new();
 
-    let mut runner_table = crate::table::Table::new(vec![
-      crate::table::Column::new(crate::table::Cell::text(""))
-        .width(crate::table::WidthPolicy::Fixed(8)),
-      crate::table::Column::new(crate::table::Cell::text(""))
-        .width(crate::table::WidthPolicy::Fixed(14)),
-      crate::table::Column::new(crate::table::Cell::text(""))
-        .width(crate::table::WidthPolicy::Auto),
-      crate::table::Column::new(crate::table::Cell::text(""))
-        .align(crate::table::Align::Right)
-        .width(crate::table::WidthPolicy::Fixed(12)),
+    let mut runner_table = crate::ui::table::Table::new(vec![
+      crate::ui::table::Column::new(crate::ui::table::Cell::text(""))
+        .width(crate::ui::table::WidthPolicy::Fixed(8)),
+      crate::ui::table::Column::new(crate::ui::table::Cell::text(""))
+        .width(crate::ui::table::WidthPolicy::Fixed(14)),
+      crate::ui::table::Column::new(crate::ui::table::Cell::text(""))
+        .width(crate::ui::table::WidthPolicy::Auto),
+      crate::ui::table::Column::new(crate::ui::table::Cell::text(""))
+        .align(crate::ui::table::Align::Right)
+        .width(crate::ui::table::WidthPolicy::Fixed(12)),
     ])
-    .layout(crate::table::Layout::compact().indent(2).padding(0, 1));
+    .layout(crate::ui::table::Layout::compact().indent(2).padding(0, 1));
 
     for res in &results {
       let duration_str = format!("{:.2?}", res.duration);
@@ -160,18 +160,24 @@ impl Runner {
       match &res.status {
         SurfaceStatus::Passed => {
           pass_count += 1;
-          runner_table.add_row(crate::table::Row::new(vec![
-            crate::table::Cell::styled("[PASS] ", crate::table::Style::Ok),
-            crate::table::Cell::styled(
+          runner_table.add_row(crate::ui::table::Row::new(vec![
+            crate::ui::table::Cell::styled(
+              "[PASS] ",
+              crate::ui::table::Style::Ok,
+            ),
+            crate::ui::table::Cell::styled(
               res.surface_name,
-              crate::table::Style::Strong,
+              crate::ui::table::Style::Strong,
             ),
-            crate::table::Cell::styled(
+            crate::ui::table::Cell::styled(
               "Clean / Formatted",
-              crate::table::Style::Dim,
+              crate::ui::table::Style::Dim,
             ),
-            crate::table::Cell::styled(duration_str, crate::table::Style::Dim)
-              .align(crate::table::Align::Right),
+            crate::ui::table::Cell::styled(
+              duration_str,
+              crate::ui::table::Style::Dim,
+            )
+            .align(crate::ui::table::Align::Right),
           ]));
         }
         SurfaceStatus::ConfigSynced { file, created } => {
@@ -181,15 +187,24 @@ impl Runner {
           } else {
             format!("Synced {}", file)
           };
-          runner_table.add_row(crate::table::Row::new(vec![
-            crate::table::Cell::styled("[SYNC] ", crate::table::Style::Ok),
-            crate::table::Cell::styled(
-              res.surface_name,
-              crate::table::Style::Strong,
+          runner_table.add_row(crate::ui::table::Row::new(vec![
+            crate::ui::table::Cell::styled(
+              "[SYNC] ",
+              crate::ui::table::Style::Ok,
             ),
-            crate::table::Cell::styled(detail, crate::table::Style::Info),
-            crate::table::Cell::styled(duration_str, crate::table::Style::Dim)
-              .align(crate::table::Align::Right),
+            crate::ui::table::Cell::styled(
+              res.surface_name,
+              crate::ui::table::Style::Strong,
+            ),
+            crate::ui::table::Cell::styled(
+              detail,
+              crate::ui::table::Style::Info,
+            ),
+            crate::ui::table::Cell::styled(
+              duration_str,
+              crate::ui::table::Style::Dim,
+            )
+            .align(crate::ui::table::Align::Right),
           ]));
         }
         SurfaceStatus::ConfigDrifted { file, diff } => {
@@ -197,18 +212,24 @@ impl Runner {
           if exit_code < 1 {
             exit_code = 1;
           }
-          runner_table.add_row(crate::table::Row::new(vec![
-            crate::table::Cell::styled("[DRIFT]", crate::table::Style::Warn),
-            crate::table::Cell::styled(
+          runner_table.add_row(crate::ui::table::Row::new(vec![
+            crate::ui::table::Cell::styled(
+              "[DRIFT]",
+              crate::ui::table::Style::Warn,
+            ),
+            crate::ui::table::Cell::styled(
               res.surface_name,
-              crate::table::Style::Strong,
+              crate::ui::table::Style::Strong,
             ),
-            crate::table::Cell::styled(
+            crate::ui::table::Cell::styled(
               format!("{} out of sync", file),
-              crate::table::Style::Warn,
+              crate::ui::table::Style::Warn,
             ),
-            crate::table::Cell::styled(duration_str, crate::table::Style::Dim)
-              .align(crate::table::Align::Right),
+            crate::ui::table::Cell::styled(
+              duration_str,
+              crate::ui::table::Style::Dim,
+            )
+            .align(crate::ui::table::Align::Right),
           ]));
           diagnostics.push((
             res.surface_name.to_string(),
@@ -223,18 +244,24 @@ impl Runner {
           if exit_code < 1 {
             exit_code = 1;
           }
-          runner_table.add_row(crate::table::Row::new(vec![
-            crate::table::Cell::styled("[MANUAL]", crate::table::Style::Warn),
-            crate::table::Cell::styled(
+          runner_table.add_row(crate::ui::table::Row::new(vec![
+            crate::ui::table::Cell::styled(
+              "[MANUAL]",
+              crate::ui::table::Style::Warn,
+            ),
+            crate::ui::table::Cell::styled(
               res.surface_name,
-              crate::table::Style::Strong,
+              crate::ui::table::Style::Strong,
             ),
-            crate::table::Cell::styled(
+            crate::ui::table::Cell::styled(
               format!("{} is manually managed", file),
-              crate::table::Style::Warn,
+              crate::ui::table::Style::Warn,
             ),
-            crate::table::Cell::styled(duration_str, crate::table::Style::Dim)
-              .align(crate::table::Align::Right),
+            crate::ui::table::Cell::styled(
+              duration_str,
+              crate::ui::table::Style::Dim,
+            )
+            .align(crate::ui::table::Align::Right),
           ]));
           diagnostics.push((res.surface_name.to_string(), suggestion.clone()));
         }
@@ -243,18 +270,24 @@ impl Runner {
           if exit_code < 1 {
             exit_code = 1;
           }
-          runner_table.add_row(crate::table::Row::new(vec![
-            crate::table::Cell::styled("[FAIL] ", crate::table::Style::Error),
-            crate::table::Cell::styled(
+          runner_table.add_row(crate::ui::table::Row::new(vec![
+            crate::ui::table::Cell::styled(
+              "[FAIL] ",
+              crate::ui::table::Style::Error,
+            ),
+            crate::ui::table::Cell::styled(
               res.surface_name,
-              crate::table::Style::Strong,
+              crate::ui::table::Style::Strong,
             ),
-            crate::table::Cell::styled(
+            crate::ui::table::Cell::styled(
               "Violations found",
-              crate::table::Style::Error,
+              crate::ui::table::Style::Error,
             ),
-            crate::table::Cell::styled(duration_str, crate::table::Style::Dim)
-              .align(crate::table::Align::Right),
+            crate::ui::table::Cell::styled(
+              duration_str,
+              crate::ui::table::Style::Dim,
+            )
+            .align(crate::ui::table::Align::Right),
           ]));
           let detail = if let Some(d) = diff {
             d.clone()
@@ -269,18 +302,24 @@ impl Runner {
         } => {
           tool_missing_count += 1;
           exit_code = 2;
-          runner_table.add_row(crate::table::Row::new(vec![
-            crate::table::Cell::styled("[MISS] ", crate::table::Style::Warn),
-            crate::table::Cell::styled(
+          runner_table.add_row(crate::ui::table::Row::new(vec![
+            crate::ui::table::Cell::styled(
+              "[MISS] ",
+              crate::ui::table::Style::Warn,
+            ),
+            crate::ui::table::Cell::styled(
               res.surface_name,
-              crate::table::Style::Strong,
+              crate::ui::table::Style::Strong,
             ),
-            crate::table::Cell::styled(
+            crate::ui::table::Cell::styled(
               format!("Missing binary: {}", binary),
-              crate::table::Style::Warn,
+              crate::ui::table::Style::Warn,
             ),
-            crate::table::Cell::styled(duration_str, crate::table::Style::Dim)
-              .align(crate::table::Align::Right),
+            crate::ui::table::Cell::styled(
+              duration_str,
+              crate::ui::table::Style::Dim,
+            )
+            .align(crate::ui::table::Align::Right),
           ]));
           diagnostics.push((
             res.surface_name.to_string(),
@@ -293,42 +332,54 @@ impl Runner {
         SurfaceStatus::ExecutionError { message } => {
           error_count += 1;
           exit_code = 2;
-          runner_table.add_row(crate::table::Row::new(vec![
-            crate::table::Cell::styled("[ERR]  ", crate::table::Style::Error),
-            crate::table::Cell::styled(
+          runner_table.add_row(crate::ui::table::Row::new(vec![
+            crate::ui::table::Cell::styled(
+              "[ERR]  ",
+              crate::ui::table::Style::Error,
+            ),
+            crate::ui::table::Cell::styled(
               res.surface_name,
-              crate::table::Style::Strong,
+              crate::ui::table::Style::Strong,
             ),
-            crate::table::Cell::styled(
+            crate::ui::table::Cell::styled(
               "Execution error",
-              crate::table::Style::Error,
+              crate::ui::table::Style::Error,
             ),
-            crate::table::Cell::styled(duration_str, crate::table::Style::Dim)
-              .align(crate::table::Align::Right),
+            crate::ui::table::Cell::styled(
+              duration_str,
+              crate::ui::table::Style::Dim,
+            )
+            .align(crate::ui::table::Align::Right),
           ]));
           diagnostics.push((res.surface_name.to_string(), message.clone()));
         }
         SurfaceStatus::Skipped { reason } => {
-          runner_table.add_row(crate::table::Row::new(vec![
-            crate::table::Cell::styled("[SKIP] ", crate::table::Style::Dim),
-            crate::table::Cell::styled(
+          runner_table.add_row(crate::ui::table::Row::new(vec![
+            crate::ui::table::Cell::styled(
+              "[SKIP] ",
+              crate::ui::table::Style::Dim,
+            ),
+            crate::ui::table::Cell::styled(
               res.surface_name,
-              crate::table::Style::Dim,
+              crate::ui::table::Style::Dim,
             ),
-            crate::table::Cell::styled(
+            crate::ui::table::Cell::styled(
               reason.clone(),
-              crate::table::Style::Dim,
+              crate::ui::table::Style::Dim,
             ),
-            crate::table::Cell::styled(duration_str, crate::table::Style::Dim)
-              .align(crate::table::Align::Right),
+            crate::ui::table::Cell::styled(
+              duration_str,
+              crate::ui::table::Style::Dim,
+            )
+            .align(crate::ui::table::Align::Right),
           ]));
         }
       }
     }
 
-    let palette = crate::table::Palette::detect();
-    let rendered_table = crate::table::render(&runner_table, &palette);
-    let separator = crate::table::separator_for_content(&rendered_table);
+    let palette = crate::ui::table::Palette::detect();
+    let rendered_table = crate::ui::table::render(&runner_table, &palette);
+    let separator = crate::ui::table::separator_for_content(&rendered_table);
 
     println!(
       "{} {} {}",
@@ -541,115 +592,4 @@ fn normalize_diagnostics(raw: &str) -> String {
 }
 
 #[cfg(test)]
-mod tests {
-  use super::*;
-  use std::time::Duration;
-
-  #[test]
-  fn test_combine_fix_results_passed_and_skipped() {
-    let lint_res = SurfaceResult {
-      surface_name: "yaml",
-      status: SurfaceStatus::Skipped {
-        reason: "Tool does not support autofix".to_string(),
-      },
-      duration: Duration::from_millis(10),
-    };
-    let fmt_res = SurfaceResult {
-      surface_name: "yaml",
-      status: SurfaceStatus::Passed,
-      duration: Duration::from_millis(20),
-    };
-
-    let combined = combine_fix_results(lint_res, fmt_res);
-    assert_eq!(combined.surface_name, "yaml");
-    assert_eq!(combined.duration, Duration::from_millis(30));
-    assert!(matches!(combined.status, SurfaceStatus::Passed));
-  }
-
-  #[test]
-  fn test_combine_fix_results_both_passed() {
-    let lint_res = SurfaceResult {
-      surface_name: "python",
-      status: SurfaceStatus::Passed,
-      duration: Duration::from_millis(15),
-    };
-    let fmt_res = SurfaceResult {
-      surface_name: "python",
-      status: SurfaceStatus::Passed,
-      duration: Duration::from_millis(25),
-    };
-
-    let combined = combine_fix_results(lint_res, fmt_res);
-    assert_eq!(combined.surface_name, "python");
-    assert_eq!(combined.duration, Duration::from_millis(40));
-    assert!(matches!(combined.status, SurfaceStatus::Passed));
-  }
-
-  #[test]
-  fn test_combine_fix_results_violations_precedence() {
-    let lint_res = SurfaceResult {
-      surface_name: "rust",
-      status: SurfaceStatus::ViolationsFound {
-        message: "warning: unused".to_string(),
-        diff: None,
-      },
-      duration: Duration::from_millis(50),
-    };
-    let fmt_res = SurfaceResult {
-      surface_name: "rust",
-      status: SurfaceStatus::Passed,
-      duration: Duration::from_millis(30),
-    };
-
-    let combined = combine_fix_results(lint_res, fmt_res);
-    assert!(matches!(
-      combined.status,
-      SurfaceStatus::ViolationsFound { message, .. } if message.contains("warning: unused")
-    ));
-  }
-
-  #[test]
-  fn test_combine_fix_results_tool_missing_precedence() {
-    let lint_res = SurfaceResult {
-      surface_name: "python",
-      status: SurfaceStatus::ToolMissing {
-        binary: "ruff".to_string(),
-        install_hint: "pip install ruff".to_string(),
-      },
-      duration: Duration::from_millis(5),
-    };
-    let fmt_res = SurfaceResult {
-      surface_name: "python",
-      status: SurfaceStatus::Passed,
-      duration: Duration::from_millis(5),
-    };
-
-    let combined = combine_fix_results(lint_res, fmt_res);
-    assert!(matches!(
-      combined.status,
-      SurfaceStatus::ToolMissing { binary, .. } if binary == "ruff"
-    ));
-  }
-
-  #[test]
-  fn test_combine_fix_results_execution_error_precedence() {
-    let lint_res = SurfaceResult {
-      surface_name: "cpp",
-      status: SurfaceStatus::ExecutionError {
-        message: "clang-tidy crashed".to_string(),
-      },
-      duration: Duration::from_millis(10),
-    };
-    let fmt_res = SurfaceResult {
-      surface_name: "cpp",
-      status: SurfaceStatus::Passed,
-      duration: Duration::from_millis(10),
-    };
-
-    let combined = combine_fix_results(lint_res, fmt_res);
-    assert!(matches!(
-      combined.status,
-      SurfaceStatus::ExecutionError { message } if message.contains("clang-tidy crashed")
-    ));
-  }
-}
+mod tests;

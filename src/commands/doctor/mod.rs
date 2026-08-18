@@ -1,18 +1,30 @@
+pub mod gitignore;
+pub mod venv;
+
+pub use gitignore::{
+  GitignoreHygieneIssue, GitignoreHygieneReport, check_gitignore_hygiene,
+  check_gitignore_hygiene_content, is_pattern_ignored,
+};
+pub use venv::{
+  VirtualEnvInfo, VirtualEnvSource, detect_virtualenv,
+  detect_virtualenv_with_env, find_venv_interpreter,
+};
+
 use crate::config::FormalityConfig;
+use crate::engine::version::{
+  ToolStatus, Version, check_tool_compatibility, get_raw_tool_version,
+  minimum_supported_tool_version, probe_tool_version,
+};
 use crate::surfaces::{
   LanguageSurface, ToolInfo, all_surfaces, create_tool_command,
   detect_surfaces_smart,
 };
-use crate::table::{
+use crate::ui::table::{
   Cell, Column, Layout, Palette, Row, Span, Style, Table, WidthPolicy, render,
-};
-use crate::version::{
-  ToolStatus, Version, check_tool_compatibility, get_raw_tool_version,
-  minimum_supported_tool_version, probe_tool_version,
 };
 use colored::Colorize;
 use std::collections::{HashMap, HashSet};
-use std::path::{Path, PathBuf};
+use std::path::Path;
 
 /// Install a deduplicated list of missing tools.
 ///
@@ -24,7 +36,7 @@ pub fn install_missing_tools(missing: &[ToolInfo]) -> bool {
     return true;
   }
 
-  let separator = crate::table::separator_line(0);
+  let separator = crate::ui::table::separator_line(0);
   println!("\n{}", separator.dimmed());
   println!("{}", "Auto-installing Missing Toolchains:".bold().cyan());
 
@@ -124,241 +136,6 @@ pub struct ToolLookupResult {
   pub parsed_version: Option<Version>,
   pub status: Option<ToolStatus>,
 }
-
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub enum VirtualEnvSource {
-  EnvVar,
-  Workspace(String),
-  None,
-}
-
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct VirtualEnvInfo {
-  pub is_active: bool,
-  pub venv_path: Option<PathBuf>,
-  pub interpreter_path: Option<PathBuf>,
-  pub source: VirtualEnvSource,
-}
-
-/// Look for Python interpreter binary inside a virtual environment directory.
-pub fn find_venv_interpreter(venv_path: &Path) -> Option<PathBuf> {
-  let candidates = [
-    venv_path.join("Scripts").join("python.exe"),
-    venv_path.join("Scripts").join("python"),
-    venv_path.join("bin").join("python"),
-    venv_path.join("bin").join("python3"),
-    venv_path.join("bin").join("python.exe"),
-    venv_path.join("python.exe"),
-    venv_path.join("python"),
-  ];
-  for candidate in &candidates {
-    if candidate.is_file() {
-      return Some(candidate.clone());
-    }
-  }
-  None
-}
-
-/// Detects active virtual environment (via `VIRTUAL_ENV`) or workspace virtualenv directory (`.venv`, `venv`, `env`, `.env`).
-pub fn detect_virtualenv(root: &Path) -> VirtualEnvInfo {
-  detect_virtualenv_with_env(
-    root,
-    std::env::var_os("VIRTUAL_ENV").map(PathBuf::from),
-  )
-}
-
-pub fn detect_virtualenv_with_env(
-  root: &Path,
-  env_var: Option<PathBuf>,
-) -> VirtualEnvInfo {
-  if let Some(venv_dir) = env_var.filter(|p| !p.as_os_str().is_empty()) {
-    let interpreter = find_venv_interpreter(&venv_dir).or_else(|| {
-      which::which("python3")
-        .or_else(|_| which::which("python"))
-        .ok()
-    });
-    return VirtualEnvInfo {
-      is_active: true,
-      venv_path: Some(venv_dir),
-      interpreter_path: interpreter,
-      source: VirtualEnvSource::EnvVar,
-    };
-  }
-
-  let candidates = [".venv", "venv", "env", ".env"];
-  for dir_name in candidates {
-    let dir = root.join(dir_name);
-    if dir.is_dir() {
-      let interpreter = find_venv_interpreter(&dir).or_else(|| {
-        which::which("python3")
-          .or_else(|_| which::which("python"))
-          .ok()
-      });
-      return VirtualEnvInfo {
-        is_active: false,
-        venv_path: Some(dir),
-        interpreter_path: interpreter,
-        source: VirtualEnvSource::Workspace(dir_name.to_string()),
-      };
-    }
-  }
-
-  let sys_interpreter = which::which("python3")
-    .or_else(|_| which::which("python"))
-    .ok();
-  VirtualEnvInfo {
-    is_active: false,
-    venv_path: None,
-    interpreter_path: sys_interpreter,
-    source: VirtualEnvSource::None,
-  }
-}
-
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct GitignoreHygieneIssue {
-  pub category: &'static str,
-  pub missing_patterns: Vec<&'static str>,
-}
-
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct GitignoreHygieneReport {
-  pub gitignore_exists: bool,
-  pub issues: Vec<GitignoreHygieneIssue>,
-}
-
-/// Checks whether a specific pattern is ignored given `.gitignore` lines.
-pub fn is_pattern_ignored(lines: &[&str], entry: &str) -> bool {
-  let normalized_entry = entry.trim_matches('/');
-  for raw_line in lines {
-    let line = raw_line.trim();
-    if line.is_empty() || line.starts_with('#') || line.starts_with('!') {
-      continue;
-    }
-    let trimmed = line
-      .trim_start_matches("**/")
-      .trim_start_matches('/')
-      .trim_end_matches("/**")
-      .trim_end_matches('/');
-    if trimmed == normalized_entry {
-      return true;
-    }
-    if normalized_entry == "__pycache__"
-      && (line == "*.py[cod]" || line == "*.pyc" || line == "*$py.class")
-    {
-      return true;
-    }
-  }
-  false
-}
-
-/// Validates that cache/artifact directories for active language toolchains are ignored in `.gitignore`.
-pub fn check_gitignore_hygiene_content(
-  gitignore_content: Option<&str>,
-  has_python: bool,
-  has_rust: bool,
-  has_js: bool,
-) -> GitignoreHygieneReport {
-  let gitignore_exists = gitignore_content.is_some();
-  let lines: Vec<&str> = gitignore_content.unwrap_or("").lines().collect();
-  let mut issues = Vec::new();
-
-  if has_python {
-    let python_patterns: &[&'static str] =
-      &[".ruff_cache", "__pycache__", ".pytest_cache"];
-    let mut missing = Vec::new();
-    for &pattern in python_patterns {
-      if !is_pattern_ignored(&lines, pattern) {
-        missing.push(pattern);
-      }
-    }
-    if !missing.is_empty() {
-      issues.push(GitignoreHygieneIssue {
-        category: "Python",
-        missing_patterns: missing,
-      });
-    }
-  }
-
-  if has_rust {
-    let rust_patterns: &[&'static str] = &["target"];
-    let mut missing = Vec::new();
-    for &pattern in rust_patterns {
-      if !is_pattern_ignored(&lines, pattern) {
-        missing.push(pattern);
-      }
-    }
-    if !missing.is_empty() {
-      issues.push(GitignoreHygieneIssue {
-        category: "Rust",
-        missing_patterns: missing,
-      });
-    }
-  }
-
-  if has_js {
-    let js_patterns: &[&'static str] = &["node_modules"];
-    let mut missing = Vec::new();
-    for &pattern in js_patterns {
-      if !is_pattern_ignored(&lines, pattern) {
-        missing.push(pattern);
-      }
-    }
-    if !missing.is_empty() {
-      issues.push(GitignoreHygieneIssue {
-        category: "JavaScript / Node",
-        missing_patterns: missing,
-      });
-    }
-  }
-
-  GitignoreHygieneReport {
-    gitignore_exists,
-    issues,
-  }
-}
-
-pub fn check_gitignore_hygiene(
-  root: &Path,
-  surfaces: &[Box<dyn LanguageSurface>],
-) -> GitignoreHygieneReport {
-  let gitignore_path = root.join(".gitignore");
-  let gitignore_content = std::fs::read_to_string(&gitignore_path).ok();
-
-  let has_python = surfaces
-    .iter()
-    .any(|s| s.name() == "python" || s.aliases().contains(&"py"))
-    || root.join("pyproject.toml").is_file()
-    || root.join("requirements.txt").is_file()
-    || root.join("setup.py").is_file()
-    || root.join("Pipfile").is_file()
-    || root.join("ruff.toml").is_file()
-    || root.join(".ruff.toml").is_file();
-
-  let has_rust = surfaces
-    .iter()
-    .any(|s| s.name() == "rust" || s.aliases().contains(&"rs"))
-    || root.join("Cargo.toml").is_file();
-
-  let has_js = root.join("package.json").is_file()
-    || root.join("node_modules").is_dir()
-    || root.join("package-lock.json").is_file()
-    || root.join("yarn.lock").is_file()
-    || root.join("pnpm-lock.yaml").is_file()
-    || root.join("bun.lockb").is_file()
-    || root.join("bun.lock").is_file()
-    || surfaces.iter().any(|s| {
-      let n = s.name();
-      n == "markdown" || n == "yaml" || n == "json"
-    });
-
-  check_gitignore_hygiene_content(
-    gitignore_content.as_deref(),
-    has_python,
-    has_rust,
-    has_js,
-  )
-}
-
 pub fn run_doctor(
   root: &Path,
   show_all: bool,
@@ -497,7 +274,7 @@ pub fn run_doctor(
 
   let palette = Palette::detect();
   let rendered_table = render(&doctor_table, &palette);
-  let separator = crate::table::separator_for_content(&rendered_table);
+  let separator = crate::ui::table::separator_for_content(&rendered_table);
 
   println!(
     "{} {}",
@@ -676,161 +453,4 @@ pub fn run_doctor(
 }
 
 #[cfg(test)]
-mod tests {
-  use super::*;
-  use tempfile::tempdir;
-
-  #[test]
-  fn test_detect_virtualenv_from_env_var() {
-    let temp = tempdir().unwrap();
-    let mock_venv = temp.path().join("custom_venv");
-    std::fs::create_dir_all(&mock_venv).unwrap();
-
-    let info = detect_virtualenv_with_env(temp.path(), Some(mock_venv.clone()));
-    assert!(info.is_active);
-    assert_eq!(info.venv_path, Some(mock_venv));
-    assert_eq!(info.source, VirtualEnvSource::EnvVar);
-  }
-
-  #[test]
-  fn test_detect_virtualenv_from_workspace_dirs() {
-    for dir_name in &[".venv", "venv", "env", ".env"] {
-      let temp = tempdir().unwrap();
-      let venv_dir = temp.path().join(dir_name);
-      std::fs::create_dir_all(&venv_dir).unwrap();
-
-      let info = detect_virtualenv_with_env(temp.path(), None);
-      assert!(!info.is_active);
-      assert_eq!(info.venv_path, Some(venv_dir));
-      assert_eq!(
-        info.source,
-        VirtualEnvSource::Workspace(dir_name.to_string())
-      );
-    }
-  }
-
-  #[test]
-  fn test_detect_virtualenv_precedence() {
-    let temp = tempdir().unwrap();
-    let dot_venv = temp.path().join(".venv");
-    let venv = temp.path().join("venv");
-    std::fs::create_dir_all(&dot_venv).unwrap();
-    std::fs::create_dir_all(&venv).unwrap();
-
-    let info = detect_virtualenv_with_env(temp.path(), None);
-    assert_eq!(info.venv_path, Some(dot_venv));
-    assert_eq!(
-      info.source,
-      VirtualEnvSource::Workspace(".venv".to_string())
-    );
-  }
-
-  #[test]
-  fn test_detect_virtualenv_none() {
-    let temp = tempdir().unwrap();
-    let info = detect_virtualenv_with_env(temp.path(), None);
-    assert!(!info.is_active);
-    assert_eq!(info.venv_path, None);
-    assert_eq!(info.source, VirtualEnvSource::None);
-  }
-
-  #[test]
-  fn test_find_venv_interpreter() {
-    let temp = tempdir().unwrap();
-    let bin_dir = temp.path().join("bin");
-    std::fs::create_dir_all(&bin_dir).unwrap();
-    let python_bin = bin_dir.join("python");
-    std::fs::write(&python_bin, "#!/bin/sh\n").unwrap();
-
-    let found = find_venv_interpreter(temp.path());
-    assert_eq!(found, Some(python_bin));
-  }
-
-  #[test]
-  fn test_is_pattern_ignored() {
-    let lines = vec![
-      "# Comments should be ignored",
-      "",
-      "target/",
-      "/.ruff_cache/",
-      "__pycache__",
-      "**/node_modules/**",
-      "!not_ignored",
-    ];
-
-    assert!(is_pattern_ignored(&lines, "target"));
-    assert!(is_pattern_ignored(&lines, ".ruff_cache"));
-    assert!(is_pattern_ignored(&lines, "__pycache__"));
-    assert!(is_pattern_ignored(&lines, "node_modules"));
-    assert!(!is_pattern_ignored(&lines, ".pytest_cache"));
-    assert!(!is_pattern_ignored(&lines, "not_ignored"));
-  }
-
-  #[test]
-  fn test_is_pattern_ignored_pyc_alias() {
-    let lines = vec!["*.pyc"];
-    assert!(is_pattern_ignored(&lines, "__pycache__"));
-  }
-
-  #[test]
-  fn test_check_gitignore_hygiene_all_satisfied() {
-    let gitignore = r#"
-/target/
-.ruff_cache/
-__pycache__/
-.pytest_cache/
-node_modules/
-"#;
-    let report = check_gitignore_hygiene_content(
-      Some(gitignore),
-      true, // has_python
-      true, // has_rust
-      true, // has_js
-    );
-    assert!(report.gitignore_exists);
-    assert!(report.issues.is_empty());
-  }
-
-  #[test]
-  fn test_check_gitignore_hygiene_missing_entries() {
-    let gitignore = r#"
-target/
-"#;
-    let report = check_gitignore_hygiene_content(
-      Some(gitignore),
-      true, // has_python
-      true, // has_rust
-      true, // has_js
-    );
-    assert!(report.gitignore_exists);
-    assert_eq!(report.issues.len(), 2);
-    let py_issue = report
-      .issues
-      .iter()
-      .find(|i| i.category == "Python")
-      .unwrap();
-    assert_eq!(
-      py_issue.missing_patterns,
-      vec![".ruff_cache", "__pycache__", ".pytest_cache"]
-    );
-    let js_issue = report
-      .issues
-      .iter()
-      .find(|i| i.category == "JavaScript / Node")
-      .unwrap();
-    assert_eq!(js_issue.missing_patterns, vec!["node_modules"]);
-  }
-
-  #[test]
-  fn test_check_gitignore_hygiene_no_file() {
-    let report = check_gitignore_hygiene_content(
-      None, true,  // has_python
-      true,  // has_rust
-      false, // has_js
-    );
-    assert!(!report.gitignore_exists);
-    assert_eq!(report.issues.len(), 2);
-    assert!(report.issues.iter().any(|i| i.category == "Python"));
-    assert!(report.issues.iter().any(|i| i.category == "Rust"));
-  }
-}
+mod tests;
