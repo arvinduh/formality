@@ -5,8 +5,9 @@ pub mod schema;
 
 pub use facets::LayoutFacet;
 pub use options::{
-  CppOptions, GoOptions, JsonOptions, KotlinOptions, MarkdownOptions,
-  PythonOptions, RustOptions, TomlOptions, TypstOptions, YamlOptions,
+  CppOptions, GoOptions, JavaScriptOptions, JsonOptions, KotlinOptions,
+  MarkdownOptions, PythonOptions, RustOptions, TomlOptions, TypstOptions,
+  YamlOptions,
 };
 pub use resolve::{find_project_config, find_user_config};
 pub use schema::generate_schema;
@@ -183,6 +184,8 @@ pub struct LangConfig {
   #[serde(skip_serializing_if = "Option::is_none")]
   pub typst: Option<TypstOptions>,
   #[serde(skip_serializing_if = "Option::is_none")]
+  pub javascript: Option<JavaScriptOptions>,
+  #[serde(skip_serializing_if = "Option::is_none")]
   pub kotlin: Option<KotlinOptions>,
   #[serde(skip_serializing_if = "Option::is_none")]
   #[schemars(skip)]
@@ -292,6 +295,13 @@ impl LangConfig {
         our_typst.merge(other_typst);
       } else {
         self.typst = Some(other_typst);
+      }
+    }
+    if let Some(other_js) = other.javascript {
+      if let Some(ref mut our_js) = self.javascript {
+        our_js.merge(other_js);
+      } else {
+        self.javascript = Some(other_js);
       }
     }
     if let Some(other_kotlin) = other.kotlin {
@@ -413,6 +423,16 @@ impl LangConfig {
     )
   }
 
+  pub fn javascript_options(&self) -> Option<JavaScriptOptions> {
+    extract_options(
+      self.javascript.clone(),
+      &self.options,
+      &self.extra,
+      |cur, other| cur.merge(other),
+      |j| j.is_empty(),
+    )
+  }
+
   pub fn kotlin_options(&self) -> Option<KotlinOptions> {
     extract_options(
       self.kotlin.clone(),
@@ -478,6 +498,7 @@ pub struct ResolvedLangConfig {
   pub json: Option<JsonOptions>,
   pub toml: Option<TomlOptions>,
   pub typst: Option<TypstOptions>,
+  pub javascript: Option<JavaScriptOptions>,
   pub kotlin: Option<KotlinOptions>,
   pub extra: BTreeMap<String, toml::Value>,
 }

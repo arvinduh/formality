@@ -122,6 +122,24 @@
         }
       }
     },
+    "JavaScriptOptions": {
+      "description": "Typed formatting and linting options for JavaScript/TypeScript (Biome).",
+      "type": "object",
+      "properties": {
+        "organize_imports": {
+          "type": ["boolean", "null"]
+        },
+        "quote_style": {
+          "type": ["string", "null"]
+        },
+        "semicolons": {
+          "type": ["string", "null"]
+        },
+        "trailing_comma": {
+          "type": ["string", "null"]
+        }
+      }
+    },
     "JsonOptions": {
       "description": "Typed formatting and linting options for JSON.",
       "type": "object"
@@ -181,6 +199,16 @@
           "type": ["integer", "null"],
           "format": "uint",
           "minimum": 0
+        },
+        "javascript": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/JavaScriptOptions"
+            },
+            {
+              "type": "null"
+            }
+          ]
         },
         "json": {
           "anyOf": [
