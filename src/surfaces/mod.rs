@@ -432,31 +432,6 @@ impl Clone for Box<dyn LanguageSurface> {
   }
 }
 
-/// A constructor function pointer for instantiating a boxed `LanguageSurface`.
-pub type SurfaceConstructor = fn() -> Box<dyn LanguageSurface>;
-
-/// Helper function to create a boxed instance of any `Default + LanguageSurface`.
-pub fn create_surface<S: LanguageSurface + Default + 'static>()
--> Box<dyn LanguageSurface> {
-  Box::new(S::default())
-}
-
-/// Canonical table of default fleet surface constructors.
-pub static DEFAULT_SURFACE_CONSTRUCTORS: &[SurfaceConstructor] = &[
-  create_surface::<rust::RustSurface>,
-  create_surface::<python::PythonSurface>,
-  create_surface::<cpp::CppSurface>,
-  create_surface::<java::JavaSurface>,
-  create_surface::<go::GoSurface>,
-  create_surface::<markdown::MarkdownSurface>,
-  create_surface::<yaml::YamlSurface>,
-  create_surface::<json::JsonSurface>,
-  create_surface::<toml::TomlSurface>,
-  create_surface::<typst::TypstSurface>,
-  create_surface::<javascript::JavaScriptSurface>,
-  create_surface::<kotlin::KotlinSurface>,
-];
-
 /// Registry for managing, querying, and discovering language surfaces.
 #[derive(Clone)]
 pub struct SurfaceRegistry {

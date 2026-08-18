@@ -103,12 +103,6 @@ impl Overflow {
       suffix: suffix.into(),
     }
   }
-
-  pub fn default_truncate() -> Self {
-    Overflow::Truncate {
-      suffix: default_truncate_suffix(),
-    }
-  }
 }
 
 /// A single cell inside a table row, composed of semantic spans.
@@ -170,11 +164,6 @@ impl Cell {
 
   pub fn push(&mut self, span: Span) {
     self.spans.push(span);
-  }
-
-  pub fn with_span(mut self, span: Span) -> Self {
-    self.spans.push(span);
-    self
   }
 }
 
