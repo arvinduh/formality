@@ -26,11 +26,13 @@
 /// | rust     | `rust-analyzer`           | rustup component add    |
 /// | python   | `pyright-langserver`      | npm / pip               |
 /// | cpp      | `clangd`                  | apt / brew / llvm.org   |
+/// | go       | `gopls`                   | go install               |
 /// | typst    | `tinymist` / `typst-lsp`  | cargo / npm             |
 /// | markdown | none (diagnostics only)   | —                       |
 /// | yaml     | `yaml-language-server`    | npm                     |
 /// | json     | `vscode-json-languageserver` | npm                  |
 /// | toml     | `taplo lsp`               | cargo / npm             |
+/// | javascript | `typescript-language-server` | npm                 |
 ///
 /// The routing layer is the core of this module. Each child server runs as a
 /// subprocess with its own stdin/stdout JSON-RPC channel. The multiplexer
@@ -90,6 +92,12 @@ pub const CHILD_LSP_REGISTRY: &[ChildLsp] = &[
     install_hint: "sudo apt install clangd  OR  brew install llvm",
   },
   ChildLsp {
+    surface: "go",
+    binary: "gopls",
+    args: &[],
+    install_hint: "go install golang.org/x/tools/gopls@latest",
+  },
+  ChildLsp {
     surface: "typst",
     binary: "tinymist",
     args: &[],
@@ -112,6 +120,12 @@ pub const CHILD_LSP_REGISTRY: &[ChildLsp] = &[
     binary: "taplo",
     args: &["lsp", "stdio"],
     install_hint: "cargo binstall taplo-cli  OR  npm install -g @taplo/cli  OR  brew install taplo",
+  },
+  ChildLsp {
+    surface: "javascript",
+    binary: "typescript-language-server",
+    args: &["--stdio"],
+    install_hint: "npm install -g typescript-language-server typescript",
   },
 ];
 

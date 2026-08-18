@@ -1,9 +1,11 @@
 name: CI
 
+# Full toolchain integration suite: fmt/lint/sync dogfooding, the full test
+# suite, and a security audit. Runs only on push to main, since it installs
+# 10+ toolchains and is too slow for per-PR feedback. Fast PR-time checks
+# live in pr-check.yml instead.
 on:
   push:
-    branches: ["main"]
-  pull_request:
     branches: ["main"]
 
 env:

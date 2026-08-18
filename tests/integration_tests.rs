@@ -10,14 +10,25 @@ use tempfile::TempDir;
 #[test]
 fn test_surface_registry_and_aliases() {
   let surfaces = all_surfaces();
-  assert_eq!(surfaces.len(), 8);
+  assert_eq!(surfaces.len(), 12);
 
   let registry = SurfaceRegistry::default();
-  assert_eq!(registry.len(), 8);
+  assert_eq!(registry.len(), 12);
   assert_eq!(
     registry.supported_languages(),
     vec![
-      "rust", "python", "cpp", "markdown", "yaml", "json", "toml", "typst"
+      "rust",
+      "python",
+      "cpp",
+      "java",
+      "go",
+      "markdown",
+      "yaml",
+      "json",
+      "toml",
+      "typst",
+      "javascript",
+      "kotlin",
     ]
   );
 
@@ -34,6 +45,13 @@ fn test_surface_registry_and_aliases() {
     ("C++", "cpp"),
     ("cxx", "cpp"),
     ("CXX", "cpp"),
+    ("java", "java"),
+    ("JAVA", "java"),
+    ("jav", "java"),
+    ("Java", "java"),
+    ("go", "go"),
+    ("GO", "go"),
+    ("golang", "go"),
     ("markdown", "markdown"),
     ("md", "markdown"),
     ("MD", "markdown"),
@@ -47,6 +65,12 @@ fn test_surface_registry_and_aliases() {
     ("typst", "typst"),
     ("typ", "typst"),
     ("TYP", "typst"),
+    ("javascript", "javascript"),
+    ("js", "javascript"),
+    ("ts", "javascript"),
+    ("typescript", "javascript"),
+    ("kotlin", "kotlin"),
+    ("kt", "kotlin"),
   ];
 
   for (query, canonical) in cases {

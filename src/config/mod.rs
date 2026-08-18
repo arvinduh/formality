@@ -5,8 +5,9 @@ pub mod schema;
 
 pub use facets::LayoutFacet;
 pub use options::{
-  CppOptions, JavaOptions, JsonOptions, MarkdownOptions, PythonOptions,
-  RustOptions, TomlOptions, TypstOptions, YamlOptions,
+  CppOptions, GoOptions, JavaOptions, JavaScriptOptions, JsonOptions,
+  KotlinOptions, MarkdownOptions, PythonOptions, RustOptions, TomlOptions,
+  TypstOptions, YamlOptions,
 };
 pub use resolve::{find_project_config, find_user_config};
 pub use schema::generate_schema;
@@ -176,6 +177,8 @@ pub struct LangConfig {
   #[serde(skip_serializing_if = "Option::is_none")]
   pub java: Option<JavaOptions>,
   #[serde(skip_serializing_if = "Option::is_none")]
+  pub go: Option<GoOptions>,
+  #[serde(skip_serializing_if = "Option::is_none")]
   pub markdown: Option<MarkdownOptions>,
   #[serde(skip_serializing_if = "Option::is_none")]
   pub yaml: Option<YamlOptions>,
@@ -185,6 +188,10 @@ pub struct LangConfig {
   pub toml: Option<TomlOptions>,
   #[serde(skip_serializing_if = "Option::is_none")]
   pub typst: Option<TypstOptions>,
+  #[serde(skip_serializing_if = "Option::is_none")]
+  pub javascript: Option<JavaScriptOptions>,
+  #[serde(skip_serializing_if = "Option::is_none")]
+  pub kotlin: Option<KotlinOptions>,
   #[serde(skip_serializing_if = "Option::is_none")]
   #[schemars(skip)]
   pub options: Option<toml::Value>,
@@ -260,6 +267,13 @@ impl LangConfig {
         self.java = Some(other_java);
       }
     }
+    if let Some(other_go) = other.go {
+      if let Some(ref mut our_go) = self.go {
+        our_go.merge(other_go);
+      } else {
+        self.go = Some(other_go);
+      }
+    }
     if let Some(other_md) = other.markdown {
       if let Some(ref mut our_md) = self.markdown {
         our_md.merge(other_md);
@@ -293,6 +307,20 @@ impl LangConfig {
         our_typst.merge(other_typst);
       } else {
         self.typst = Some(other_typst);
+      }
+    }
+    if let Some(other_js) = other.javascript {
+      if let Some(ref mut our_js) = self.javascript {
+        our_js.merge(other_js);
+      } else {
+        self.javascript = Some(other_js);
+      }
+    }
+    if let Some(other_kotlin) = other.kotlin {
+      if let Some(ref mut our_kotlin) = self.kotlin {
+        our_kotlin.merge(other_kotlin);
+      } else {
+        self.kotlin = Some(other_kotlin);
       }
     }
     if other.options.is_some() {
@@ -340,6 +368,16 @@ impl LangConfig {
       &self.extra,
       |cur, other| cur.merge(other),
       |j| j.is_empty(),
+    )
+  }
+
+  pub fn go_options(&self) -> Option<GoOptions> {
+    extract_options(
+      self.go.clone(),
+      &self.options,
+      &self.extra,
+      |cur, other| cur.merge(other),
+      |g| g.is_empty(),
     )
   }
 
@@ -406,6 +444,26 @@ impl LangConfig {
       |_| false,
     )
   }
+
+  pub fn javascript_options(&self) -> Option<JavaScriptOptions> {
+    extract_options(
+      self.javascript.clone(),
+      &self.options,
+      &self.extra,
+      |cur, other| cur.merge(other),
+      |j| j.is_empty(),
+    )
+  }
+
+  pub fn kotlin_options(&self) -> Option<KotlinOptions> {
+    extract_options(
+      self.kotlin.clone(),
+      &self.options,
+      &self.extra,
+      |cur, other| cur.merge(other),
+      |_| false,
+    )
+  }
 }
 
 #[derive(
@@ -457,11 +515,14 @@ pub struct ResolvedLangConfig {
   pub python: Option<PythonOptions>,
   pub cpp: Option<CppOptions>,
   pub java: Option<JavaOptions>,
+  pub go: Option<GoOptions>,
   pub markdown: Option<MarkdownOptions>,
   pub yaml: Option<YamlOptions>,
   pub json: Option<JsonOptions>,
   pub toml: Option<TomlOptions>,
   pub typst: Option<TypstOptions>,
+  pub javascript: Option<JavaScriptOptions>,
+  pub kotlin: Option<KotlinOptions>,
   pub extra: BTreeMap<String, toml::Value>,
 }
 

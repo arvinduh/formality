@@ -1,7 +1,8 @@
 use super::facets::LayoutFacet;
 use super::options::{
-  CppOptions, JavaOptions, JsonOptions, MarkdownOptions, PythonOptions,
-  RustOptions, TomlOptions, TypstOptions, YamlOptions,
+  CppOptions, GoOptions, JavaOptions, JavaScriptOptions, JsonOptions,
+  KotlinOptions, MarkdownOptions, PythonOptions, RustOptions, TomlOptions,
+  TypstOptions, YamlOptions,
 };
 use super::{
   CONFIG_FILE_CANDIDATES, ConfigError, FormalityConfig, GlobalConfig,
@@ -123,11 +124,14 @@ impl FormalityConfig {
       "python" => (Some("ruff-format"), Some("ruff-check")),
       "cpp" => (Some("clang-format"), Some("clang-tidy")),
       "java" => (Some("google-java-format"), Some("checkstyle")),
+      "go" => (Some("goimports"), Some("golangci-lint")),
       "markdown" => (Some("prettier"), Some("markdownlint")),
       "yaml" => (Some("prettier"), Some("yamllint")),
       "json" => (Some("prettier"), None),
       "toml" => (Some("taplo"), Some("taplo")),
       "typst" => (Some("typstyle"), Some("typstyle")),
+      "javascript" => (Some("biome"), Some("biome")),
+      "kotlin" => (Some("ktlint"), Some("ktlint")),
       _ => (None, None),
     };
 
@@ -208,6 +212,14 @@ impl FormalityConfig {
       }
     });
 
+    let go = lang_cfg.and_then(|l| l.go_options()).or_else(|| {
+      if lang_name == "go" {
+        Some(GoOptions::default())
+      } else {
+        None
+      }
+    });
+
     let markdown = lang_cfg.and_then(|l| l.markdown_options()).or_else(|| {
       if lang_name == "markdown" {
         Some(MarkdownOptions {
@@ -250,6 +262,23 @@ impl FormalityConfig {
       }
     });
 
+    let javascript =
+      lang_cfg.and_then(|l| l.javascript_options()).or_else(|| {
+        if lang_name == "javascript" {
+          Some(JavaScriptOptions::default())
+        } else {
+          None
+        }
+      });
+
+    let kotlin = lang_cfg.and_then(|l| l.kotlin_options()).or_else(|| {
+      if lang_name == "kotlin" {
+        Some(KotlinOptions::default())
+      } else {
+        None
+      }
+    });
+
     let extra = lang_cfg.map(|l| l.extra.clone()).unwrap_or_default();
 
     ResolvedLangConfig {
@@ -281,11 +310,14 @@ impl FormalityConfig {
       python,
       cpp,
       java,
+      go,
       markdown,
       yaml,
       json,
       toml,
       typst,
+      javascript,
+      kotlin,
       extra,
     }
   }
