@@ -479,6 +479,7 @@ mod tests {
   use crate::config::{
     PythonOptions, ResolvedGlobalConfig, ResolvedLangConfig,
   };
+  use std::sync::Arc;
   use tempfile::TempDir;
 
   #[test]
@@ -515,8 +516,8 @@ mod tests {
 
     let ctx = ExecutionContext {
       root: temp.path().to_path_buf(),
-      paths: Vec::new(),
-      global_config: ResolvedGlobalConfig::default(),
+      paths: Arc::new(Vec::new()),
+      global_config: Arc::new(ResolvedGlobalConfig::default()),
       lang_config: lang_cfg,
       check_only: false,
     };
@@ -622,8 +623,8 @@ mod tests {
     let surface = PythonSurface;
     let ctx_check = ExecutionContext {
       root: temp.path().to_path_buf(),
-      paths: Vec::new(),
-      global_config: ResolvedGlobalConfig::default(),
+      paths: Arc::new(Vec::new()),
+      global_config: Arc::new(ResolvedGlobalConfig::default()),
       lang_config: ResolvedLangConfig::new("python"),
       check_only: true,
     };
@@ -636,8 +637,8 @@ mod tests {
 
     let ctx_fix = ExecutionContext {
       root: temp.path().to_path_buf(),
-      paths: Vec::new(),
-      global_config: ResolvedGlobalConfig::default(),
+      paths: Arc::new(Vec::new()),
+      global_config: Arc::new(ResolvedGlobalConfig::default()),
       lang_config: ResolvedLangConfig::new("python"),
       check_only: false,
     };

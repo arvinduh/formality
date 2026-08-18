@@ -47,11 +47,99 @@ pub fn find_files_with_ext(
   if exclude.is_empty() {
     raw_files
   } else {
+    // Normalize each exclude pattern once up front instead of inside
+    // `is_excluded`, which used to re-derive `to_string_lossy()` /
+    // `replace('\\', "/")` allocations for every (file, pattern) pair —
+    // O(files * excludes) allocations for what only needs to happen
+    // O(excludes) times per invocation.
+    let normalized_exclude: Vec<NormalizedExclude<'_>> = exclude
+      .iter()
+      .map(|ex| NormalizedExclude::new(ex, root))
+      .collect();
     raw_files
       .into_iter()
-      .filter(|file| !is_excluded(file, root, exclude))
+      .filter(|file| !is_excluded_normalized(file, root, &normalized_exclude))
       .collect()
   }
+}
+
+struct NormalizedExclude<'a> {
+  raw: &'a Path,
+  /// `raw` re-joined against `root` when it was relative, so an absolute
+  /// prefix check can be done without reallocating per file.
+  absolute: PathBuf,
+  slash_normalized: String,
+  trimmed: String,
+}
+
+impl<'a> NormalizedExclude<'a> {
+  fn new(raw: &'a PathBuf, root: &Path) -> Self {
+    let slash_normalized = raw.to_string_lossy().replace('\\', "/");
+    let trimmed = slash_normalized.trim_matches('/').to_string();
+    let absolute = if raw.is_absolute() {
+      raw.clone()
+    } else {
+      root.join(raw)
+    };
+    NormalizedExclude {
+      raw,
+      absolute,
+      slash_normalized,
+      trimmed,
+    }
+  }
+}
+
+fn is_excluded_normalized(
+  path: &Path,
+  root: &Path,
+  exclude: &[NormalizedExclude<'_>],
+) -> bool {
+  if exclude.is_empty() {
+    return false;
+  }
+  let rel_path = path.strip_prefix(root).unwrap_or(path);
+  let rel_str = rel_path.to_string_lossy().replace('\\', "/");
+  let file_name = path.file_name().and_then(|f| f.to_str()).unwrap_or("");
+
+  for ex in exclude {
+    // 1. Direct path prefix or exact match with full / root-relative path
+    if path.starts_with(ex.raw) || rel_path.starts_with(ex.raw) {
+      return true;
+    }
+    if path.starts_with(&ex.absolute) {
+      return true;
+    }
+
+    // 2. Relative prefix, exact relative string match, or directory match
+    if rel_str == ex.trimmed || rel_str.starts_with(&format!("{}/", ex.trimmed))
+    {
+      return true;
+    }
+
+    // 3. Filename match
+    if file_name == ex.trimmed || file_name == ex.slash_normalized {
+      return true;
+    }
+
+    // 4. Any path component matches
+    if rel_path.components().any(|c| {
+      c.as_os_str().to_string_lossy() == ex.trimmed
+        || c.as_os_str() == ex.raw.as_os_str()
+    }) {
+      return true;
+    }
+
+    // 5. Glob / wildcard pattern matching
+    if (ex.trimmed.contains('*') || ex.trimmed.contains('?'))
+      && (simple_glob_match(&ex.trimmed, &rel_str)
+        || simple_glob_match(&ex.trimmed, file_name))
+    {
+      return true;
+    }
+  }
+
+  false
 }
 
 #[must_use]
@@ -110,61 +198,22 @@ fn glob_match_slices(pattern: &[u8], text: &[u8]) -> bool {
   false
 }
 
+/// Checks a single path against a raw exclude list.
+///
+/// This normalizes `exclude` on every call, so callers checking many paths
+/// against the same exclude list (e.g. [`find_files_with_ext`]'s internal
+/// filter) should normalize once via [`NormalizedExclude`] and call
+/// [`is_excluded_normalized`] directly instead of this function in a loop.
 #[must_use]
 pub fn is_excluded(path: &Path, root: &Path, exclude: &[PathBuf]) -> bool {
   if exclude.is_empty() {
     return false;
   }
-  let rel_path = path.strip_prefix(root).unwrap_or(path);
-  let rel_str = rel_path.to_string_lossy().replace('\\', "/");
-  let file_name = path.file_name().and_then(|f| f.to_str()).unwrap_or("");
-
-  for ex in exclude {
-    let ex_str_raw = ex.to_string_lossy();
-    let ex_str = ex_str_raw.replace('\\', "/");
-    let ex_trimmed = ex_str.trim_matches('/');
-
-    // 1. Direct path prefix or exact match with full / root-relative path
-    if path.starts_with(ex) || rel_path.starts_with(ex) {
-      return true;
-    }
-    let full_ex = if ex.is_absolute() {
-      ex.clone()
-    } else {
-      root.join(ex)
-    };
-    if path.starts_with(&full_ex) {
-      return true;
-    }
-
-    // 2. Relative prefix, exact relative string match, or directory match
-    if rel_str == ex_trimmed || rel_str.starts_with(&format!("{ex_trimmed}/")) {
-      return true;
-    }
-
-    // 3. Filename match
-    if file_name == ex_trimmed || file_name == ex_str_raw {
-      return true;
-    }
-
-    // 4. Any path component matches
-    if rel_path.components().any(|c| {
-      c.as_os_str().to_string_lossy() == ex_trimmed
-        || c.as_os_str() == ex.as_os_str()
-    }) {
-      return true;
-    }
-
-    // 5. Glob / wildcard pattern matching
-    if (ex_trimmed.contains('*') || ex_trimmed.contains('?'))
-      && (simple_glob_match(ex_trimmed, &rel_str)
-        || simple_glob_match(ex_trimmed, file_name))
-    {
-      return true;
-    }
-  }
-
-  false
+  let normalized: Vec<NormalizedExclude<'_>> = exclude
+    .iter()
+    .map(|ex| NormalizedExclude::new(ex, root))
+    .collect();
+  is_excluded_normalized(path, root, &normalized)
 }
 
 fn walk_dir_ext(dir: &Path, extensions: &[&str]) -> Vec<PathBuf> {
