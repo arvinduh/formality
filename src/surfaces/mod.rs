@@ -1,5 +1,6 @@
 pub mod cpp;
 pub mod json;
+pub mod kotlin;
 pub mod markdown;
 pub mod native;
 pub mod python;
@@ -253,6 +254,14 @@ const CLANG_TIDY_CHAIN: &[InstallMethod] = &[
 const RUSTFMT_CHAIN: &[InstallMethod] = &[InstallMethod::Rustup("rustfmt")];
 const CLIPPY_CHAIN: &[InstallMethod] = &[InstallMethod::Rustup("clippy")];
 
+// ktlint ships as a prebuilt executable jar; there is no cargo/npm fallback,
+// so the chain is limited to system package managers (mirrors the
+// CLANG_FORMAT_CHAIN / CLANG_TIDY_CHAIN pattern above).
+const KTLINT_CHAIN: &[InstallMethod] = &[
+  InstallMethod::Brew("ktlint"),
+  InstallMethod::Scoop("ktlint"),
+];
+
 /// Looks up the ordered installer preference chain for a tool binary name.
 /// This is the single place that maps a tool to its installers — adding a
 /// new tool means adding a chain constant and one arm here, not copying a
@@ -270,6 +279,7 @@ fn install_chain_for(binary: &str) -> Option<&'static [InstallMethod]> {
     "clang-tidy" => Some(CLANG_TIDY_CHAIN),
     "rustfmt" => Some(RUSTFMT_CHAIN),
     "clippy-driver" => Some(CLIPPY_CHAIN),
+    "ktlint" => Some(KTLINT_CHAIN),
     _ => None,
   }
 }
@@ -401,6 +411,7 @@ pub static DEFAULT_SURFACE_CONSTRUCTORS: &[SurfaceConstructor] = &[
   create_surface::<json::JsonSurface>,
   create_surface::<toml::TomlSurface>,
   create_surface::<typst::TypstSurface>,
+  create_surface::<kotlin::KotlinSurface>,
 ];
 
 /// Registry for managing, querying, and discovering language surfaces.
@@ -420,6 +431,7 @@ impl Default for SurfaceRegistry {
     reg.register_surface::<json::JsonSurface>();
     reg.register_surface::<toml::TomlSurface>();
     reg.register_surface::<typst::TypstSurface>();
+    reg.register_surface::<kotlin::KotlinSurface>();
     reg
   }
 }
@@ -1221,6 +1233,7 @@ mod tests {
       "clang-tidy",
       "rustfmt",
       "clippy-driver",
+      "ktlint",
     ];
 
     for binary in tools {
@@ -1450,11 +1463,12 @@ mod tests {
   #[test]
   fn test_all_fleet_surfaces_present() {
     let surfaces = all_surfaces();
-    assert_eq!(surfaces.len(), 8);
+    assert_eq!(surfaces.len(), 9);
 
     let names: Vec<&str> = surfaces.iter().map(|s| s.name()).collect();
     let expected = [
       "rust", "python", "cpp", "markdown", "yaml", "json", "toml", "typst",
+      "kotlin",
     ];
     for exp in expected {
       assert!(
@@ -1484,6 +1498,8 @@ mod tests {
       ("toml", "toml"),
       ("typst", "typst"),
       ("typ", "typst"),
+      ("kotlin", "kotlin"),
+      ("kt", "kotlin"),
     ];
 
     for (query, canonical) in test_cases {
@@ -1543,6 +1559,10 @@ mod tests {
       ("Typst", "typst"),
       ("TYP", "typst"),
       ("Typ", "typst"),
+      ("KOTLIN", "kotlin"),
+      ("Kotlin", "kotlin"),
+      ("KT", "kotlin"),
+      ("Kt", "kotlin"),
       ("  rust  ", "rust"),
       ("  C++  ", "cpp"),
     ];
@@ -1596,6 +1616,7 @@ mod tests {
     assert!(markdown::MarkdownSurface.supports_lint_fix());
     assert!(!json::JsonSurface.supports_lint_fix());
     assert!(!typst::TypstSurface.supports_lint_fix());
+    assert!(kotlin::KotlinSurface.supports_lint_fix());
   }
 
   #[test]

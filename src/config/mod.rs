@@ -5,8 +5,8 @@ pub mod schema;
 
 pub use facets::LayoutFacet;
 pub use options::{
-  CppOptions, JsonOptions, MarkdownOptions, PythonOptions, RustOptions,
-  TomlOptions, TypstOptions, YamlOptions,
+  CppOptions, JsonOptions, KotlinOptions, MarkdownOptions, PythonOptions,
+  RustOptions, TomlOptions, TypstOptions, YamlOptions,
 };
 pub use resolve::{find_project_config, find_user_config};
 pub use schema::generate_schema;
@@ -181,6 +181,8 @@ pub struct LangConfig {
   #[serde(skip_serializing_if = "Option::is_none")]
   pub typst: Option<TypstOptions>,
   #[serde(skip_serializing_if = "Option::is_none")]
+  pub kotlin: Option<KotlinOptions>,
+  #[serde(skip_serializing_if = "Option::is_none")]
   #[schemars(skip)]
   pub options: Option<toml::Value>,
   #[serde(default, flatten, skip_serializing_if = "BTreeMap::is_empty")]
@@ -281,6 +283,13 @@ impl LangConfig {
         our_typst.merge(other_typst);
       } else {
         self.typst = Some(other_typst);
+      }
+    }
+    if let Some(other_kotlin) = other.kotlin {
+      if let Some(ref mut our_kotlin) = self.kotlin {
+        our_kotlin.merge(other_kotlin);
+      } else {
+        self.kotlin = Some(other_kotlin);
       }
     }
     if other.options.is_some() {
@@ -384,6 +393,16 @@ impl LangConfig {
       |_| false,
     )
   }
+
+  pub fn kotlin_options(&self) -> Option<KotlinOptions> {
+    extract_options(
+      self.kotlin.clone(),
+      &self.options,
+      &self.extra,
+      |cur, other| cur.merge(other),
+      |_| false,
+    )
+  }
 }
 
 #[derive(
@@ -439,6 +458,7 @@ pub struct ResolvedLangConfig {
   pub json: Option<JsonOptions>,
   pub toml: Option<TomlOptions>,
   pub typst: Option<TypstOptions>,
+  pub kotlin: Option<KotlinOptions>,
   pub extra: BTreeMap<String, toml::Value>,
 }
 
