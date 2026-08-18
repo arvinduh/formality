@@ -31,6 +31,7 @@ use std::path::Path;
 /// Prints progress to stdout and returns `true` if every tool either
 /// installed successfully or already had a known auto-install command,
 /// `false` if any tool could not be installed.
+#[must_use]
 pub fn install_missing_tools(missing: &[ToolInfo]) -> bool {
   if missing.is_empty() {
     return true;
@@ -99,6 +100,7 @@ pub fn install_missing_tools(missing: &[ToolInfo]) -> bool {
 /// Collect the missing tools required by `surfaces` for the given action
 /// (format or lint), then install them. Returns `false` if any tool
 /// could not be installed.
+#[must_use]
 pub fn preflight_install(
   surfaces: &[Box<dyn LanguageSurface>],
   config: &FormalityConfig,
@@ -136,6 +138,7 @@ pub struct ToolLookupResult {
   pub parsed_version: Option<Version>,
   pub status: Option<ToolStatus>,
 }
+#[must_use]
 pub fn run_doctor(
   root: &Path,
   show_all: bool,
@@ -212,7 +215,7 @@ pub fn run_doctor(
           match &lookup.status {
             Some(ToolStatus::Outdated { current, minimum }) => {
               outdated_unique_tools.insert(tool.binary);
-              let v_info = format!(" (v{} < MSTV v{})", current, minimum);
+              let v_info = format!(" (v{current} < MSTV v{minimum})");
               let row = Row::new(vec![
                 Cell::styled("[WARN] ", Style::Warn),
                 Cell::styled(tool.binary, Style::Warn),
@@ -225,7 +228,7 @@ pub fn run_doctor(
               doctor_table.add_row(row);
             }
             Some(ToolStatus::Compatible { current, .. }) => {
-              let v_info = format!(" (v{})", current);
+              let v_info = format!(" (v{current})");
               let row = Row::new(vec![
                 Cell::styled("[READY]", Style::Ok),
                 Cell::styled(tool.binary, Style::Tool),
@@ -239,7 +242,7 @@ pub fn run_doctor(
             }
             _ => {
               let v_info = if let Some(ref v) = lookup.parsed_version {
-                format!(" (v{})", v)
+                format!(" (v{v})")
               } else if let Some(ref v) = lookup.raw_version {
                 format!(" ({})", v.trim())
               } else {
@@ -287,7 +290,7 @@ pub fn run_doctor(
   );
   println!("{}", separator.dimmed());
   if !rendered_table.is_empty() {
-    println!("{}", rendered_table);
+    println!("{rendered_table}");
   }
 
   // Check for unconfigured surfaces if explicit `languages` is set
@@ -411,16 +414,16 @@ pub fn run_doctor(
 
   // Auto-install mode
   if install && !missing_unique_tools.is_empty() {
-    install_missing_tools(&missing_unique_tools);
+    let _ = install_missing_tools(&missing_unique_tools);
   }
 
   println!("{}", separator.dimmed());
-  let outdated_str = if !outdated_unique_tools.is_empty() {
+  let outdated_str = if outdated_unique_tools.is_empty() {
+    String::new()
+  } else {
     format!(" ({} outdated)", outdated_unique_tools.len())
       .yellow()
       .to_string()
-  } else {
-    String::new()
   };
   println!(
     "  {} installed{}, {} missing{}\n",

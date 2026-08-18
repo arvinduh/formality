@@ -75,7 +75,7 @@ fn test_surface_registry_and_aliases() {
 
   for (query, canonical) in cases {
     let surface = get_surface_by_name(query);
-    assert!(surface.is_some(), "Lookup failed for query '{}'", query);
+    assert!(surface.is_some(), "Lookup failed for query '{query}'");
     assert_eq!(surface.unwrap().name(), canonical);
     assert_eq!(resolve_canonical_name(query), Some(canonical));
 

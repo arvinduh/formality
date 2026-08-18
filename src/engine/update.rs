@@ -47,11 +47,10 @@ fn write_cached_tag(tag: Option<&str>) {
     }
     let now = SystemTime::now()
       .duration_since(UNIX_EPOCH)
-      .map(|d| d.as_secs())
-      .unwrap_or(0);
+      .map_or(0, |d| d.as_secs());
     let cache = UpdateCache {
       last_checked_unix: now,
-      latest_tag: tag.map(|s| s.to_string()),
+      latest_tag: tag.map(std::string::ToString::to_string),
     };
     if let Ok(json) = serde_json::to_string(&cache) {
       let _ = std::fs::write(path, json);
@@ -60,6 +59,7 @@ fn write_cached_tag(tag: Option<&str>) {
 }
 
 /// Safely parse the `tag_name` field from GitHub release JSON response.
+#[must_use]
 pub fn parse_latest_tag_from_json(body: &str) -> Option<String> {
   let value: serde_json::Value = serde_json::from_str(body).ok()?;
   let tag = value.get("tag_name")?.as_str()?;
@@ -67,6 +67,7 @@ pub fn parse_latest_tag_from_json(body: &str) -> Option<String> {
 }
 
 /// Compares a release tag (e.g. "v0.2.0" or "0.2.0") with the current version.
+#[must_use]
 pub fn is_newer_version(latest_tag: &str, current_version: &str) -> bool {
   let clean_latest = latest_tag.trim_start_matches('v');
   let clean_curr = current_version.trim_start_matches('v');
@@ -111,6 +112,7 @@ pub struct UpdateNotifier {
 /// Spawns a background update check or uses cached result.
 /// Returns an `UpdateNotifier` which should be passed to `print_update_notice()`
 /// at the end of the CLI session to avoid interleaving output.
+#[must_use]
 pub fn spawn_update_check() -> Option<UpdateNotifier> {
   // Suppress update checks in CI/CD environments or when explicitly disabled
   if std::env::var("CI").is_ok()
@@ -191,7 +193,7 @@ pub fn print_update_notice(notifier: Option<UpdateNotifier>) {
       "\n{} A new version of formality is available: {} (current: {})\n   Update via: {}",
       "⚡".yellow().bold(),
       tag.green().bold(),
-      format!("v{}", current_version).dimmed(),
+      format!("v{current_version}").dimmed(),
       "cargo install --git https://github.com/arvinduh/formality".cyan()
     );
   }

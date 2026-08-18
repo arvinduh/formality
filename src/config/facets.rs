@@ -32,6 +32,7 @@ impl LayoutFacet {
     }
   }
 
+  #[must_use]
   pub fn is_empty(&self) -> bool {
     self.indent_size.is_none()
       && self.line_length.is_none()
@@ -78,7 +79,8 @@ impl Facet {
     Facet::Standard,
   ];
 
-  /// The canonical snake_case identifier for this facet.
+  /// The canonical `snake_case` identifier for this facet.
+  #[must_use]
   pub const fn name(&self) -> &'static str {
     match self {
       Facet::IndentTabs => "indent_tabs",
@@ -94,6 +96,7 @@ impl Facet {
   }
 
   /// Human-readable description of what this facet configures.
+  #[must_use]
   pub const fn description(&self) -> &'static str {
     match self {
       Facet::IndentTabs => "Indentation using tabs instead of spaces",
@@ -109,6 +112,7 @@ impl Facet {
   }
 
   /// Parses a facet from its canonical name or common aliases.
+  #[must_use]
   pub fn from_name(s: &str) -> Option<Self> {
     let lower = s.trim().to_ascii_lowercase();
     match lower.as_str() {
@@ -157,18 +161,22 @@ pub enum FacetSupport {
 }
 
 impl FacetSupport {
+  #[must_use]
   pub fn is_configurable(&self) -> bool {
     matches!(self, FacetSupport::Configurable)
   }
 
+  #[must_use]
   pub fn is_fixed(&self) -> bool {
     matches!(self, FacetSupport::Fixed(_))
   }
 
+  #[must_use]
   pub fn is_unsupported(&self) -> bool {
     matches!(self, FacetSupport::Unsupported)
   }
 
+  #[must_use]
   pub fn fixed_value(&self) -> Option<&'static str> {
     match self {
       FacetSupport::Fixed(v) => Some(v),
@@ -181,7 +189,7 @@ impl std::fmt::Display for FacetSupport {
   fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
     match self {
       FacetSupport::Configurable => write!(f, "configurable"),
-      FacetSupport::Fixed(val) => write!(f, "fixed({})", val),
+      FacetSupport::Fixed(val) => write!(f, "fixed({val})"),
       FacetSupport::Unsupported => write!(f, "unsupported"),
     }
   }
@@ -333,6 +341,7 @@ fn is_value_compatible_with_fixed(
 }
 
 /// Validates a single facet configuration value against a declared support state.
+#[must_use]
 pub fn validate_facet_value(
   surface_name: &str,
   support: FacetSupport,
@@ -409,8 +418,7 @@ pub fn validate_surface_reporting(
       && val.is_empty()
     {
       errors.push(format!(
-        "Surface '{}' declared Fixed support for facet {:?} with an empty string",
-        name, facet
+        "Surface '{name}' declared Fixed support for facet {facet:?} with an empty string"
       ));
     }
   }
