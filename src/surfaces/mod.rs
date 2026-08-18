@@ -1,4 +1,5 @@
 pub mod cpp;
+pub mod go;
 pub mod json;
 pub mod kotlin;
 pub mod markdown;
@@ -70,6 +71,8 @@ pub enum InstallMethod {
     locked: bool,
   },
   Rustup(&'static str),
+  /// `go install <package>@latest`. Requires the Go toolchain (`go`) on PATH.
+  GoInstall(&'static str),
 }
 
 impl InstallMethod {
@@ -91,6 +94,7 @@ impl InstallMethod {
       }
       InstallMethod::Cargo { .. } => check_binary_exists("cargo"),
       InstallMethod::Rustup(_) => check_binary_exists("rustup"),
+      InstallMethod::GoInstall(_) => check_binary_exists("go"),
     }
   }
 
@@ -151,6 +155,10 @@ impl InstallMethod {
       InstallMethod::Rustup(component) => {
         ("rustup".to_string(), strs(&["component", "add", component]))
       }
+      InstallMethod::GoInstall(pkg) => (
+        "go".to_string(),
+        vec!["install".to_string(), format!("{pkg}@latest")],
+      ),
     }
   }
 }
@@ -254,6 +262,17 @@ const CLANG_TIDY_CHAIN: &[InstallMethod] = &[
 const RUSTFMT_CHAIN: &[InstallMethod] = &[InstallMethod::Rustup("rustfmt")];
 const CLIPPY_CHAIN: &[InstallMethod] = &[InstallMethod::Rustup("clippy")];
 
+const GOIMPORTS_CHAIN: &[InstallMethod] =
+  &[InstallMethod::GoInstall("golang.org/x/tools/cmd/goimports")];
+
+const GOLANGCI_LINT_CHAIN: &[InstallMethod] = &[
+  InstallMethod::Brew("golangci-lint"),
+  InstallMethod::Scoop("golangci-lint"),
+  InstallMethod::GoInstall(
+    "github.com/golangci/golangci-lint/v2/cmd/golangci-lint",
+  ),
+];
+
 // ktlint ships as a prebuilt executable jar; there is no cargo/npm fallback,
 // so the chain is limited to system package managers (mirrors the
 // CLANG_FORMAT_CHAIN / CLANG_TIDY_CHAIN pattern above).
@@ -279,6 +298,8 @@ fn install_chain_for(binary: &str) -> Option<&'static [InstallMethod]> {
     "clang-tidy" => Some(CLANG_TIDY_CHAIN),
     "rustfmt" => Some(RUSTFMT_CHAIN),
     "clippy-driver" => Some(CLIPPY_CHAIN),
+    "goimports" => Some(GOIMPORTS_CHAIN),
+    "golangci-lint" => Some(GOLANGCI_LINT_CHAIN),
     "ktlint" => Some(KTLINT_CHAIN),
     _ => None,
   }
@@ -406,6 +427,7 @@ pub static DEFAULT_SURFACE_CONSTRUCTORS: &[SurfaceConstructor] = &[
   create_surface::<rust::RustSurface>,
   create_surface::<python::PythonSurface>,
   create_surface::<cpp::CppSurface>,
+  create_surface::<go::GoSurface>,
   create_surface::<markdown::MarkdownSurface>,
   create_surface::<yaml::YamlSurface>,
   create_surface::<json::JsonSurface>,
@@ -426,6 +448,7 @@ impl Default for SurfaceRegistry {
     reg.register_surface::<rust::RustSurface>();
     reg.register_surface::<python::PythonSurface>();
     reg.register_surface::<cpp::CppSurface>();
+    reg.register_surface::<go::GoSurface>();
     reg.register_surface::<markdown::MarkdownSurface>();
     reg.register_surface::<yaml::YamlSurface>();
     reg.register_surface::<json::JsonSurface>();
@@ -1233,6 +1256,8 @@ mod tests {
       "clang-tidy",
       "rustfmt",
       "clippy-driver",
+      "goimports",
+      "golangci-lint",
       "ktlint",
     ];
 
@@ -1463,12 +1488,12 @@ mod tests {
   #[test]
   fn test_all_fleet_surfaces_present() {
     let surfaces = all_surfaces();
-    assert_eq!(surfaces.len(), 9);
+    assert_eq!(surfaces.len(), 10);
 
     let names: Vec<&str> = surfaces.iter().map(|s| s.name()).collect();
     let expected = [
-      "rust", "python", "cpp", "markdown", "yaml", "json", "toml", "typst",
-      "kotlin",
+      "rust", "python", "cpp", "go", "markdown", "yaml", "json", "toml",
+      "typst", "kotlin",
     ];
     for exp in expected {
       assert!(
@@ -1490,6 +1515,8 @@ mod tests {
       ("c", "cpp"),
       ("c++", "cpp"),
       ("cxx", "cpp"),
+      ("go", "go"),
+      ("golang", "go"),
       ("markdown", "markdown"),
       ("md", "markdown"),
       ("yaml", "yaml"),
@@ -1611,6 +1638,7 @@ mod tests {
     assert!(rust::RustSurface.supports_lint_fix());
     assert!(python::PythonSurface.supports_lint_fix());
     assert!(cpp::CppSurface.supports_lint_fix());
+    assert!(go::GoSurface.supports_lint_fix());
     assert!(!yaml::YamlSurface.supports_lint_fix());
     assert!(!toml::TomlSurface.supports_lint_fix());
     assert!(markdown::MarkdownSurface.supports_lint_fix());
