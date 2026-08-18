@@ -30,6 +30,7 @@ pub use native::{
 pub use crate::config::facets::{DeclaresFacets, Facet, FacetSupport};
 use crate::config::{ResolvedGlobalConfig, ResolvedLangConfig};
 use std::path::{Path, PathBuf};
+use std::sync::Arc;
 use std::time::Duration;
 
 pub use glob::{find_files_with_ext, is_excluded, simple_glob_match};
@@ -43,11 +44,20 @@ pub use tooling::{
   tool_missing_result,
 };
 
+/// Execution context shared with every [`LanguageSurface`] invocation for a
+/// single `fml` command.
+///
+/// `paths` and `global_config` are wrapped in [`Arc`] because the runner
+/// builds one `ExecutionContext` per surface and dispatches them in
+/// parallel (`rayon::par_iter`): with plain owned fields, every surface
+/// would deep-clone the *entire* candidate path list and global config on
+/// every invocation, even though all surfaces see the same values. `Arc`
+/// makes that a cheap refcount bump instead of an O(paths.len()) copy.
 #[derive(Debug, Clone)]
 pub struct ExecutionContext {
   pub root: PathBuf,
-  pub paths: Vec<PathBuf>,
-  pub global_config: ResolvedGlobalConfig,
+  pub paths: Arc<Vec<PathBuf>>,
+  pub global_config: Arc<ResolvedGlobalConfig>,
   pub lang_config: ResolvedLangConfig,
   pub check_only: bool,
 }

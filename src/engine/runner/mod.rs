@@ -5,6 +5,7 @@ use crate::surfaces::{
 use colored::Colorize;
 use rayon::prelude::*;
 use std::path::{Path, PathBuf};
+use std::sync::Arc;
 use std::time::Instant;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -32,7 +33,12 @@ impl Runner {
     }
 
     let start_time = Instant::now();
-    let global_config = config.resolve_global();
+    // Shared across every surface's ExecutionContext below. Both are wrapped
+    // in Arc so the per-surface parallel dispatch (rayon::par_iter) clones a
+    // refcount instead of deep-copying the full candidate path list / global
+    // config on every one of the (up to 12) surfaces per invocation.
+    let global_config = Arc::new(config.resolve_global());
+    let shared_paths: Arc<Vec<PathBuf>> = Arc::new(paths.to_vec());
 
     let action_verb = match &action {
       RunnerAction::Format { check } => {
@@ -69,8 +75,8 @@ impl Runner {
             let lang_config = config.resolve_for_lang(surface.name());
             let ctx = ExecutionContext {
               root: root.to_path_buf(),
-              paths: paths.to_vec(),
-              global_config: global_config.clone(),
+              paths: Arc::clone(&shared_paths),
+              global_config: Arc::clone(&global_config),
               lang_config,
               check_only: false,
             };
@@ -85,8 +91,8 @@ impl Runner {
             let lang_config = config.resolve_for_lang(surface.name());
             let ctx = ExecutionContext {
               root: root.to_path_buf(),
-              paths: paths.to_vec(),
-              global_config: global_config.clone(),
+              paths: Arc::clone(&shared_paths),
+              global_config: Arc::clone(&global_config),
               lang_config,
               check_only: false,
             };
@@ -107,8 +113,8 @@ impl Runner {
           let lang_config = config.resolve_for_lang(surface.name());
           let ctx = ExecutionContext {
             root: root.to_path_buf(),
-            paths: paths.to_vec(),
-            global_config: global_config.clone(),
+            paths: Arc::clone(&shared_paths),
+            global_config: Arc::clone(&global_config),
             lang_config,
             check_only: match action {
               RunnerAction::Format { check } | RunnerAction::Sync { check } => {

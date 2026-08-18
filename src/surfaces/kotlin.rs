@@ -320,6 +320,7 @@ mod tests {
   use super::*;
   use crate::config::{ResolvedGlobalConfig, ResolvedLangConfig};
   use std::path::PathBuf;
+  use std::sync::Arc;
   use tempfile::TempDir;
 
   #[test]
@@ -436,8 +437,8 @@ mod tests {
     let surface = KotlinSurface;
     let ctx = ExecutionContext {
       root: temp.path().to_path_buf(),
-      paths: Vec::new(),
-      global_config: ResolvedGlobalConfig::default(),
+      paths: Arc::new(Vec::new()),
+      global_config: Arc::new(ResolvedGlobalConfig::default()),
       lang_config: ResolvedLangConfig::new("kotlin"),
       check_only: false,
     };
@@ -459,8 +460,8 @@ mod tests {
     let surface = KotlinSurface;
     let ctx = ExecutionContext {
       root: temp.path().to_path_buf(),
-      paths: Vec::new(),
-      global_config: ResolvedGlobalConfig::default(),
+      paths: Arc::new(Vec::new()),
+      global_config: Arc::new(ResolvedGlobalConfig::default()),
       lang_config: ResolvedLangConfig::new("kotlin"),
       check_only: false,
     };
@@ -482,8 +483,8 @@ mod tests {
     let surface = KotlinSurface;
     let ctx_check = ExecutionContext {
       root: temp.path().to_path_buf(),
-      paths: Vec::new(),
-      global_config: ResolvedGlobalConfig::default(),
+      paths: Arc::new(Vec::new()),
+      global_config: Arc::new(ResolvedGlobalConfig::default()),
       lang_config: ResolvedLangConfig::new("kotlin"),
       check_only: true,
     };
@@ -495,8 +496,8 @@ mod tests {
 
     let ctx_fix = ExecutionContext {
       root: temp.path().to_path_buf(),
-      paths: Vec::new(),
-      global_config: ResolvedGlobalConfig::default(),
+      paths: Arc::new(Vec::new()),
+      global_config: Arc::new(ResolvedGlobalConfig::default()),
       lang_config: ResolvedLangConfig::new("kotlin"),
       check_only: false,
     };

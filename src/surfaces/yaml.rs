@@ -342,6 +342,7 @@ impl LanguageSurface for YamlSurface {
 mod tests {
   use super::*;
   use crate::config::{ResolvedGlobalConfig, ResolvedLangConfig};
+  use std::sync::Arc;
   use tempfile::TempDir;
 
   #[test]
@@ -374,8 +375,8 @@ mod tests {
     let temp = TempDir::new().unwrap();
     let ctx = ExecutionContext {
       root: temp.path().to_path_buf(),
-      paths: Vec::new(),
-      global_config: ResolvedGlobalConfig::default(),
+      paths: Arc::new(Vec::new()),
+      global_config: Arc::new(ResolvedGlobalConfig::default()),
       lang_config: ResolvedLangConfig::new("yaml"),
       check_only: false,
     };
@@ -402,8 +403,8 @@ mod tests {
 
     let ctx = ExecutionContext {
       root: temp.path().to_path_buf(),
-      paths: Vec::new(),
-      global_config: ResolvedGlobalConfig::default(),
+      paths: Arc::new(Vec::new()),
+      global_config: Arc::new(ResolvedGlobalConfig::default()),
       lang_config: lang_cfg,
       check_only: false,
     };
@@ -424,8 +425,8 @@ mod tests {
     let surface = YamlSurface;
     let ctx = ExecutionContext {
       root: temp.path().to_path_buf(),
-      paths: Vec::new(),
-      global_config: ResolvedGlobalConfig::default(),
+      paths: Arc::new(Vec::new()),
+      global_config: Arc::new(ResolvedGlobalConfig::default()),
       lang_config: ResolvedLangConfig::new("yaml"),
       check_only: false,
     };
