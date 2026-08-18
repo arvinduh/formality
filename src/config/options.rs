@@ -128,6 +128,45 @@ impl CppOptions {
   }
 }
 
+/// Typed formatting and linting options for JavaScript/TypeScript (Biome).
+#[derive(
+  Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize, JsonSchema,
+)]
+pub struct JavaScriptOptions {
+  #[serde(skip_serializing_if = "Option::is_none")]
+  pub quote_style: Option<String>,
+  #[serde(skip_serializing_if = "Option::is_none")]
+  pub trailing_comma: Option<String>,
+  #[serde(skip_serializing_if = "Option::is_none")]
+  pub semicolons: Option<String>,
+  #[serde(skip_serializing_if = "Option::is_none")]
+  pub organize_imports: Option<bool>,
+}
+
+impl JavaScriptOptions {
+  pub fn merge(&mut self, other: JavaScriptOptions) {
+    if other.quote_style.is_some() {
+      self.quote_style = other.quote_style;
+    }
+    if other.trailing_comma.is_some() {
+      self.trailing_comma = other.trailing_comma;
+    }
+    if other.semicolons.is_some() {
+      self.semicolons = other.semicolons;
+    }
+    if other.organize_imports.is_some() {
+      self.organize_imports = other.organize_imports;
+    }
+  }
+
+  pub fn is_empty(&self) -> bool {
+    self.quote_style.is_none()
+      && self.trailing_comma.is_none()
+      && self.semicolons.is_none()
+      && self.organize_imports.is_none()
+  }
+}
+
 /// Typed formatting and linting options for Go.
 #[derive(
   Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize, JsonSchema,

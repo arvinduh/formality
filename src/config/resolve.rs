@@ -1,7 +1,8 @@
 use super::facets::LayoutFacet;
 use super::options::{
-  CppOptions, GoOptions, JsonOptions, KotlinOptions, MarkdownOptions,
-  PythonOptions, RustOptions, TomlOptions, TypstOptions, YamlOptions,
+  CppOptions, GoOptions, JavaScriptOptions, JsonOptions, KotlinOptions,
+  MarkdownOptions, PythonOptions, RustOptions, TomlOptions, TypstOptions,
+  YamlOptions,
 };
 use super::{
   CONFIG_FILE_CANDIDATES, ConfigError, FormalityConfig, GlobalConfig,
@@ -128,6 +129,7 @@ impl FormalityConfig {
       "json" => (Some("prettier"), None),
       "toml" => (Some("taplo"), Some("taplo")),
       "typst" => (Some("typstyle"), Some("typstyle")),
+      "javascript" => (Some("biome"), Some("biome")),
       "kotlin" => (Some("ktlint"), Some("ktlint")),
       _ => (None, None),
     };
@@ -233,6 +235,15 @@ impl FormalityConfig {
       }
     });
 
+    let javascript =
+      lang_cfg.and_then(|l| l.javascript_options()).or_else(|| {
+        if lang_name == "javascript" {
+          Some(JavaScriptOptions::default())
+        } else {
+          None
+        }
+      });
+
     let kotlin = lang_cfg.and_then(|l| l.kotlin_options()).or_else(|| {
       if lang_name == "kotlin" {
         Some(KotlinOptions::default())
@@ -277,6 +288,7 @@ impl FormalityConfig {
       json,
       toml,
       typst,
+      javascript,
       kotlin,
       extra,
     }

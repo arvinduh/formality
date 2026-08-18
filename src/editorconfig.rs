@@ -10,7 +10,16 @@ use std::time::Instant;
 pub const EDITORCONFIG_FILE_NAME: &str = ".editorconfig";
 
 const CANONICAL_FLEET_ORDER: &[&str] = &[
-  "rust", "python", "cpp", "go", "yaml", "json", "toml", "markdown", "typst",
+  "rust",
+  "python",
+  "cpp",
+  "go",
+  "yaml",
+  "json",
+  "toml",
+  "markdown",
+  "typst",
+  "javascript",
 ];
 
 /// Returns the standard EditorConfig section glob for a known or custom surface.
@@ -25,6 +34,7 @@ pub fn glob_for_surface(surface: &dyn LanguageSurface) -> String {
     "toml" => "[*.toml]".to_string(),
     "markdown" => "[*.md]".to_string(),
     "typst" => "[*.typ]".to_string(),
+    "javascript" => "[*.{js,jsx,ts,tsx,mjs,cjs,mts,cts}]".to_string(),
     _ => {
       let exts = surface.file_extensions();
       if exts.len() == 1 {
