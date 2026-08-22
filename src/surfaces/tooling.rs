@@ -3,6 +3,8 @@
 //! Windows-aware `Command` construction.
 
 use super::{SurfaceResult, SurfaceStatus};
+use std::collections::HashMap;
+use std::sync::{Mutex, OnceLock};
 use std::time::Instant;
 
 /// A package-manager-level way to install a CLI tool: knows how to detect
@@ -311,9 +313,18 @@ pub(super) fn install_chain_for(
   }
 }
 
+static BINARY_CACHE: OnceLock<Mutex<HashMap<String, bool>>> = OnceLock::new();
+
 #[must_use]
 pub fn check_binary_exists(binary: &str) -> bool {
-  which::which(binary).is_ok()
+  let cache = BINARY_CACHE.get_or_init(|| Mutex::new(HashMap::new()));
+  let mut guard = cache.lock().unwrap_or_else(|e| e.into_inner());
+  if let Some(&exists) = guard.get(binary) {
+    return exists;
+  }
+  let exists = which::which(binary).is_ok();
+  guard.insert(binary.to_string(), exists);
+  exists
 }
 
 /// Builds the `SurfaceResult` every surface returns from `format`/`lint` when

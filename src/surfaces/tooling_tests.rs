@@ -157,3 +157,47 @@ fn test_extra_args_wired_to_command() {
   assert!(args.contains(&"--verbose".to_string()));
   assert!(args.contains(&"--locked".to_string()));
 }
+
+#[test]
+fn test_check_binary_exists_caching() {
+  let non_existent = "non_existent_binary_xyz_12345";
+  let non_existent_result = check_binary_exists(non_existent);
+  assert!(!non_existent_result);
+
+  let existing = "cargo";
+  let existing_result = check_binary_exists(existing);
+
+  // Inspect BINARY_CACHE directly to verify process-lifetime memoization
+  let cache = BINARY_CACHE.get().expect("cache should be initialized");
+  let guard = cache.lock().unwrap_or_else(|e| e.into_inner());
+  assert_eq!(guard.get(non_existent), Some(&false));
+  assert_eq!(guard.get(existing), Some(&existing_result));
+}
+
+#[test]
+fn test_check_binary_exists_thread_safety() {
+  let handles: Vec<_> = (0..10)
+    .map(|i| {
+      std::thread::spawn(move || {
+        let binary_name = format!("thread_test_binary_{i}");
+        for _ in 0..50 {
+          let _ = check_binary_exists("cargo");
+          let _ = check_binary_exists(&binary_name);
+        }
+      })
+    })
+    .collect();
+
+  for handle in handles {
+    handle.join().unwrap();
+  }
+
+  let cache = BINARY_CACHE.get().expect("cache should be initialized");
+  let guard = cache.lock().unwrap_or_else(|e| e.into_inner());
+  assert!(guard.contains_key("cargo"));
+  for i in 0..10 {
+    let binary_name = format!("thread_test_binary_{i}");
+    assert!(guard.contains_key(&binary_name));
+  }
+}
+
