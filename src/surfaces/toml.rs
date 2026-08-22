@@ -8,6 +8,8 @@ use serde::{Deserialize, Serialize};
 use std::path::Path;
 use std::time::Instant;
 
+// Directly mirrors Taplo's upstream native schema formatting flags.
+#[allow(clippy::struct_excessive_bools)]
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct TaploFormattingConfig {
   pub align_entries: bool,
@@ -50,6 +52,11 @@ impl TaploConfig {
     }
   }
 
+  /// Renders the Taplo configuration as a TOML string with the standard formality header.
+  ///
+  /// # Errors
+  ///
+  /// Returns a [`toml::ser::Error`] if serialization fails.
   pub fn render(&self) -> Result<String, toml::ser::Error> {
     serialize_toml_with_header(self)
   }

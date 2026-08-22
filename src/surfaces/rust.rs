@@ -51,6 +51,11 @@ impl RustfmtConfig {
     }
   }
 
+  /// Renders the rustfmt configuration as a TOML string with the standard formality header.
+  ///
+  /// # Errors
+  ///
+  /// Returns a [`toml::ser::Error`] if serialization fails.
   pub fn render(&self) -> Result<String, toml::ser::Error> {
     serialize_toml_with_header(self)
   }
@@ -163,6 +168,8 @@ impl LanguageSurface for RustSurface {
     ]
   }
 
+  // Dispatches rustfmt formatting with Cargo.toml discovery, check vs write modes, and error parsing.
+  #[allow(clippy::too_many_lines)]
   fn format(&self, ctx: &ExecutionContext) -> SurfaceResult {
     let start = Instant::now();
 
@@ -428,10 +435,9 @@ mod tests {
       SurfaceStatus::ExecutionError { message } => {
         assert!(message.contains("Cargo.toml"));
       }
-      other => panic!(
-        "expected ExecutionError for missing Cargo.toml, got {:?}",
-        other
-      ),
+      other => {
+        panic!("expected ExecutionError for missing Cargo.toml, got {other:?}")
+      }
     }
   }
 

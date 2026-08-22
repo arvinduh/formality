@@ -323,8 +323,12 @@ impl LanguageServer for FormalityLsp {
           return Ok(Some(vec![]));
         }
         // Return a single whole-document replacement edit.
-        let line_count = before.lines().count() as u32;
-        let last_col = before.lines().last().map_or(0, |l| l.len() as u32);
+        let line_count =
+          u32::try_from(before.lines().count()).unwrap_or(u32::MAX);
+        let last_col = before
+          .lines()
+          .last()
+          .map_or(0, |l| u32::try_from(l.len()).unwrap_or(u32::MAX));
         Ok(Some(vec![TextEdit {
           range: Range {
             start: Position {
@@ -444,6 +448,8 @@ impl LanguageServer for FormalityLsp {
 /// # Panics
 ///
 /// Panics if the underlying Tokio runtime fails to initialize.
+// Takes owned Option<PathBuf> from the top-level CLI command runner for uniform handler signature.
+#[allow(clippy::needless_pass_by_value)]
 pub fn run_lsp_server(root: Option<std::path::PathBuf>) {
   // Print a startup banner to stderr (not stdout — that's the LSP channel).
   eprintln!(

@@ -52,6 +52,11 @@ impl GolangciLintConfig {
     }
   }
 
+  /// Renders the golangci-lint configuration as a YAML string with the standard formality header.
+  ///
+  /// # Errors
+  ///
+  /// Returns a [`serde_yaml::Error`] if serialization fails.
   pub fn render(&self) -> Result<String, serde_yaml::Error> {
     serialize_yaml_with_header(self)
   }
@@ -165,6 +170,8 @@ impl LanguageSurface for GoSurface {
     ]
   }
 
+  // Orchestrates two-stage Go formatting (gofmt + goimports) with check and in-place modes.
+  #[allow(clippy::too_many_lines)]
   fn format(&self, ctx: &ExecutionContext) -> SurfaceResult {
     let start = Instant::now();
 

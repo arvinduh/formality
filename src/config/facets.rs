@@ -426,6 +426,10 @@ pub fn validate_surface_reporting(
 }
 
 /// Validates facet reporting consistency across all provided language surfaces.
+///
+/// # Errors
+///
+/// Returns a vector of error messages if any surface fails facet reporting validation.
 pub fn validate_all_surfaces_reporting(
   surfaces: &[Box<dyn crate::surfaces::LanguageSurface>],
 ) -> Result<(), Vec<String>> {

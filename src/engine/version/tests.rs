@@ -222,6 +222,8 @@ fn test_mstv_fleet_declarations() {
   assert_eq!(get_mstv("golangci-lint"), Some(Version::new(1, 50, 0)));
 }
 
+// Comprehensive registry validation checking minimum supported tool versions and version-probe regexes across all tools.
+#[allow(clippy::too_many_lines)]
 #[test]
 fn test_tool_mstv_registry_entries() {
   let yamllint_entry =

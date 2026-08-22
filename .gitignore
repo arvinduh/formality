@@ -5,3 +5,4 @@ editors/vscode/*.vsix
 .ruff_cache
 .vscode/
 /.artifacts/
+/.agents/

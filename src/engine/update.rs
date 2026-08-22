@@ -11,7 +11,7 @@ struct UpdateCache {
   latest_tag: Option<String>,
 }
 
-fn get_cache_path() -> Option<PathBuf> {
+fn get_cache_path() -> PathBuf {
   let base_dir = if let Ok(local_app_data) = std::env::var("LOCALAPPDATA") {
     PathBuf::from(local_app_data).join("formality")
   } else if let Ok(cache_home) = std::env::var("XDG_CACHE_HOME") {
@@ -24,11 +24,13 @@ fn get_cache_path() -> Option<PathBuf> {
     std::env::temp_dir().join("formality")
   };
 
-  Some(base_dir.join("update_check.json"))
+  base_dir.join("update_check.json")
 }
 
+// Outer Option represents cache validity (fresh vs expired); inner Option is the cached latest tag.
+#[allow(clippy::option_option)]
 fn read_cached_tag() -> Option<Option<String>> {
-  let path = get_cache_path()?;
+  let path = get_cache_path();
   let data = std::fs::read_to_string(path).ok()?;
   let cache: UpdateCache = serde_json::from_str(&data).ok()?;
 
@@ -41,20 +43,19 @@ fn read_cached_tag() -> Option<Option<String>> {
 }
 
 fn write_cached_tag(tag: Option<&str>) {
-  if let Some(path) = get_cache_path() {
-    if let Some(parent) = path.parent() {
-      let _ = std::fs::create_dir_all(parent);
-    }
-    let now = SystemTime::now()
-      .duration_since(UNIX_EPOCH)
-      .map_or(0, |d| d.as_secs());
-    let cache = UpdateCache {
-      last_checked_unix: now,
-      latest_tag: tag.map(std::string::ToString::to_string),
-    };
-    if let Ok(json) = serde_json::to_string(&cache) {
-      let _ = std::fs::write(path, json);
-    }
+  let path = get_cache_path();
+  if let Some(parent) = path.parent() {
+    let _ = std::fs::create_dir_all(parent);
+  }
+  let now = SystemTime::now()
+    .duration_since(UNIX_EPOCH)
+    .map_or(0, |d| d.as_secs());
+  let cache = UpdateCache {
+    last_checked_unix: now,
+    latest_tag: tag.map(std::string::ToString::to_string),
+  };
+  if let Ok(json) = serde_json::to_string(&cache) {
+    let _ = std::fs::write(path, json);
   }
 }
 
@@ -66,6 +67,26 @@ pub fn parse_latest_tag_from_json(body: &str) -> Option<String> {
   Some(tag.to_string())
 }
 
+fn parse_semver(s: &str) -> Option<(u64, u64, u64)> {
+  let main_part = s.split('-').next().unwrap_or(s);
+  let parts: Vec<&str> = main_part.split('.').collect();
+  if parts.len() >= 3 {
+    let major = parts[0].parse().ok()?;
+    let minor = parts[1].parse().ok()?;
+    let patch = parts[2].parse().ok()?;
+    Some((major, minor, patch))
+  } else if parts.len() == 2 {
+    let major = parts[0].parse().ok()?;
+    let minor = parts[1].parse().ok()?;
+    Some((major, minor, 0))
+  } else if parts.len() == 1 {
+    let major = parts[0].parse().ok()?;
+    Some((major, 0, 0))
+  } else {
+    None
+  }
+}
+
 /// Compares a release tag (e.g. "v0.2.0" or "0.2.0") with the current version.
 #[must_use]
 pub fn is_newer_version(latest_tag: &str, current_version: &str) -> bool {
@@ -73,26 +94,6 @@ pub fn is_newer_version(latest_tag: &str, current_version: &str) -> bool {
   let clean_curr = current_version.trim_start_matches('v');
   if clean_latest.is_empty() || clean_curr.is_empty() {
     return false;
-  }
-
-  fn parse_semver(s: &str) -> Option<(u64, u64, u64)> {
-    let main_part = s.split('-').next().unwrap_or(s);
-    let parts: Vec<&str> = main_part.split('.').collect();
-    if parts.len() >= 3 {
-      let major = parts[0].parse().ok()?;
-      let minor = parts[1].parse().ok()?;
-      let patch = parts[2].parse().ok()?;
-      Some((major, minor, patch))
-    } else if parts.len() == 2 {
-      let major = parts[0].parse().ok()?;
-      let minor = parts[1].parse().ok()?;
-      Some((major, minor, 0))
-    } else if parts.len() == 1 {
-      let major = parts[0].parse().ok()?;
-      Some((major, 0, 0))
-    } else {
-      None
-    }
   }
 
   if let (Some(latest_nums), Some(curr_nums)) =

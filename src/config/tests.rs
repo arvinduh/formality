@@ -625,10 +625,10 @@ fn test_unrecognized_lang_sections_flags_typo_but_not_valid_undetected() {
   let registry = crate::surfaces::SurfaceRegistry::default();
 
   // A genuine typo: "pythonn" is not a known surface name or alias.
-  let toml = r#"
+  let toml = r"
     [lang.pythonn]
     indent_size = 4
-  "#;
+  ";
   let cfg =
     FormalityConfig::parse_str(toml, Path::new("formality.toml")).unwrap();
   assert_eq!(
@@ -640,10 +640,10 @@ fn test_unrecognized_lang_sections_flags_typo_but_not_valid_undetected() {
   // A valid, recognized surface name that simply isn't active/detected in
   // the current workspace (pre-configuring for a language not yet in use)
   // must NOT be flagged — this is a legitimate, intentional override.
-  let toml = r#"
+  let toml = r"
     [lang.rust]
     indent_size = 4
-  "#;
+  ";
   let cfg =
     FormalityConfig::parse_str(toml, Path::new("formality.toml")).unwrap();
   assert!(
@@ -728,10 +728,10 @@ fn test_unrecognized_lang_sections_handles_case_and_aliases() {
   let registry = crate::surfaces::SurfaceRegistry::default();
 
   // Canonical names are matched case-insensitively.
-  let toml = r#"
+  let toml = r"
     [lang.RUST]
     indent_size = 4
-  "#;
+  ";
   let cfg =
     FormalityConfig::parse_str(toml, Path::new("formality.toml")).unwrap();
   assert!(
@@ -741,10 +741,10 @@ fn test_unrecognized_lang_sections_handles_case_and_aliases() {
 
   // Aliases (e.g. "py" for "python", "js" for "javascript") also resolve
   // and must not be flagged.
-  let toml = r#"
+  let toml = r"
     [lang.py]
     indent_size = 4
-  "#;
+  ";
   let cfg =
     FormalityConfig::parse_str(toml, Path::new("formality.toml")).unwrap();
   assert!(
@@ -753,13 +753,13 @@ fn test_unrecognized_lang_sections_handles_case_and_aliases() {
   );
 
   // Multiple unrecognized sections are all reported.
-  let toml = r#"
+  let toml = r"
     [lang.pythonn]
     indent_size = 4
 
     [lang.jaav]
     indent_size = 4
-  "#;
+  ";
   let cfg =
     FormalityConfig::parse_str(toml, Path::new("formality.toml")).unwrap();
   let mut unrecognized = cfg.unrecognized_lang_sections(&registry);

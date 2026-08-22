@@ -42,6 +42,9 @@ pub fn sync_file_helper(
   }
 
   // File exists but was not written by fml — protect it from silent overwrite.
+  // The multi-clause condition explicitly distinguishes between presence, non-emptiness,
+  // auto-generated header matching, and valid JSON config fallback.
+  #[allow(clippy::nonminimal_bool)]
   if exists
     && !current_content.is_empty()
     && !is_auto_generated(&current_content)
@@ -139,6 +142,8 @@ impl Drop for TempFileGuard<'_> {
 /// unified diffs between the original content and the formatted content.
 ///
 /// Uses an RAII guard to guarantee that `.fml-check.tmp` files are cleaned up on all exit paths.
+// Implements temporary-file copy, in-place formatting execution, unified diff generation, and RAII cleanup across file sets.
+#[allow(clippy::too_many_lines)]
 pub fn diff_check_via_tempcopy(
   files: &[PathBuf],
   run_in_place: impl Fn(&Path) -> std::io::Result<std::process::Output>,

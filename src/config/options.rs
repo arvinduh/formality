@@ -262,6 +262,8 @@ pub struct YamlOptions {
 }
 
 impl YamlOptions {
+  // Maintains consistent `merge(&mut self, other: Self)` signature across all language option structs.
+  #[allow(clippy::needless_pass_by_value)]
   pub fn merge(&mut self, other: YamlOptions) {
     if other.indent_sequence.is_some() {
       self.indent_sequence = other.indent_sequence;

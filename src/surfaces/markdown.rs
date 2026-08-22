@@ -41,6 +41,11 @@ impl PrettierConfig {
     }
   }
 
+  /// Renders the Prettier configuration as a pretty JSON string.
+  ///
+  /// # Errors
+  ///
+  /// Returns a [`serde_json::Error`] if serialization fails.
   pub fn render(&self) -> Result<String, serde_json::Error> {
     serialize_json_pretty(self)
   }
@@ -87,6 +92,11 @@ impl MarkdownlintConfig {
     }
   }
 
+  /// Renders the markdownlint configuration as a pretty JSON string.
+  ///
+  /// # Errors
+  ///
+  /// Returns a [`serde_json::Error`] if serialization fails.
   pub fn render(&self) -> Result<String, serde_json::Error> {
     serialize_json_pretty(self)
   }
@@ -192,6 +202,8 @@ impl LanguageSurface for MarkdownSurface {
     ]
   }
 
+  // Orchestrates prettier markdown formatting across check and write modes with fallback tempcopy handling.
+  #[allow(clippy::too_many_lines)]
   fn format(&self, ctx: &ExecutionContext) -> SurfaceResult {
     let start = Instant::now();
 

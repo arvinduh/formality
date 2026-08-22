@@ -156,6 +156,127 @@ pub fn run_doctor(
     }
   };
 
+  let (
+    doctor_table,
+    missing_unique_tools,
+    installed_unique_tools,
+    outdated_unique_tools,
+  ) = scan_tools_and_build_table(&surfaces, config);
+
+  let palette = Palette::detect();
+  let rendered_table = render(&doctor_table, &palette);
+  let separator = crate::ui::table::separator_for_content(&rendered_table);
+
+  println!(
+    "{} {}",
+    "fml doctor".bold().cyan(),
+    if show_all {
+      "(all surfaces)".dimmed()
+    } else {
+      "(active surfaces)".dimmed()
+    }
+  );
+  println!("{}", separator.dimmed());
+  if !rendered_table.is_empty() {
+    println!("{rendered_table}");
+  }
+
+  // Check for unconfigured surfaces if explicit `languages` is set
+  print_unconfigured_languages(root, config, &separator);
+
+  // Virtual Environment status
+  print_virtualenv_status(root, &surfaces, show_all, &separator);
+
+  // .gitignore Cache Hygiene Check
+  print_gitignore_hygiene(root, &surfaces, &separator);
+
+  // Auto-install mode
+  if install && !missing_unique_tools.is_empty() {
+    let _ = install_missing_tools(&missing_unique_tools);
+  }
+
+  println!("{}", separator.dimmed());
+  let outdated_str = if outdated_unique_tools.is_empty() {
+    String::new()
+  } else {
+    format!(" ({} outdated)", outdated_unique_tools.len())
+      .yellow()
+      .to_string()
+  };
+  println!(
+    "  {} installed{}, {} missing{}\n",
+    installed_unique_tools.len().to_string().green().bold(),
+    outdated_str,
+    if missing_unique_tools.is_empty() {
+      "0".green().bold().to_string()
+    } else {
+      missing_unique_tools
+        .len()
+        .to_string()
+        .yellow()
+        .bold()
+        .to_string()
+    },
+    if !missing_unique_tools.is_empty() && !install {
+      " (run 'fml install' to install missing tools)"
+        .dimmed()
+        .to_string()
+    } else {
+      String::new()
+    }
+  );
+
+  if missing_unique_tools.is_empty() || install {
+    0
+  } else {
+    2
+  }
+}
+
+fn lookup_tool_info(binary: &'static str) -> ToolLookupResult {
+  let is_installed = which::which(binary).is_ok()
+    || (binary == "clippy"
+      && (which::which("clippy-driver").is_ok()
+        || which::which("cargo").is_ok()));
+
+  if is_installed {
+    let path = which::which(binary)
+      .or_else(|_| which::which("clippy-driver"))
+      .or_else(|_| which::which("cargo"))
+      .ok()
+      .map(|p| p.display().to_string());
+    let raw_version = get_raw_tool_version(binary);
+    let parsed_version = probe_tool_version(binary);
+    let status = minimum_supported_tool_version(binary)
+      .map(|mstv| check_tool_compatibility(binary, &mstv));
+
+    ToolLookupResult {
+      is_installed: true,
+      path,
+      raw_version,
+      parsed_version,
+      status,
+    }
+  } else {
+    ToolLookupResult {
+      is_installed: false,
+      path: None,
+      raw_version: None,
+      parsed_version: None,
+      status: Some(ToolStatus::NotFound),
+    }
+  }
+}
+
+fn scan_tools_and_build_table(
+  surfaces: &[Box<dyn LanguageSurface>],
+  config: &FormalityConfig,
+) -> (
+  Table,
+  Vec<ToolInfo>,
+  HashSet<&'static str>,
+  HashSet<&'static str>,
+) {
   let mut cache: HashMap<&'static str, ToolLookupResult> = HashMap::new();
   let mut missing_unique_tools: Vec<ToolInfo> = Vec::new();
   let mut installed_unique_tools = HashSet::new();
@@ -169,45 +290,14 @@ pub fn run_doctor(
   ])
   .layout(Layout::compact().indent(2).padding(0, 1));
 
-  for surface in &surfaces {
+  for surface in surfaces {
     let resolved = config.resolve_for_lang(surface.name());
     let tools = surface.tool_info(&resolved);
 
     for tool in tools {
-      let lookup = cache.entry(tool.binary).or_insert_with(|| {
-        let is_installed = which::which(tool.binary).is_ok()
-          || (tool.binary == "clippy"
-            && (which::which("clippy-driver").is_ok()
-              || which::which("cargo").is_ok()));
-
-        if is_installed {
-          let path = which::which(tool.binary)
-            .or_else(|_| which::which("clippy-driver"))
-            .or_else(|_| which::which("cargo"))
-            .ok()
-            .map(|p| p.display().to_string());
-          let raw_version = get_raw_tool_version(tool.binary);
-          let parsed_version = probe_tool_version(tool.binary);
-          let status = minimum_supported_tool_version(tool.binary)
-            .map(|mstv| check_tool_compatibility(tool.binary, &mstv));
-
-          ToolLookupResult {
-            is_installed: true,
-            path,
-            raw_version,
-            parsed_version,
-            status,
-          }
-        } else {
-          ToolLookupResult {
-            is_installed: false,
-            path: None,
-            raw_version: None,
-            parsed_version: None,
-            status: Some(ToolStatus::NotFound),
-          }
-        }
-      });
+      let lookup = cache
+        .entry(tool.binary)
+        .or_insert_with(|| lookup_tool_info(tool.binary));
 
       if lookup.is_installed {
         if installed_unique_tools.insert(tool.binary) {
@@ -275,25 +365,19 @@ pub fn run_doctor(
     }
   }
 
-  let palette = Palette::detect();
-  let rendered_table = render(&doctor_table, &palette);
-  let separator = crate::ui::table::separator_for_content(&rendered_table);
+  (
+    doctor_table,
+    missing_unique_tools,
+    installed_unique_tools,
+    outdated_unique_tools,
+  )
+}
 
-  println!(
-    "{} {}",
-    "fml doctor".bold().cyan(),
-    if show_all {
-      "(all surfaces)".dimmed()
-    } else {
-      "(active surfaces)".dimmed()
-    }
-  );
-  println!("{}", separator.dimmed());
-  if !rendered_table.is_empty() {
-    println!("{rendered_table}");
-  }
-
-  // Check for unconfigured surfaces if explicit `languages` is set
+fn print_unconfigured_languages(
+  root: &Path,
+  config: &FormalityConfig,
+  separator: &str,
+) {
   if let Some(ref explicit_langs) = config.resolve_global().languages {
     let mut unconfigured = Vec::new();
     for surface in all_surfaces() {
@@ -323,8 +407,14 @@ pub fn run_doctor(
       );
     }
   }
+}
 
-  // Virtual Environment status
+fn print_virtualenv_status(
+  root: &Path,
+  surfaces: &[Box<dyn LanguageSurface>],
+  show_all: bool,
+  separator: &str,
+) {
   let has_python = surfaces
     .iter()
     .any(|s| s.name() == "python" || s.aliases().contains(&"py"))
@@ -382,9 +472,14 @@ pub fn run_doctor(
       );
     }
   }
+}
 
-  // .gitignore Cache Hygiene Check
-  let hygiene_report = check_gitignore_hygiene(root, &surfaces);
+fn print_gitignore_hygiene(
+  root: &Path,
+  surfaces: &[Box<dyn LanguageSurface>],
+  separator: &str,
+) {
+  let hygiene_report = check_gitignore_hygiene(root, surfaces);
   if !hygiene_report.issues.is_empty() {
     println!("\n{}", separator.dimmed());
     println!("{}", "Gitignore Cache Hygiene:".yellow().bold());
@@ -410,48 +505,6 @@ pub fn run_doctor(
       "Tip:".cyan().bold(),
       ".gitignore".bold()
     );
-  }
-
-  // Auto-install mode
-  if install && !missing_unique_tools.is_empty() {
-    let _ = install_missing_tools(&missing_unique_tools);
-  }
-
-  println!("{}", separator.dimmed());
-  let outdated_str = if outdated_unique_tools.is_empty() {
-    String::new()
-  } else {
-    format!(" ({} outdated)", outdated_unique_tools.len())
-      .yellow()
-      .to_string()
-  };
-  println!(
-    "  {} installed{}, {} missing{}\n",
-    installed_unique_tools.len().to_string().green().bold(),
-    outdated_str,
-    if missing_unique_tools.is_empty() {
-      "0".green().bold().to_string()
-    } else {
-      missing_unique_tools
-        .len()
-        .to_string()
-        .yellow()
-        .bold()
-        .to_string()
-    },
-    if !missing_unique_tools.is_empty() && !install {
-      " (run 'fml install' to install missing tools)"
-        .dimmed()
-        .to_string()
-    } else {
-      String::new()
-    }
-  );
-
-  if missing_unique_tools.is_empty() || install {
-    0
-  } else {
-    2
   }
 }
 

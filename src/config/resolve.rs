@@ -31,6 +31,11 @@ impl FormalityConfig {
     }
   }
 
+  /// Parses configuration from a TOML string.
+  ///
+  /// # Errors
+  ///
+  /// Returns a [`ConfigError::Parse`] if the TOML is invalid or does not match the schema.
   pub fn parse_str(content: &str, path: &Path) -> Result<Self, ConfigError> {
     toml::from_str(content).map_err(|source| ConfigError::Parse {
       path: path.to_path_buf(),
@@ -38,6 +43,11 @@ impl FormalityConfig {
     })
   }
 
+  /// Loads and parses configuration from a file path.
+  ///
+  /// # Errors
+  ///
+  /// Returns a [`ConfigError::Io`] if the file cannot be read, or [`ConfigError::Parse`] if the TOML is invalid.
   pub fn load_file(path: &Path) -> Result<Self, ConfigError> {
     let content =
       fs::read_to_string(path).map_err(|source| ConfigError::Io {
@@ -123,121 +133,30 @@ impl FormalityConfig {
   pub fn resolve_for_lang(&self, lang_name: &str) -> ResolvedLangConfig {
     let global = self.resolve_global();
     let lang_cfg = self.lang.get(lang_name);
-    let lang_layout = lang_cfg.and_then(|l| l.layout.as_ref());
 
-    let (default_fmt, default_lint) = match lang_name {
-      "rust" => (Some("cargo-fmt"), Some("clippy")),
-      "python" => (Some("ruff-format"), Some("ruff-check")),
-      "cpp" => (Some("clang-format"), Some("clang-tidy")),
-      "java" => (Some("google-java-format"), Some("checkstyle")),
-      "go" => (Some("goimports"), Some("golangci-lint")),
-      "markdown" => (Some("prettier"), Some("markdownlint")),
-      "yaml" => (Some("prettier"), Some("yamllint")),
-      "json" => (Some("prettier"), None),
-      "toml" => (Some("taplo"), Some("taplo")),
-      "typst" => (Some("typstyle"), Some("typstyle")),
-      "javascript" => (Some("biome"), Some("biome")),
-      "kotlin" => (Some("ktlint"), Some("ktlint")),
-      _ => (None, None),
-    };
+    let (default_fmt, default_lint) = default_tools_for_lang(lang_name);
+    let (layout, indent_size, line_length, use_tabs, prose_wrap) =
+      resolve_layout_for_lang(lang_name, lang_cfg, &global);
 
-    // Java's indent width is dictated by the configured google-java-format
-    // style (Google = 2, AOSP = 4) when the user hasn't explicitly pinned
-    // `indent_size` themselves. Resolving it here — the single source of
-    // truth `ResolvedLangConfig::indent_size` — is what keeps the generated
-    // `checkstyle.xml` and `.editorconfig` in agreement; see
-    // `JavaSurface::facet_support` (Configurable, not Fixed) and
-    // `CheckstyleConfig::from_context`, both of which just read this value.
-    let java_style_is_aosp = lang_name == "java"
-      && lang_cfg
-        .and_then(super::LangConfig::java_options)
-        .and_then(|j| j.style)
-        .as_deref()
-        == Some("aosp");
+    macro_rules! resolve_opt {
+      ($field_getter:ident, $opt_type:ident, $target_lang:expr) => {
+        lang_cfg
+          .and_then(super::LangConfig::$field_getter)
+          .or_else(|| {
+            if lang_name == $target_lang {
+              Some($opt_type::default())
+            } else {
+              None
+            }
+          })
+      };
+    }
 
-    let indent_size = lang_cfg
-      .and_then(|l| l.indent_size)
-      .or_else(|| lang_layout.and_then(|l| l.indent_size))
-      .unwrap_or(if java_style_is_aosp {
-        4
-      } else {
-        global.indent_size
-      });
-
-    let line_length = lang_cfg
-      .and_then(|l| l.line_length)
-      .or_else(|| lang_layout.and_then(|l| l.line_length))
-      .unwrap_or(global.line_length);
-
-    let use_tabs = lang_cfg
-      .and_then(|l| l.use_tabs)
-      .or_else(|| lang_layout.and_then(|l| l.use_tabs))
-      .unwrap_or(global.use_tabs);
-
-    let prose_wrap = lang_cfg
-      .and_then(|l| l.prose_wrap.clone())
-      .or_else(|| lang_layout.and_then(|l| l.prose_wrap.clone()))
-      .or_else(|| global.layout.prose_wrap.clone());
-
-    let layout = LayoutFacet {
-      indent_size: Some(indent_size),
-      line_length: Some(line_length),
-      use_tabs: Some(use_tabs),
-      prose_wrap: prose_wrap.clone(),
-    };
-
-    let rust =
-      lang_cfg
-        .and_then(super::LangConfig::rust_options)
-        .or_else(|| {
-          if lang_name == "rust" {
-            Some(RustOptions::default())
-          } else {
-            None
-          }
-        });
-
-    let python = lang_cfg
-      .and_then(super::LangConfig::python_options)
-      .or_else(|| {
-        if lang_name == "python" {
-          Some(PythonOptions::default())
-        } else {
-          None
-        }
-      });
-
-    let cpp = lang_cfg
-      .and_then(super::LangConfig::cpp_options)
-      .or_else(|| {
-        if lang_name == "cpp" {
-          Some(CppOptions::default())
-        } else {
-          None
-        }
-      });
-
-    let java =
-      lang_cfg
-        .and_then(super::LangConfig::java_options)
-        .or_else(|| {
-          if lang_name == "java" {
-            Some(JavaOptions::default())
-          } else {
-            None
-          }
-        });
-
-    let go = lang_cfg
-      .and_then(super::LangConfig::go_options)
-      .or_else(|| {
-        if lang_name == "go" {
-          Some(GoOptions::default())
-        } else {
-          None
-        }
-      });
-
+    let rust = resolve_opt!(rust_options, RustOptions, "rust");
+    let python = resolve_opt!(python_options, PythonOptions, "python");
+    let cpp = resolve_opt!(cpp_options, CppOptions, "cpp");
+    let java = resolve_opt!(java_options, JavaOptions, "java");
+    let go = resolve_opt!(go_options, GoOptions, "go");
     let markdown = lang_cfg
       .and_then(super::LangConfig::markdown_options)
       .or_else(|| {
@@ -249,70 +168,13 @@ impl FormalityConfig {
           None
         }
       });
-
-    let yaml =
-      lang_cfg
-        .and_then(super::LangConfig::yaml_options)
-        .or_else(|| {
-          if lang_name == "yaml" {
-            Some(YamlOptions::default())
-          } else {
-            None
-          }
-        });
-
-    let json =
-      lang_cfg
-        .and_then(super::LangConfig::json_options)
-        .or_else(|| {
-          if lang_name == "json" {
-            Some(JsonOptions::default())
-          } else {
-            None
-          }
-        });
-
-    let toml =
-      lang_cfg
-        .and_then(super::LangConfig::toml_options)
-        .or_else(|| {
-          if lang_name == "toml" {
-            Some(TomlOptions::default())
-          } else {
-            None
-          }
-        });
-
-    let typst =
-      lang_cfg
-        .and_then(super::LangConfig::typst_options)
-        .or_else(|| {
-          if lang_name == "typst" {
-            Some(TypstOptions::default())
-          } else {
-            None
-          }
-        });
-
-    let javascript = lang_cfg
-      .and_then(super::LangConfig::javascript_options)
-      .or_else(|| {
-        if lang_name == "javascript" {
-          Some(JavaScriptOptions::default())
-        } else {
-          None
-        }
-      });
-
-    let kotlin = lang_cfg
-      .and_then(super::LangConfig::kotlin_options)
-      .or_else(|| {
-        if lang_name == "kotlin" {
-          Some(KotlinOptions::default())
-        } else {
-          None
-        }
-      });
+    let yaml = resolve_opt!(yaml_options, YamlOptions, "yaml");
+    let json = resolve_opt!(json_options, JsonOptions, "json");
+    let toml = resolve_opt!(toml_options, TomlOptions, "toml");
+    let typst = resolve_opt!(typst_options, TypstOptions, "typst");
+    let javascript =
+      resolve_opt!(javascript_options, JavaScriptOptions, "javascript");
+    let kotlin = resolve_opt!(kotlin_options, KotlinOptions, "kotlin");
 
     let extra = lang_cfg.map(|l| l.extra.clone()).unwrap_or_default();
 
@@ -382,7 +244,11 @@ impl FormalityConfig {
   }
 
   /// Loads configuration with layered resolution:
-  /// Embedded defaults -> User config (~/.config/formality/config.toml) -> Project config (formality.toml / .formality.toml)
+  /// Embedded defaults -> User config (`~/.config/formality/config.toml`) -> Project config (`formality.toml` / `.formality.toml`)
+  ///
+  /// # Errors
+  ///
+  /// Returns a [`ConfigError`] if reading or parsing any discovered configuration file fails.
   pub fn load_layered(
     repo_root: Option<&Path>,
   ) -> Result<(Self, Option<PathBuf>), ConfigError> {
@@ -569,4 +435,79 @@ pub fn find_user_config() -> Option<PathBuf> {
   }
 
   None
+}
+
+fn default_tools_for_lang(
+  lang_name: &str,
+) -> (Option<&'static str>, Option<&'static str>) {
+  match lang_name {
+    "rust" => (Some("cargo-fmt"), Some("clippy")),
+    "python" => (Some("ruff-format"), Some("ruff-check")),
+    "cpp" => (Some("clang-format"), Some("clang-tidy")),
+    "java" => (Some("google-java-format"), Some("checkstyle")),
+    "go" => (Some("goimports"), Some("golangci-lint")),
+    "markdown" => (Some("prettier"), Some("markdownlint")),
+    "yaml" => (Some("prettier"), Some("yamllint")),
+    "json" => (Some("prettier"), None),
+    "toml" => (Some("taplo"), Some("taplo")),
+    "typst" => (Some("typstyle"), Some("typstyle")),
+    "javascript" => (Some("biome"), Some("biome")),
+    "kotlin" => (Some("ktlint"), Some("ktlint")),
+    _ => (None, None),
+  }
+}
+
+fn resolve_layout_for_lang(
+  lang_name: &str,
+  lang_cfg: Option<&super::LangConfig>,
+  global: &ResolvedGlobalConfig,
+) -> (LayoutFacet, usize, usize, bool, Option<String>) {
+  let lang_layout = lang_cfg.and_then(|l| l.layout.as_ref());
+
+  // Java's indent width is dictated by the configured google-java-format
+  // style (Google = 2, AOSP = 4) when the user hasn't explicitly pinned
+  // `indent_size` themselves. Resolving it here — the single source of
+  // truth `ResolvedLangConfig::indent_size` — is what keeps the generated
+  // `checkstyle.xml` and `.editorconfig` in agreement; see
+  // `JavaSurface::facet_support` (Configurable, not Fixed) and
+  // `CheckstyleConfig::from_context`, both of which just read this value.
+  let java_style_is_aosp = lang_name == "java"
+    && lang_cfg
+      .and_then(super::LangConfig::java_options)
+      .and_then(|j| j.style)
+      .as_deref()
+      == Some("aosp");
+
+  let indent_size = lang_cfg
+    .and_then(|l| l.indent_size)
+    .or_else(|| lang_layout.and_then(|l| l.indent_size))
+    .unwrap_or(if java_style_is_aosp {
+      4
+    } else {
+      global.indent_size
+    });
+
+  let line_length = lang_cfg
+    .and_then(|l| l.line_length)
+    .or_else(|| lang_layout.and_then(|l| l.line_length))
+    .unwrap_or(global.line_length);
+
+  let use_tabs = lang_cfg
+    .and_then(|l| l.use_tabs)
+    .or_else(|| lang_layout.and_then(|l| l.use_tabs))
+    .unwrap_or(global.use_tabs);
+
+  let prose_wrap = lang_cfg
+    .and_then(|l| l.prose_wrap.clone())
+    .or_else(|| lang_layout.and_then(|l| l.prose_wrap.clone()))
+    .or_else(|| global.layout.prose_wrap.clone());
+
+  let layout = LayoutFacet {
+    indent_size: Some(indent_size),
+    line_length: Some(line_length),
+    use_tabs: Some(use_tabs),
+    prose_wrap: prose_wrap.clone(),
+  };
+
+  (layout, indent_size, line_length, use_tabs, prose_wrap)
 }

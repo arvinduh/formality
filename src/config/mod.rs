@@ -109,7 +109,7 @@ impl GlobalConfig {
 
 fn extract_options<T>(
   initial: Option<T>,
-  options: &Option<toml::Value>,
+  options: Option<&toml::Value>,
   extra: &BTreeMap<String, toml::Value>,
   merge_fn: impl Fn(&mut T, T),
   is_empty_fn: impl Fn(&T) -> bool,
@@ -232,97 +232,33 @@ impl LangConfig {
     if other.exclude.is_some() {
       self.exclude = other.exclude;
     }
-    if let Some(other_layout) = other.layout {
-      if let Some(ref mut our_layout) = self.layout {
-        our_layout.merge(other_layout);
-      } else {
-        self.layout = Some(other_layout);
-      }
+
+    macro_rules! merge_option {
+      ($field:ident) => {
+        if let Some(other_val) = other.$field {
+          if let Some(ref mut our_val) = self.$field {
+            our_val.merge(other_val);
+          } else {
+            self.$field = Some(other_val);
+          }
+        }
+      };
     }
-    if let Some(other_rust) = other.rust {
-      if let Some(ref mut our_rust) = self.rust {
-        our_rust.merge(other_rust);
-      } else {
-        self.rust = Some(other_rust);
-      }
-    }
-    if let Some(other_py) = other.python {
-      if let Some(ref mut our_py) = self.python {
-        our_py.merge(other_py);
-      } else {
-        self.python = Some(other_py);
-      }
-    }
-    if let Some(other_cpp) = other.cpp {
-      if let Some(ref mut our_cpp) = self.cpp {
-        our_cpp.merge(other_cpp);
-      } else {
-        self.cpp = Some(other_cpp);
-      }
-    }
-    if let Some(other_java) = other.java {
-      if let Some(ref mut our_java) = self.java {
-        our_java.merge(other_java);
-      } else {
-        self.java = Some(other_java);
-      }
-    }
-    if let Some(other_go) = other.go {
-      if let Some(ref mut our_go) = self.go {
-        our_go.merge(other_go);
-      } else {
-        self.go = Some(other_go);
-      }
-    }
-    if let Some(other_md) = other.markdown {
-      if let Some(ref mut our_md) = self.markdown {
-        our_md.merge(other_md);
-      } else {
-        self.markdown = Some(other_md);
-      }
-    }
-    if let Some(other_yaml) = other.yaml {
-      if let Some(ref mut our_yaml) = self.yaml {
-        our_yaml.merge(other_yaml);
-      } else {
-        self.yaml = Some(other_yaml);
-      }
-    }
-    if let Some(other_json) = other.json {
-      if let Some(ref mut our_json) = self.json {
-        our_json.merge(other_json);
-      } else {
-        self.json = Some(other_json);
-      }
-    }
-    if let Some(other_toml) = other.toml {
-      if let Some(ref mut our_toml) = self.toml {
-        our_toml.merge(other_toml);
-      } else {
-        self.toml = Some(other_toml);
-      }
-    }
-    if let Some(other_typst) = other.typst {
-      if let Some(ref mut our_typst) = self.typst {
-        our_typst.merge(other_typst);
-      } else {
-        self.typst = Some(other_typst);
-      }
-    }
-    if let Some(other_js) = other.javascript {
-      if let Some(ref mut our_js) = self.javascript {
-        our_js.merge(other_js);
-      } else {
-        self.javascript = Some(other_js);
-      }
-    }
-    if let Some(other_kotlin) = other.kotlin {
-      if let Some(ref mut our_kotlin) = self.kotlin {
-        our_kotlin.merge(other_kotlin);
-      } else {
-        self.kotlin = Some(other_kotlin);
-      }
-    }
+
+    merge_option!(layout);
+    merge_option!(rust);
+    merge_option!(python);
+    merge_option!(cpp);
+    merge_option!(java);
+    merge_option!(go);
+    merge_option!(markdown);
+    merge_option!(yaml);
+    merge_option!(json);
+    merge_option!(toml);
+    merge_option!(typst);
+    merge_option!(javascript);
+    merge_option!(kotlin);
+
     if other.options.is_some() {
       self.options = other.options;
     }
@@ -335,7 +271,7 @@ impl LangConfig {
   pub fn rust_options(&self) -> Option<RustOptions> {
     extract_options(
       self.rust.clone(),
-      &self.options,
+      self.options.as_ref(),
       &self.extra,
       options::RustOptions::merge,
       options::RustOptions::is_empty,
@@ -346,7 +282,7 @@ impl LangConfig {
   pub fn python_options(&self) -> Option<PythonOptions> {
     extract_options(
       self.python.clone(),
-      &self.options,
+      self.options.as_ref(),
       &self.extra,
       options::PythonOptions::merge,
       options::PythonOptions::is_empty,
@@ -357,7 +293,7 @@ impl LangConfig {
   pub fn cpp_options(&self) -> Option<CppOptions> {
     extract_options(
       self.cpp.clone(),
-      &self.options,
+      self.options.as_ref(),
       &self.extra,
       options::CppOptions::merge,
       options::CppOptions::is_empty,
@@ -368,7 +304,7 @@ impl LangConfig {
   pub fn java_options(&self) -> Option<JavaOptions> {
     extract_options(
       self.java.clone(),
-      &self.options,
+      self.options.as_ref(),
       &self.extra,
       options::JavaOptions::merge,
       options::JavaOptions::is_empty,
@@ -379,7 +315,7 @@ impl LangConfig {
   pub fn go_options(&self) -> Option<GoOptions> {
     extract_options(
       self.go.clone(),
-      &self.options,
+      self.options.as_ref(),
       &self.extra,
       options::GoOptions::merge,
       options::GoOptions::is_empty,
@@ -390,7 +326,7 @@ impl LangConfig {
   pub fn markdown_options(&self) -> Option<MarkdownOptions> {
     let mut opts = extract_options(
       self.markdown.clone(),
-      &self.options,
+      self.options.as_ref(),
       &self.extra,
       options::MarkdownOptions::merge,
       options::MarkdownOptions::is_empty,
@@ -415,7 +351,7 @@ impl LangConfig {
   pub fn yaml_options(&self) -> Option<YamlOptions> {
     extract_options(
       self.yaml.clone(),
-      &self.options,
+      self.options.as_ref(),
       &self.extra,
       options::YamlOptions::merge,
       options::YamlOptions::is_empty,
@@ -426,7 +362,7 @@ impl LangConfig {
   pub fn json_options(&self) -> Option<JsonOptions> {
     extract_options(
       self.json.clone(),
-      &self.options,
+      self.options.as_ref(),
       &self.extra,
       options::JsonOptions::merge,
       |_| false,
@@ -437,7 +373,7 @@ impl LangConfig {
   pub fn toml_options(&self) -> Option<TomlOptions> {
     extract_options(
       self.toml.clone(),
-      &self.options,
+      self.options.as_ref(),
       &self.extra,
       options::TomlOptions::merge,
       |_| false,
@@ -448,7 +384,7 @@ impl LangConfig {
   pub fn typst_options(&self) -> Option<TypstOptions> {
     extract_options(
       self.typst.clone(),
-      &self.options,
+      self.options.as_ref(),
       &self.extra,
       options::TypstOptions::merge,
       |_| false,
@@ -459,7 +395,7 @@ impl LangConfig {
   pub fn javascript_options(&self) -> Option<JavaScriptOptions> {
     extract_options(
       self.javascript.clone(),
-      &self.options,
+      self.options.as_ref(),
       &self.extra,
       options::JavaScriptOptions::merge,
       options::JavaScriptOptions::is_empty,
@@ -470,7 +406,7 @@ impl LangConfig {
   pub fn kotlin_options(&self) -> Option<KotlinOptions> {
     extract_options(
       self.kotlin.clone(),
-      &self.options,
+      self.options.as_ref(),
       &self.extra,
       options::KotlinOptions::merge,
       |_| false,

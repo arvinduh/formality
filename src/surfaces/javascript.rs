@@ -150,6 +150,11 @@ impl BiomeConfig {
     }
   }
 
+  /// Renders the Biome configuration as a pretty JSON string.
+  ///
+  /// # Errors
+  ///
+  /// Returns a [`serde_json::Error`] if serialization fails.
   pub fn render(&self) -> Result<String, serde_json::Error> {
     serialize_json_pretty(self)
   }

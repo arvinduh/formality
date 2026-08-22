@@ -19,6 +19,8 @@ pub enum RunnerAction {
 pub struct Runner;
 
 impl Runner {
+  // Dispatches parallel surface execution across fix/fmt/lint/sync stages, aggregates results, and renders status tables.
+  #[allow(clippy::too_many_lines, clippy::needless_pass_by_value)]
   #[must_use]
   pub fn run(
     surfaces: Vec<Box<dyn LanguageSurface>>,

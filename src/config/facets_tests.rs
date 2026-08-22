@@ -71,6 +71,8 @@ fn test_all_surfaces_reporting_engine() {
 /// explicitly against the documented table so a change to any surface's
 /// `facet_support` (or the table drifting out of sync with the code) shows
 /// up as a failing assertion instead of an untested edge.
+// Comprehensive golden-matrix test verifying all 12 surfaces x 9 facets against the rosetta spec.
+#[allow(clippy::too_many_lines)]
 #[test]
 fn test_surface_facet_declarations() {
   use Facet::{

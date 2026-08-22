@@ -61,6 +61,8 @@ pub fn run_with_args(args: Cli) -> i32 {
   code
 }
 
+// Dispatches all top-level CLI commands (fmt, lint, sync, fix, doctor, init, lsp, schema, etc.).
+#[allow(clippy::too_many_lines)]
 fn run_command_inner(args: Cli) -> i32 {
   let root = args.root.unwrap_or_else(|| {
     std::env::current_dir().unwrap_or_else(|_| PathBuf::from("."))
@@ -495,10 +497,20 @@ fn get_git_diff_files(
   Ok(files)
 }
 
+/// Returns the list of staged git files relative to `root`.
+///
+/// # Errors
+///
+/// Returns an error message if git execution fails or the git command cannot be run.
 pub fn get_git_staged_files(root: &Path) -> Result<Vec<PathBuf>, String> {
   get_git_diff_files(root, true, "staged")
 }
 
+/// Returns the list of changed git files relative to `root`.
+///
+/// # Errors
+///
+/// Returns an error message if git execution fails or the git command cannot be run.
 pub fn get_git_changed_files(root: &Path) -> Result<Vec<PathBuf>, String> {
   get_git_diff_files(root, false, "changed")
 }

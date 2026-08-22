@@ -88,6 +88,11 @@ impl RuffConfig {
     }
   }
 
+  /// Renders the Ruff configuration as a TOML string with the standard formality header.
+  ///
+  /// # Errors
+  ///
+  /// Returns a [`toml::ser::Error`] if serialization fails.
   pub fn render(&self) -> Result<String, toml::ser::Error> {
     serialize_toml_with_header(self)
   }
@@ -201,6 +206,8 @@ impl LanguageSurface for PythonSurface {
     }]
   }
 
+  // Orchestrates Ruff formatting across check, diff, and in-place write modes with target path resolution.
+  #[allow(clippy::too_many_lines)]
   fn format(&self, ctx: &ExecutionContext) -> SurfaceResult {
     let start = Instant::now();
 

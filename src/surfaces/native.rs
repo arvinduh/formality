@@ -12,6 +12,10 @@ pub trait NativeConfig: Serialize {
 }
 
 /// Serializes a struct to TOML and prepends the standard formality auto-generated warning header.
+///
+/// # Errors
+///
+/// Returns a [`toml::ser::Error`] if serialization fails.
 pub fn serialize_toml_with_header<T: Serialize>(
   val: &T,
 ) -> Result<String, toml::ser::Error> {
@@ -20,6 +24,10 @@ pub fn serialize_toml_with_header<T: Serialize>(
 }
 
 /// Serializes a struct to YAML and prepends the standard formality auto-generated warning header.
+///
+/// # Errors
+///
+/// Returns a [`serde_yaml::Error`] if serialization fails.
 pub fn serialize_yaml_with_header<T: Serialize>(
   val: &T,
 ) -> Result<String, serde_yaml::Error> {
@@ -33,6 +41,10 @@ pub fn serialize_yaml_with_header<T: Serialize>(
 }
 
 /// Serializes a struct to pretty-formatted JSON with trailing newline.
+///
+/// # Errors
+///
+/// Returns a [`serde_json::Error`] if serialization fails.
 pub fn serialize_json_pretty<T: Serialize>(
   val: &T,
 ) -> Result<String, serde_json::Error> {
@@ -44,6 +56,12 @@ pub fn serialize_json_pretty<T: Serialize>(
 }
 
 /// Helper to render a native config struct to string based on format preference and file extension.
+///
+/// # Errors
+///
+/// Returns an error string if JSON, YAML, or TOML serialization fails.
+// Native tool configuration filenames (e.g. .golangci.yml, .clang-format) are fixed static ASCII strings.
+#[allow(clippy::case_sensitive_file_extension_comparisons)]
 pub fn render_native_config<T: NativeConfig>(
   cfg: &T,
   as_json: bool,

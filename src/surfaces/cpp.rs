@@ -66,6 +66,11 @@ impl ClangFormatConfig {
     }
   }
 
+  /// Renders the clang-format configuration as a YAML string with the standard formality header.
+  ///
+  /// # Errors
+  ///
+  /// Returns a [`serde_yaml::Error`] if serialization fails.
   pub fn render(&self) -> Result<String, serde_yaml::Error> {
     serialize_yaml_with_header(self)
   }
@@ -103,6 +108,11 @@ impl ClangTidyConfig {
     Self::default()
   }
 
+  /// Renders the clang-tidy configuration as a YAML string with the standard formality header.
+  ///
+  /// # Errors
+  ///
+  /// Returns a [`serde_yaml::Error`] if serialization fails.
   pub fn render(&self) -> Result<String, serde_yaml::Error> {
     serialize_yaml_with_header(self)
   }

@@ -159,6 +159,8 @@ fn to_comfy_align(align: Align) -> comfy_table::CellAlignment {
 }
 
 /// Render a semantic Table specification into a formatted string using comfy-table.
+// Renders rich formatted tables with palette coloring, column width constraints, row spanning, and terminal clamping.
+#[allow(clippy::too_many_lines)]
 #[must_use]
 pub fn render(spec: &Table, palette: &Palette) -> String {
   let mut table = comfy_table::Table::new();
@@ -423,6 +425,10 @@ pub fn separator_for_content(content: &str) -> String {
 }
 
 /// Render a JSON-encoded table specification directly into a formatted string.
+///
+/// # Errors
+///
+/// Returns a [`serde_json::Error`] if parsing `spec_json` fails.
 pub fn render_json(spec_json: &str) -> Result<String, serde_json::Error> {
   let table: Table = serde_json::from_str(spec_json)?;
   let palette = Palette::detect();
