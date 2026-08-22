@@ -1,19 +1,65 @@
 # Adding a New Language Surface
 
-This is the step-by-step walkthrough for adding a 13th `LanguageSurface` to
-`fml`, using the pattern established by Wave 5 (Go, JavaScript/TypeScript, Java,
-Kotlin — `src/surfaces/{go,javascript,java,kotlin}.rs`, PRs #85/#87/#86/#84).
+This is the step-by-step walkthrough for adding a new `LanguageSurface` to
+`fml`, following the architecture and patterns established across the fleet
+(such as Go, JavaScript/TypeScript, Java, and Kotlin in `src/surfaces/`).
 
 > **Note on "self-registration":** `fml` does not use a runtime plugin registry
-> (no `inventory`/`linkme`/dynamic loading). "Self-registering" a surface means
-> adding it to two static compile-time lists — a genuinely small, mechanical
-> diff, not a new subsystem — described in step 4 below.
+> (no `inventory`/`linkme`/dynamic loading). "Registering" a surface means
+> declaring the module in `src/surfaces/mod.rs` and registering the surface type
+> in `SurfaceRegistry::default()` in `src/surfaces/registry.rs`.
+
+---
+
+## Author Checklist
+
+Adding a language surface touches the following touchpoints across the
+repository:
+
+- [ ] **1. Surface implementation**: `src/surfaces/<lang>.rs` implementing
+      `LanguageSurface` + `DeclaresFacets`, exposed via `pub mod <lang>;` in
+      `src/surfaces/mod.rs`.
+- [ ] **2. Tooling installer chains**: `src/surfaces/tooling.rs`
+      (`InstallMethod` constant slice and match arm in `install_chain_for()`).
+- [ ] **3. Per-language configuration**:
+  - `src/config/options.rs`: Typed `FooOptions` struct (`merge()`,
+    `is_empty()`).
+  - `src/config/mod.rs`: `LangConfig` and `ResolvedLangConfig` fields, `merge()`
+    arm, and `foo_options()` accessor using `extract_options()`.
+  - `src/config/resolve.rs`: Default tools match arm in `resolve_for_lang()` and
+    `ResolvedLangConfig` wiring.
+- [ ] **4. Registry wiring**: `src/surfaces/registry.rs`
+      (`SurfaceRegistry::default()` registration call).
+- [ ] **5. Soft / optional tables**:
+  - `src/commands/lsp.rs`: `CHILD_LSP_REGISTRY` entry for child language server
+    (if applicable).
+  - `src/editorconfig.rs`: `glob_for_surface()` match arm and
+    `CANONICAL_FLEET_ORDER` entry.
+  - Prose surface counts in doc comments and documentation (e.g.
+    `SurfaceRegistry::new()` doc comment).
+- [ ] **6. Test coverage**:
+  - Surface unit tests in `src/surfaces/<lang>.rs` (or `<lang>_tests.rs`).
+  - Registry tests in `src/surfaces/registry_tests.rs` (fleet count assertion,
+    name list in `test_all_fleet_surfaces_present()`, alias & case-insensitive
+    lookup test cases).
+  - Fleet lint-fix test in `src/surfaces/mod_tests.rs`
+    (`test_surface_supports_lint_fix()`).
+  - Facet Rosetta golden table in `src/config/facets_tests.rs`
+    (`test_surface_facet_declarations()` and surface count assertions).
+- [ ] **7. JSON Schema & Documentation**:
+  - `cargo run -q -- schema -o schema/formality.schema.json`
+  - `docs/language-surfaces.md`
+  - `docs/facet-rosetta.md`
+  - `README.md`
+
+---
 
 ## 1. Create `src/surfaces/<lang>.rs`
 
-Implement two traits on a unit struct
+Implement two traits on a unit struct:
 (`#[derive(Default, Clone)] pub struct FooSurface;` is the pattern every
-existing surface follows):
+existing surface follows). Expose the module in `src/surfaces/mod.rs` with
+`pub mod <lang>;`.
 
 ### `DeclaresFacets`
 
@@ -35,174 +81,353 @@ impl DeclaresFacets for FooSurface {
 }
 ```
 
-There's no default fallback arm — the `match` must be exhaustive over
-`Facet::ALL`, by design, so a new surface can't accidentally skip declaring a
+There is no wildcard fallback arm — the `match` must be exhaustive over
+`Facet::ALL`, by design, so a new surface cannot accidentally skip declaring a
 position on any facet. Every arm needs an honest answer: does the real tool
 support configuring this, does it enforce one fixed value (document _why_ in a
 comment, the way `go.rs`/`java.rs`/`kotlin.rs` do), or is the concept simply
-absent for this language. Update [docs/facet-rosetta.md](facet-rosetta.md)'s
-table with the same row once this is decided.
+absent for this language. Update [docs/facet-rosetta.md](facet-rosetta.md) with
+the same row once this is decided.
 
 ### `LanguageSurface`
 
 ```rust
 impl LanguageSurface for FooSurface {
   fn name(&self) -> &'static str { "foo" }
-  fn aliases(&self) -> &[&'static str] { &[] } // alternate names, e.g. markdown -> "md"
+  fn display_name(&self) -> &'static str { "Foo" } // optional, defaults to name()
+  fn aliases(&self) -> &[&'static str] { &["foolang"] } // alternate names
   fn file_extensions(&self) -> &[&'static str] { FOO_EXTENSIONS }
   fn detect(&self, root: &Path) -> bool { /* any file_extensions() present under root? */ }
   fn tool_info(&self, config: &ResolvedLangConfig) -> Vec<ToolInfo> { /* binaries + install hints */ }
   fn format(&self, ctx: &ExecutionContext) -> SurfaceResult { /* Smart Format pass */ }
   fn lint(&self, ctx: &ExecutionContext, fix: bool) -> SurfaceResult { /* linter invocation */ }
-  fn supports_lint_fix(&self) -> bool { true } // only if the linter has a real --fix mode
+  fn supports_lint_fix(&self) -> bool { true } // true only if linter has an automated fix mode
   fn sync_config(&self, ctx: &ExecutionContext, check: bool) -> SurfaceResult { /* native config generation */ }
   fn clone_box(&self) -> Box<dyn LanguageSurface> { Box::new(self.clone()) }
 }
 ```
 
-Key implementation notes drawn from the existing 12 surfaces:
+Key implementation notes drawn from the existing fleet of surfaces:
 
 - **Smart Format ordering (Rule #7)**: `format()` must leave files in a state
-  that won't immediately fail a trivial structural lint check. If the tool
+  that will not immediately fail a trivial structural lint check. If the tool
   ecosystem separates "mechanical fix" (import sorting, blank-line
   normalization) from "layout formatting", run the mechanical pass first, inside
   `format()` — see Python's `ruff check --select I --fix` → `ruff format`, or
   Markdown's `markdownlint-cli2 --fix` → `prettier --write`. If one tool does
   both in a single invocation (Go's `goimports -w`, Kotlin's `ktlint -F`,
   JS/TS's `biome check --write --linter-enabled=false`), a single call is fine —
-  don't invent a fake two-stage split.
+  do not invent a fake two-stage split.
 - **`fml lint --fix` vs. `fml fmt`**: `format()` must never apply _semantic_
-  lint fixes (unused-import removal, rule-based rewrites) — that's what
+  lint fixes (unused-import removal, rule-based rewrites) — that is what
   `lint(ctx, fix: true)` and `supports_lint_fix()` are for. If the tool has no
   real auto-fix mode for lint violations (Checkstyle, yamllint, taplo lint), set
-  `supports_lint_fix()` to `false` (the trait default) and leave `lint()`'s
-  `fix` parameter effectively a no-op for that surface.
-- **`check_binary_exists("<binary>")`** guards every tool invocation and returns
-  `SurfaceStatus::ToolMissing` with an actionable `install_hint` — copy the
-  pattern from any existing surface's `format()`/`lint()` rather than inventing
-  new error handling.
-- **`tool_info()`** feeds `fml doctor` and `fml install` — list every binary the
-  surface depends on (formatter and linter separately if they're different
+  `supports_lint_fix()` to `false` (the trait default) and return
+  `SurfaceStatus::Skipped` (e.g.
+  `"Tool does not support autofix; run fml fmt instead"`) when `fix == true`.
+- **`check_binary_exists("<binary>")` and `tool_missing_result(...)`**: guard
+  tool invocations with `check_binary_exists("<binary>")`. If missing, return
+  `tool_missing_result(self.name(), start, "<binary>", install_hint)`.
+- **`tool_info()`**: feeds `fml doctor` and `fml install` — list every binary
+  the surface depends on (formatter and linter separately if they are different
   binaries), each with `is_required_for_fmt`/`is_required_for_lint` set
   accurately so `fml doctor --all` reports gaps precisely.
 - **Diff-check temp files**: if `format()` needs to check "would this change
   anything" without mutating the real file (used by `fmt --check`), route
-  through the shared tempcopy helper in `src/surfaces/mod.rs` — it preserves the
-  original file extension (see #90/PR #86) so extension-sensitive tools like
-  Biome/google-java-format/ktlint don't reject the scratch file.
+  through the shared `diff_check_via_tempcopy` helper in `src/surfaces/sync.rs`
+  — it preserves the original file extension so extension-sensitive tools
+  (Biome, google-java-format, ktlint) do not reject the scratch file.
 
-## 2. Add typed per-language options (if the tool has real config knobs)
+---
 
-In `src/config/options.rs`, add a `FooOptions` struct following the existing
-pattern
-(`Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize, JsonSchema`, a
-`merge()` method, an `is_empty()` method). If the tool has no config knobs
-beyond the shared facets (like TOML, JSON, Typst, Kotlin today), still add an
-empty struct — it keeps every surface consistent in
-`LangTable`/`ResolvedLangConfig` and gives you a home for future options without
-a breaking config shape change later.
+## 2. Tooling & Installer Chains (`src/surfaces/tooling.rs`)
 
-Wire the new struct into `src/config/mod.rs`:
+`fml install` and `ToolInfo::get_auto_install_cmd()` discover how to install
+missing CLI tools via preference chains defined in `src/surfaces/tooling.rs`.
 
-- Add `pub foo: Option<FooOptions>` to both the top-level `LangTable` and the
-  resolved-config struct.
-- Add a `foo_options(&self) -> Option<FooOptions>` accessor alongside the
-  existing `java_options()`/`go_options()`/`kotlin_options()` methods.
-- Wire resolution (defaults → user config → project config merge) the same way
-  the existing per-language accessors do.
-
-## 3. Native config generation (`fml sync`)
-
-If the tool reads a persisted config file (`.rustfmt.toml`, `ruff.toml`,
-`biome.json`, `.golangci.yml`, `checkstyle.xml`, …), implement `sync_config()`
-to:
-
-1. Render the canonical globals + resolved `FooOptions` into that file's native
-   format.
-2. Prefix the generated file with the standard sentinel comment (see any
-   existing `sync_config()` for the exact banner text) so `fml sync` can detect
-   drift and distinguish a formality-managed file from a manually edited one
-   (`[MANUAL]` diagnostic).
-3. On `check: true`, compare against the file on disk instead of writing,
-   returning `ConfigDrifted` if they differ.
-
-If the tool has no config file and is driven entirely by CLI flags (Typst) or
-reads from the shared `.editorconfig` instead of its own file (Kotlin/ktlint),
-`sync_config()` can be a thin no-op/pass-through — follow whichever existing
-surface matches your tool's actual config story most closely.
-
-## 4. Register the surface
-
-Two lists in `src/surfaces/mod.rs` must both include the new surface — this is
-the entire "self-registration" step:
+Add an ordered slice of [`InstallMethod`](../src/surfaces/tooling.rs) variants
+(preferring prebuilt binary managers first, falling back to source compilation
+or package managers) and register it in `install_chain_for`:
 
 ```rust
-// 1. The canonical constructor table (used wherever a fresh registry is built):
-pub static DEFAULT_SURFACE_CONSTRUCTORS: &[SurfaceConstructor] = &[
-  // ...existing 12...
-  create_surface::<foo::FooSurface>,
+const FOOFMT_CHAIN: &[InstallMethod] = &[
+  InstallMethod::CargoBinstall("foofmt"),
+  InstallMethod::Brew("foofmt"),
+  InstallMethod::Scoop("foofmt"),
+  InstallMethod::WingetName("Foo.foofmt"),
+  InstallMethod::Cargo {
+    package: "foofmt",
+    locked: true,
+  },
 ];
 
-// 2. SurfaceRegistry::default() (kept in lockstep with the table above):
-impl Default for SurfaceRegistry {
-  fn default() -> Self {
-    let mut reg = Self::empty();
-    // ...existing 12 reg.register_surface::<...>() calls...
-    reg.register_surface::<foo::FooSurface>();
-    reg
+pub(super) fn install_chain_for(
+  binary: &str,
+) -> Option<&'static [InstallMethod]> {
+  match binary {
+    // ...existing tools...
+    "foofmt" => Some(FOOFMT_CHAIN),
+    _ => None,
   }
 }
 ```
 
-Also add `pub mod foo;` near the top of `src/surfaces/mod.rs` alongside the
-other surface modules, and update any fleet-count comments/doc-strings that
-mention "12 surfaces" (`SurfaceRegistry::new()`'s doc comment, `cli.rs`'s
-`long_about`, this repo's README) — searching for the literal string `"12"` near
-"surface" or "language" in `src/` and `README.md` will find them.
+---
 
-## 5. Tests
+## 3. Per-Language Options & Config Wiring
 
-Every existing surface carries a `#[cfg(test)] mod tests` block in its own file
-(or a co-located `_tests.rs`) covering at minimum: `facet_support()` for every
-`Facet::ALL` entry, `detect()` against a fixture with/without matching files,
-and `supports_lint_fix()`. `src/surfaces/mod.rs`'s own test suite
-(`test_surface_supports_lint_fix`, fleet-count assertions) also needs a new
-assertion line for the added surface. Run the full presubmit gate before opening
-a PR:
+### 3.1. Add typed options struct in `src/config/options.rs`
+
+Define a `FooOptions` struct deriving
+`Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize, JsonSchema`.
+Implement `merge(&mut self, other: FooOptions)` and `is_empty(&self) -> bool`.
+
+```rust
+/// Typed formatting and linting options for Foo.
+#[derive(
+  Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize, JsonSchema,
+)]
+pub struct FooOptions {
+  #[serde(skip_serializing_if = "Option::is_none")]
+  pub max_width: Option<usize>,
+}
+
+impl FooOptions {
+  pub fn merge(&mut self, other: FooOptions) {
+    if other.max_width.is_some() {
+      self.max_width = other.max_width;
+    }
+  }
+
+  #[must_use]
+  pub fn is_empty(&self) -> bool {
+    self.max_width.is_none()
+  }
+}
+```
+
+> **Note:** If the tool has no knobs beyond shared facets (like TOML, JSON,
+> Typst, or Kotlin), still add an empty struct (`merge` does nothing, `is_empty`
+> returns `true`). This keeps all surfaces uniform in
+> `LangConfig`/`ResolvedLangConfig` and provides a place for future knobs
+> without breaking changes.
+
+### 3.2. Wire into `src/config/mod.rs`
+
+1. Export `FooOptions` from `options`.
+2. Add `pub foo: Option<FooOptions>` to `LangConfig` and `ResolvedLangConfig`.
+3. In `LangConfig::merge()`, merge `other.foo`:
+
+   ```rust
+   if let Some(other_foo) = other.foo {
+     if let Some(ref mut our_foo) = self.foo {
+       our_foo.merge(other_foo);
+     } else {
+       self.foo = Some(other_foo);
+     }
+   }
+   ```
+
+4. Add the `foo_options()` accessor on `LangConfig` using `extract_options`:
+
+   ```rust
+   #[must_use]
+   pub fn foo_options(&self) -> Option<FooOptions> {
+     extract_options(
+       self.foo.clone(),
+       &self.options,
+       &self.extra,
+       options::FooOptions::merge,
+       options::FooOptions::is_empty,
+     )
+   }
+   ```
+
+### 3.3. Wire into `src/config/resolve.rs`
+
+In `FormalityConfig::resolve_for_lang(&self, lang_name: &str)`:
+
+1. Add the default formatter and linter tools in the `match lang_name`
+   expression:
+
+   ```rust
+   let (default_fmt, default_lint) = match lang_name {
+     // ...existing languages...
+     "foo" => (Some("foofmt"), Some("foolint")),
+     _ => (None, None),
+   };
+   ```
+
+2. Resolve typed options with default fallback:
+
+   ```rust
+   let foo = lang_cfg
+     .and_then(super::LangConfig::foo_options)
+     .or_else(|| {
+       if lang_name == "foo" {
+         Some(FooOptions::default())
+       } else {
+         None
+       }
+     });
+   ```
+
+3. Pass `foo` to the `ResolvedLangConfig` struct instantiation.
+
+---
+
+## 4. Register the Surface in `SurfaceRegistry`
+
+Registering the surface requires adding it to the default registry in
+`src/surfaces/registry.rs`:
+
+1. Import the new surface module in `src/surfaces/registry.rs`:
+
+   ```rust
+   use super::{
+     LanguageSurface, cpp, foo, go, java, javascript, json, kotlin, markdown,
+     python, rust, toml, typst, yaml,
+   };
+   ```
+
+2. Register the surface type in `SurfaceRegistry::default()`:
+
+   ```rust
+   impl Default for SurfaceRegistry {
+     fn default() -> Self {
+       let mut reg = Self::empty();
+       reg.register_surface::<rust::RustSurface>();
+       reg.register_surface::<python::PythonSurface>();
+       // ...existing surfaces...
+       reg.register_surface::<foo::FooSurface>();
+       reg
+     }
+   }
+   ```
+
+`SurfaceRegistry::register_surface::<S>()` instantiates `Box::new(S::default())`
+and appends it to the registry.
+
+---
+
+## 5. Native Config Generation (`fml sync`)
+
+If the tool reads a persisted configuration file (`.foorc`, `foo.toml`,
+`biome.json`, `.golangci.yml`, `checkstyle.xml`, …), implement `sync_config()`:
+
+1. Render the canonical globals + resolved `FooOptions` into the target file
+   format.
+2. Prefix generated content with `AUTO_GENERATED_HEADER`
+   (`src/surfaces/native.rs`) so `fml sync` detects drift and preserves
+   user-managed files without overwriting (`[MANUAL]` diagnostic).
+3. Use
+   `sync_file_helper(&target_path, file_name, &rendered_content, check, start, "foo")`
+   from `src/surfaces/sync.rs` to handle file creation, update, and drift check
+   cleanly.
+
+If the tool has no native config file (driven entirely by CLI flags or
+`.editorconfig`), `sync_config()` can return `SurfaceStatus::Passed` or
+`SurfaceStatus::Skipped`.
+
+---
+
+## 6. Soft / Optional Integrations
+
+- **LSP Child Server (`src/commands/lsp.rs`)**: If the ecosystem provides a
+  language server, add an entry to `CHILD_LSP_REGISTRY`:
+
+  ```rust
+  ChildLsp {
+    surface: "foo",
+    binary: "foo-lsp",
+    args: &["--stdio"],
+    install_hint: "npm install -g foo-lsp  OR  brew install foo-lsp",
+  },
+  ```
+
+- **EditorConfig Generation (`src/editorconfig.rs`)**:
+  - Add section glob to `glob_for_surface()`:
+
+    ```rust
+    "foo" => "[*.foo]".to_string(),
+    ```
+
+  - Add `"foo"` to `CANONICAL_FLEET_ORDER`.
+- **Prose surface counts**: Update doc comments and prose mentioning the fleet
+  count (e.g. `SurfaceRegistry::new()` doc comment "default fleet of 12 language
+  surfaces", `cli.rs`, `README.md`).
+
+---
+
+## 7. Tests & Validation
+
+Add tests across the test suites:
+
+1. **Per-surface unit tests**: In `src/surfaces/<lang>.rs` (or
+   `<lang>_tests.rs`), test `facet_support()` across all `Facet::ALL`,
+   `detect()` with positive/negative temp fixtures, `tool_info()`, and
+   `supports_lint_fix()`.
+2. **Registry tests (`src/surfaces/registry_tests.rs`)**:
+   - In `test_all_fleet_surfaces_present()`: update
+     `assert_eq!(surfaces.len(), N)` and add `"foo"` to the `expected` list.
+   - In `test_get_surface_by_name_canonical_and_aliases()`: add canonical and
+     alias test cases.
+   - In `test_get_surface_by_name_case_insensitive()`: add case-insensitive
+     variations.
+3. **Lint-fix assertion (`src/surfaces/mod_tests.rs`)**:
+   - Add `assert!(foo::FooSurface.supports_lint_fix())` (or `!`) to
+     `test_surface_supports_lint_fix()`.
+4. **Facet Rosetta golden table (`src/config/facets_tests.rs`)**:
+   - Add the surface's expected facet row to
+     `test_surface_facet_declarations()`.
+   - Update `assert_eq!(surfaces.len(), N)` and `assert_eq!(golden.len(), N)`.
+
+Run presubmit verification:
 
 ```bash
 cargo test --lib -q
 cargo clippy -q
-cargo run -q -- fmt --check   # dogfood: the new surface's own source should already be clean
+cargo run -q -- fmt --check
 ```
 
-## 6. Regenerate the schema
+---
 
-`formality.toml`'s JSON Schema (`schema/formality.schema.json`) is generated
-from the Rust types via `schemars`, so a new `FooOptions` struct or `LangTable`
-field must be reflected there:
+## 8. Regenerate Schema
+
+Whenever `LangConfig`, `ResolvedLangConfig`, or per-language options structs are
+modified, regenerate the schema:
 
 ```bash
 cargo run -q -- schema -o schema/formality.schema.json
 ```
 
-Commit the regenerated schema alongside the surface implementation — CI enforces
-that the checked-in schema matches what the binary actually generates.
+Commit the updated `schema/formality.schema.json`. CI verifies that the
+repository schema matches the binary generation.
 
-## 7. Update documentation
+---
 
-- Add a section to [docs/language-surfaces.md](language-surfaces.md) following
-  the existing per-surface format (tools, Smart Format behavior, managed config,
-  `[lang.foo]` options, facet table row, `supports_lint_fix`).
-- Add the surface's row to [docs/facet-rosetta.md](facet-rosetta.md)'s table.
-- Add the surface to README.md's supported-surfaces table and the
-  `.artifacts/PLAN.md` formatting matrix (§3) if you're working from that
-  orchestration plan.
+## 9. Documentation
 
-## Reference: an existing surface end-to-end
+- Add a dedicated section to [docs/language-surfaces.md](language-surfaces.md)
+  documenting the surface, its tools, Smart Format behavior, options, and config
+  generation.
+- Add the surface's row to the table in
+  [docs/facet-rosetta.md](facet-rosetta.md).
+- Update the supported language table in `README.md`.
 
-`src/surfaces/kotlin.rs` is the smallest complete example in the fleet (one
-tool, `ktlint`, doing both format and lint) — start there if you want the
-shortest real implementation to model against. `src/surfaces/javascript.rs` is
-the best example of a surface with real typed options (`JavaScriptOptions`) and
-a native JSON config file (`biome.json`) if your new tool needs either.
+---
+
+## Reference Examples
+
+- [`src/surfaces/kotlin.rs`](../src/surfaces/kotlin.rs): Minimal single-tool
+  surface (`ktlint` for formatting and linting, editorconfig-based
+  configuration).
+- [`src/surfaces/javascript.rs`](../src/surfaces/javascript.rs): Multi-extension
+  surface with typed options (`JavaScriptOptions`) and native JSON config
+  generation (`biome.json`).
+- [`src/surfaces/go.rs`](../src/surfaces/go.rs): Multi-tool surface
+  (`goimports` + `golangci-lint`) with options and YAML config generation
+  (`.golangci.yml`).
+- [`src/surfaces/python.rs`](../src/surfaces/python.rs): Multi-stage formatting
+  surface (`ruff check --fix` + `ruff format`) with options and TOML config
+  generation (`ruff.toml`).
