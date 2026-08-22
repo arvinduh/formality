@@ -140,6 +140,9 @@ fn test_install_method_command_shapes() {
       ]
     )
   );
+  let (prog, args) = InstallMethod::Apt("clang-format").command();
+  assert!(prog == "sudo" || prog == "apt-get");
+  assert!(args.contains(&"clang-format".to_string()));
 }
 
 #[test]

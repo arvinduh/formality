@@ -21,6 +21,7 @@ pub enum InstallMethod {
   Pipx(&'static str),
   Pip(&'static str),
   Pip3(&'static str),
+  Apt(&'static str),
   Brew(&'static str),
   Scoop(&'static str),
   /// winget resolves the package by fuzzy name/id match.
@@ -49,6 +50,7 @@ impl InstallMethod {
       InstallMethod::Pipx(_) => check_binary_exists("pipx"),
       InstallMethod::Pip(_) => check_binary_exists("pip"),
       InstallMethod::Pip3(_) => check_binary_exists("pip3"),
+      InstallMethod::Apt(_) => check_binary_exists("apt-get"),
       InstallMethod::Brew(_) => check_binary_exists("brew"),
       InstallMethod::Scoop(_) => check_binary_exists("scoop"),
       InstallMethod::WingetName(_) | InstallMethod::WingetId(_) => {
@@ -84,6 +86,13 @@ impl InstallMethod {
       InstallMethod::Pipx(pkg) => ("pipx".to_string(), strs(&["install", pkg])),
       InstallMethod::Pip(pkg) => ("pip".to_string(), strs(&["install", pkg])),
       InstallMethod::Pip3(pkg) => ("pip3".to_string(), strs(&["install", pkg])),
+      InstallMethod::Apt(pkg) => {
+        if check_binary_exists("sudo") {
+          ("sudo".to_string(), strs(&["apt-get", "install", "-y", pkg]))
+        } else {
+          ("apt-get".to_string(), strs(&["install", "-y", pkg]))
+        }
+      }
       InstallMethod::Brew(pkg) => ("brew".to_string(), strs(&["install", pkg])),
       InstallMethod::Scoop(pkg) => {
         ("scoop".to_string(), strs(&["install", pkg]))
@@ -211,13 +220,16 @@ const YAMLLINT_CHAIN: &[InstallMethod] = &[
   InstallMethod::Pipx("yamllint"),
   InstallMethod::Pip("yamllint"),
   InstallMethod::Pip3("yamllint"),
+  InstallMethod::Apt("yamllint"),
   InstallMethod::Brew("yamllint"),
   InstallMethod::Scoop("yamllint"),
   InstallMethod::WingetName("yamllint"),
 ];
 
 const CLANG_FORMAT_CHAIN: &[InstallMethod] = &[
+  InstallMethod::Apt("clang-format"),
   InstallMethod::Brew("clang-format"),
+  InstallMethod::Pipx("clang-format"),
   InstallMethod::Pip("clang-format"),
   InstallMethod::Pip3("clang-format"),
   InstallMethod::WingetName("LLVM.LLVM"),
@@ -225,15 +237,23 @@ const CLANG_FORMAT_CHAIN: &[InstallMethod] = &[
 ];
 
 const CLANG_TIDY_CHAIN: &[InstallMethod] = &[
+  InstallMethod::Apt("clang-tidy"),
   InstallMethod::Brew("llvm"),
   InstallMethod::WingetName("LLVM.LLVM"),
   InstallMethod::Scoop("llvm"),
 ];
 
-const GOOGLE_JAVA_FORMAT_CHAIN: &[InstallMethod] =
-  &[InstallMethod::Brew("google-java-format")];
+const GOOGLE_JAVA_FORMAT_CHAIN: &[InstallMethod] = &[
+  InstallMethod::Brew("google-java-format"),
+  InstallMethod::Npm("google-java-format"),
+  InstallMethod::Pipx("google-java-format"),
+];
 
-const CHECKSTYLE_CHAIN: &[InstallMethod] = &[InstallMethod::Brew("checkstyle")];
+const CHECKSTYLE_CHAIN: &[InstallMethod] = &[
+  InstallMethod::Brew("checkstyle"),
+  InstallMethod::Apt("checkstyle"),
+  InstallMethod::Npm("checkstyle"),
+];
 
 const RUSTFMT_CHAIN: &[InstallMethod] = &[InstallMethod::Rustup("rustfmt")];
 const CLIPPY_CHAIN: &[InstallMethod] = &[InstallMethod::Rustup("clippy")];
@@ -247,6 +267,9 @@ const GOLANGCI_LINT_CHAIN: &[InstallMethod] = &[
   InstallMethod::GoInstall(
     "github.com/golangci/golangci-lint/v2/cmd/golangci-lint",
   ),
+  InstallMethod::GoInstall(
+    "github.com/golangci/golangci-lint/cmd/golangci-lint",
+  ),
 ];
 
 // ktlint ships as a prebuilt executable jar; there is no cargo/npm fallback,
@@ -255,6 +278,8 @@ const GOLANGCI_LINT_CHAIN: &[InstallMethod] = &[
 const KTLINT_CHAIN: &[InstallMethod] = &[
   InstallMethod::Brew("ktlint"),
   InstallMethod::Scoop("ktlint"),
+  InstallMethod::Npm("ktlint"),
+  InstallMethod::Apt("ktlint"),
 ];
 
 /// Looks up the ordered installer preference chain for a tool binary name.
@@ -278,7 +303,7 @@ pub(super) fn install_chain_for(
     "google-java-format" => Some(GOOGLE_JAVA_FORMAT_CHAIN),
     "checkstyle" => Some(CHECKSTYLE_CHAIN),
     "rustfmt" => Some(RUSTFMT_CHAIN),
-    "clippy-driver" => Some(CLIPPY_CHAIN),
+    "clippy" | "clippy-driver" => Some(CLIPPY_CHAIN),
     "goimports" => Some(GOIMPORTS_CHAIN),
     "golangci-lint" => Some(GOLANGCI_LINT_CHAIN),
     "ktlint" => Some(KTLINT_CHAIN),
