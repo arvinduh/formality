@@ -105,11 +105,22 @@ sign-off, always — an "ask first" item per `AGENTS.md`.
 - **Debate, don't rubber-stamp** — worker and reviewer go back and forth on
   concrete objections until they converge on the best solution, not just an
   acceptable one.
-- **Scope triage mid-debate:** if a better solution surfaced in debate still
-  fits the issue's scope, fold it into the current PR. If it implies new
-  capability or unrelated work, file a new issue (`gh issue create`, proper
-  labels, `status:*`, `Blocked-by:` if applicable) instead of scope-creeping the
-  current PR.
+- **Scope triage — not just a QA-debate thing.** Applies whenever anyone
+  (worker, QA reviewer, orchestrator) finds something out of scope: if it still
+  fits the issue as filed, fold it in. If it implies new capability, a different
+  part of the codebase, or a design decision the issue didn't ask for, don't
+  scope-creep the current PR — file it as its own issue (`gh issue create`,
+  topical label + `status:*` per §11, `Blocked-by:` if applicable, and a "Spun
+  off from #N" line pointing back here).
+- **Audit/survey-shaped issues fan out by nature, more than scoped
+  implementation ones — expect it, don't treat it as scope creep when it
+  happens.** An issue whose job is _reading across the codebase_ (`c4.2`'s
+  style-guide authoring, `c10`'s sweep, `k1`'s docs backfill, or any future
+  Wave-6-style audit) will routinely turn up more than one PR's worth of
+  findings — that's the audit doing its job, not the worker going off-scope.
+  Same in/out-of-scope split as above decides what's foldable vs. spun off; the
+  difference is only that a survey issue should produce _several_ spinoffs as a
+  matter of course, not zero or one.
 - **Style-guide amendment obligation** (once `c4.2` exists): if a QA reviewer
   finds a violation `docs/style-guide.md` doesn't already cover, fixing the PR
   isn't sufficient sign-off — either promote the rule into the style guide (tier
