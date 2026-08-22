@@ -184,6 +184,9 @@ impl LanguageSurface for JsonSurface {
   }
 
   fn sync_config(&self, ctx: &ExecutionContext, check: bool) -> SurfaceResult {
+    // JSON formatting uses Prettier; its layout configuration is shared and
+    // emitted via `PrettierConfig` (.prettierrc.json), so there is no standalone
+    // native JSON formatter config struct to maintain.
     let start = Instant::now();
     sync_prettier_config(ctx, check, start, self.name())
   }

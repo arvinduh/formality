@@ -2,7 +2,7 @@ use super::{
   DeclaresFacets, ExecutionContext, Facet, FacetSupport, LanguageSurface,
   NativeConfig, SurfaceResult, SurfaceStatus, ToolInfo, check_binary_exists,
   create_tool_command, diff_check_via_tempcopy, find_files_with_ext,
-  serialize_yaml_with_header, sync_file_helper, tool_missing_result,
+  render_native_config, sync_native_config, tool_missing_result,
 };
 use serde::{Deserialize, Serialize};
 use std::path::{Path, PathBuf};
@@ -24,11 +24,8 @@ pub struct ClangFormatConfig {
 
 impl NativeConfig for ClangFormatConfig {
   const FILE_NAME: &'static str = ".clang-format";
-}
 
-impl ClangFormatConfig {
-  #[must_use]
-  pub fn from_context(ctx: &ExecutionContext) -> Self {
+  fn from_context(ctx: &ExecutionContext) -> Self {
     let use_tab = if ctx.lang_config.use_tabs {
       "Always"
     } else {
@@ -66,13 +63,8 @@ impl ClangFormatConfig {
     }
   }
 
-  /// Renders the clang-format configuration as a YAML string with the standard formality header.
-  ///
-  /// # Errors
-  ///
-  /// Returns a [`serde_yaml::Error`] if serialization fails.
-  pub fn render(&self) -> Result<String, serde_yaml::Error> {
-    serialize_yaml_with_header(self)
+  fn render(&self) -> Result<String, String> {
+    render_native_config(self)
   }
 }
 
@@ -83,10 +75,6 @@ pub struct ClangTidyConfig {
   pub warnings_as_errors: String,
   pub header_filter_regex: String,
   pub format_style: String,
-}
-
-impl NativeConfig for ClangTidyConfig {
-  const FILE_NAME: &'static str = ".clang-tidy";
 }
 
 impl Default for ClangTidyConfig {
@@ -102,19 +90,15 @@ impl Default for ClangTidyConfig {
   }
 }
 
-impl ClangTidyConfig {
-  #[must_use]
-  pub fn from_context(_ctx: &ExecutionContext) -> Self {
+impl NativeConfig for ClangTidyConfig {
+  const FILE_NAME: &'static str = ".clang-tidy";
+
+  fn from_context(_ctx: &ExecutionContext) -> Self {
     Self::default()
   }
 
-  /// Renders the clang-tidy configuration as a YAML string with the standard formality header.
-  ///
-  /// # Errors
-  ///
-  /// Returns a [`serde_yaml::Error`] if serialization fails.
-  pub fn render(&self) -> Result<String, serde_yaml::Error> {
-    serialize_yaml_with_header(self)
+  fn render(&self) -> Result<String, String> {
+    render_native_config(self)
   }
 }
 
@@ -487,33 +471,8 @@ impl LanguageSurface for CppSurface {
 
   fn sync_config(&self, ctx: &ExecutionContext, check: bool) -> SurfaceResult {
     let start = Instant::now();
-    let format_target = ctx.root.join(ClangFormatConfig::FILE_NAME);
-    let format_cfg = ClangFormatConfig::from_context(ctx);
-    let format_content = match format_cfg.render() {
-      Ok(c) => c,
-      Err(e) => {
-        return SurfaceResult {
-          surface_name: self.name(),
-          status: SurfaceStatus::ExecutionError {
-            message: format!(
-              "Failed to serialize {}: {}",
-              ClangFormatConfig::FILE_NAME,
-              e
-            ),
-          },
-          duration: start.elapsed(),
-        };
-      }
-    };
-
-    let format_res = sync_file_helper(
-      &format_target,
-      ClangFormatConfig::FILE_NAME,
-      &format_content,
-      check,
-      start,
-      self.name(),
-    );
+    let format_res =
+      sync_native_config::<ClangFormatConfig>(ctx, check, start, self.name());
 
     if !format_res.is_success() {
       return format_res;
@@ -539,33 +498,7 @@ pub fn sync_clang_tidy_config(
   start: Instant,
   surface_name: &'static str,
 ) -> SurfaceResult {
-  let target = ctx.root.join(ClangTidyConfig::FILE_NAME);
-  let tidy_cfg = ClangTidyConfig::from_context(ctx);
-  let content = match tidy_cfg.render() {
-    Ok(c) => c,
-    Err(e) => {
-      return SurfaceResult {
-        surface_name,
-        status: SurfaceStatus::ExecutionError {
-          message: format!(
-            "Failed to serialize {}: {}",
-            ClangTidyConfig::FILE_NAME,
-            e
-          ),
-        },
-        duration: start.elapsed(),
-      };
-    }
-  };
-
-  sync_file_helper(
-    &target,
-    ClangTidyConfig::FILE_NAME,
-    &content,
-    check,
-    start,
-    surface_name,
-  )
+  sync_native_config::<ClangTidyConfig>(ctx, check, start, surface_name)
 }
 
 #[cfg(test)]

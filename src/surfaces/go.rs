@@ -2,7 +2,7 @@ use super::{
   DeclaresFacets, ExecutionContext, Facet, FacetSupport, LanguageSurface,
   NativeConfig, SurfaceResult, SurfaceStatus, ToolInfo, check_binary_exists,
   create_tool_command, diff_check_via_tempcopy, find_files_with_ext,
-  serialize_yaml_with_header, sync_file_helper, tool_missing_result,
+  render_native_config, sync_native_config, tool_missing_result,
 };
 use serde::{Deserialize, Serialize};
 use std::path::PathBuf;
@@ -35,10 +35,8 @@ pub struct GolangciLintConfig {
 
 impl NativeConfig for GolangciLintConfig {
   const FILE_NAME: &'static str = ".golangci.yml";
-}
 
-impl GolangciLintConfig {
-  pub fn from_context(ctx: &ExecutionContext) -> Self {
+  fn from_context(ctx: &ExecutionContext) -> Self {
     let enable = ctx
       .lang_config
       .go
@@ -52,13 +50,8 @@ impl GolangciLintConfig {
     }
   }
 
-  /// Renders the golangci-lint configuration as a YAML string with the standard formality header.
-  ///
-  /// # Errors
-  ///
-  /// Returns a [`serde_yaml::Error`] if serialization fails.
-  pub fn render(&self) -> Result<String, serde_yaml::Error> {
-    serialize_yaml_with_header(self)
+  fn render(&self) -> Result<String, String> {
+    render_native_config(self)
   }
 }
 
@@ -418,33 +411,7 @@ impl LanguageSurface for GoSurface {
 
   fn sync_config(&self, ctx: &ExecutionContext, check: bool) -> SurfaceResult {
     let start = Instant::now();
-    let target = ctx.root.join(GolangciLintConfig::FILE_NAME);
-    let cfg = GolangciLintConfig::from_context(ctx);
-    let content = match cfg.render() {
-      Ok(c) => c,
-      Err(e) => {
-        return SurfaceResult {
-          surface_name: self.name(),
-          status: SurfaceStatus::ExecutionError {
-            message: format!(
-              "Failed to serialize {}: {}",
-              GolangciLintConfig::FILE_NAME,
-              e
-            ),
-          },
-          duration: start.elapsed(),
-        };
-      }
-    };
-
-    sync_file_helper(
-      &target,
-      GolangciLintConfig::FILE_NAME,
-      &content,
-      check,
-      start,
-      self.name(),
-    )
+    sync_native_config::<GolangciLintConfig>(ctx, check, start, self.name())
   }
 }
 

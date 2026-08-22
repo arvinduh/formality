@@ -2,7 +2,7 @@ use super::{
   DeclaresFacets, ExecutionContext, Facet, FacetSupport, LanguageSurface,
   NativeConfig, SurfaceResult, SurfaceStatus, ToolInfo, check_binary_exists,
   create_tool_command, diff_check_via_tempcopy, find_files_with_ext,
-  serialize_json_pretty, sync_file_helper, tool_missing_result,
+  render_native_config, sync_native_config, tool_missing_result,
 };
 use serde::{Deserialize, Serialize};
 use std::path::{Path, PathBuf};
@@ -75,11 +75,8 @@ pub struct BiomeConfig {
 
 impl NativeConfig for BiomeConfig {
   const FILE_NAME: &'static str = "biome.json";
-}
 
-impl BiomeConfig {
-  #[must_use]
-  pub fn from_context(ctx: &ExecutionContext) -> Self {
+  fn from_context(ctx: &ExecutionContext) -> Self {
     let indent_style = if ctx.lang_config.use_tabs {
       "tab"
     } else {
@@ -150,13 +147,8 @@ impl BiomeConfig {
     }
   }
 
-  /// Renders the Biome configuration as a pretty JSON string.
-  ///
-  /// # Errors
-  ///
-  /// Returns a [`serde_json::Error`] if serialization fails.
-  pub fn render(&self) -> Result<String, serde_json::Error> {
-    serialize_json_pretty(self)
+  fn render(&self) -> Result<String, String> {
+    render_native_config(self)
   }
 }
 
@@ -452,33 +444,7 @@ impl LanguageSurface for JavaScriptSurface {
 
   fn sync_config(&self, ctx: &ExecutionContext, check: bool) -> SurfaceResult {
     let start = Instant::now();
-    let target = ctx.root.join(BiomeConfig::FILE_NAME);
-    let cfg = BiomeConfig::from_context(ctx);
-    let content = match cfg.render() {
-      Ok(c) => c,
-      Err(e) => {
-        return SurfaceResult {
-          surface_name: self.name(),
-          status: SurfaceStatus::ExecutionError {
-            message: format!(
-              "Failed to serialize {}: {}",
-              BiomeConfig::FILE_NAME,
-              e
-            ),
-          },
-          duration: start.elapsed(),
-        };
-      }
-    };
-
-    sync_file_helper(
-      &target,
-      BiomeConfig::FILE_NAME,
-      &content,
-      check,
-      start,
-      self.name(),
-    )
+    sync_native_config::<BiomeConfig>(ctx, check, start, self.name())
   }
 }
 

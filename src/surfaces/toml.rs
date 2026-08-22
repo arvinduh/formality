@@ -2,7 +2,7 @@ use super::{
   DeclaresFacets, ExecutionContext, Facet, FacetSupport, LanguageSurface,
   NativeConfig, SurfaceResult, SurfaceStatus, ToolInfo, check_binary_exists,
   create_tool_command, diff_check_via_tempcopy, find_files_with_ext,
-  serialize_toml_with_header, sync_file_helper, tool_missing_result,
+  render_native_config, sync_native_config, tool_missing_result,
 };
 use serde::{Deserialize, Serialize};
 use std::path::Path;
@@ -27,11 +27,8 @@ pub struct TaploConfig {
 
 impl NativeConfig for TaploConfig {
   const FILE_NAME: &'static str = "taplo.toml";
-}
 
-impl TaploConfig {
-  #[must_use]
-  pub fn from_context(ctx: &ExecutionContext) -> Self {
+  fn from_context(ctx: &ExecutionContext) -> Self {
     let indent_spaces = if ctx.lang_config.use_tabs {
       "\t".to_string()
     } else {
@@ -52,13 +49,8 @@ impl TaploConfig {
     }
   }
 
-  /// Renders the Taplo configuration as a TOML string with the standard formality header.
-  ///
-  /// # Errors
-  ///
-  /// Returns a [`toml::ser::Error`] if serialization fails.
-  pub fn render(&self) -> Result<String, toml::ser::Error> {
-    serialize_toml_with_header(self)
+  fn render(&self) -> Result<String, String> {
+    render_native_config(self)
   }
 }
 
@@ -310,33 +302,7 @@ impl LanguageSurface for TomlSurface {
 
   fn sync_config(&self, ctx: &ExecutionContext, check: bool) -> SurfaceResult {
     let start = Instant::now();
-    let target = ctx.root.join(TaploConfig::FILE_NAME);
-    let cfg = TaploConfig::from_context(ctx);
-    let content = match cfg.render() {
-      Ok(c) => c,
-      Err(e) => {
-        return SurfaceResult {
-          surface_name: self.name(),
-          status: SurfaceStatus::ExecutionError {
-            message: format!(
-              "Failed to serialize {}: {}",
-              TaploConfig::FILE_NAME,
-              e
-            ),
-          },
-          duration: start.elapsed(),
-        };
-      }
-    };
-
-    sync_file_helper(
-      &target,
-      TaploConfig::FILE_NAME,
-      &content,
-      check,
-      start,
-      self.name(),
-    )
+    sync_native_config::<TaploConfig>(ctx, check, start, self.name())
   }
 }
 

@@ -2,8 +2,7 @@ use super::{
   DeclaresFacets, ExecutionContext, Facet, FacetSupport, LanguageSurface,
   NativeConfig, SurfaceResult, SurfaceStatus, ToolInfo, check_binary_exists,
   create_tool_command, diff_check_via_tempcopy, find_files_with_ext,
-  markdown::sync_prettier_config, serialize_yaml_with_header,
-  tool_missing_result,
+  markdown::sync_prettier_config, render_native_config, tool_missing_result,
 };
 use serde::{Deserialize, Serialize};
 use std::path::Path;
@@ -46,11 +45,8 @@ pub struct YamllintConfig {
 
 impl NativeConfig for YamllintConfig {
   const FILE_NAME: &'static str = ".yamllint.yaml";
-}
 
-impl YamllintConfig {
-  #[must_use]
-  pub fn from_context(ctx: &ExecutionContext) -> Self {
+  fn from_context(ctx: &ExecutionContext) -> Self {
     let yaml_opts = ctx.lang_config.yaml.as_ref();
     let indent_sequences =
       yaml_opts.and_then(|y| y.indent_sequence).unwrap_or(true);
@@ -79,13 +75,8 @@ impl YamllintConfig {
     }
   }
 
-  /// Renders the yamllint configuration as a YAML string with the standard formality header.
-  ///
-  /// # Errors
-  ///
-  /// Returns a [`serde_yaml::Error`] if serialization fails.
-  pub fn render(&self) -> Result<String, serde_yaml::Error> {
-    serialize_yaml_with_header(self)
+  fn render(&self) -> Result<String, String> {
+    render_native_config(self)
   }
 }
 
