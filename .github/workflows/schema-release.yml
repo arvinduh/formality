@@ -1,0 +1,49 @@
+name: Schema Release
+
+on:
+  push:
+    tags:
+      - "s*"
+
+permissions:
+  contents: write
+
+jobs:
+  schema-release:
+    name: Build & Publish Schema Release
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v7
+
+      - name: Set up Rust toolchain
+        # Pinned to match rust-toolchain.toml; bump both together.
+        uses: dtolnay/rust-toolchain@1.97.1
+
+      - name: Set up Rust cache
+        uses: Swatinem/rust-cache@v2
+
+      - name: Build fml (needed to generate schema)
+        run: cargo build --release
+
+      # The schema is embedded in the binary; generate the file from it so it
+      # can be attached to the independent schema release under s{N} tags.
+      - name: Generate schema file
+        run: |
+          mkdir -p schema
+          ./target/release/fml schema --output schema/formality.schema.json
+
+      - name: Upload Schema to GitHub Release
+        uses: softprops/action-gh-release@v3
+        with:
+          files: schema/formality.schema.json
+          name: Schema Release ${{ github.ref_name }}
+          body: |
+            Formality JSON Schema release `${{ github.ref_name }}`.
+
+            ### Usage in `formality.toml`:
+            ```toml
+            #:schema https://github.com/arvinduh/formality/releases/download/${{ github.ref_name }}/formality.schema.json
+            ```
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

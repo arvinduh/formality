@@ -187,9 +187,9 @@ YAML's `yamllint`, TOML's `taplo lint`).
 ### Minimal setup (zero boilerplate)
 
 ```toml
-# Always pin to a specific release — the schema is a release asset, not a
-# branch file. Replace v0.1.0 with the version you have installed.
-#:schema https://github.com/arvinduh/formality/releases/download/v0.1.0/formality.schema.json
+# Always pin to a specific schema tag (e.g. s1) — the schema is a release asset,
+# not a raw branch file.
+#:schema https://github.com/arvinduh/formality/releases/download/s1/formality.schema.json
 
 [global]
 languages = ["rust", "toml", "markdown"]  # Explicit active surfaces

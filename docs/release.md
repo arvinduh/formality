@@ -111,6 +111,55 @@ semver bump (`feat` -> minor, `fix` -> patch, `!`/`BREAKING CHANGE` -> major).
    install instructions) references a specific release URL or version number,
    update those references to point at the new tag.
 
+## Schema Releases (`s*` tags)
+
+In addition to binary releases (`v*`), `fml` supports independent schema
+releases tagged with the `s{N}` pattern (e.g. `s1`, `s2`).
+
+Schema releases publish `schema/formality.schema.json` as an independent GitHub
+Release asset under the corresponding `s{N}` tag so users can pin their
+`formality.toml` or `.formality.toml` configuration files to stable schema
+versions via `#:schema` directives:
+
+```toml
+#:schema https://github.com/arvinduh/formality/releases/download/s1/formality.schema.json
+```
+
+### Schema Release Procedure
+
+1. **Verify schema freshness on `main`.**
+
+   ```sh
+   git checkout main
+   git pull
+   cargo test --test schema_drift
+   ```
+
+2. **Tag the schema release.**
+
+   ```sh
+   git tag -a s1 -m "s1 schema release"
+   git push origin s1
+   ```
+
+3. **CI Automation.**
+
+   Pushing an `s*` tag triggers `.github/workflows/schema-release.yml`, which:
+   - Builds `fml` from the tagged commit.
+   - Generates `schema/formality.schema.json`.
+   - Creates a GitHub Release for tag `s{N}` and uploads `formality.schema.json`
+     as a release asset.
+
+4. **Verify the schema release.**
+
+   Check the GitHub Releases page for tag `s{N}` and confirm that
+   `formality.schema.json` is attached to the release.
+
+5. **Update documentation & matrix.**
+
+   Update [COMPATIBILITY.md](../COMPATIBILITY.md) and example `#:schema`
+   directives in documentation if a new schema version (e.g. `s2`) was cut.
+
 ## Changelog conventions
 
 `cliff.toml` at the repository root controls how `git-cliff` groups and formats
