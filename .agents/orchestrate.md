@@ -181,6 +181,46 @@ more than it saves.
    resolution that compiles is not the same as one that's correct.
 4. Push, wait for CI to go green again, then merge per the steps above.
 
+## 4.6. Post-merge cleanup — leave nothing behind, every time
+
+A merge is not done until the local footprint it created is gone too. This is
+what let 6 worker worktrees and 8GB of stale build cache accumulate before a
+manual cleanup caught it (2026-08-22) — the process never said to close the
+loop, only to open it. Every merge, immediately, no exceptions:
+
+1. **Remove the worktree**: `git worktree remove <path>` (`--force` if it has
+   ignorable residue — build artifacts, not real uncommitted work; check
+   `git status` in it first if unsure). Creating a worktree (§1) and never
+   removing it is the actual root cause of the mess this section exists to
+   prevent.
+2. **Delete the local branch**: `git branch -d <branch>` — the remote side is
+   already handled by `--delete-branch` in §4.5's merge command; this is the
+   local half of the same cleanup, easy to forget because it doesn't error
+   loudly like a stale worktree eventually does.
+3. **`git worktree prune`** periodically (start of a dispatch batch is a good
+   moment) to catch anything removed by hand outside `git worktree remove`
+   instead of through it.
+4. **Target-dir growth is a design problem, not just a discipline problem** —
+   each `git worktree` gets its own `target/` by default, so N concurrent
+   worktrees means N independent multi-GB build caches. Prefer fixing this at
+   the root over relying on step 1 alone: set a shared `CARGO_TARGET_DIR` (env
+   var, or `[build] target-dir` in `.cargo/config.toml`) so every worktree
+   incrementally shares one build cache instead of each growing its own. If
+   that's not set up yet, step 1 still takes a worktree's `target/` with it when
+   the worktree is removed — confirmed working this session — so it isn't
+   silently leaked, just less efficient than sharing one cache would be.
+5. **Dead code is a merge-gate check, not a follow-up sweep.** If a diff makes
+   something unreachable (e.g. `c2`'s `lib.rs` split must delete the old inline
+   code paths it replaces, not just add new modules alongside them), that's part
+   of what §4's QA review checks before merge, same as any other acceptance
+   criterion — don't let it slip through on the assumption `c10`'s sweep will
+   catch it later. `c10` is a backstop for what's already there today, not a
+   substitute for reviewing new dead code in on the way in.
+6. **Local scratch tied to a closed issue** (design notes, one-off planning
+   files outside version control) is safe to delete once that issue is closed —
+   its content is now either implemented or superseded by real committed docs.
+   Don't let local-only files outlive the work they were scratch for.
+
 ## 5. Smart Format principle
 
 `fml fmt` must leave files in a state that doesn't immediately fail trivial lint
