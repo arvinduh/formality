@@ -225,11 +225,7 @@ fn test_sync_file_helper_json_without_header_is_protected_as_manual() {
   ));
 
   let biome_path = temp.path().join("biome.json");
-  std::fs::write(
-    &biome_path,
-    r#"{"formatter":{"enabled":true,"indentStyle":"space","indentWidth":2,"lineWidth":80}}"#,
-  )
-  .unwrap();
+  std::fs::write(&biome_path, r#"{"invalidKey": 123}"#).unwrap();
 
   let res_biome = sync_file_helper(
     &biome_path,

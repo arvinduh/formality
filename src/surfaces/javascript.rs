@@ -1,9 +1,8 @@
 use super::{
-  AUTO_GENERATED_JSON_COMMENT, DeclaresFacets, ExecutionContext, Facet,
-  FacetSupport, LanguageSurface, NativeConfig, SurfaceResult, SurfaceStatus,
-  ToolInfo, check_binary_exists, create_tool_command, diff_check_via_tempcopy,
-  find_files_with_ext, render_native_config, sync_native_config,
-  tool_missing_result,
+  DeclaresFacets, ExecutionContext, Facet, FacetSupport, LanguageSurface,
+  NativeConfig, SurfaceResult, SurfaceStatus, ToolInfo, check_binary_exists,
+  create_tool_command, diff_check_via_tempcopy, find_files_with_ext,
+  render_native_config, sync_native_config, tool_missing_result,
 };
 use serde::{Deserialize, Serialize};
 use std::path::{Path, PathBuf};
@@ -68,8 +67,6 @@ pub struct BiomeLinterConfig {
 pub struct BiomeConfig {
   #[serde(rename = "$schema")]
   pub schema: String,
-  #[serde(rename = "$comment")]
-  pub comment: String,
   pub formatter: BiomeFormatterConfig,
   pub javascript: BiomeJsConfig,
   pub assist: BiomeAssistConfig,
@@ -116,7 +113,6 @@ impl NativeConfig for BiomeConfig {
 
     Self {
       schema: "https://biomejs.dev/schemas/2.0.0/schema.json".to_string(),
-      comment: AUTO_GENERATED_JSON_COMMENT.to_string(),
       formatter: BiomeFormatterConfig {
         enabled: true,
         indent_style: indent_style.to_string(),
@@ -536,7 +532,6 @@ mod tests {
   fn test_biome_config_typed_serialization() {
     let cfg = BiomeConfig {
       schema: "https://biomejs.dev/schemas/1.5.0/schema.json".to_string(),
-      comment: "warning".to_string(),
       formatter: BiomeFormatterConfig {
         enabled: true,
         indent_style: "space".to_string(),
@@ -567,7 +562,6 @@ mod tests {
     };
     let rendered = cfg.render().unwrap();
     assert!(rendered.contains("\"$schema\""));
-    assert!(rendered.contains("\"$comment\": \"warning\""));
     assert!(rendered.contains("\"indentWidth\": 2"));
     assert!(rendered.contains("\"lineWidth\": 80"));
     assert!(rendered.contains("\"quoteStyle\": \"single\""));
@@ -619,7 +613,6 @@ mod tests {
     assert!(content.contains("\"assist\""));
     assert!(content.contains("\"organizeImports\": \"on\""));
     assert!(content.contains("\"enabled\": true"));
-    assert!(content.contains("\"$comment\""));
   }
 
   #[test]
