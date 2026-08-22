@@ -159,6 +159,60 @@ fn test_extra_args_wired_to_command() {
 }
 
 #[test]
+fn test_check_binary_exists_nonexistent_and_edge_case_inputs() {
+  assert!(!check_binary_exists("__nonexistent_binary_xyz_987654321__"));
+  assert!(!check_binary_exists(""));
+  assert!(!check_binary_exists("   "));
+  assert!(!check_binary_exists("\0invalid_null_byte"));
+}
+
+#[test]
+fn test_tool_missing_result_construction_for_all_surfaces() {
+  let surfaces = crate::surfaces::all_surfaces();
+  let start = Instant::now();
+
+  for surface in surfaces {
+    let missing_res = tool_missing_result(
+      surface.name(),
+      start,
+      "dummy-tool",
+      "install via package manager",
+    );
+    assert_eq!(missing_res.surface_name, surface.name());
+    match missing_res.status {
+      SurfaceStatus::ToolMissing {
+        binary,
+        install_hint,
+      } => {
+        assert_eq!(binary, "dummy-tool");
+        assert_eq!(install_hint, "install via package manager");
+      }
+      other => panic!("Expected ToolMissing status, got {other:?}"),
+    }
+  }
+}
+
+#[test]
+fn test_doctor_tool_missing_table_generation() {
+  use crate::commands::doctor::install_missing_tools;
+  use crate::surfaces::ToolInfo;
+
+  let missing_tool = ToolInfo {
+    binary: "__missing_dummy_binary_test__",
+    description: "Dummy Missing Tool Test",
+    install_hint: "Run npm install -g dummy",
+    is_required_for_fmt: true,
+    is_required_for_lint: true,
+  };
+
+  let ok = install_missing_tools(&[missing_tool]);
+  assert!(
+    !ok,
+    "Should return false when tool cannot be auto-installed"
+  );
+}
+
+#[test]
 fn test_check_binary_exists_caching() {
   let non_existent = "non_existent_binary_xyz_12345";
   let non_existent_result = check_binary_exists(non_existent);
@@ -200,4 +254,3 @@ fn test_check_binary_exists_thread_safety() {
     assert!(guard.contains_key(&binary_name));
   }
 }
-

@@ -345,3 +345,184 @@ fn test_diff_check_via_tempcopy_raii_cleanup_on_panic() {
   let scratch = file.with_file_name(format!("{file_stem}.fml-check-tmp.{ext}"));
   assert!(!scratch.exists());
 }
+
+#[test]
+fn test_diff_check_via_tempcopy_naming_and_path_edge_cases() {
+  let temp = TempDir::new().unwrap();
+
+  // Case A: File with no extension (e.g., Makefile)
+  let no_ext = temp.path().join("Makefile");
+  std::fs::write(&no_ext, "all:\n\techo hi\n").unwrap();
+  let res_no_ext = diff_check_via_tempcopy(
+    std::slice::from_ref(&no_ext),
+    |scratch| {
+      assert!(
+        scratch
+          .file_name()
+          .unwrap()
+          .to_str()
+          .unwrap()
+          .ends_with(".fml-check.tmp")
+      );
+      Ok(create_dummy_success_output())
+    },
+    "makefile",
+    Instant::now(),
+  );
+  assert!(matches!(res_no_ext.status, SurfaceStatus::Passed));
+
+  // Case B: Multi-dot file extension (e.g. app.test.spec.rs)
+  let multi_ext = temp.path().join("app.test.spec.rs");
+  std::fs::write(&multi_ext, "fn test() {}").unwrap();
+  let res_multi = diff_check_via_tempcopy(
+    std::slice::from_ref(&multi_ext),
+    |scratch| {
+      let name = scratch.file_name().unwrap().to_str().unwrap();
+      assert!(name.contains("app.test.spec.fml-check-tmp.rs"));
+      Ok(create_dummy_success_output())
+    },
+    "rust",
+    Instant::now(),
+  );
+  assert!(matches!(res_multi.status, SurfaceStatus::Passed));
+
+  // Case C: File in nested directory hierarchy
+  let nested_dir = temp.path().join("nested").join("sub");
+  std::fs::create_dir_all(&nested_dir).unwrap();
+  let nested_file = nested_dir.join("script.py");
+  std::fs::write(&nested_file, "print('hello')\n").unwrap();
+  let res_nested = diff_check_via_tempcopy(
+    std::slice::from_ref(&nested_file),
+    |_scratch| Ok(create_dummy_success_output()),
+    "python",
+    Instant::now(),
+  );
+  assert!(matches!(res_nested.status, SurfaceStatus::Passed));
+
+  // Case D: Filename with spaces and special characters
+  let special_file = temp.path().join("my test #1 (draft).js");
+  std::fs::write(&special_file, "console.log(1);").unwrap();
+  let res_special = diff_check_via_tempcopy(
+    std::slice::from_ref(&special_file),
+    |_scratch| Ok(create_dummy_success_output()),
+    "javascript",
+    Instant::now(),
+  );
+  assert!(matches!(res_special.status, SurfaceStatus::Passed));
+}
+
+#[test]
+fn test_diff_check_via_tempcopy_original_file_non_mutation_fuzzing() {
+  let temp = TempDir::new().unwrap();
+  let original_file = temp.path().join("fuzz_target.txt");
+  let original_bytes = b"ORIGINAL_STABLE_CONTENT_DO_NOT_MUTATE_123456789";
+  std::fs::write(&original_file, original_bytes).unwrap();
+
+  // Test 1: Closure truncates scratch file
+  let _ = diff_check_via_tempcopy(
+    std::slice::from_ref(&original_file),
+    |scratch| {
+      std::fs::write(scratch, b"TRUNCATED").unwrap();
+      Ok(create_dummy_success_output())
+    },
+    "text",
+    Instant::now(),
+  );
+  assert_eq!(std::fs::read(&original_file).unwrap(), original_bytes);
+
+  // Test 2: Closure completely deletes scratch file
+  let _ = diff_check_via_tempcopy(
+    std::slice::from_ref(&original_file),
+    |scratch| {
+      let _ = std::fs::remove_file(scratch);
+      Ok(create_dummy_success_output())
+    },
+    "text",
+    Instant::now(),
+  );
+  assert_eq!(std::fs::read(&original_file).unwrap(), original_bytes);
+
+  // Test 3: Closure fills scratch with random binary garbage
+  let _ = diff_check_via_tempcopy(
+    std::slice::from_ref(&original_file),
+    |scratch| {
+      std::fs::write(scratch, [0x00, 0xFF, 0xFE, 0x12, 0x99]).unwrap();
+      Ok(create_dummy_success_output())
+    },
+    "text",
+    Instant::now(),
+  );
+  assert_eq!(std::fs::read(&original_file).unwrap(), original_bytes);
+}
+
+#[test]
+fn test_diff_check_via_tempcopy_batch_processing_and_cleanup() {
+  let temp = TempDir::new().unwrap();
+  let files: Vec<_> = (0..5)
+    .map(|i| {
+      let p = temp.path().join(format!("batch_{i}.rs"));
+      std::fs::write(&p, format!("fn f{i}() {{}}\n")).unwrap();
+      p
+    })
+    .collect();
+
+  // Multi-file run where element index 2 panics or returns error
+  let start = Instant::now();
+  let _ = diff_check_via_tempcopy(
+    &files,
+    |scratch| {
+      if scratch.to_string_lossy().contains("batch_2") {
+        return Err(std::io::Error::other("Simulated batch failure on file 2"));
+      }
+      Ok(create_dummy_success_output())
+    },
+    "rust",
+    start,
+  );
+
+  // Ensure NO temp files left over for any of the batch files
+  for f in &files {
+    let scratch = f.with_file_name(format!(
+      "{}.fml-check-tmp.rs",
+      f.file_stem().unwrap().to_str().unwrap()
+    ));
+    assert!(
+      !scratch.exists(),
+      "Scratch file {:?} was not cleaned up!",
+      scratch
+    );
+  }
+}
+
+#[test]
+fn test_diff_check_via_tempcopy_content_variations() {
+  let temp = TempDir::new().unwrap();
+
+  // Empty file
+  let empty = temp.path().join("empty.rs");
+  std::fs::write(&empty, "").unwrap();
+  let res_empty = diff_check_via_tempcopy(
+    std::slice::from_ref(&empty),
+    |_scratch| Ok(create_dummy_success_output()),
+    "rust",
+    Instant::now(),
+  );
+  assert!(matches!(res_empty.status, SurfaceStatus::Passed));
+
+  // CRLF line endings
+  let crlf = temp.path().join("crlf.rs");
+  std::fs::write(&crlf, "line1\r\nline2\r\n").unwrap();
+  let res_crlf = diff_check_via_tempcopy(
+    std::slice::from_ref(&crlf),
+    |scratch| {
+      std::fs::write(scratch, "line1\nline2\n").unwrap();
+      Ok(create_dummy_success_output())
+    },
+    "rust",
+    Instant::now(),
+  );
+  assert!(matches!(
+    res_crlf.status,
+    SurfaceStatus::ViolationsFound { .. }
+  ));
+}

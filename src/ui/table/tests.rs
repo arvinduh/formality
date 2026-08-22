@@ -411,3 +411,96 @@ fn test_dynamic_separator_and_width_alignment() {
     .expect("Must have a rule line");
   assert_eq!(rule_line.chars().count(), max_w);
 }
+
+#[test]
+fn test_terminal_width_extremes_and_alignments() {
+  let test_widths = [
+    0, 1, 5, 10, 20, 39, 40, 41, 77, 80, 120, 160, 200, 1000, 65535,
+  ];
+
+  for &width in &test_widths {
+    let mut table = Table::new(vec![
+      Column::new("Left")
+        .align(Align::Left)
+        .width(WidthPolicy::Auto),
+      Column::new("Center")
+        .align(Align::Center)
+        .width(WidthPolicy::Auto),
+      Column::new("Right")
+        .align(Align::Right)
+        .width(WidthPolicy::Auto),
+    ])
+    .layout(Layout::compact().max_width(width));
+
+    table.add_row(Row::new(vec![
+      Cell::styled("L1", Style::Tool),
+      Cell::styled("C1", Style::Ok),
+      Cell::styled("R1", Style::Warn),
+    ]));
+    table.add_row(Row::rule());
+    table.add_row(Row::group("Group Row Test"));
+
+    let rendered = render(&table, &Palette::none());
+    assert!(
+      !rendered.is_empty(),
+      "Failed to render table at width {width}"
+    );
+
+    let sep = separator_line(width as usize);
+    assert!(!sep.is_empty());
+    let sep_content = separator_for_content(&rendered);
+    assert!(!sep_content.is_empty());
+  }
+}
+
+#[test]
+fn test_non_standard_width_with_unicode_ansi_and_wrapping() {
+  let widths = [15, 25, 33, 47, 80, 125];
+
+  for &w in &widths {
+    let mut table = Table::new(vec![
+      Column::new("Status").width(WidthPolicy::Fixed(8)),
+      Column::new("Tool / Surface").width(WidthPolicy::Fixed(12)),
+      Column::new("Details").overflow(Overflow::Wrap),
+    ])
+    .layout(Layout::compact().max_width(w).indent(2));
+
+    table.add_row(Row::new(vec![
+      Cell::styled("[PASS]", Style::Ok),
+      Cell::styled("\u{1f980} rustfmt", Style::Tool),
+      Cell::styled(
+        "Unicode \u{4f60}\u{597d}\u{4e16}\u{754c} details line",
+        Style::Info,
+      ),
+    ]));
+    table.add_row(Row::rule());
+    table.add_row(Row::new(vec![
+      Cell::styled("[FAIL]", Style::Error),
+      Cell::styled("ruff", Style::Tool),
+      Cell::styled("Detailed error message with ANSI styling", Style::Error),
+    ]));
+
+    let rendered_ansi = render(&table, &Palette::ansi16());
+    let rendered_tc = render(&table, &Palette::truecolor());
+
+    assert!(!rendered_ansi.is_empty());
+    assert!(!rendered_tc.is_empty());
+
+    let display_w = max_line_display_width(&rendered_ansi);
+    assert!(display_w > 0);
+  }
+}
+
+#[test]
+fn test_table_padding_and_indent_overflow_safety() {
+  let mut table =
+    Table::new(vec![Column::new("Col A").width(WidthPolicy::Fixed(50))])
+      .layout(Layout::compact().max_width(20).indent(18).padding(5, 5));
+
+  table.add_row(Row::new(vec![Cell::text(
+    "Content testing overflow safety",
+  )]));
+
+  let rendered = render(&table, &Palette::none());
+  assert!(!rendered.is_empty());
+}

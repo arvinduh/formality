@@ -766,3 +766,79 @@ fn test_unrecognized_lang_sections_handles_case_and_aliases() {
   unrecognized.sort_unstable();
   assert_eq!(unrecognized, vec!["jaav", "pythonn"]);
 }
+
+#[test]
+fn test_corrupted_config_syntax_errors_and_recovery() {
+  let temp = tempfile::TempDir::new().unwrap();
+
+  // Test 1: Unclosed section header
+  let path1 = temp.path().join("unclosed_sec.toml");
+  fs::write(&path1, "[global\nindent_size = 2").unwrap();
+  let err1 = FormalityConfig::load_file(&path1).unwrap_err();
+  match &err1 {
+    ConfigError::Parse { path, source } => {
+      assert_eq!(path, &path1);
+      assert!(!source.to_string().is_empty());
+    }
+    other => panic!("Expected Parse error, got {other:?}"),
+  }
+  assert!(err1.to_string().contains("Failed to parse config file at"));
+
+  // Test 2: Type mismatch (indent_size as string instead of int)
+  let path2 = temp.path().join("type_mismatch.toml");
+  fs::write(&path2, "[global]\nindent_size = \"two\"\n").unwrap();
+  let err2 = FormalityConfig::load_file(&path2).unwrap_err();
+  assert!(matches!(err2, ConfigError::Parse { .. }));
+  assert!(err2.to_string().contains("invalid type"));
+
+  // Test 3: Invalid TOML token / syntax error
+  let path3 = temp.path().join("bad_syntax.toml");
+  fs::write(&path3, "global = = = true\n").unwrap();
+  let err3 = FormalityConfig::load_file(&path3).unwrap_err();
+  assert!(matches!(err3, ConfigError::Parse { .. }));
+
+  // Test 4: File not found (Io error recovery)
+  let path4 = temp.path().join("nonexistent_config.toml");
+  let err4 = FormalityConfig::load_file(&path4).unwrap_err();
+  assert!(matches!(err4, ConfigError::Io { .. }));
+  assert!(err4.to_string().contains("Failed to read config file at"));
+}
+
+#[test]
+fn test_corrupted_config_fuzzing_random_and_malformed_inputs() {
+  let malformed_inputs = [
+    "",
+    "   \n\t   ",
+    "\0\0\0\0",
+    "[[[[[[[[[",
+    "\"unclosed string",
+    "[global]\nindent_size = -9999999999999999999999999999999999",
+    "[lang.rust]\nformat_tool = 12345",
+    "[lang.python]\nextra_args = \"not an array\"",
+    "true = false\n[123]\n===456",
+  ];
+
+  for input in malformed_inputs {
+    let res = FormalityConfig::parse_str(input, Path::new("fuzz.toml"));
+    if input.trim().is_empty() {
+      assert!(res.is_ok(), "Empty input should parse to empty config");
+    } else if let Err(err) = res {
+      assert!(!err.to_string().is_empty());
+    }
+  }
+}
+
+#[test]
+fn test_layered_config_with_corrupted_project_file() {
+  let temp = tempfile::TempDir::new().unwrap();
+  let root = temp.path();
+
+  let bad_config = root.join("formality.toml");
+  fs::write(&bad_config, "[global]\nline_length = \"invalid_length\"").unwrap();
+
+  let res = FormalityConfig::load_layered(Some(root));
+  assert!(res.is_err());
+  let err = res.unwrap_err();
+  assert!(err.to_string().contains("formality.toml"));
+  assert!(err.to_string().contains("Failed to parse"));
+}
