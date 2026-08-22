@@ -3,6 +3,7 @@ pub mod commands;
 pub mod config;
 pub mod editorconfig;
 pub mod engine;
+pub mod errors;
 pub mod surfaces;
 pub mod ui;
 
@@ -24,6 +25,10 @@ pub use engine::diff;
 pub use engine::runner;
 pub use engine::update;
 pub use engine::version;
+pub use errors::{
+  ConfigError, ExitStatus, FormalityError, GitError, IoError, Result,
+  SurfaceError, ToolMissingError,
+};
 pub use ui::table;
 
 use clap::Parser;
@@ -41,13 +46,13 @@ use surfaces::{
 pub use schema::generate_schema;
 
 #[must_use]
-pub fn run() -> i32 {
+pub fn run() -> ExitStatus {
   let args = Cli::parse();
   run_with_args(args)
 }
 
 #[must_use]
-pub fn run_with_args(args: Cli) -> i32 {
+pub fn run_with_args(args: Cli) -> ExitStatus {
   if std::env::var("FORCE_COLOR").is_ok()
     || std::env::var("CLICOLOR_FORCE").is_ok()
     || std::env::var("GITHUB_ACTIONS").is_ok()
@@ -56,14 +61,14 @@ pub fn run_with_args(args: Cli) -> i32 {
   }
 
   let update_notifier = update::spawn_update_check();
-  let code = run_command_inner(args);
+  let status = run_command_inner(args);
   update::print_update_notice(update_notifier);
-  code
+  status
 }
 
 // Dispatches all top-level CLI commands (fmt, lint, sync, fix, doctor, init, lsp, schema, etc.).
 #[allow(clippy::too_many_lines)]
-fn run_command_inner(args: Cli) -> i32 {
+fn run_command_inner(args: Cli) -> ExitStatus {
   let root = args.root.unwrap_or_else(|| {
     std::env::current_dir().unwrap_or_else(|_| PathBuf::from("."))
   });
@@ -72,8 +77,8 @@ fn run_command_inner(args: Cli) -> i32 {
     match FormalityConfig::load_layered(Some(&root)) {
       Ok(res) => res,
       Err(e) => {
-        eprintln!("{} {}", "Config error:".red().bold(), e);
-        return 2;
+        FormalityError::from(e).print_diagnostic();
+        return ExitStatus::Error;
       }
     };
 
@@ -81,8 +86,8 @@ fn run_command_inner(args: Cli) -> i32 {
     match FormalityConfig::load_file(&custom_cfg) {
       Ok(custom) => config.merge(custom),
       Err(e) => {
-        eprintln!("{} {}", "Custom config error:".red().bold(), e);
-        return 2;
+        FormalityError::from(e).print_diagnostic();
+        return ExitStatus::Error;
       }
     }
   }
@@ -103,21 +108,17 @@ fn run_command_inner(args: Cli) -> i32 {
               "[OK]".green().bold(),
               target_file.display().to_string().cyan()
             );
-            0
+            ExitStatus::Clean
           }
           Err(e) => {
-            eprintln!(
-              "{} Failed to write schema to {}: {}",
-              "[ERR]".red().bold(),
-              target_file.display(),
-              e
-            );
-            2
+            FormalityError::Io(IoError::new(Some(target_file), e))
+              .print_diagnostic();
+            ExitStatus::Error
           }
         }
       } else {
         println!("{schema_json}");
-        0
+        ExitStatus::Clean
       }
     }
 
@@ -143,7 +144,7 @@ fn run_command_inner(args: Cli) -> i32 {
             existing.display(),
             "--force".bold()
           );
-          return 1;
+          return ExitStatus::Violations;
         }
         // Warn when --force would create a file that is shadowed by an existing
         // higher-priority config (e.g. creating .formality.toml while
@@ -173,16 +174,11 @@ fn run_command_inner(args: Cli) -> i32 {
             target.display().to_string().cyan(),
             detected.len()
           );
-          0
+          ExitStatus::Clean
         }
         Err(e) => {
-          eprintln!(
-            "{} Failed to write {}: {}",
-            "[ERR]".red().bold(),
-            target.display(),
-            e
-          );
-          2
+          FormalityError::Io(IoError::new(Some(target), e)).print_diagnostic();
+          ExitStatus::Error
         }
       }
     }
@@ -255,7 +251,7 @@ fn run_command_inner(args: Cli) -> i32 {
         active_count.to_string().green().bold(),
         (all_surfaces().len() - active_count).to_string().dimmed()
       );
-      0
+      ExitStatus::Clean
     }
 
     Commands::Fmt {
@@ -270,8 +266,8 @@ fn run_command_inner(args: Cli) -> i32 {
       {
         Ok(p) => p,
         Err(e) => {
-          eprintln!("{}", e.red().bold());
-          return 2;
+          e.print_diagnostic();
+          return ExitStatus::Error;
         }
       };
 
@@ -279,8 +275,8 @@ fn run_command_inner(args: Cli) -> i32 {
         match resolve_target_surfaces(&root, &lang, &target_paths, &config) {
           Ok(s) => s,
           Err(e) => {
-            eprintln!("{}", e.red().bold());
-            return 2;
+            e.print_diagnostic();
+            return ExitStatus::Error;
           }
         };
 
@@ -290,14 +286,18 @@ fn run_command_inner(args: Cli) -> i32 {
         install_failed = true;
       }
 
-      let code = Runner::run(
+      let status = Runner::run(
         surfaces,
         &root,
         &target_paths,
         RunnerAction::Format { check },
         &config,
       );
-      if install_failed && code == 0 { 2 } else { code }
+      if install_failed && status.is_clean() {
+        ExitStatus::Error
+      } else {
+        status
+      }
     }
 
     Commands::Fix {
@@ -311,8 +311,8 @@ fn run_command_inner(args: Cli) -> i32 {
       {
         Ok(p) => p,
         Err(e) => {
-          eprintln!("{}", e.red().bold());
-          return 2;
+          e.print_diagnostic();
+          return ExitStatus::Error;
         }
       };
 
@@ -320,8 +320,8 @@ fn run_command_inner(args: Cli) -> i32 {
         match resolve_target_surfaces(&root, &lang, &target_paths, &config) {
           Ok(s) => s,
           Err(e) => {
-            eprintln!("{}", e.red().bold());
-            return 2;
+            e.print_diagnostic();
+            return ExitStatus::Error;
           }
         };
 
@@ -335,9 +335,13 @@ fn run_command_inner(args: Cli) -> i32 {
         }
       }
 
-      let code =
+      let status =
         Runner::run(surfaces, &root, &target_paths, RunnerAction::Fix, &config);
-      if install_failed && code == 0 { 2 } else { code }
+      if install_failed && status.is_clean() {
+        ExitStatus::Error
+      } else {
+        status
+      }
     }
 
     Commands::Lint {
@@ -352,8 +356,8 @@ fn run_command_inner(args: Cli) -> i32 {
       {
         Ok(p) => p,
         Err(e) => {
-          eprintln!("{}", e.red().bold());
-          return 2;
+          e.print_diagnostic();
+          return ExitStatus::Error;
         }
       };
 
@@ -361,8 +365,8 @@ fn run_command_inner(args: Cli) -> i32 {
         match resolve_target_surfaces(&root, &lang, &target_paths, &config) {
           Ok(s) => s,
           Err(e) => {
-            eprintln!("{}", e.red().bold());
-            return 2;
+            e.print_diagnostic();
+            return ExitStatus::Error;
           }
         };
 
@@ -372,22 +376,26 @@ fn run_command_inner(args: Cli) -> i32 {
         install_failed = true;
       }
 
-      let code = Runner::run(
+      let status = Runner::run(
         surfaces,
         &root,
         &target_paths,
         RunnerAction::Lint { fix },
         &config,
       );
-      if install_failed && code == 0 { 2 } else { code }
+      if install_failed && status.is_clean() {
+        ExitStatus::Error
+      } else {
+        status
+      }
     }
 
     Commands::Sync { check, lang } => {
       let surfaces = match resolve_target_surfaces(&root, &lang, &[], &config) {
         Ok(s) => s,
         Err(e) => {
-          eprintln!("{}", e.red().bold());
-          return 2;
+          e.print_diagnostic();
+          return ExitStatus::Error;
         }
       };
       Runner::run(surfaces, &root, &[], RunnerAction::Sync { check }, &config)
@@ -395,7 +403,7 @@ fn run_command_inner(args: Cli) -> i32 {
 
     Commands::Lsp => {
       lsp::run_lsp_server(Some(root));
-      0
+      ExitStatus::Clean
     }
 
     Commands::Table { json } => {
@@ -405,23 +413,19 @@ fn run_command_inner(args: Cli) -> i32 {
         use std::io::Read;
         let mut buf = String::new();
         if let Err(e) = std::io::stdin().read_to_string(&mut buf) {
-          eprintln!(
-            "{} Failed to read table spec from stdin: {}",
-            "[ERR]".red().bold(),
-            e
-          );
-          return 2;
+          FormalityError::Io(IoError::new(None, e)).print_diagnostic();
+          return ExitStatus::Error;
         }
         buf
       };
       match table::render_json(&json_str) {
         Ok(rendered) => {
           print!("{rendered}");
-          0
+          ExitStatus::Clean
         }
         Err(e) => {
           eprintln!("{} Invalid table JSON spec: {}", "[ERR]".red().bold(), e);
-          2
+          ExitStatus::Error
         }
       }
     }
@@ -471,12 +475,9 @@ fn resolve_git_paths(
   staged: bool,
   changed: bool,
   explicit_paths: Vec<PathBuf>,
-) -> Result<Vec<PathBuf>, String> {
+) -> Result<Vec<PathBuf>, FormalityError> {
   if staged && changed {
-    return Err(
-      "--staged and --changed are mutually exclusive. Use one or the other."
-        .to_string(),
-    );
+    return Err(FormalityError::Git(GitError::MutuallyExclusiveFlags));
   }
   if staged {
     return get_git_staged_files(root);
@@ -491,7 +492,7 @@ fn get_git_diff_files(
   root: &Path,
   staged: bool,
   error_context: &str,
-) -> Result<Vec<PathBuf>, String> {
+) -> Result<Vec<PathBuf>, FormalityError> {
   let mut cmd = std::process::Command::new("git");
   cmd.arg("diff").arg("--name-only");
   if staged {
@@ -499,12 +500,14 @@ fn get_git_diff_files(
   }
   cmd.arg("--diff-filter=ACMR").current_dir(root);
 
-  let output = cmd
-    .output()
-    .map_err(|e| format!("Failed to execute git: {e}"))?;
+  let output = cmd.output().map_err(|e| {
+    FormalityError::Git(GitError::ExecutionFailed(e.to_string()))
+  })?;
 
   if !output.status.success() {
-    return Err(format!("Failed to query git {error_context} files."));
+    return Err(FormalityError::Git(GitError::CommandFailed(format!(
+      "Failed to query git {error_context} files."
+    ))));
   }
 
   let stdout = String::from_utf8_lossy(&output.stdout);
@@ -521,8 +524,10 @@ fn get_git_diff_files(
 ///
 /// # Errors
 ///
-/// Returns an error message if git execution fails or the git command cannot be run.
-pub fn get_git_staged_files(root: &Path) -> Result<Vec<PathBuf>, String> {
+/// Returns a [`FormalityError`] if git execution fails or the git command cannot be run.
+pub fn get_git_staged_files(
+  root: &Path,
+) -> Result<Vec<PathBuf>, FormalityError> {
   get_git_diff_files(root, true, "staged")
 }
 
@@ -530,8 +535,10 @@ pub fn get_git_staged_files(root: &Path) -> Result<Vec<PathBuf>, String> {
 ///
 /// # Errors
 ///
-/// Returns an error message if git execution fails or the git command cannot be run.
-pub fn get_git_changed_files(root: &Path) -> Result<Vec<PathBuf>, String> {
+/// Returns a [`FormalityError`] if git execution fails or the git command cannot be run.
+pub fn get_git_changed_files(
+  root: &Path,
+) -> Result<Vec<PathBuf>, FormalityError> {
   get_git_diff_files(root, false, "changed")
 }
 
@@ -540,16 +547,16 @@ fn resolve_target_surfaces(
   lang_filter: &[String],
   paths: &[PathBuf],
   config: &FormalityConfig,
-) -> Result<Vec<Box<dyn LanguageSurface>>, String> {
+) -> Result<Vec<Box<dyn LanguageSurface>>, FormalityError> {
   if !lang_filter.is_empty() {
     let mut selected = Vec::new();
     for name in lang_filter {
       if let Some(s) = get_surface_by_name(name) {
         selected.push(s);
       } else {
-        return Err(format!(
-          "Unknown language surface: '{name}'. Run 'fml list-surfaces' to see supported languages."
-        ));
+        return Err(FormalityError::Surface(SurfaceError::UnknownSurface(
+          name.clone(),
+        )));
       }
     }
     return Ok(selected);

@@ -16,6 +16,8 @@ pub enum RunnerAction {
   Fix,
 }
 
+use crate::errors::ExitStatus;
+
 pub struct Runner;
 
 impl Runner {
@@ -28,10 +30,10 @@ impl Runner {
     paths: &[PathBuf],
     action: RunnerAction,
     config: &FormalityConfig,
-  ) -> i32 {
+  ) -> ExitStatus {
     if surfaces.is_empty() {
       println!("{}", "No matching language surfaces found.".yellow());
-      return 0;
+      return ExitStatus::Clean;
     }
 
     let start_time = Instant::now();
@@ -456,7 +458,7 @@ impl Runner {
 
     println!("  {} in {:.2?}\n", summary_text, start_time.elapsed());
 
-    exit_code
+    ExitStatus::try_from(exit_code).unwrap_or(ExitStatus::Error)
   }
 }
 

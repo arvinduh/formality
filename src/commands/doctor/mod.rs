@@ -138,13 +138,15 @@ pub struct ToolLookupResult {
   pub parsed_version: Option<Version>,
   pub status: Option<ToolStatus>,
 }
+use crate::errors::ExitStatus;
+
 #[must_use]
 pub fn run_doctor(
   root: &Path,
   show_all: bool,
   install: bool,
   config: &FormalityConfig,
-) -> i32 {
+) -> ExitStatus {
   let surfaces: Vec<Box<dyn LanguageSurface>> = if show_all {
     all_surfaces()
   } else {
@@ -231,9 +233,9 @@ pub fn run_doctor(
   );
 
   if (missing_unique_tools.is_empty() || install) && !install_failed {
-    0
+    ExitStatus::Clean
   } else {
-    2
+    ExitStatus::Error
   }
 }
 

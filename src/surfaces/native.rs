@@ -2,6 +2,7 @@ pub use crate::editorconfig::{
   EDITORCONFIG_FILE_NAME, generate_editorconfig,
   generate_editorconfig_from_config, sync_editorconfig,
 };
+use crate::errors::{FormalityError, SurfaceError};
 use crate::surfaces::{
   ExecutionContext, SurfaceResult, SurfaceStatus, sync_file_helper,
 };
@@ -23,9 +24,9 @@ pub trait NativeConfig: Sized {
   ///
   /// # Errors
   ///
-  /// Returns an error string if the underlying serialization (TOML, YAML, or
+  /// Returns a [`FormalityError`] if the underlying serialization (TOML, YAML, or
   /// JSON, depending on the implementor) fails.
-  fn render(&self) -> Result<String, String>;
+  fn render(&self) -> Result<String, FormalityError>;
 }
 
 /// Serializes a struct to TOML and prepends the standard formality auto-generated warning header.
@@ -81,13 +82,13 @@ pub fn serialize_json_pretty<T: Serialize>(
 ///
 /// # Errors
 ///
-/// Returns an error string if JSON, YAML, or TOML serialization fails.
+/// Returns a [`FormalityError`] if JSON, YAML, or TOML serialization fails.
 // Native tool configuration filenames (e.g. .golangci.yml, .clang-format) are fixed static ASCII strings.
 #[allow(clippy::case_sensitive_file_extension_comparisons)]
 pub fn render_native_config<T: Serialize + NativeConfig>(
   cfg: &T,
-) -> Result<String, String> {
-  if T::FILE_NAME.ends_with(".json") {
+) -> Result<String, FormalityError> {
+  let res = if T::FILE_NAME.ends_with(".json") {
     serialize_json_pretty(cfg).map_err(|e| e.to_string())
   } else if T::FILE_NAME.ends_with(".yaml")
     || T::FILE_NAME.ends_with(".yml")
@@ -96,7 +97,14 @@ pub fn render_native_config<T: Serialize + NativeConfig>(
     serialize_yaml_with_header(cfg).map_err(|e| e.to_string())
   } else {
     serialize_toml_with_header(cfg).map_err(|e| e.to_string())
-  }
+  };
+
+  res.map_err(|msg| {
+    FormalityError::Surface(SurfaceError::SerializationFailed {
+      surface: T::FILE_NAME.to_string(),
+      message: msg,
+    })
+  })
 }
 
 /// Helper to sync a typed [`NativeConfig`] to disk for a surface.
@@ -152,7 +160,7 @@ mod tests {
       }
     }
 
-    fn render(&self) -> Result<String, String> {
+    fn render(&self) -> Result<String, FormalityError> {
       render_native_config(self)
     }
   }
@@ -174,7 +182,7 @@ mod tests {
       }
     }
 
-    fn render(&self) -> Result<String, String> {
+    fn render(&self) -> Result<String, FormalityError> {
       render_native_config(self)
     }
   }
@@ -193,7 +201,7 @@ mod tests {
       }
     }
 
-    fn render(&self) -> Result<String, String> {
+    fn render(&self) -> Result<String, FormalityError> {
       render_native_config(self)
     }
   }
@@ -265,7 +273,7 @@ mod tests {
       }
     }
 
-    fn render(&self) -> Result<String, String> {
+    fn render(&self) -> Result<String, FormalityError> {
       render_native_config(self)
     }
   }

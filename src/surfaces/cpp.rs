@@ -63,7 +63,7 @@ impl NativeConfig for ClangFormatConfig {
     }
   }
 
-  fn render(&self) -> Result<String, String> {
+  fn render(&self) -> Result<String, crate::errors::FormalityError> {
     render_native_config(self)
   }
 }
@@ -97,7 +97,7 @@ impl NativeConfig for ClangTidyConfig {
     Self::default()
   }
 
-  fn render(&self) -> Result<String, String> {
+  fn render(&self) -> Result<String, crate::errors::FormalityError> {
     render_native_config(self)
   }
 }

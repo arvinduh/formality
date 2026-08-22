@@ -151,7 +151,7 @@ impl NativeConfig for BiomeConfig {
     }
   }
 
-  fn render(&self) -> Result<String, String> {
+  fn render(&self) -> Result<String, crate::errors::FormalityError> {
     render_native_config(self)
   }
 }

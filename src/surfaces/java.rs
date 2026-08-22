@@ -51,7 +51,7 @@ impl NativeConfig for CheckstyleConfig {
     }
   }
 
-  fn render(&self) -> Result<String, String> {
+  fn render(&self) -> Result<String, crate::errors::FormalityError> {
     let import_order_module = if self.check_import_order {
       "\n    <module name=\"ImportOrder\">\n      <property name=\"ordered\" value=\"true\"/>\n      <property name=\"separated\" value=\"true\"/>\n    </module>"
     } else {
