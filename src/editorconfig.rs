@@ -10,7 +10,7 @@ use std::time::Instant;
 
 pub const EDITORCONFIG_FILE_NAME: &str = ".editorconfig";
 
-const CANONICAL_FLEET_ORDER: &[&str] = &[
+pub const CANONICAL_FLEET_ORDER: &[&str] = &[
   "rust",
   "python",
   "cpp",

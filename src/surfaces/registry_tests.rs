@@ -301,3 +301,160 @@ fn test_surface_file_extensions() {
     );
   }
 }
+
+#[test]
+fn test_canonical_fleet_order_covers_all_surfaces() {
+  use std::collections::HashSet;
+
+  let reg = SurfaceRegistry::default();
+  let registered_names: HashSet<&str> =
+    reg.surfaces().iter().map(|s| s.name()).collect();
+
+  let fleet_order = crate::editorconfig::CANONICAL_FLEET_ORDER;
+  let fleet_set: HashSet<&str> = fleet_order.iter().copied().collect();
+
+  // No duplicate entries in CANONICAL_FLEET_ORDER
+  assert_eq!(
+    fleet_order.len(),
+    fleet_set.len(),
+    "CANONICAL_FLEET_ORDER contains duplicate surface names"
+  );
+
+  // Every surface in SurfaceRegistry::default() is present in CANONICAL_FLEET_ORDER
+  for &name in &registered_names {
+    assert!(
+      fleet_set.contains(name),
+      "Surface '{name}' from SurfaceRegistry::default() is missing from CANONICAL_FLEET_ORDER"
+    );
+  }
+
+  // Every surface in CANONICAL_FLEET_ORDER corresponds to a registered surface
+  for &name in fleet_order {
+    assert!(
+      registered_names.contains(name),
+      "CANONICAL_FLEET_ORDER contains '{name}' which is not in SurfaceRegistry::default()"
+    );
+  }
+
+  assert_eq!(
+    fleet_order.len(),
+    reg.len(),
+    "CANONICAL_FLEET_ORDER length ({}) does not match SurfaceRegistry::default() count ({})",
+    fleet_order.len(),
+    reg.len()
+  );
+}
+
+#[test]
+fn test_child_lsp_registry_covers_all_surfaces_or_exemptions() {
+  use std::collections::HashSet;
+
+  let reg = SurfaceRegistry::default();
+  let registered_names: HashSet<&str> =
+    reg.surfaces().iter().map(|s| s.name()).collect();
+
+  // Intentional exemptions from child LSP passthrough server:
+  // - "markdown": diagnostics only via fml lint (markdownlint / biome); no child LSP server spawned.
+  // - "java": heavyweight Eclipse JDT LS not bundled; formatting and linting handled directly via google-java-format and Checkstyle.
+  // - "kotlin": standalone Kotlin language server not integrated; formatting and linting handled directly via ktlint.
+  let documented_exemptions: &[(&str, &str)] = &[
+    (
+      "markdown",
+      "Markdown uses diagnostics-only via formality lint; no dedicated child LSP binary.",
+    ),
+    (
+      "java",
+      "Java uses google-java-format and Checkstyle directly without spawning JDT LS.",
+    ),
+    (
+      "kotlin",
+      "Kotlin uses ktlint directly for formatting and linting without a standalone language server.",
+    ),
+  ];
+
+  let exemption_names: HashSet<&str> = documented_exemptions
+    .iter()
+    .map(|(name, _)| *name)
+    .collect();
+
+  // Ensure all documented exemptions are valid registered surfaces
+  for &(exempt_name, _) in documented_exemptions {
+    assert!(
+      registered_names.contains(exempt_name),
+      "Documented LSP exemption '{exempt_name}' is not a registered surface in SurfaceRegistry::default()"
+    );
+    assert!(
+      crate::commands::lsp::child_lsp_for_surface(exempt_name).is_none(),
+      "Exempt surface '{exempt_name}' unexpectedly has a registered child LSP"
+    );
+  }
+
+  let child_lsp_surfaces: Vec<&str> = crate::commands::lsp::CHILD_LSP_REGISTRY
+    .iter()
+    .map(|c| c.surface)
+    .collect();
+
+  let child_lsp_set: HashSet<&str> =
+    child_lsp_surfaces.iter().copied().collect();
+
+  // No duplicate entries in CHILD_LSP_REGISTRY
+  assert_eq!(
+    child_lsp_surfaces.len(),
+    child_lsp_set.len(),
+    "CHILD_LSP_REGISTRY contains duplicate surface names"
+  );
+
+  // Every entry in CHILD_LSP_REGISTRY is a recognized surface
+  for &surface_name in &child_lsp_surfaces {
+    assert!(
+      registered_names.contains(surface_name),
+      "CHILD_LSP_REGISTRY contains '{surface_name}' which is not in SurfaceRegistry::default()"
+    );
+  }
+
+  // Ensure no overlap between active child LSPs and exemptions
+  for &surface_name in &child_lsp_surfaces {
+    assert!(
+      !exemption_names.contains(surface_name),
+      "Surface '{surface_name}' is present in both CHILD_LSP_REGISTRY and documented exemptions"
+    );
+  }
+
+  // Every registered surface must either have a child LSP or be explicitly exempt
+  for &name in &registered_names {
+    let has_child_lsp = child_lsp_set.contains(name);
+    let is_exempt = exemption_names.contains(name);
+
+    assert!(
+      has_child_lsp || is_exempt,
+      "Surface '{name}' has no child LSP in CHILD_LSP_REGISTRY and no documented exemption"
+    );
+
+    if has_child_lsp {
+      let lsp = crate::commands::lsp::child_lsp_for_surface(name);
+      assert!(
+        lsp.is_some(),
+        "child_lsp_for_surface('{name}') returned None for surface in CHILD_LSP_REGISTRY"
+      );
+      assert_eq!(
+        lsp.unwrap().surface,
+        name,
+        "child_lsp_for_surface('{name}') returned mismatched surface"
+      );
+      assert!(
+        !lsp.unwrap().binary.is_empty(),
+        "child LSP binary name must not be empty for surface '{name}'"
+      );
+    }
+  }
+
+  // Exhaustive partition: CHILD_LSP_REGISTRY + exemptions == all registered surfaces
+  assert_eq!(
+    child_lsp_surfaces.len() + documented_exemptions.len(),
+    reg.len(),
+    "Sum of CHILD_LSP_REGISTRY ({}) and documented exemptions ({}) must equal total registered surfaces ({})",
+    child_lsp_surfaces.len(),
+    documented_exemptions.len(),
+    reg.len()
+  );
+}
