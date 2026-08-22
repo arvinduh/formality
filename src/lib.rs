@@ -284,17 +284,20 @@ fn run_command_inner(args: Cli) -> i32 {
           }
         };
 
-      if install {
-        let _ = doctor::preflight_install(&surfaces, &config, true);
+      let mut install_failed = false;
+      if install && !doctor::preflight_install(&surfaces, &config, true) {
+        warn_tool_install_failed("formatting");
+        install_failed = true;
       }
 
-      Runner::run(
+      let code = Runner::run(
         surfaces,
         &root,
         &target_paths,
         RunnerAction::Format { check },
         &config,
-      )
+      );
+      if install_failed && code == 0 { 2 } else { code }
     }
 
     Commands::Fix {
@@ -322,12 +325,19 @@ fn run_command_inner(args: Cli) -> i32 {
           }
         };
 
+      let mut install_failed = false;
       if install {
-        let _ = doctor::preflight_install(&surfaces, &config, false);
-        let _ = doctor::preflight_install(&surfaces, &config, true);
+        let lint_ok = doctor::preflight_install(&surfaces, &config, false);
+        let fmt_ok = doctor::preflight_install(&surfaces, &config, true);
+        if !lint_ok || !fmt_ok {
+          warn_tool_install_failed("fixes");
+          install_failed = true;
+        }
       }
 
-      Runner::run(surfaces, &root, &target_paths, RunnerAction::Fix, &config)
+      let code =
+        Runner::run(surfaces, &root, &target_paths, RunnerAction::Fix, &config);
+      if install_failed && code == 0 { 2 } else { code }
     }
 
     Commands::Lint {
@@ -356,17 +366,20 @@ fn run_command_inner(args: Cli) -> i32 {
           }
         };
 
-      if install {
-        let _ = doctor::preflight_install(&surfaces, &config, false);
+      let mut install_failed = false;
+      if install && !doctor::preflight_install(&surfaces, &config, false) {
+        warn_tool_install_failed("linting");
+        install_failed = true;
       }
 
-      Runner::run(
+      let code = Runner::run(
         surfaces,
         &root,
         &target_paths,
         RunnerAction::Lint { fix },
         &config,
-      )
+      );
+      if install_failed && code == 0 { 2 } else { code }
     }
 
     Commands::Sync { check, lang } => {
@@ -444,6 +457,13 @@ fn warn_unrecognized_lang_sections(config: &FormalityConfig) {
       "fml list-surfaces".cyan()
     );
   }
+}
+
+fn warn_tool_install_failed(verb: &str) {
+  eprintln!(
+    "{} One or more required tools failed to install automatically; {verb} may be skipped for affected languages.",
+    "[WARN]".yellow().bold()
+  );
 }
 
 fn resolve_git_paths(

@@ -639,3 +639,81 @@ fn test_fmt_rust_import_reordering_lifecycle() {
   };
   assert_eq!(fml::run_with_args(check_clean_args), 0);
 }
+
+#[test]
+fn test_fmt_fix_lint_doctor_install_flag_paths() {
+  let temp = TempDir::new().unwrap();
+  let root = temp.path().to_path_buf();
+  let src = root.join("src");
+  fs::create_dir_all(&src).unwrap();
+
+  fs::write(
+    root.join("Cargo.toml"),
+    "[package]\nname = \"install_flag_test\"\nversion = \"0.1.0\"\nedition = \"2024\"\n",
+  )
+  .unwrap();
+  fs::write(
+    src.join("main.rs"),
+    "fn main() {\n    println!(\"Hello, world!\");\n}\n",
+  )
+  .unwrap();
+
+  // Test doctor with install: true
+  let doctor_args = Cli {
+    config: None,
+    root: Some(root.clone()),
+    command: Commands::Doctor {
+      all: false,
+      install: true,
+    },
+  };
+  let doc_code = fml::run_with_args(doctor_args);
+  assert!(doc_code == 0 || doc_code == 2);
+
+  // Test fmt with install: true
+  let fmt_args = Cli {
+    config: None,
+    root: Some(root.clone()),
+    command: Commands::Fmt {
+      check: true,
+      staged: false,
+      changed: false,
+      lang: vec!["rust".to_string()],
+      install: true,
+      paths: vec![],
+    },
+  };
+  let fmt_code = fml::run_with_args(fmt_args);
+  assert_eq!(fmt_code, 0);
+
+  // Test fix with install: true
+  let fix_args = Cli {
+    config: None,
+    root: Some(root.clone()),
+    command: Commands::Fix {
+      staged: false,
+      changed: false,
+      lang: vec!["rust".to_string()],
+      install: true,
+      paths: vec![],
+    },
+  };
+  let fix_code = fml::run_with_args(fix_args);
+  assert_eq!(fix_code, 0);
+
+  // Test lint with install: true
+  let lint_args = Cli {
+    config: None,
+    root: Some(root),
+    command: Commands::Lint {
+      fix: false,
+      staged: false,
+      changed: false,
+      lang: vec!["rust".to_string()],
+      install: true,
+      paths: vec![],
+    },
+  };
+  let lint_code = fml::run_with_args(lint_args);
+  assert_eq!(lint_code, 0);
+}

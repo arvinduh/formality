@@ -191,8 +191,12 @@ pub fn run_doctor(
   print_gitignore_hygiene(root, &surfaces, &separator);
 
   // Auto-install mode
-  if install && !missing_unique_tools.is_empty() {
-    let _ = install_missing_tools(&missing_unique_tools);
+  let mut install_failed = false;
+  if install
+    && !missing_unique_tools.is_empty()
+    && !install_missing_tools(&missing_unique_tools)
+  {
+    install_failed = true;
   }
 
   println!("{}", separator.dimmed());
@@ -226,7 +230,7 @@ pub fn run_doctor(
     }
   );
 
-  if missing_unique_tools.is_empty() || install {
+  if (missing_unique_tools.is_empty() || install) && !install_failed {
     0
   } else {
     2
