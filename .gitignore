@@ -5,8 +5,9 @@ editors/vscode/*.vsix
 .ruff_cache
 .vscode/
 /.artifacts/
-# .agents/orchestrate.md is the single committed process file every
-# harness/human references directly — must ship with the repo. Only
-# ignore other loose scratch files dropped in .agents/.
+# .agents/orchestrate.md and .agents/start.md are the committed process
+# files every harness/human references directly — must ship with the
+# repo. Only ignore other loose scratch files dropped in .agents/.
 /.agents/*
 !/.agents/orchestrate.md
+!/.agents/start.md
