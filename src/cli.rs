@@ -172,4 +172,18 @@ pub enum Commands {
     #[arg(long)]
     json: Option<String>,
   },
+
+  /// Migrate project files to match the current formality release
+  Migrate {
+    #[command(subcommand)]
+    command: MigrateCommands,
+  },
+}
+
+#[derive(Subcommand, Debug)]
+pub enum MigrateCommands {
+  /// Rewrite the `#:schema` directive in formality.toml / .formality.toml to
+  /// point at the current release's schema URL, leaving the rest of the file
+  /// untouched
+  Schema,
 }

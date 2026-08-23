@@ -47,7 +47,7 @@ pub use errors::{
 pub use ui::table;
 
 use clap::Parser;
-use cli::{Cli, Commands};
+use cli::{Cli, Commands, MigrateCommands};
 use colored::Colorize;
 use config::FormalityConfig;
 pub use config::SCHEMA_VERSION;
@@ -166,6 +166,10 @@ fn run_command_inner(args: Cli) -> ExitStatus {
     }
 
     Commands::Table { json } => commands::table::run_table(json),
+
+    Commands::Migrate { command } => match command {
+      MigrateCommands::Schema => commands::migrate::run_migrate_schema(&root),
+    },
   }
 }
 

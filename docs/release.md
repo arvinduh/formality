@@ -109,7 +109,9 @@ semver bump (`feat` -> minor, `fix` -> patch, `!`/`BREAKING CHANGE` -> major).
 
    If anything (docs, `#:schema` directives in example `formality.toml` files,
    install instructions) references a specific release URL or version number,
-   update those references to point at the new tag.
+   update those references to point at the new tag. Users can run
+   `fml migrate schema` to rewrite their own project's `#:schema` directive to
+   the new tag without hand-editing it.
 
 ## Schema Releases (`s*` tags)
 
@@ -159,6 +161,8 @@ versions via `#:schema` directives:
 
    Update [COMPATIBILITY.md](../COMPATIBILITY.md) and example `#:schema`
    directives in documentation if a new schema version (e.g. `s2`) was cut.
+   Individual users don't need to hand-edit their own `formality.toml` —
+   `fml migrate schema` rewrites their `#:schema` line to the current tag.
 
 ## Changelog conventions
 

@@ -6,6 +6,7 @@ pub mod fmt;
 pub mod init;
 pub mod lint;
 pub mod lsp;
+pub mod migrate;
 pub mod schema;
 pub mod surfaces;
 pub mod sync;

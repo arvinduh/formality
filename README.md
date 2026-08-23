@@ -197,6 +197,16 @@ indent_size = 2
 line_length = 80
 ```
 
+Run `fml migrate schema` to rewrite an existing `#:schema` line to point at the
+current release's schema tag (or insert one if it's missing). It only touches
+that single line — it does not attempt to rewrite config content for a breaking
+schema change, since that's a human decision.
+
+```text
+$ fml migrate schema
+[OK] Updated formality.toml schema reference: s0 -> s1
+```
+
 ### Full configuration with overrides
 
 ```toml
@@ -248,6 +258,7 @@ Commands:
   schema         Print the JSON Schema for formality.toml
   lsp            Start the formality LSP server (stdio transport)
   table          Render an opinionated semantic terminal table from JSON specification
+  migrate        Migrate project files to match the current formality release
   help           Print this message or the help of the given subcommand(s)
 
 Options:

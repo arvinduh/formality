@@ -1,4 +1,4 @@
-use fml::cli::{Cli, Commands};
+use fml::cli::{Cli, Commands, MigrateCommands};
 use fml::surfaces::{
   SurfaceRegistry, all_surfaces, detect_surfaces, get_surface_by_name,
   resolve_canonical_name,
@@ -338,6 +338,57 @@ fn test_schema_command() {
       .unwrap()
       .contains("FormalityConfig")
   );
+}
+
+#[test]
+fn test_migrate_schema_command() {
+  let temp = TempDir::new().unwrap();
+  let root = temp.path().to_path_buf();
+
+  // 1. No config present -> error.
+  let missing_args = Cli {
+    config: None,
+    root: Some(root.clone()),
+    command: Commands::Migrate {
+      command: MigrateCommands::Schema,
+    },
+  };
+  assert_eq!(fml::run_with_args(missing_args), 2);
+
+  // 2. Stale #:schema line gets rewritten to the current version.
+  fs::write(
+    root.join("formality.toml"),
+    "#:schema https://github.com/arvinduh/formality/releases/download/s0/formality.schema.json\n[global]\nindent_size = 2\n",
+  )
+  .unwrap();
+
+  let rewrite_args = Cli {
+    config: None,
+    root: Some(root.clone()),
+    command: Commands::Migrate {
+      command: MigrateCommands::Schema,
+    },
+  };
+  assert_eq!(fml::run_with_args(rewrite_args), 0);
+
+  let content = fs::read_to_string(root.join("formality.toml")).unwrap();
+  assert!(
+    content
+      .contains(&format!("s{}/formality.schema.json", fml::SCHEMA_VERSION))
+  );
+  assert!(content.contains("[global]\nindent_size = 2\n"));
+
+  // 3. Already up to date -> no-op, file unchanged.
+  let noop_args = Cli {
+    config: None,
+    root: Some(root.clone()),
+    command: Commands::Migrate {
+      command: MigrateCommands::Schema,
+    },
+  };
+  assert_eq!(fml::run_with_args(noop_args), 0);
+  let content_after = fs::read_to_string(root.join("formality.toml")).unwrap();
+  assert_eq!(content, content_after);
 }
 
 #[test]
