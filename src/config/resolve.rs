@@ -1,9 +1,9 @@
 use super::facets::LayoutFacet;
-use super::options::{
-  CppOptions, GoOptions, JavaOptions, JavaScriptOptions, JsonOptions,
-  KotlinOptions, MarkdownOptions, PythonOptions, RustOptions, TomlOptions,
-  TypstOptions, YamlOptions,
+use super::lang_table::{
+  build_resolved_lang_config, default_tool_opt, impl_default_tools_fn,
+  lang_options_table,
 };
+use super::options::MarkdownOptions;
 use super::{
   CONFIG_FILE_CANDIDATES, ConfigError, FormalityConfig, GlobalConfig,
   ResolvedGlobalConfig, ResolvedLangConfig,
@@ -143,25 +143,6 @@ impl FormalityConfig {
     let (layout, indent_size, line_length, use_tabs, prose_wrap) =
       resolve_layout_for_lang(lang_name, lang_cfg, &global);
 
-    macro_rules! resolve_opt {
-      ($field_getter:ident, $opt_type:ident, $target_lang:expr) => {
-        lang_cfg
-          .and_then(super::LangConfig::$field_getter)
-          .or_else(|| {
-            if lang_name == $target_lang {
-              Some($opt_type::default())
-            } else {
-              None
-            }
-          })
-      };
-    }
-
-    let rust = resolve_opt!(rust_options, RustOptions, "rust");
-    let python = resolve_opt!(python_options, PythonOptions, "python");
-    let cpp = resolve_opt!(cpp_options, CppOptions, "cpp");
-    let java = resolve_opt!(java_options, JavaOptions, "java");
-    let go = resolve_opt!(go_options, GoOptions, "go");
     let markdown = lang_cfg
       .and_then(super::LangConfig::markdown_options)
       .or_else(|| {
@@ -173,22 +154,18 @@ impl FormalityConfig {
           None
         }
       });
-    let yaml = resolve_opt!(yaml_options, YamlOptions, "yaml");
-    let json = resolve_opt!(json_options, JsonOptions, "json");
-    let toml = resolve_opt!(toml_options, TomlOptions, "toml");
-    let typst = resolve_opt!(typst_options, TypstOptions, "typst");
-    let javascript =
-      resolve_opt!(javascript_options, JavaScriptOptions, "javascript");
-    let kotlin = resolve_opt!(kotlin_options, KotlinOptions, "kotlin");
 
     let extra = lang_cfg.map(|l| l.extra.clone()).unwrap_or_default();
 
-    ResolvedLangConfig {
-      name: lang_name.to_string(),
-      format_tool: lang_cfg
+    lang_options_table!(
+      build_resolved_lang_config,
+      lang_cfg,
+      lang_name,
+      lang_name.to_string(),
+      lang_cfg
         .and_then(|l| l.format_tool.clone())
         .or_else(|| default_fmt.map(std::string::ToString::to_string)),
-      lint_tool: lang_cfg
+      lang_cfg
         .and_then(|l| l.lint_tool.clone())
         .or_else(|| default_lint.map(std::string::ToString::to_string)),
       indent_size,
@@ -196,32 +173,21 @@ impl FormalityConfig {
       use_tabs,
       prose_wrap,
       layout,
-      enabled: lang_cfg.and_then(|l| l.enabled).unwrap_or(true),
-      extra_args: lang_cfg
+      lang_cfg.and_then(|l| l.enabled).unwrap_or(true),
+      lang_cfg
         .and_then(|l| l.extra_args.clone())
         .unwrap_or_default(),
-      files: lang_cfg.and_then(|l| l.files.clone()).unwrap_or_default(),
-      exclude: {
+      lang_cfg.and_then(|l| l.files.clone()).unwrap_or_default(),
+      {
         let mut ex = global.exclude.clone();
         if let Some(lang_ex) = lang_cfg.and_then(|l| l.exclude.clone()) {
           ex.extend(lang_ex);
         }
         ex
       },
-      rust,
-      python,
-      cpp,
-      java,
-      go,
       markdown,
-      yaml,
-      json,
-      toml,
-      typst,
-      javascript,
-      kotlin,
-      extra,
-    }
+      extra
+    )
   }
 
   /// Returns the raw `[lang.X]` section names from this config whose `X`
@@ -442,25 +408,7 @@ pub fn find_user_config() -> Option<PathBuf> {
   None
 }
 
-fn default_tools_for_lang(
-  lang_name: &str,
-) -> (Option<&'static str>, Option<&'static str>) {
-  match lang_name {
-    "rust" => (Some("cargo-fmt"), Some("clippy")),
-    "python" => (Some("ruff-format"), Some("ruff-check")),
-    "cpp" => (Some("clang-format"), Some("clang-tidy")),
-    "java" => (Some("google-java-format"), Some("checkstyle")),
-    "go" => (Some("goimports"), Some("golangci-lint")),
-    "markdown" => (Some("prettier"), Some("markdownlint")),
-    "yaml" => (Some("prettier"), Some("yamllint")),
-    "json" => (Some("prettier"), None),
-    "toml" => (Some("taplo"), Some("taplo")),
-    "typst" => (Some("typstyle"), Some("typstyle")),
-    "javascript" => (Some("biome"), Some("biome")),
-    "kotlin" => (Some("ktlint"), Some("ktlint")),
-    _ => (None, None),
-  }
-}
+lang_options_table!(impl_default_tools_fn);
 
 fn resolve_layout_for_lang(
   lang_name: &str,

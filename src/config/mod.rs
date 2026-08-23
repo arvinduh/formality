@@ -1,5 +1,9 @@
 /// Formatting and linting layout facet definitions.
 pub mod facets;
+/// X-macro table generating the repetitive per-language options wiring
+/// shared by `LangConfig`/`resolve_for_lang`/`default_tools_for_lang` —
+/// see its module docs for the design.
+mod lang_table;
 /// Per-language strongly typed formatting options.
 pub mod options;
 /// Configuration parsing, cascade merging, and path resolution.
@@ -20,6 +24,7 @@ pub use schema::{
   print_schema_notice, spawn_schema_check,
 };
 
+use lang_table::{impl_lang_accessors, impl_lang_merge, lang_options_table};
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
@@ -296,18 +301,11 @@ impl LangConfig {
     }
 
     merge_option!(layout);
-    merge_option!(rust);
-    merge_option!(python);
-    merge_option!(cpp);
-    merge_option!(java);
-    merge_option!(go);
+    // markdown is deliberately excluded from `lang_options_table!` (see
+    // src/config/lang_table.rs), so it stays merged by hand here even
+    // though this arm itself is otherwise identical to the generated ones.
     merge_option!(markdown);
-    merge_option!(yaml);
-    merge_option!(json);
-    merge_option!(toml);
-    merge_option!(typst);
-    merge_option!(javascript);
-    merge_option!(kotlin);
+    lang_options_table!(impl_lang_merge, self, other);
 
     if other.options.is_some() {
       self.options = other.options;
@@ -317,65 +315,7 @@ impl LangConfig {
     }
   }
 
-  /// Extracts resolved [`RustOptions`].
-  #[must_use]
-  pub fn rust_options(&self) -> Option<RustOptions> {
-    extract_options(
-      self.rust.clone(),
-      self.options.as_ref(),
-      &self.extra,
-      options::RustOptions::merge,
-      options::RustOptions::is_empty,
-    )
-  }
-
-  /// Extracts resolved [`PythonOptions`].
-  #[must_use]
-  pub fn python_options(&self) -> Option<PythonOptions> {
-    extract_options(
-      self.python.clone(),
-      self.options.as_ref(),
-      &self.extra,
-      options::PythonOptions::merge,
-      options::PythonOptions::is_empty,
-    )
-  }
-
-  /// Extracts resolved [`CppOptions`].
-  #[must_use]
-  pub fn cpp_options(&self) -> Option<CppOptions> {
-    extract_options(
-      self.cpp.clone(),
-      self.options.as_ref(),
-      &self.extra,
-      options::CppOptions::merge,
-      options::CppOptions::is_empty,
-    )
-  }
-
-  /// Extracts resolved [`JavaOptions`].
-  #[must_use]
-  pub fn java_options(&self) -> Option<JavaOptions> {
-    extract_options(
-      self.java.clone(),
-      self.options.as_ref(),
-      &self.extra,
-      options::JavaOptions::merge,
-      options::JavaOptions::is_empty,
-    )
-  }
-
-  /// Extracts resolved [`GoOptions`].
-  #[must_use]
-  pub fn go_options(&self) -> Option<GoOptions> {
-    extract_options(
-      self.go.clone(),
-      self.options.as_ref(),
-      &self.extra,
-      options::GoOptions::merge,
-      options::GoOptions::is_empty,
-    )
-  }
+  lang_options_table!(impl_lang_accessors);
 
   /// Extracts resolved [`MarkdownOptions`].
   #[must_use]
@@ -401,78 +341,6 @@ impl LangConfig {
       }
     }
     opts
-  }
-
-  /// Extracts resolved [`YamlOptions`].
-  #[must_use]
-  pub fn yaml_options(&self) -> Option<YamlOptions> {
-    extract_options(
-      self.yaml.clone(),
-      self.options.as_ref(),
-      &self.extra,
-      options::YamlOptions::merge,
-      options::YamlOptions::is_empty,
-    )
-  }
-
-  /// Extracts resolved [`JsonOptions`].
-  #[must_use]
-  pub fn json_options(&self) -> Option<JsonOptions> {
-    extract_options(
-      self.json.clone(),
-      self.options.as_ref(),
-      &self.extra,
-      options::JsonOptions::merge,
-      |_| false,
-    )
-  }
-
-  /// Extracts resolved [`TomlOptions`].
-  #[must_use]
-  pub fn toml_options(&self) -> Option<TomlOptions> {
-    extract_options(
-      self.toml.clone(),
-      self.options.as_ref(),
-      &self.extra,
-      options::TomlOptions::merge,
-      |_| false,
-    )
-  }
-
-  /// Extracts resolved [`TypstOptions`].
-  #[must_use]
-  pub fn typst_options(&self) -> Option<TypstOptions> {
-    extract_options(
-      self.typst.clone(),
-      self.options.as_ref(),
-      &self.extra,
-      options::TypstOptions::merge,
-      |_| false,
-    )
-  }
-
-  /// Extracts resolved [`JavaScriptOptions`].
-  #[must_use]
-  pub fn javascript_options(&self) -> Option<JavaScriptOptions> {
-    extract_options(
-      self.javascript.clone(),
-      self.options.as_ref(),
-      &self.extra,
-      options::JavaScriptOptions::merge,
-      options::JavaScriptOptions::is_empty,
-    )
-  }
-
-  /// Extracts resolved [`KotlinOptions`].
-  #[must_use]
-  pub fn kotlin_options(&self) -> Option<KotlinOptions> {
-    extract_options(
-      self.kotlin.clone(),
-      self.options.as_ref(),
-      &self.extra,
-      options::KotlinOptions::merge,
-      |_| false,
-    )
   }
 }
 
