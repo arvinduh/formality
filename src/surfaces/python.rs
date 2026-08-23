@@ -171,6 +171,28 @@ pub fn build_ruff_check_args(
   args
 }
 
+/// Builds argument vector for a machine-readable `ruff check` invocation,
+/// used by the LSP server (`fml lsp`, Fixes #159) to translate individual
+/// violations into per-file `Diagnostic`s instead of one generic warning.
+/// Mirrors [`build_ruff_check_args`] but requests `--output-format=json`
+/// output instead of `--fix`.
+#[must_use]
+pub fn build_ruff_check_json_args(
+  files: &[PathBuf],
+  extra_args: &[String],
+) -> Vec<String> {
+  let mut args = vec!["check".to_string(), "--output-format=json".to_string()];
+  if files.is_empty() {
+    args.push(".".to_string());
+  } else {
+    for f in files {
+      args.push(f.to_string_lossy().to_string());
+    }
+  }
+  args.extend(extra_args.iter().cloned());
+  args
+}
+
 /// Renders the resolved [`RuffConfig`] as the inline `--config "<key> =
 /// <value>"` overrides `ruff format`/`ruff check` accept, so `fml
 /// fmt`/`fml lint` can apply formality.toml's settings without writing

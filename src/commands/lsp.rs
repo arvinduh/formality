@@ -381,40 +381,46 @@ impl LanguageServer for FormalityLsp {
     });
     let uri = params.text_document.uri.clone();
 
-    // Run `fml lint <file>` and publish diagnostics.
-    // TODO: parse structured output per-tool (ruff --output-format=json,
-    //       clippy --message-format=json, etc.) and map to LSP Diagnostics.
-    //       For now we clear diagnostics on save to avoid stale markers.
-    let result = std::process::Command::new("fml")
-      .arg("lint")
-      .arg(&path)
-      .current_dir(&root)
-      .output();
+    // For surfaces with structured-output support wired up (rust via
+    // clippy, python via ruff — see `lsp_diagnostics`), publish one
+    // `Diagnostic` per real violation with correct range/message/severity.
+    // Everything else falls back to shelling out to `fml lint` and, on
+    // non-zero exit, a single generic warning pointing at the output
+    // channel — the same behavior this module had before #159.
+    let diagnostics = if let Some(diags) =
+      crate::commands::lsp_diagnostics::diagnostics_for_file(&root, &path)
+    {
+      diags
+    } else {
+      let result = std::process::Command::new("fml")
+        .arg("lint")
+        .arg(&path)
+        .current_dir(&root)
+        .output();
 
-    let diagnostics = match result {
-      Ok(out) if out.status.success() => vec![],
-      Ok(_out) => {
-        // Non-zero exit = violations found. Until we parse per-tool JSON,
-        // publish a single workspace-level note pointing users to the output
-        // channel rather than individual squiggles.
-        vec![Diagnostic {
-          range: Range::default(),
-          severity: Some(DiagnosticSeverity::WARNING),
-          source: Some("formality".to_string()),
-          message: "fml lint found issues — see the Formality output channel."
-            .to_string(),
-          ..Default::default()
-        }]
-      }
-      Err(e) => {
-        self
-          .client
-          .log_message(
-            MessageType::ERROR,
-            format!("[formality] fml lint error: {e}"),
-          )
-          .await;
-        vec![]
+      match result {
+        Ok(out) if out.status.success() => vec![],
+        Ok(_out) => {
+          vec![Diagnostic {
+            range: Range::default(),
+            severity: Some(DiagnosticSeverity::WARNING),
+            source: Some("formality".to_string()),
+            message:
+              "fml lint found issues — see the Formality output channel."
+                .to_string(),
+            ..Default::default()
+          }]
+        }
+        Err(e) => {
+          self
+            .client
+            .log_message(
+              MessageType::ERROR,
+              format!("[formality] fml lint error: {e}"),
+            )
+            .await;
+          vec![]
+        }
       }
     };
 

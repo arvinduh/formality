@@ -98,6 +98,26 @@ pub fn build_clippy_args(fix: bool, extra_args: &[String]) -> Vec<String> {
   args
 }
 
+/// Builds argument vector for a machine-readable `cargo clippy` invocation,
+/// used by the LSP server (`fml lsp`, Fixes #159) to translate individual
+/// violations into per-file `Diagnostic`s instead of one generic warning.
+/// Mirrors [`build_clippy_args`] but requests `--message-format=json` output
+/// instead of `--fix`, since autofixing and machine parsing are mutually
+/// exclusive uses of the same invocation.
+#[must_use]
+pub fn build_clippy_json_args(extra_args: &[String]) -> Vec<String> {
+  let mut args = vec![
+    "clippy".to_string(),
+    "--message-format=json".to_string(),
+    "--all-targets".to_string(),
+    "--".to_string(),
+    "-D".to_string(),
+    "warnings".to_string(),
+  ];
+  args.extend(extra_args.iter().cloned());
+  args
+}
+
 /// Renders a [`RustfmtConfig`] as the inline `key1=val1,key2=val2` string
 /// accepted by rustfmt's/`cargo fmt`'s `--config` flag, so `fml fmt`/`fml
 /// lint` can apply the resolved formality.toml settings without writing

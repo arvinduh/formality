@@ -12,6 +12,8 @@ pub mod init;
 pub mod lint;
 /// Language Server Protocol passthrough server implementation.
 pub mod lsp;
+/// Structured per-violation lint diagnostics for `fml lsp` (Fixes #159).
+pub mod lsp_diagnostics;
 /// Config schema-reference migration CLI command handler.
 pub mod migrate;
 /// JSON Schema generator CLI command handler.
