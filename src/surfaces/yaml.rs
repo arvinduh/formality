@@ -5,7 +5,7 @@ use super::{
   markdown::{
     PrettierConfig, build_prettier_inline_args, sync_prettier_config,
   },
-  render_native_config, tool_missing_result,
+  render_native_config, sync_native_config, tool_missing_result,
 };
 use serde::{Deserialize, Serialize};
 use std::path::Path;
@@ -102,8 +102,8 @@ impl NativeConfig for YamllintConfig {
 /// Renders a [`YamllintConfig`] as the inline YAML source text yamllint's
 /// `-d`/`--config-data` flag accepts, so `fml lint` can apply
 /// formality.toml's settings without writing `.yamllint.yaml` to disk
-/// (Fixes #151). Only `fml sync` writes that file now (see
-/// [`YamlSurface::sync_config`]).
+/// (Fixes #151). `fml sync` still writes that file for users who want it
+/// materialized on disk (see [`YamlSurface::sync_config`], Fixes #158).
 #[must_use]
 pub fn build_yamllint_inline_config(cfg: &YamllintConfig) -> String {
   // yamllint's `-d` takes a literal YAML document, so this just reuses the
@@ -380,22 +380,23 @@ impl LanguageSurface for YamlSurface {
     }
   }
 
-  // `fml fmt` no longer goes through this path (Fixes #151): it passes the
-  // resolved config to prettier inline (see `build_prettier_inline_args`,
-  // used in `format()` above). This method is now reached only by `fml
-  // sync`, for users who explicitly want `.prettierrc.json` materialized on
-  // disk.
-  //
-  // Pre-existing note, not introduced by this change: unlike every other
-  // surface, this method never called `sync_native_config::<YamllintConfig>`
-  // — `.yamllint.yaml` was never written by `fml sync` even before this
-  // PR, despite `YamllintConfig` existing. `fml lint` now uses that struct
-  // productively for the first time, via `build_yamllint_inline_config`
-  // above, so nothing regresses; whether `fml sync` should also start
-  // writing `.yamllint.yaml` for users who want the file is a separate,
-  // pre-existing gap worth its own follow-up issue.
+  // `fml fmt`/`fml lint` no longer go through this path (Fixes #151): they
+  // pass the resolved config to prettier/yamllint inline (see
+  // `build_prettier_inline_args` and `build_yamllint_inline_config`, used in
+  // `format()`/`lint()` above). This method is now reached only by `fml
+  // sync`, for users who explicitly want `.yamllint.yaml` and
+  // `.prettierrc.json` materialized on disk (Fixes #158: previously this
+  // never called `sync_native_config::<YamllintConfig>`, so `.yamllint.yaml`
+  // was never actually written by `fml sync`).
   fn sync_config(&self, ctx: &ExecutionContext, check: bool) -> SurfaceResult {
     let start = Instant::now();
+    let yamllint_res =
+      sync_native_config::<YamllintConfig>(ctx, check, start, self.name());
+    if !yamllint_res.is_success() {
+      return yamllint_res;
+    }
+
+    // Also sync .prettierrc.json
     sync_prettier_config(ctx, check, start, self.name())
   }
 }
@@ -483,14 +484,23 @@ mod tests {
   }
 
   #[test]
-  fn test_yaml_sync_config_delegates_to_prettier() {
+  fn test_yaml_sync_config_writes_prettier_and_yamllint() {
     let temp = TempDir::new().unwrap();
     let surface = YamlSurface;
+    let mut lang_cfg = ResolvedLangConfig::new("yaml");
+    lang_cfg.line_length = 100;
+    lang_cfg.indent_size = 4;
+    lang_cfg.yaml = Some(crate::config::YamlOptions {
+      indent_sequence: Some(false),
+      document_start: Some(true),
+      truthy: Some(true),
+    });
+
     let ctx = ExecutionContext {
       root: temp.path().to_path_buf(),
       paths: Arc::new(Vec::new()),
       global_config: Arc::new(ResolvedGlobalConfig::default()),
-      lang_config: ResolvedLangConfig::new("yaml"),
+      lang_config: lang_cfg,
       check_only: false,
     };
 
@@ -500,6 +510,18 @@ mod tests {
       SurfaceStatus::ConfigSynced { created: true, .. }
     ));
     assert!(temp.path().join(".prettierrc.json").is_file());
+
+    // Fixes #158: `fml sync` must also materialize `.yamllint.yaml`.
+    let yamllint_path = temp.path().join(".yamllint.yaml");
+    assert!(yamllint_path.is_file());
+    let content = std::fs::read_to_string(&yamllint_path).unwrap();
+    assert!(content.starts_with(crate::surfaces::AUTO_GENERATED_HEADER));
+    assert!(content.contains("extends: default"));
+    assert!(content.contains("max: 100"));
+    assert!(content.contains("spaces: 4"));
+    assert!(content.contains("indent-sequences: false"));
+    assert!(content.contains("document-start: enable"));
+    assert!(content.contains("truthy: enable"));
   }
 
   #[test]
@@ -525,9 +547,8 @@ mod tests {
   #[test]
   fn test_yaml_format_and_lint_do_not_write_native_files() {
     // Fixes #151: `fml fmt`/`fml lint` must not write `.prettierrc.json` or
-    // `.yamllint.yaml` as a side effect; only `fml sync` writes the former
-    // (the latter isn't written by `fml sync` either — see the doc comment
-    // on `sync_config`).
+    // `.yamllint.yaml` as a side effect; only `fml sync` writes those files
+    // (see `sync_config`, Fixes #158).
     let temp = TempDir::new().unwrap();
     std::fs::write(temp.path().join("a.yaml"), "a: 1\n").unwrap();
 
