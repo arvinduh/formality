@@ -314,6 +314,30 @@ fn test_doctor_command() {
 }
 
 #[test]
+fn test_doctor_command_prints_sync_optional_notice() {
+  use std::process::Command;
+
+  let output = Command::new(env!("CARGO_BIN_EXE_fml"))
+    .arg("doctor")
+    .output()
+    .expect("failed to run fml doctor");
+
+  let stdout = String::from_utf8_lossy(&output.stdout);
+  assert!(
+    stdout.contains("fml sync:"),
+    "expected doctor output to contain the 'fml sync:' notice heading, got:\n{stdout}"
+  );
+  assert!(
+    stdout.contains(fml::commands::doctor::SYNC_NOTICE_SUMMARY),
+    "expected doctor output to contain the sync-optional summary, got:\n{stdout}"
+  );
+  assert!(
+    stdout.contains(fml::commands::doctor::SYNC_NOTICE_DETAIL),
+    "expected doctor output to contain the sync-optional detail line, got:\n{stdout}"
+  );
+}
+
+#[test]
 fn test_schema_command() {
   let args = Cli {
     config: None,

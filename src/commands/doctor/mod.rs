@@ -202,6 +202,9 @@ pub fn run_doctor(
   // Configuration Schema Version Check
   print_schema_version_check(root, &separator);
 
+  // `fml sync` optionality notice
+  print_sync_notice(&separator);
+
   // Auto-install mode
   let mut install_failed = false;
   if install
@@ -552,6 +555,32 @@ fn print_schema_version_check(root: &Path, separator: &str) {
       );
     }
   }
+}
+
+/// The informational message printed by [`print_sync_notice`], exposed as a
+/// standalone constant so it can be asserted on directly in tests without
+/// capturing stdout.
+pub const SYNC_NOTICE_SUMMARY: &str =
+  "`fml sync` is optional for the primary fml fmt / fml lint / VS Code workflow now \
+— config is passed inline and the VS Code extension talks to `fml lsp` directly.";
+
+/// The informational message's second line, describing why `fml sync` still
+/// exists for editors that aren't wired up to `fml lsp`.
+pub const SYNC_NOTICE_DETAIL: &str =
+  "It remains available for other editor integrations that read native config \
+files directly (e.g. `.rustfmt.toml`, for editors whose LSP setup expects a \
+real file on disk rather than talking to `fml lsp`).";
+
+/// Prints a purely informational notice that `fml sync` is optional for the
+/// primary `fml fmt` / `fml lint` / VS Code workflow now that config is
+/// passed inline and the VS Code extension talks to `fml lsp` directly. This
+/// does not change `fml sync`'s behavior in any way — it still works exactly
+/// as before for editor integrations that read native config files directly.
+fn print_sync_notice(separator: &str) {
+  println!("\n{}", separator.dimmed());
+  println!("{}", "fml sync:".bold().cyan());
+  println!("  {} {}", "[INFO] ".cyan().bold(), SYNC_NOTICE_SUMMARY.dimmed());
+  println!("    {SYNC_NOTICE_DETAIL}");
 }
 
 #[cfg(test)]
