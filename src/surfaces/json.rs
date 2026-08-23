@@ -1,8 +1,11 @@
 use super::{
   DeclaresFacets, ExecutionContext, Facet, FacetSupport, LanguageSurface,
-  SurfaceResult, SurfaceStatus, ToolInfo, check_binary_exists,
+  NativeConfig, SurfaceResult, SurfaceStatus, ToolInfo, check_binary_exists,
   create_tool_command, diff_check_via_tempcopy, find_files_with_ext,
-  markdown::sync_prettier_config, tool_missing_result,
+  markdown::{
+    PrettierConfig, build_prettier_inline_args, sync_prettier_config,
+  },
+  tool_missing_result,
 };
 use std::path::Path;
 use std::time::Instant;
@@ -95,6 +98,12 @@ impl LanguageSurface for JsonSurface {
       };
     }
 
+    // Inline `--tab-width`/`--print-width`/etc. instead of writing
+    // `.prettierrc.json` to disk — see `build_prettier_inline_args` (Fixes
+    // #151). `fml sync` remains the only path that materializes the file.
+    let inline_config =
+      build_prettier_inline_args(&PrettierConfig::from_context(ctx));
+
     if ctx.check_only {
       return diff_check_via_tempcopy(
         &files,
@@ -105,7 +114,12 @@ impl LanguageSurface for JsonSurface {
             "json"
           };
           let mut cmd = create_tool_command("prettier");
-          cmd.arg("--write").arg("--parser").arg(parser).arg(scratch);
+          cmd
+            .arg("--write")
+            .arg("--parser")
+            .arg(parser)
+            .args(&inline_config)
+            .arg(scratch);
           cmd.args(&ctx.lang_config.extra_args);
           cmd.current_dir(&ctx.root);
           cmd.output()
@@ -117,6 +131,7 @@ impl LanguageSurface for JsonSurface {
 
     let mut cmd = create_tool_command("prettier");
     cmd.arg("--write");
+    cmd.args(&inline_config);
 
     for f in &files {
       cmd.arg(f);
@@ -184,6 +199,11 @@ impl LanguageSurface for JsonSurface {
     self.format(&check_ctx)
   }
 
+  // `fml fmt` no longer goes through this path (Fixes #151): it passes the
+  // resolved config to prettier inline (see `build_prettier_inline_args`,
+  // used in `format()` above). This method is now reached only by `fml
+  // sync`, for users who explicitly want `.prettierrc.json` materialized on
+  // disk.
   fn sync_config(&self, ctx: &ExecutionContext, check: bool) -> SurfaceResult {
     // JSON formatting uses Prettier; its layout configuration is shared and
     // emitted via `PrettierConfig` (.prettierrc.json), so there is no standalone
@@ -374,5 +394,22 @@ mod tests {
       surface.facet_support(Facet::Standard),
       FacetSupport::Unsupported
     );
+  }
+
+  #[test]
+  fn test_json_format_does_not_write_prettierrc() {
+    // Fixes #151: `fml fmt` must not write `.prettierrc.json` as a side
+    // effect; only `fml sync` should materialize the native config file.
+    if !check_binary_exists("prettier") {
+      return;
+    }
+    let temp = TempDir::new().unwrap();
+    std::fs::write(temp.path().join("a.json"), "{\"a\":1}").unwrap();
+
+    let surface = JsonSurface;
+    let ctx = ctx_for(&temp, ResolvedLangConfig::new("json"));
+    let _ = surface.format(&ctx);
+
+    assert!(!temp.path().join(".prettierrc.json").exists());
   }
 }

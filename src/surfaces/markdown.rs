@@ -54,6 +54,25 @@ impl NativeConfig for PrettierConfig {
   }
 }
 
+/// Renders the resolved [`PrettierConfig`] as the inline `--tab-width`/
+/// `--print-width`/etc. flags `prettier` accepts on the CLI, so `fml fmt`
+/// can apply formality.toml's settings without writing `.prettierrc.json`
+/// to disk (Fixes #151). Shared by the Markdown, YAML, and JSON surfaces,
+/// which all format via prettier. Only `fml sync` writes that file now.
+#[must_use]
+pub fn build_prettier_inline_args(cfg: &PrettierConfig) -> Vec<String> {
+  let mut args = vec![
+    format!("--tab-width={}", cfg.tab_width),
+    format!("--print-width={}", cfg.print_width),
+    format!("--end-of-line={}", cfg.end_of_line),
+    format!("--prose-wrap={}", cfg.prose_wrap),
+  ];
+  if cfg.use_tabs {
+    args.push("--use-tabs".to_string());
+  }
+  args
+}
+
 /// Comment field container for markdownlint config.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct MarkdownlintComment {
@@ -247,6 +266,18 @@ impl LanguageSurface for MarkdownSurface {
       None
     };
 
+    // Inline `--tab-width`/`--print-width`/etc. instead of writing
+    // `.prettierrc.json` to disk — see `build_prettier_inline_args` (Fixes
+    // #151). `fml sync` remains the only path that materializes the file.
+    // markdownlint-cli2's own `--fix` pass above has no equivalent inline
+    // flag (it only accepts `--config <path>`), so it still runs with
+    // whatever `.markdownlint.json` happens to be on disk, or its own
+    // built-in defaults if there is none — that pass is a structural/mechanical
+    // fixer (list markers, heading style, ...), not layout, so it isn't
+    // affected by the formality.toml settings this issue is about.
+    let inline_config =
+      build_prettier_inline_args(&PrettierConfig::from_context(ctx));
+
     if ctx.check_only {
       return diff_check_via_tempcopy(
         &files,
@@ -263,6 +294,7 @@ impl LanguageSurface for MarkdownSurface {
             .arg("--write")
             .arg("--parser")
             .arg("markdown")
+            .args(&inline_config)
             .arg(scratch);
           cmd.args(&ctx.lang_config.extra_args);
           cmd.current_dir(&ctx.root);
@@ -285,6 +317,7 @@ impl LanguageSurface for MarkdownSurface {
 
     let mut cmd = create_tool_command("prettier");
     cmd.args(build_prettier_fmt_args(&files, &ctx.lang_config.extra_args));
+    cmd.args(&inline_config);
     cmd.current_dir(&ctx.root);
 
     match cmd.output() {
@@ -402,6 +435,14 @@ impl LanguageSurface for MarkdownSurface {
     }
   }
 
+  // `fml fmt`'s prettier pass no longer goes through the `.prettierrc.json`
+  // half of this path (Fixes #151): it passes those settings to prettier
+  // inline (see `build_prettier_inline_args`, used in `format()` above).
+  // `.markdownlint.json` is still written here because `fml fmt`'s
+  // markdownlint-cli2 pass and `fml lint` both still consume it — see the
+  // comment in `format()` for why that tool can't take its settings inline.
+  // This method (both halves) is otherwise reached only by `fml sync`, for
+  // users who explicitly want the native files materialized on disk.
   fn sync_config(&self, ctx: &ExecutionContext, check: bool) -> SurfaceResult {
     let start = Instant::now();
     let md_res =
@@ -548,5 +589,47 @@ mod tests {
     assert!(md_content.contains("\"line_length\": 100"));
     assert!(prettier_content.contains("\"printWidth\": 100"));
     assert!(prettier_content.contains("\"$comment\""));
+  }
+
+  #[test]
+  fn test_build_prettier_inline_args_shape() {
+    let cfg = PrettierConfig {
+      comment: "warning".to_string(),
+      tab_width: 4,
+      print_width: 100,
+      use_tabs: true,
+      end_of_line: "crlf".to_string(),
+      prose_wrap: "preserve".to_string(),
+    };
+    let args = build_prettier_inline_args(&cfg);
+    assert!(args.contains(&"--tab-width=4".to_string()));
+    assert!(args.contains(&"--print-width=100".to_string()));
+    assert!(args.contains(&"--end-of-line=crlf".to_string()));
+    assert!(args.contains(&"--prose-wrap=preserve".to_string()));
+    assert!(args.contains(&"--use-tabs".to_string()));
+  }
+
+  #[test]
+  fn test_markdown_format_does_not_write_prettierrc() {
+    // Fixes #151: `fml fmt` must not write `.prettierrc.json` as a side
+    // effect; only `fml sync` should materialize the native config file.
+    if !check_binary_exists("prettier") {
+      return;
+    }
+    let temp = TempDir::new().unwrap();
+    std::fs::write(temp.path().join("a.md"), "# hi\n").unwrap();
+
+    let surface = MarkdownSurface;
+    let ctx = ExecutionContext {
+      root: temp.path().to_path_buf(),
+      paths: Arc::new(Vec::new()),
+      global_config: Arc::new(ResolvedGlobalConfig::default()),
+      lang_config: ResolvedLangConfig::new("markdown"),
+      check_only: false,
+    };
+
+    let _ = surface.format(&ctx);
+
+    assert!(!temp.path().join(".prettierrc.json").exists());
   }
 }

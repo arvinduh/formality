@@ -63,6 +63,30 @@ impl NativeConfig for TaploConfig {
   }
 }
 
+/// Renders a [`TaploConfig`] as the `-o key=value` flags taplo's `format`
+/// subcommand accepts inline, so `fml fmt` can apply formality.toml's
+/// settings without writing `taplo.toml` to disk (Fixes #151). Only `fml
+/// sync` writes that file now (see [`TomlSurface::sync_config`]). taplo's
+/// `lint` subcommand has no equivalent inline-override flag (only `-c/--config
+/// <path>`), but lint doesn't consume these formatting-layout options anyway.
+#[must_use]
+pub fn build_taplo_inline_config_args(cfg: &TaploConfig) -> Vec<String> {
+  vec![
+    "-o".to_string(),
+    format!("column_width={}", cfg.formatting.column_width),
+    "-o".to_string(),
+    format!("indent_string={}", cfg.formatting.indent_string),
+    "-o".to_string(),
+    format!("crlf={}", cfg.formatting.crlf),
+    "-o".to_string(),
+    format!("align_entries={}", cfg.formatting.align_entries),
+    "-o".to_string(),
+    format!("indent_entries={}", cfg.formatting.indent_entries),
+    "-o".to_string(),
+    format!("indent_tables={}", cfg.formatting.indent_tables),
+  ]
+}
+
 /// TOML language surface implementation.
 #[derive(Debug, Default, Clone, Copy)]
 pub struct TomlSurface;
@@ -148,13 +172,19 @@ impl LanguageSurface for TomlSurface {
       };
     }
 
+    // Inline `-o key=value` instead of writing `taplo.toml` to disk — see
+    // `build_taplo_inline_config_args` (Fixes #151). `fml sync` remains the
+    // only path that materializes the file.
+    let inline_config =
+      build_taplo_inline_config_args(&TaploConfig::from_context(ctx));
+
     if ctx.check_only {
       return diff_check_via_tempcopy(
         &files,
         |scratch| {
           let content = std::fs::read(scratch)?;
           let mut cmd = create_tool_command("taplo");
-          cmd.arg("format").arg("-");
+          cmd.arg("format").args(&inline_config).arg("-");
           cmd.args(&ctx.lang_config.extra_args);
           cmd.current_dir(&ctx.root);
           cmd.stdin(std::process::Stdio::piped());
@@ -178,6 +208,7 @@ impl LanguageSurface for TomlSurface {
 
     let mut cmd = create_tool_command("taplo");
     cmd.arg("format");
+    cmd.args(&inline_config);
 
     for f in &files {
       cmd.arg(f);
@@ -310,6 +341,11 @@ impl LanguageSurface for TomlSurface {
     }
   }
 
+  // `fml fmt` no longer goes through this path (Fixes #151): it passes the
+  // resolved config to taplo inline via repeated `-o key=value` flags (see
+  // `build_taplo_inline_config_args`, used in `format()` above). This method
+  // is now reached only by `fml sync`, for users who explicitly want
+  // `taplo.toml` materialized on disk.
   fn sync_config(&self, ctx: &ExecutionContext, check: bool) -> SurfaceResult {
     let start = Instant::now();
     sync_native_config::<TaploConfig>(ctx, check, start, self.name())
@@ -417,5 +453,48 @@ mod tests {
       .map(|a| a.to_string_lossy().to_string())
       .collect();
     assert_eq!(args, vec!["format", "-", "--colors", "never"]);
+  }
+
+  #[test]
+  fn test_build_taplo_inline_config_args_shape() {
+    let cfg = TaploConfig {
+      formatting: TaploFormattingConfig {
+        align_entries: false,
+        column_width: 100,
+        indent_entries: false,
+        indent_string: "    ".to_string(),
+        indent_tables: false,
+        crlf: true,
+      },
+    };
+    let args = build_taplo_inline_config_args(&cfg);
+    assert!(args.contains(&"column_width=100".to_string()));
+    assert!(args.contains(&"indent_string=    ".to_string()));
+    assert!(args.contains(&"crlf=true".to_string()));
+  }
+
+  #[test]
+  fn test_toml_format_does_not_write_taplo_toml() {
+    // Fixes #151: `fml fmt` must not write `taplo.toml` as a side effect;
+    // only `fml sync` should materialize the native config file.
+    if !check_binary_exists("taplo") {
+      return;
+    }
+    let temp = TempDir::new().unwrap();
+    std::fs::write(temp.path().join("a.toml"), "a=1\n").unwrap();
+
+    let surface = TomlSurface;
+    let ctx = ExecutionContext {
+      root: temp.path().to_path_buf(),
+      paths: Arc::new(Vec::new()),
+      global_config: Arc::new(ResolvedGlobalConfig::default()),
+      lang_config: crate::config::ResolvedLangConfig::new("toml"),
+      check_only: false,
+    };
+
+    let _ = surface.format(&ctx);
+
+    assert!(!temp.path().join("taplo.toml").exists());
+    assert!(!temp.path().join(".taplo.toml").exists());
   }
 }

@@ -98,13 +98,32 @@ pub fn build_clippy_args(fix: bool, extra_args: &[String]) -> Vec<String> {
   args
 }
 
+/// Renders a [`RustfmtConfig`] as the inline `key1=val1,key2=val2` string
+/// accepted by rustfmt's/`cargo fmt`'s `--config` flag, so `fml fmt`/`fml
+/// lint` can apply the resolved formality.toml settings without writing
+/// `.rustfmt.toml` to disk. Only `fml sync` writes that file now (see
+/// [`RustSurface::sync_config`]).
+#[must_use]
+pub fn build_rustfmt_inline_config(cfg: &RustfmtConfig) -> String {
+  format!(
+    "max_width={},tab_spaces={},newline_style={},use_small_heuristics={},reorder_imports={}",
+    cfg.max_width,
+    cfg.tab_spaces,
+    cfg.newline_style,
+    cfg.use_small_heuristics,
+    cfg.reorder_imports,
+  )
+}
+
 pub(crate) fn build_rustfmt_fallback_cmd(
   edition: &str,
+  inline_config: &str,
   check_only: bool,
   files: &[PathBuf],
 ) -> Command {
   let mut c = create_tool_command("rustfmt");
   c.arg("--edition").arg(edition);
+  c.arg("--config").arg(inline_config);
   if check_only {
     c.arg("--check");
   }
@@ -217,6 +236,13 @@ impl LanguageSurface for RustSurface {
         .unwrap_or("2021")
     };
 
+    // Inline `--config key=val,...` instead of writing `.rustfmt.toml` to
+    // disk — see `build_rustfmt_inline_config` (Fixes #151). `fml sync`
+    // remains the only path that materializes the file, for users who want
+    // it on disk (e.g. for editor integrations that don't go through `fml`).
+    let inline_config =
+      build_rustfmt_inline_config(&RustfmtConfig::from_context(ctx));
+
     if ctx.check_only {
       return diff_check_via_tempcopy(
         &files,
@@ -224,10 +250,15 @@ impl LanguageSurface for RustSurface {
           let mut c = if check_binary_exists("rustfmt") {
             let mut cmd = create_tool_command("rustfmt");
             cmd.arg("--edition").arg(edition);
+            cmd.arg("--config").arg(&inline_config);
             cmd
           } else {
+            // Unlike the direct-rustfmt branch above, `cargo fmt` infers
+            // `--edition` itself from Cargo.toml and errors ("Option
+            // 'edition' given more than once") if it's also passed
+            // explicitly here — pass only `--config`.
             let mut c = create_tool_command("cargo");
-            c.arg("fmt").arg("--").arg("--edition").arg(edition);
+            c.arg("fmt").arg("--").arg("--config").arg(&inline_config);
             c
           };
           c.arg(scratch);
@@ -243,19 +274,26 @@ impl LanguageSurface for RustSurface {
     let mut cmd =
       if check_binary_exists("cargo") && ctx.root.join("Cargo.toml").exists() {
         let mut c = create_tool_command("cargo");
-        c.arg("fmt");
+        // `cargo fmt` infers `--edition` itself from Cargo.toml (and errors
+        // if it's also passed explicitly, see the check-mode branch above
+        // for why) — pass only `--config` here.
+        c.arg("fmt").arg("--").arg("--config").arg(&inline_config);
         if !ctx.paths.is_empty()
           || !ctx.lang_config.files.is_empty()
           || !ctx.lang_config.exclude.is_empty()
         {
-          c.arg("--");
           for f in &files {
             c.arg(f);
           }
         }
         c
       } else {
-        build_rustfmt_fallback_cmd(edition, ctx.check_only, &files)
+        build_rustfmt_fallback_cmd(
+          edition,
+          &inline_config,
+          ctx.check_only,
+          &files,
+        )
       };
 
     cmd.args(&ctx.lang_config.extra_args);
@@ -372,6 +410,12 @@ impl LanguageSurface for RustSurface {
     }
   }
 
+  // `fml fmt`/`fml lint` no longer go through this path (Fixes #151): they
+  // pass the resolved config to rustfmt inline via `--config` (see
+  // `build_rustfmt_inline_config`, used in `format()` above). This method is
+  // now reached only by `fml sync`, for users who explicitly want
+  // `.rustfmt.toml` materialized on disk (e.g. for editor/rust-analyzer
+  // integration outside of `fml`).
   fn sync_config(&self, ctx: &ExecutionContext, check: bool) -> SurfaceResult {
     let start = Instant::now();
     sync_native_config::<RustfmtConfig>(ctx, check, start, self.name())
@@ -502,7 +546,7 @@ mod tests {
     let files = vec![PathBuf::from("src/main.rs"), PathBuf::from("src/lib.rs")];
 
     // check_only = false
-    let cmd = build_rustfmt_fallback_cmd("2024", false, &files);
+    let cmd = build_rustfmt_fallback_cmd("2024", "max_width=80", false, &files);
     let args: Vec<String> = cmd
       .get_args()
       .map(|a| a.to_string_lossy().into_owned())
@@ -520,6 +564,17 @@ mod tests {
       Some("2024"),
       "edition value must be 2024"
     );
+    let config_idx = args.iter().position(|a| a == "--config");
+    assert!(
+      config_idx.is_some(),
+      "--config flag must be passed to rustfmt"
+    );
+    assert_eq!(
+      args
+        .get(config_idx.unwrap() + 1)
+        .map(std::string::String::as_str),
+      Some("max_width=80")
+    );
     assert!(!args.contains(&"--check".to_string()));
     assert!(
       args.contains(&"src/main.rs".to_string())
@@ -527,7 +582,8 @@ mod tests {
     );
 
     // check_only = true
-    let cmd_check = build_rustfmt_fallback_cmd("2021", true, &files);
+    let cmd_check =
+      build_rustfmt_fallback_cmd("2021", "max_width=80", true, &files);
     let check_args: Vec<String> = cmd_check
       .get_args()
       .map(|a| a.to_string_lossy().into_owned())
@@ -542,6 +598,45 @@ mod tests {
       Some("2021")
     );
     assert!(check_args.contains(&"--check".to_string()));
+  }
+
+  #[test]
+  fn test_build_rustfmt_inline_config_shape() {
+    let cfg = RustfmtConfig {
+      tab_spaces: 2,
+      max_width: 80,
+      newline_style: "Unix".to_string(),
+      use_small_heuristics: "Default".to_string(),
+      edition: "2024".to_string(),
+      reorder_imports: true,
+    };
+    let inline = build_rustfmt_inline_config(&cfg);
+    assert_eq!(
+      inline,
+      "max_width=80,tab_spaces=2,newline_style=Unix,use_small_heuristics=Default,reorder_imports=true"
+    );
+  }
+
+  #[test]
+  fn test_rust_format_does_not_write_rustfmt_toml() {
+    // Fixes #151: `fml fmt` must not write `.rustfmt.toml` as a side effect;
+    // only `fml sync` should materialize the native config file.
+    if !check_binary_exists("rustfmt") && !check_binary_exists("cargo") {
+      return;
+    }
+    let temp = TempDir::new().unwrap();
+    let src = temp.path().join("src");
+    std::fs::create_dir_all(&src).unwrap();
+    std::fs::write(src.join("main.rs"), "fn main(){let x=1;}\n").unwrap();
+
+    let surface = RustSurface;
+    let ctx = dummy_execution_context(temp.path(), false);
+    let _ = surface.format(&ctx);
+
+    assert!(
+      !temp.path().join(".rustfmt.toml").exists(),
+      "fml fmt must not write .rustfmt.toml"
+    );
   }
   #[test]
   fn test_rust_fallback_edition_without_cargo_toml() {

@@ -2,7 +2,10 @@ use super::{
   DeclaresFacets, ExecutionContext, Facet, FacetSupport, LanguageSurface,
   NativeConfig, SurfaceResult, SurfaceStatus, ToolInfo, check_binary_exists,
   create_tool_command, diff_check_via_tempcopy, find_files_with_ext,
-  markdown::sync_prettier_config, render_native_config, tool_missing_result,
+  markdown::{
+    PrettierConfig, build_prettier_inline_args, sync_prettier_config,
+  },
+  render_native_config, tool_missing_result,
 };
 use serde::{Deserialize, Serialize};
 use std::path::Path;
@@ -94,6 +97,19 @@ impl NativeConfig for YamllintConfig {
   fn render(&self) -> Result<String, crate::errors::FormalityError> {
     render_native_config(self)
   }
+}
+
+/// Renders a [`YamllintConfig`] as the inline YAML source text yamllint's
+/// `-d`/`--config-data` flag accepts, so `fml lint` can apply
+/// formality.toml's settings without writing `.yamllint.yaml` to disk
+/// (Fixes #151). Only `fml sync` writes that file now (see
+/// [`YamlSurface::sync_config`]).
+#[must_use]
+pub fn build_yamllint_inline_config(cfg: &YamllintConfig) -> String {
+  // yamllint's `-d` takes a literal YAML document, so this just reuses the
+  // same renderer as the on-disk file (minus formality's auto-generated
+  // header comment, which isn't meaningful for an inline value).
+  serde_yaml::to_string(cfg).unwrap_or_default()
 }
 
 /// YAML language surface implementation.
@@ -191,12 +207,23 @@ impl LanguageSurface for YamlSurface {
       };
     }
 
+    // Inline `--tab-width`/`--print-width`/etc. instead of writing
+    // `.prettierrc.json` to disk — see `build_prettier_inline_args` (Fixes
+    // #151). `fml sync` remains the only path that materializes the file.
+    let inline_config =
+      build_prettier_inline_args(&PrettierConfig::from_context(ctx));
+
     if ctx.check_only {
       return diff_check_via_tempcopy(
         &files,
         |scratch| {
           let mut cmd = create_tool_command("prettier");
-          cmd.arg("--write").arg("--parser").arg("yaml").arg(scratch);
+          cmd
+            .arg("--write")
+            .arg("--parser")
+            .arg("yaml")
+            .args(&inline_config)
+            .arg(scratch);
           cmd.args(&ctx.lang_config.extra_args);
           cmd.current_dir(&ctx.root);
           cmd.output()
@@ -208,6 +235,7 @@ impl LanguageSurface for YamlSurface {
 
     let mut cmd = create_tool_command("prettier");
     cmd.arg("--write");
+    cmd.args(&inline_config);
 
     for f in &files {
       cmd.arg(f);
@@ -293,7 +321,14 @@ impl LanguageSurface for YamlSurface {
       };
     }
 
+    // Inline `-d <yaml source>` instead of writing `.yamllint.yaml` to disk
+    // — see `build_yamllint_inline_config` (Fixes #151). `fml sync` remains
+    // the only path that materializes the file.
+    let inline_config =
+      build_yamllint_inline_config(&YamllintConfig::from_context(ctx));
+
     let mut cmd = create_tool_command("yamllint");
+    cmd.arg("-d").arg(&inline_config);
     if !ctx.paths.is_empty()
       || !ctx.lang_config.files.is_empty()
       || !ctx.lang_config.exclude.is_empty()
@@ -345,6 +380,20 @@ impl LanguageSurface for YamlSurface {
     }
   }
 
+  // `fml fmt` no longer goes through this path (Fixes #151): it passes the
+  // resolved config to prettier inline (see `build_prettier_inline_args`,
+  // used in `format()` above). This method is now reached only by `fml
+  // sync`, for users who explicitly want `.prettierrc.json` materialized on
+  // disk.
+  //
+  // Pre-existing note, not introduced by this change: unlike every other
+  // surface, this method never called `sync_native_config::<YamllintConfig>`
+  // — `.yamllint.yaml` was never written by `fml sync` even before this
+  // PR, despite `YamllintConfig` existing. `fml lint` now uses that struct
+  // productively for the first time, via `build_yamllint_inline_config`
+  // above, so nothing regresses; whether `fml sync` should also start
+  // writing `.yamllint.yaml` for users who want the file is a separate,
+  // pre-existing gap worth its own follow-up issue.
   fn sync_config(&self, ctx: &ExecutionContext, check: bool) -> SurfaceResult {
     let start = Instant::now();
     sync_prettier_config(ctx, check, start, self.name())
@@ -451,5 +500,54 @@ mod tests {
       SurfaceStatus::ConfigSynced { created: true, .. }
     ));
     assert!(temp.path().join(".prettierrc.json").is_file());
+  }
+
+  #[test]
+  fn test_build_yamllint_inline_config_shape() {
+    let cfg = YamllintConfig {
+      extends: "default".to_string(),
+      rules: YamllintRulesConfig {
+        line_length: YamllintLineLengthRule { max: 120 },
+        indentation: YamllintIndentationRule {
+          spaces: 4,
+          indent_sequences: true,
+        },
+        document_start: YamllintRuleToggle::Disable,
+        truthy: YamllintRuleToggle::Disable,
+      },
+    };
+    let inline = build_yamllint_inline_config(&cfg);
+    assert!(inline.contains("max: 120"));
+    assert!(inline.contains("spaces: 4"));
+    assert!(!inline.starts_with(crate::surfaces::AUTO_GENERATED_HEADER));
+  }
+
+  #[test]
+  fn test_yaml_format_and_lint_do_not_write_native_files() {
+    // Fixes #151: `fml fmt`/`fml lint` must not write `.prettierrc.json` or
+    // `.yamllint.yaml` as a side effect; only `fml sync` writes the former
+    // (the latter isn't written by `fml sync` either — see the doc comment
+    // on `sync_config`).
+    let temp = TempDir::new().unwrap();
+    std::fs::write(temp.path().join("a.yaml"), "a: 1\n").unwrap();
+
+    let surface = YamlSurface;
+    let ctx = ExecutionContext {
+      root: temp.path().to_path_buf(),
+      paths: Arc::new(Vec::new()),
+      global_config: Arc::new(ResolvedGlobalConfig::default()),
+      lang_config: ResolvedLangConfig::new("yaml"),
+      check_only: false,
+    };
+
+    if check_binary_exists("prettier") {
+      let _ = surface.format(&ctx);
+    }
+    if check_binary_exists("yamllint") {
+      let _ = surface.lint(&ctx, false);
+    }
+
+    assert!(!temp.path().join(".prettierrc.json").exists());
+    assert!(!temp.path().join(".yamllint.yaml").exists());
   }
 }

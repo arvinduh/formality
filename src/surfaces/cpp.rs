@@ -492,6 +492,19 @@ impl LanguageSurface for CppSurface {
     }
   }
 
+  // Left as a documented exception to #151 for this pass, not converted to
+  // inline config: `clang-format` accepts an inline style via
+  // `-style='{...}'` (JSON-like), and modern `clang-tidy` accepts inline
+  // YAML text via `--config=`, so both tools individually *can* take config
+  // inline. What's not verified is whether that combination is safe here —
+  // `.clang-format`/`.clang-tidy` together cover a much larger option
+  // surface (BasedOnStyle, per-check argument maps, header filters, ...)
+  // than rustfmt/ruff/taplo/biome's simpler flat key=value model, and this
+  // environment has neither tool installed to verify byte-identical output
+  // against the file-based path before committing to it. Converting this
+  // surface is real, doable follow-up work — just not a low-risk one to
+  // fold into the same pass as the surfaces above without that
+  // verification.
   fn sync_config(&self, ctx: &ExecutionContext, check: bool) -> SurfaceResult {
     let start = Instant::now();
     let format_res =

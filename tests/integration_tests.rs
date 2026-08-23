@@ -703,9 +703,16 @@ fn test_fmt_fix_lint_doctor_install_flag_paths() {
     "[package]\nname = \"install_flag_test\"\nversion = \"0.1.0\"\nedition = \"2024\"\n",
   )
   .unwrap();
+  // 2-space indent: matches formality's own default `indent_size` (no
+  // formality.toml present here, so the built-in default applies), not
+  // rustfmt's own 4-space default. Before #151, plain `fml fmt --check`
+  // silently checked against rustfmt's bare default instead of formality's
+  // resolved config, so a 4-space fixture passed by coincidence; now that
+  // the resolved config is actually applied inline, the fixture has to
+  // already match it for `--check` to report clean.
   fs::write(
     src.join("main.rs"),
-    "fn main() {\n    println!(\"Hello, world!\");\n}\n",
+    "fn main() {\n  println!(\"Hello, world!\");\n}\n",
   )
   .unwrap();
 

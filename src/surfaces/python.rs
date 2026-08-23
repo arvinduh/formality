@@ -171,6 +171,64 @@ pub fn build_ruff_check_args(
   args
 }
 
+/// Renders the resolved [`RuffConfig`] as the inline `--config "<key> =
+/// <value>"` overrides `ruff format`/`ruff check` accept, so `fml
+/// fmt`/`fml lint` can apply formality.toml's settings without writing
+/// `ruff.toml` to disk (Fixes #151). Only `fml sync` writes that file now
+/// (see [`PythonSurface::sync_config`]).
+#[must_use]
+pub fn build_ruff_inline_config_args(cfg: &RuffConfig) -> Vec<String> {
+  let mut args = vec![
+    "--config".to_string(),
+    format!("line-length={}", cfg.line_length),
+    "--config".to_string(),
+    format!("indent-width={}", cfg.indent_width),
+    "--config".to_string(),
+    format!("format.indent-style='{}'", cfg.format.indent_style),
+    "--config".to_string(),
+    format!("format.quote-style='{}'", cfg.format.quote_style),
+    "--config".to_string(),
+    format!("format.line-ending='{}'", cfg.format.line_ending),
+  ];
+  if let Some(target_version) = &cfg.target_version {
+    args.push("--config".to_string());
+    args.push(format!("target-version='{target_version}'"));
+  }
+  args
+}
+
+/// Renders the resolved [`RuffConfig`]'s lint-relevant settings as inline
+/// `--config` overrides for `ruff check` (Fixes #151, sibling of
+/// [`build_ruff_inline_config_args`] above).
+#[must_use]
+pub fn build_ruff_inline_lint_config_args(cfg: &RuffConfig) -> Vec<String> {
+  let select = cfg
+    .lint
+    .select
+    .iter()
+    .map(|s| format!("'{s}'"))
+    .collect::<Vec<_>>()
+    .join(",");
+  let mut args = vec![
+    "--config".to_string(),
+    format!("line-length={}", cfg.line_length),
+    "--config".to_string(),
+    format!("lint.select=[{select}]"),
+  ];
+  if !cfg.lint.ignore.is_empty() {
+    let ignore = cfg
+      .lint
+      .ignore
+      .iter()
+      .map(|s| format!("'{s}'"))
+      .collect::<Vec<_>>()
+      .join(",");
+    args.push("--config".to_string());
+    args.push(format!("lint.ignore=[{ignore}]"));
+  }
+  args
+}
+
 impl LanguageSurface for PythonSurface {
   fn name(&self) -> &'static str {
     "python"
@@ -244,6 +302,12 @@ impl LanguageSurface for PythonSurface {
       };
     }
 
+    // Inline `--config key=value` instead of writing `ruff.toml` to disk —
+    // see `build_ruff_inline_config_args` (Fixes #151). `fml sync` remains
+    // the only path that materializes the file.
+    let inline_config =
+      build_ruff_inline_config_args(&RuffConfig::from_context(ctx));
+
     if ctx.check_only {
       return diff_check_via_tempcopy(
         &files,
@@ -254,6 +318,7 @@ impl LanguageSurface for PythonSurface {
             .arg("--select")
             .arg("I")
             .arg("--fix")
+            .args(&inline_config)
             .arg(scratch);
           isort_cmd.args(&ctx.lang_config.extra_args);
           isort_cmd.current_dir(&ctx.root);
@@ -263,7 +328,7 @@ impl LanguageSurface for PythonSurface {
           }
 
           let mut fmt_cmd = create_tool_command("ruff");
-          fmt_cmd.arg("format").arg(scratch);
+          fmt_cmd.arg("format").args(&inline_config).arg(scratch);
           fmt_cmd.args(&ctx.lang_config.extra_args);
           fmt_cmd.current_dir(&ctx.root);
           fmt_cmd.output()
@@ -287,6 +352,7 @@ impl LanguageSurface for PythonSurface {
       &files_to_pass,
       &ctx.lang_config.extra_args,
     ));
+    isort_cmd.args(&inline_config);
     isort_cmd.current_dir(&ctx.root);
 
     match isort_cmd.output() {
@@ -325,6 +391,7 @@ impl LanguageSurface for PythonSurface {
 
     let mut cmd = create_tool_command("ruff");
     cmd.arg("format");
+    cmd.args(&inline_config);
 
     if files_to_pass.is_empty() {
       cmd.arg(".");
@@ -412,12 +479,16 @@ impl LanguageSurface for PythonSurface {
       Vec::new()
     };
 
+    let lint_config =
+      build_ruff_inline_lint_config_args(&RuffConfig::from_context(ctx));
+
     let mut cmd = create_tool_command("ruff");
     cmd.args(build_ruff_check_args(
       &files_to_pass,
       fix,
       &ctx.lang_config.extra_args,
     ));
+    cmd.args(&lint_config);
     cmd.current_dir(&ctx.root);
 
     match cmd.output() {
@@ -457,6 +528,12 @@ impl LanguageSurface for PythonSurface {
     }
   }
 
+  // `fml fmt`/`fml lint` no longer go through this path (Fixes #151): they
+  // pass the resolved config to ruff inline via repeated `--config key=val`
+  // flags (see `build_ruff_inline_config_args` /
+  // `build_ruff_inline_lint_config_args`, used in `format()`/`lint()`
+  // above). This method is now reached only by `fml sync`, for users who
+  // explicitly want `ruff.toml` materialized on disk.
   fn sync_config(&self, ctx: &ExecutionContext, check: bool) -> SurfaceResult {
     let start = Instant::now();
     sync_native_config::<RuffConfig>(ctx, check, start, self.name())
@@ -644,5 +721,57 @@ mod tests {
 
     let check_clean = surface.format(&ctx_check);
     assert!(matches!(check_clean.status, SurfaceStatus::Passed));
+  }
+
+  #[test]
+  fn test_build_ruff_inline_config_args_shape() {
+    let cfg = RuffConfig {
+      line_length: 100,
+      indent_width: 4,
+      target_version: Some("py311".to_string()),
+      format: RuffFormatConfig {
+        indent_style: "space".to_string(),
+        quote_style: "single".to_string(),
+        line_ending: "lf".to_string(),
+      },
+      lint: RuffLintConfig {
+        select: vec!["E".to_string(), "F".to_string()],
+        ignore: vec![],
+      },
+    };
+    let args = build_ruff_inline_config_args(&cfg);
+    assert!(args.contains(&"line-length=100".to_string()));
+    assert!(args.contains(&"indent-width=4".to_string()));
+    assert!(args.contains(&"format.quote-style='single'".to_string()));
+    assert!(args.contains(&"target-version='py311'".to_string()));
+
+    let lint_args = build_ruff_inline_lint_config_args(&cfg);
+    assert!(lint_args.contains(&"lint.select=['E','F']".to_string()));
+  }
+
+  #[test]
+  fn test_python_format_and_lint_do_not_write_ruff_toml() {
+    // Fixes #151: `fml fmt`/`fml lint` must not write `ruff.toml` as a side
+    // effect; only `fml sync` should materialize the native config file.
+    if !check_binary_exists("ruff") {
+      return;
+    }
+    let temp = TempDir::new().unwrap();
+    std::fs::write(temp.path().join("a.py"), "x=1\n").unwrap();
+
+    let surface = PythonSurface;
+    let ctx = ExecutionContext {
+      root: temp.path().to_path_buf(),
+      paths: Arc::new(Vec::new()),
+      global_config: Arc::new(ResolvedGlobalConfig::default()),
+      lang_config: ResolvedLangConfig::new("python"),
+      check_only: false,
+    };
+
+    let _ = surface.format(&ctx);
+    let _ = surface.lint(&ctx, false);
+
+    assert!(!temp.path().join("ruff.toml").exists());
+    assert!(!temp.path().join(".ruff.toml").exists());
   }
 }

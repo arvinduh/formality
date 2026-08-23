@@ -416,6 +416,14 @@ impl LanguageSurface for GoSurface {
     }
   }
 
+  // Left as a documented exception to #151 for this pass, not converted to
+  // inline config: `golangci-lint run` has no CLI flag for enabling a
+  // specific linter set inline — `--enable`/`--disable` toggle *individual*
+  // linters against whatever the active config file (or the tool's own
+  // default set) already enables, they don't replace "no config file
+  // present" the way `ruff --config`/`taplo -o` do. gofmt/goimports (the
+  // formatters `format()` calls) are unaffected either way — they've never
+  // read `.golangci.yml`; only `golangci-lint` (the linter) does.
   fn sync_config(&self, ctx: &ExecutionContext, check: bool) -> SurfaceResult {
     let start = Instant::now();
     sync_native_config::<GolangciLintConfig>(ctx, check, start, self.name())

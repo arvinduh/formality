@@ -399,6 +399,15 @@ impl LanguageSurface for JavaSurface {
     }
   }
 
+  // Left as a documented exception to #151 for this pass, not converted to
+  // inline config: checkstyle's config is an XML *module tree* (see
+  // `CheckstyleConfig::render` above), not a flat key=value map — checkstyle
+  // has no CLI flag for passing a module tree inline, only `-c <path>`
+  // (accepting either a file path or one of its built-in bundled config
+  // names like `google_checks.xml`, neither of which is "inline data").
+  // google-java-format (the actual formatter tool) has a fixed, unconfigurable
+  // style already, so it was never reading this file in the first place —
+  // this exception is specific to checkstyle, the linter.
   fn sync_config(&self, ctx: &ExecutionContext, check: bool) -> SurfaceResult {
     let start = Instant::now();
     sync_native_config::<CheckstyleConfig>(ctx, check, start, self.name())

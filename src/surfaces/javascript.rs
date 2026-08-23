@@ -204,6 +204,35 @@ impl DeclaresFacets for JavaScriptSurface {
 pub const JS_TS_EXTENSIONS: &[&str] =
   &["js", "jsx", "ts", "tsx", "mjs", "cjs", "mts", "cts"];
 
+/// Renders the resolved [`BiomeConfig`]'s formatting-layout settings as the
+/// inline `--indent-style`/`--line-width`/etc. flags `biome check`/`biome
+/// format` accept, so `fml fmt` can apply formality.toml's settings without
+/// writing `biome.json` to disk (Fixes #151). Only `fml sync` writes that
+/// file now (see [`JavaScriptSurface::sync_config`]). This covers the
+/// formatting-layout options only — the linter preset and the
+/// `assist.actions.source.organizeImports` toggle have no equivalent
+/// single-action inline flag (only the coarser `--assist-enabled` /
+/// `--javascript-assist-enabled`), so those two stay config-file-only;
+/// biome's own defaults for both already match what `BiomeConfig::default`
+/// would render, so this is a low-risk gap, not a functional regression.
+#[must_use]
+pub fn build_biome_inline_format_args(cfg: &BiomeConfig) -> Vec<String> {
+  vec![
+    format!("--indent-style={}", cfg.formatter.indent_style),
+    format!("--indent-width={}", cfg.formatter.indent_width),
+    format!("--line-width={}", cfg.formatter.line_width),
+    format!(
+      "--javascript-formatter-quote-style={}",
+      cfg.javascript.formatter.quote_style
+    ),
+    format!(
+      "--trailing-commas={}",
+      cfg.javascript.formatter.trailing_commas
+    ),
+    format!("--semicolons={}", cfg.javascript.formatter.semicolons),
+  ]
+}
+
 /// Builds the argument list for the "Smart Format" pass: `biome check --write`
 /// with the linter disabled so this step only applies formatting and (per
 /// `biome.json`'s `organizeImports.enabled`) import sorting — never lint fixes.
@@ -320,6 +349,12 @@ impl LanguageSurface for JavaScriptSurface {
       };
     }
 
+    // Inline `--indent-style`/`--line-width`/etc. instead of writing
+    // `biome.json` to disk — see `build_biome_inline_format_args` (Fixes
+    // #151). `fml sync` remains the only path that materializes the file.
+    let inline_config =
+      build_biome_inline_format_args(&BiomeConfig::from_context(ctx));
+
     if ctx.check_only {
       return diff_check_via_tempcopy(
         &files,
@@ -329,6 +364,7 @@ impl LanguageSurface for JavaScriptSurface {
             &[scratch.to_path_buf()],
             &ctx.lang_config.extra_args,
           ));
+          cmd.args(&inline_config);
           cmd.current_dir(&ctx.root);
           cmd.output()
         },
@@ -351,6 +387,7 @@ impl LanguageSurface for JavaScriptSurface {
       &files_to_pass,
       &ctx.lang_config.extra_args,
     ));
+    cmd.args(&inline_config);
     cmd.current_dir(&ctx.root);
 
     match cmd.output() {
@@ -473,6 +510,14 @@ impl LanguageSurface for JavaScriptSurface {
     }
   }
 
+  // `fml fmt` no longer goes through this path for the formatting-layout
+  // options (Fixes #151): it passes them to biome inline (see
+  // `build_biome_inline_format_args`, used in `format()` above). The
+  // linter preset and `organizeImports` toggle have no equivalent
+  // single-action CLI flag (see that function's doc comment for why), so
+  // `fml lint` still relies on biome's own defaults there rather than on
+  // this file. This method is now reached only by `fml sync`, for users who
+  // explicitly want `biome.json` materialized on disk.
   fn sync_config(&self, ctx: &ExecutionContext, check: bool) -> SurfaceResult {
     let start = Instant::now();
     sync_native_config::<BiomeConfig>(ctx, check, start, self.name())
@@ -674,5 +719,60 @@ mod tests {
       surface.facet_support(Facet::Standard),
       FacetSupport::Unsupported
     );
+  }
+
+  #[test]
+  fn test_build_biome_inline_format_args_shape() {
+    let temp = TempDir::new().unwrap();
+    let mut lang_cfg = ResolvedLangConfig::new("javascript");
+    lang_cfg.line_length = 100;
+    lang_cfg.indent_size = 4;
+    lang_cfg.javascript = Some(JavaScriptOptions {
+      quote_style: Some("single".to_string()),
+      trailing_comma: Some("es5".to_string()),
+      semicolons: Some("as-needed".to_string()),
+      organize_imports: Some(true),
+    });
+    let ctx = ExecutionContext {
+      root: temp.path().to_path_buf(),
+      paths: Arc::new(Vec::new()),
+      global_config: Arc::new(ResolvedGlobalConfig::default()),
+      lang_config: lang_cfg,
+      check_only: false,
+    };
+    let cfg = BiomeConfig::from_context(&ctx);
+    let args = build_biome_inline_format_args(&cfg);
+    assert!(args.contains(&"--indent-width=4".to_string()));
+    assert!(args.contains(&"--line-width=100".to_string()));
+    assert!(
+      args.contains(&"--javascript-formatter-quote-style=single".to_string())
+    );
+    assert!(args.contains(&"--trailing-commas=es5".to_string()));
+    assert!(args.contains(&"--semicolons=as-needed".to_string()));
+  }
+
+  #[test]
+  fn test_javascript_format_does_not_write_biome_json() {
+    // Fixes #151: `fml fmt` must not write `biome.json` as a side effect;
+    // only `fml sync` should materialize the native config file.
+    if !check_binary_exists("biome") {
+      return;
+    }
+    let temp = TempDir::new().unwrap();
+    std::fs::write(temp.path().join("a.js"), "const x=1;\n").unwrap();
+
+    let surface = JavaScriptSurface;
+    let ctx = ExecutionContext {
+      root: temp.path().to_path_buf(),
+      paths: Arc::new(Vec::new()),
+      global_config: Arc::new(ResolvedGlobalConfig::default()),
+      lang_config: ResolvedLangConfig::new("javascript"),
+      check_only: false,
+    };
+
+    let _ = surface.format(&ctx);
+
+    assert!(!temp.path().join("biome.json").exists());
+    assert!(!temp.path().join("biome.jsonc").exists());
   }
 }
