@@ -305,7 +305,7 @@ impl LanguageSurface for KotlinSurface {
     // ktlint reads its layout configuration (indent size, max line length,
     // code style, disabled rules, ...) exclusively from `.editorconfig`,
     // which formality already synthesizes centrally for every surface (see
-    // `crate::editorconfig::sync_editorconfig`). There is no separate
+    // `crate::surfaces::editorconfig::sync_editorconfig`). There is no separate
     // native ktlint config file to generate, so this is a no-op.
     SurfaceResult {
       surface_name: self.name(),

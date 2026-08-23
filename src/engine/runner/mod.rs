@@ -139,8 +139,9 @@ impl Runner {
     };
 
     if let RunnerAction::Sync { check } = action {
-      let editorconfig_res =
-        crate::editorconfig::sync_editorconfig(root, config, &surfaces, check);
+      let editorconfig_res = crate::surfaces::editorconfig::sync_editorconfig(
+        root, config, &surfaces, check,
+      );
       results.push(editorconfig_res);
     }
 

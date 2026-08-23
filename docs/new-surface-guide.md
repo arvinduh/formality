@@ -33,7 +33,7 @@ repository:
 - [ ] **5. Soft / optional tables**:
   - `src/commands/lsp.rs`: `CHILD_LSP_REGISTRY` entry for child language server
     (if applicable).
-  - `src/editorconfig.rs`: `glob_for_surface()` match arm and
+  - `src/surfaces/editorconfig.rs`: `glob_for_surface()` match arm and
     `CANONICAL_FLEET_ORDER` entry.
   - Prose surface counts in doc comments and documentation (e.g.
     `SurfaceRegistry::new()` doc comment).
@@ -345,7 +345,7 @@ If the tool has no native config file (driven entirely by CLI flags or
   },
   ```
 
-- **EditorConfig Generation (`src/editorconfig.rs`)**:
+- **EditorConfig Generation (`src/surfaces/editorconfig.rs`)**:
   - Add section glob to `glob_for_surface()`:
 
     ```rust

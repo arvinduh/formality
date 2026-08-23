@@ -537,7 +537,9 @@ mod tests {
 
     let surfaces: Vec<Box<dyn LanguageSurface>> = vec![Box::new(JavaSurface)];
     let editorconfig_content =
-      crate::editorconfig::generate_editorconfig_from_config(&cfg, &surfaces);
+      crate::surfaces::editorconfig::generate_editorconfig_from_config(
+        &cfg, &surfaces,
+      );
     // Extract the `[*.java]` section's indent_size line.
     let java_section = editorconfig_content
       .split("[*.java]")

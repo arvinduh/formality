@@ -1,9 +1,9 @@
 use fml::cli::{Cli, Commands};
 use fml::config::{FormalityConfig, ResolvedGlobalConfig};
-use fml::editorconfig::{
+use fml::surfaces::all_surfaces;
+use fml::surfaces::editorconfig::{
   generate_editorconfig, generate_editorconfig_from_config,
 };
-use fml::surfaces::all_surfaces;
 use std::fs;
 use std::path::Path;
 use tempfile::TempDir;

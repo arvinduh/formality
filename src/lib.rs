@@ -1,7 +1,6 @@
 pub mod cli;
 pub mod commands;
 pub mod config;
-pub mod editorconfig;
 pub mod engine;
 pub mod errors;
 pub mod surfaces;
@@ -17,21 +16,34 @@ pub mod ui;
 // alias, even where the alias would resolve to the same item. Keeping that
 // distinction consistent means the alias list can eventually be trimmed or
 // deprecated without touching any internal call site.
+//
+// DEPRECATED / STALE ALIAS: doctor
 pub use commands::doctor;
+// DEPRECATED / STALE ALIAS: lsp
 pub use commands::lsp;
 pub use commands::{get_git_changed_files, get_git_staged_files};
+// DEPRECATED / STALE ALIAS: facets
 pub use config::facets;
+// DEPRECATED / STALE ALIAS: schema
 pub use config::schema;
 pub use config::schema::generate_schema;
-pub use editorconfig::generate_editorconfig;
+pub use surfaces::editorconfig::generate_editorconfig;
+// DEPRECATED / STALE ALIAS: diff
 pub use engine::diff;
+// DEPRECATED / STALE ALIAS: runner
 pub use engine::runner;
+// DEPRECATED / STALE ALIAS: update
 pub use engine::update;
+// DEPRECATED / STALE ALIAS: version
 pub use engine::version;
+// DEPRECATED / STALE ALIAS: editorconfig
+pub use surfaces::editorconfig;
+// DEPRECATED / STALE ALIAS: errors
 pub use errors::{
   ConfigError, ExitStatus, FormalityError, GitError, IoError, Result,
   SurfaceError, ToolMissingError,
 };
+// DEPRECATED / STALE ALIAS: table
 pub use ui::table;
 
 use clap::Parser;
