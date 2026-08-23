@@ -1,0 +1,42 @@
+name: VS Code Extension Check
+
+# TypeScript compile check for the VS Code extension. Separate from
+# pr-check.yml's Library Tests (Rust) so this doesn't run on every PR --
+# only ones that actually touch editors/vscode. Not a required status
+# check (see .agents/orchestrate.md §3 -- that's an orchestrator/repo-owner
+# decision, not this workflow's).
+on:
+  pull_request:
+    branches: ["main"]
+    paths:
+      - "editors/vscode/**"
+
+env:
+  FORCE_COLOR: "1"
+
+jobs:
+  typecheck:
+    name: TypeScript Compile Check
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: editors/vscode
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v7
+
+      - name: Set up Node.js
+        # Matches release.yml's VS Code packaging job.
+        uses: actions/setup-node@v7
+        with:
+          node-version: 22
+          cache: "npm"
+          cache-dependency-path: editors/vscode/package-lock.json
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Compile TypeScript
+        # No eslint/prettier config exists in editors/vscode yet, so
+        # `compile` (tsc -p ./) is the only check available today.
+        run: npm run compile
