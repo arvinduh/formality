@@ -1,6 +1,12 @@
 import { execFile } from "child_process";
 import * as path from "path";
 import * as vscode from "vscode";
+import {
+  LanguageClient,
+  LanguageClientOptions,
+  ServerOptions,
+  TransportKind,
+} from "vscode-languageclient/node";
 
 const SUPPORTED_LANGUAGES = [
   "rust",
@@ -16,8 +22,13 @@ const SUPPORTED_LANGUAGES = [
 ];
 
 let outputChannel: vscode.OutputChannel;
+let client: LanguageClient | undefined;
+// Fallback formatting provider, only registered per-language if the LSP
+// client fails to start (e.g. an old or missing `fml` binary that doesn't
+// support `fml lsp`). Keeps "Format Document" working either way.
+let fallbackFormattingProviders: vscode.Disposable[] = [];
 
-export function activate(context: vscode.ExtensionContext) {
+export async function activate(context: vscode.ExtensionContext) {
   outputChannel = vscode.window.createOutputChannel("Formality");
   context.subscriptions.push(outputChannel);
 
@@ -32,20 +43,7 @@ export function activate(context: vscode.ExtensionContext) {
   statusBarItem.show();
   context.subscriptions.push(statusBarItem);
 
-  // Register document formatting providers for all supported languages
-  for (const lang of SUPPORTED_LANGUAGES) {
-    const provider = vscode.languages.registerDocumentFormattingEditProvider(
-      lang,
-      {
-        provideDocumentFormattingEdits(
-          document: vscode.TextDocument,
-        ): Promise<vscode.TextEdit[]> {
-          return formatDocument(document);
-        },
-      },
-    );
-    context.subscriptions.push(provider);
-  }
+  await startLanguageClient(context);
 
   // Command: Format Entire Workspace
   context.subscriptions.push(
@@ -145,7 +143,96 @@ export function activate(context: vscode.ExtensionContext) {
   context.subscriptions.push(configWatcher);
 }
 
-export function deactivate() {}
+export async function deactivate(): Promise<void> {
+  if (client) {
+    await client.stop();
+    client = undefined;
+  }
+}
+
+/// Launches `fml lsp` as a language server and connects a `LanguageClient` to
+/// it, covering `SUPPORTED_LANGUAGES`. This gives us "Format Document" (via
+/// the server's `documentFormattingProvider` capability) and Problems-panel
+/// diagnostics (the server publishes them via `textDocument/publishDiagnostics`
+/// on open/save) for free, without any extension-side parsing.
+///
+/// If the client fails to start (e.g. `fml` isn't installed, or is an old
+/// version without an `lsp` subcommand), we fall back to the previous
+/// execFile-based `DocumentFormattingEditProvider` so formatting still works.
+async function startLanguageClient(
+  context: vscode.ExtensionContext,
+): Promise<void> {
+  const exe = getFmlExecutable();
+
+  const serverOptions: ServerOptions = {
+    command: exe,
+    args: ["lsp"],
+    transport: TransportKind.stdio,
+    options: { cwd: getWorkspaceRoot() },
+  };
+
+  const clientOptions: LanguageClientOptions = {
+    documentSelector: SUPPORTED_LANGUAGES.map((language) => ({
+      scheme: "file",
+      language,
+    })),
+    outputChannel,
+    synchronize: {
+      fileEvents: vscode.workspace.createFileSystemWatcher(
+        "**/{formality.toml,.formality.toml}",
+      ),
+    },
+  };
+
+  client = new LanguageClient(
+    "formality",
+    "Formality Language Server",
+    serverOptions,
+    clientOptions,
+  );
+
+  try {
+    await client.start();
+    context.subscriptions.push({
+      dispose: () => {
+        void client?.stop();
+      },
+    });
+  } catch (err) {
+    client = undefined;
+    outputChannel.appendLine(
+      `[Formality] Could not start 'fml lsp': ${
+        err instanceof Error ? err.message : String(err)
+      }`,
+    );
+    outputChannel.appendLine(
+      "[Formality] Falling back to per-command formatting. Set formality.executablePath " +
+        "if 'fml' isn't on PATH, or upgrade fml if it predates the 'lsp' subcommand.",
+    );
+    registerFallbackFormattingProviders(context);
+  }
+}
+
+/// Registers the legacy execFile-based formatting provider. Only used when
+/// the LSP client could not be started, so "Format Document" keeps working.
+function registerFallbackFormattingProviders(
+  context: vscode.ExtensionContext,
+): void {
+  for (const lang of SUPPORTED_LANGUAGES) {
+    const provider = vscode.languages.registerDocumentFormattingEditProvider(
+      lang,
+      {
+        provideDocumentFormattingEdits(
+          document: vscode.TextDocument,
+        ): Promise<vscode.TextEdit[]> {
+          return formatDocument(document);
+        },
+      },
+    );
+    fallbackFormattingProviders.push(provider);
+    context.subscriptions.push(provider);
+  }
+}
 
 function getFmlExecutable(): string {
   return vscode.workspace
