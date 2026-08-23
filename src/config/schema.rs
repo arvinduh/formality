@@ -6,22 +6,40 @@ use serde::{Deserialize, Serialize};
 use std::path::{Path, PathBuf};
 use std::time::{SystemTime, UNIX_EPOCH};
 
+/// The current `s{N}` schema version this build of `fml` expects a project's
+/// `#:schema` directive to reference.
 pub const SCHEMA_VERSION: u32 = 1;
 const SCHEMA_CHECK_INTERVAL_SECS: u64 = 24 * 60 * 60; // 24 hours
 
+/// A config file's schema version status relative to [`SCHEMA_VERSION`].
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum SchemaStatus {
-  UpToDate { version: u32 },
-  Stale { version: u32, expected: u32 },
+  /// The config's `#:schema` directive references the current version.
+  UpToDate {
+    /// The version found in the config's `#:schema` directive.
+    version: u32,
+  },
+  /// The config's `#:schema` directive references an older version.
+  Stale {
+    /// The version found in the config's `#:schema` directive.
+    version: u32,
+    /// The current [`SCHEMA_VERSION`].
+    expected: u32,
+  },
+  /// The config has no `#:schema` directive at all.
   Missing,
 }
 
+/// On-disk cache of the last schema-staleness check, used to throttle
+/// [`spawn_schema_check`] to once per [`SCHEMA_CHECK_INTERVAL_SECS`].
 #[derive(Serialize, Deserialize, Debug)]
 struct SchemaCheckCache {
   last_checked_unix: u64,
   stale_version: Option<u32>,
 }
 
+/// Holds a pending stale-schema notice to be printed later via
+/// [`print_schema_notice`], once command output has settled.
 pub struct SchemaNotifier {
   stale_info: Option<(PathBuf, u32, u32)>,
 }
@@ -187,6 +205,7 @@ pub fn print_schema_notice(notifier: Option<SchemaNotifier>) {
 }
 
 #[cfg(test)]
+#[allow(missing_docs, clippy::missing_errors_doc, clippy::missing_panics_doc)]
 mod tests {
   use super::*;
 

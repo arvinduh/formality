@@ -4,33 +4,55 @@
 use super::Version;
 
 /// Minimum Supported Tool Version declarations for tools in the Formality fleet.
+/// MSTV for rustfmt.
 pub const MSTV_RUSTFMT: Version = Version::new(1, 4, 0);
+/// MSTV for clippy.
 pub const MSTV_CLIPPY: Version = Version::new(1, 65, 0);
+/// MSTV for ruff.
 pub const MSTV_RUFF: Version = Version::new(0, 1, 0);
+/// MSTV for clang-format.
 pub const MSTV_CLANG_FORMAT: Version = Version::new(14, 0, 0);
+/// MSTV for clang-tidy.
 pub const MSTV_CLANG_TIDY: Version = Version::new(14, 0, 0);
+/// MSTV for prettier.
 pub const MSTV_PRETTIER: Version = Version::new(2, 0, 0);
+/// MSTV for taplo.
 pub const MSTV_TAPLO: Version = Version::new(0, 8, 0);
+/// MSTV for markdownlint-cli2.
 pub const MSTV_MARKDOWNLINT_CLI2: Version = Version::new(0, 4, 0);
+/// MSTV for typstyle.
 pub const MSTV_TYPSTYLE: Version = Version::new(0, 11, 0);
+/// MSTV for yamllint.
 pub const MSTV_YAMLLINT: Version = Version::new(1, 20, 0);
+/// MSTV for biome.
 pub const MSTV_BIOME: Version = Version::new(1, 5, 0);
+/// MSTV for checkstyle.
 pub const MSTV_CHECKSTYLE: Version = Version::new(10, 0, 0);
+/// MSTV for ktfmt.
 pub const MSTV_KTFMT: Version = Version::new(0, 44, 0);
+/// MSTV for ktlint.
 pub const MSTV_KTLINT: Version = Version::new(1, 0, 0);
+/// MSTV for gofmt.
 pub const MSTV_GOFMT: Version = Version::new(1, 18, 0);
+/// MSTV for golangci-lint.
 pub const MSTV_GOLANGCI_LINT: Version = Version::new(1, 50, 0);
 
 /// Minimum Supported Tool Version entry with metadata, invocation arguments, regex, and upgrade advice.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ToolMstvEntry {
+  /// Name of the binary executable.
   pub binary: &'static str,
+  /// Declared MSTV minimum required version.
   pub min_version: Version,
+  /// CLI argument flags to print binary version string.
   pub version_args: &'static [&'static str],
+  /// Regex pattern to extract semver version string from output.
   pub regex: &'static str,
+  /// Upgrade advice message shown when tool is outdated.
   pub advice: &'static str,
 }
 
+/// Registry table of all declared Minimum Supported Tool Version entries.
 pub const TOOL_MSTV_REGISTRY: &[ToolMstvEntry] = &[
   ToolMstvEntry {
     binary: "rustfmt",
@@ -146,6 +168,7 @@ pub const TOOL_MSTV_REGISTRY: &[ToolMstvEntry] = &[
   },
 ];
 
+/// Returns the [`ToolMstvEntry`] for `binary` if declared in the registry.
 #[must_use]
 pub fn get_tool_mstv_entry(binary: &str) -> Option<&'static ToolMstvEntry> {
   let lookup_bin = match binary {
@@ -157,6 +180,7 @@ pub fn get_tool_mstv_entry(binary: &str) -> Option<&'static ToolMstvEntry> {
     .find(|entry| entry.binary == lookup_bin)
 }
 
+/// Returns a slice of all declared [`ToolMstvEntry`] entries.
 #[must_use]
 pub fn all_mstv_entries() -> &'static [ToolMstvEntry] {
   TOOL_MSTV_REGISTRY

@@ -8,25 +8,36 @@ use serde::{Deserialize, Serialize};
 use std::path::{Path, PathBuf};
 use std::time::Instant;
 
+/// Formatter configuration block for `biome.json`.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "camelCase")]
 pub struct BiomeFormatterConfig {
+  /// Whether the formatter is enabled.
   pub enabled: bool,
+  /// Indent style (`"space"` or `"tab"`).
   pub indent_style: String,
+  /// Indentation spaces count per level.
   pub indent_width: usize,
+  /// Maximum line width.
   pub line_width: usize,
 }
 
+/// JS-specific formatter options for `biome.json`.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "camelCase")]
 pub struct BiomeJsFormatterConfig {
+  /// Preferred string quote style.
   pub quote_style: String,
+  /// Trailing comma policy.
   pub trailing_commas: String,
+  /// Semicolon requirement policy.
   pub semicolons: String,
 }
 
+/// JS configuration wrapper for `biome.json`.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct BiomeJsConfig {
+  /// JavaScript formatter configuration.
   pub formatter: BiomeJsFormatterConfig,
 }
 
@@ -36,40 +47,57 @@ pub struct BiomeJsConfig {
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "camelCase")]
 pub struct BiomeAssistSourceActions {
+  /// Organize imports action state (`"on"` or `"off"`).
   pub organize_imports: String,
 }
 
+/// Assist actions sub-block for `biome.json`.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct BiomeAssistActions {
+  /// Source assist actions.
   pub source: BiomeAssistSourceActions,
 }
 
+/// Assist configuration block for `biome.json`.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct BiomeAssistConfig {
+  /// Whether assist feature is enabled.
   pub enabled: bool,
+  /// Assist actions settings.
   pub actions: BiomeAssistActions,
 }
 
+/// Linter rules sub-block for `biome.json`.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct BiomeLinterRules {
+  /// Linter rule preset name (e.g. `"recommended"`).
   pub preset: String,
 }
 
+/// Linter configuration block for `biome.json`.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "camelCase")]
 pub struct BiomeLinterConfig {
+  /// Whether the linter is enabled.
   pub enabled: bool,
+  /// Linter rules configuration.
   pub rules: BiomeLinterRules,
 }
 
+/// Native `biome.json` configuration representation for JavaScript/TypeScript formatting and linting.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "camelCase")]
 pub struct BiomeConfig {
+  /// JSON Schema reference URI.
   #[serde(rename = "$schema")]
   pub schema: String,
+  /// Formatter configuration block.
   pub formatter: BiomeFormatterConfig,
+  /// JavaScript language options.
   pub javascript: BiomeJsConfig,
+  /// Code assist / import sorting configuration.
   pub assist: BiomeAssistConfig,
+  /// Linter configuration block.
   pub linter: BiomeLinterConfig,
 }
 
@@ -152,6 +180,7 @@ impl NativeConfig for BiomeConfig {
   }
 }
 
+/// JavaScript/TypeScript language surface implementation.
 #[derive(Debug, Default, Clone, Copy)]
 pub struct JavaScriptSurface;
 
@@ -171,6 +200,7 @@ impl DeclaresFacets for JavaScriptSurface {
   }
 }
 
+/// Standard file extensions recognized for JavaScript and TypeScript source files.
 pub const JS_TS_EXTENSIONS: &[&str] =
   &["js", "jsx", "ts", "tsx", "mjs", "cjs", "mts", "cts"];
 
@@ -199,6 +229,7 @@ pub fn build_biome_format_args(
   args
 }
 
+/// Builds argument vector for biome lint invocation.
 #[must_use]
 pub fn build_biome_lint_args(
   files: &[PathBuf],
@@ -449,6 +480,7 @@ impl LanguageSurface for JavaScriptSurface {
 }
 
 #[cfg(test)]
+#[allow(missing_docs, clippy::missing_errors_doc, clippy::missing_panics_doc)]
 mod tests {
   use super::*;
   use crate::config::{

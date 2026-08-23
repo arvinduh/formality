@@ -7,6 +7,7 @@ use super::{
 use std::path::Path;
 use std::time::Instant;
 
+/// Typst language surface implementation.
 #[derive(Debug, Default, Clone, Copy)]
 pub struct TypstSurface;
 
@@ -197,6 +198,7 @@ impl LanguageSurface for TypstSurface {
 }
 
 #[cfg(test)]
+#[allow(missing_docs, clippy::missing_errors_doc, clippy::missing_panics_doc)]
 mod tests {
   use super::*;
   use crate::config::{ResolvedGlobalConfig, ResolvedLangConfig};

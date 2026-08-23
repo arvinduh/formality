@@ -8,28 +8,41 @@ use serde::{Deserialize, Serialize};
 use std::path::{Path, PathBuf};
 use std::time::Instant;
 
+/// Format configuration subsection for `ruff.toml`.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "kebab-case")]
 pub struct RuffFormatConfig {
+  /// Indent style (`"space"` or `"tab"`).
   pub indent_style: String,
+  /// Preferred quote style (`"single"` or `"double"`).
   pub quote_style: String,
+  /// Line ending style (`"auto"`, `"lf"`, `"crlf"`).
   pub line_ending: String,
 }
 
+/// Lint configuration subsection for `ruff.toml`.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct RuffLintConfig {
+  /// Selected rule codes to enable.
   pub select: Vec<String>,
+  /// Ignored rule codes.
   pub ignore: Vec<String>,
 }
 
+/// Native `ruff.toml` configuration representation for Python formatting and linting.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "kebab-case")]
 pub struct RuffConfig {
+  /// Line length limit.
   pub line_length: usize,
+  /// Indentation spaces width.
   pub indent_width: usize,
+  /// Target Python version.
   #[serde(skip_serializing_if = "Option::is_none")]
   pub target_version: Option<String>,
+  /// Format configuration subsection.
   pub format: RuffFormatConfig,
+  /// Lint configuration subsection.
   pub lint: RuffLintConfig,
 }
 
@@ -53,8 +66,8 @@ impl NativeConfig for RuffConfig {
       .lang_config
       .python
       .as_ref()
-      .and_then(|p| p.quote_style.as_deref())
-      .unwrap_or("double");
+      .and_then(|p| p.quote_style.clone())
+      .unwrap_or_else(|| "double".to_string());
 
     let target_version = ctx
       .lang_config
@@ -68,7 +81,7 @@ impl NativeConfig for RuffConfig {
       target_version,
       format: RuffFormatConfig {
         indent_style: indent_style.to_string(),
-        quote_style: quote_style.to_string(),
+        quote_style,
         line_ending: line_ending.to_string(),
       },
       lint: RuffLintConfig {
@@ -90,6 +103,7 @@ impl NativeConfig for RuffConfig {
   }
 }
 
+/// Python language surface implementation.
 #[derive(Debug, Default, Clone, Copy)]
 pub struct PythonSurface;
 
@@ -109,8 +123,10 @@ impl DeclaresFacets for PythonSurface {
   }
 }
 
+/// Standard file extensions recognized for Python source files.
 pub const PYTHON_EXTENSIONS: &[&str] = &["py", "pyi"];
 
+/// Builds argument vector for ruff import sorting invocation (`ruff check --select I --fix`).
 #[must_use]
 pub fn build_ruff_import_sort_args(
   files: &[PathBuf],
@@ -133,6 +149,7 @@ pub fn build_ruff_import_sort_args(
   args
 }
 
+/// Builds argument vector for ruff lint check invocation.
 #[must_use]
 pub fn build_ruff_check_args(
   files: &[PathBuf],
@@ -447,6 +464,7 @@ impl LanguageSurface for PythonSurface {
 }
 
 #[cfg(test)]
+#[allow(missing_docs, clippy::missing_errors_doc, clippy::missing_panics_doc)]
 mod tests {
   use super::*;
   use crate::config::{

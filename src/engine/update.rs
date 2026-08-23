@@ -93,6 +93,7 @@ pub fn is_newer_version(latest_tag: &str, current_version: &str) -> bool {
   }
 }
 
+/// Handle for background update check result.
 pub struct UpdateNotifier {
   handle: Option<std::thread::JoinHandle<Option<String>>>,
   cached_tag: Option<String>,
@@ -189,6 +190,7 @@ pub fn print_update_notice(notifier: Option<UpdateNotifier>) {
 }
 
 #[cfg(test)]
+#[allow(missing_docs, clippy::missing_errors_doc, clippy::missing_panics_doc)]
 mod tests {
   use super::*;
 

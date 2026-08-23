@@ -8,8 +8,10 @@ use std::fmt::Write as _;
 use std::path::Path;
 use std::time::Instant;
 
+/// Default filename for `.editorconfig` files.
 pub const EDITORCONFIG_FILE_NAME: &str = ".editorconfig";
 
+/// Canonical ordering of supported surfaces when writing `.editorconfig` blocks.
 pub const CANONICAL_FLEET_ORDER: &[&str] = &[
   "rust",
   "python",
@@ -272,6 +274,7 @@ pub fn sync_editorconfig(
 }
 
 #[cfg(test)]
+#[allow(missing_docs, clippy::missing_errors_doc, clippy::missing_panics_doc)]
 mod tests {
   use super::*;
   use crate::surfaces::all_surfaces;

@@ -6,17 +6,22 @@ use serde::{Deserialize, Serialize};
   Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize, JsonSchema,
 )]
 pub struct LayoutFacet {
+  /// Indentation size in spaces.
   #[serde(skip_serializing_if = "Option::is_none")]
   pub indent_size: Option<usize>,
+  /// Maximum line length limit.
   #[serde(skip_serializing_if = "Option::is_none")]
   pub line_length: Option<usize>,
+  /// Whether to use tabs for indentation.
   #[serde(skip_serializing_if = "Option::is_none")]
   pub use_tabs: Option<bool>,
+  /// Prose wrapping strategy string.
   #[serde(skip_serializing_if = "Option::is_none")]
   pub prose_wrap: Option<String>,
 }
 
 impl LayoutFacet {
+  /// Merges values from `other` into `self`.
   pub fn merge(&mut self, other: LayoutFacet) {
     if other.indent_size.is_some() {
       self.indent_size = other.indent_size;
@@ -32,6 +37,7 @@ impl LayoutFacet {
     }
   }
 
+  /// Returns `true` if all fields are `None`.
   #[must_use]
   pub fn is_empty(&self) -> bool {
     self.indent_size.is_none()
@@ -161,21 +167,25 @@ pub enum FacetSupport {
 }
 
 impl FacetSupport {
+  /// Returns `true` if the facet is configurable by user settings.
   #[must_use]
   pub fn is_configurable(&self) -> bool {
     matches!(self, FacetSupport::Configurable)
   }
 
+  /// Returns `true` if the facet support level is fixed to a static value.
   #[must_use]
   pub fn is_fixed(&self) -> bool {
     matches!(self, FacetSupport::Fixed(_))
   }
 
+  /// Returns `true` if the facet is unsupported by the surface.
   #[must_use]
   pub fn is_unsupported(&self) -> bool {
     matches!(self, FacetSupport::Unsupported)
   }
 
+  /// Returns the fixed value string slice if support is [`FacetSupport::Fixed`].
   #[must_use]
   pub fn fixed_value(&self) -> Option<&'static str> {
     match self {
@@ -249,17 +259,24 @@ pub trait DeclaresFacets {
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum FacetDiagnosticSeverity {
+  /// Non-fatal configuration warning.
   Warning,
+  /// Fatal configuration error.
   Error,
 }
 
 /// Diagnostic produced when validating a facet configuration against a surface's declared capabilities.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 pub struct FacetDiagnostic {
+  /// Name of the surface reporting the diagnostic.
   pub surface: String,
+  /// Associated layout facet.
   pub facet: Facet,
+  /// Declared facet support level.
   pub support: FacetSupport,
+  /// Severity level of the diagnostic.
   pub severity: FacetDiagnosticSeverity,
+  /// Human-readable diagnostic message.
   pub message: String,
 }
 
@@ -446,6 +463,7 @@ pub fn validate_all_surfaces_reporting(
 }
 
 #[cfg(test)]
+#[allow(missing_docs, clippy::missing_errors_doc, clippy::missing_panics_doc)]
 mod tests {
   use super::*;
   use crate::surfaces::all_surfaces;
@@ -520,7 +538,6 @@ mod tests {
   /// explicitly against the documented table so a change to any surface's
   /// `facet_support` (or the table drifting out of sync with the code) shows
   /// up as a failing assertion instead of an untested edge.
-  // Comprehensive golden-matrix test verifying all 12 surfaces x 9 facets against the rosetta spec.
   #[allow(clippy::too_many_lines)]
   #[test]
   fn test_surface_facet_declarations() {
@@ -538,9 +555,6 @@ mod tests {
         .unwrap_or_else(|| panic!("surface '{name}' not registered"))
     };
 
-    // (surface name, [indent_tabs, indent_width, line_length, quote_style,
-    //  trailing_comma, import_sort, prose_wrap, edition, standard])
-    // matches the rosetta table row-for-row in docs/facet-rosetta.md.
     let golden: &[(&str, [FacetSupport; 9])] = &[
       (
         "rust",
@@ -749,7 +763,6 @@ mod tests {
     let surfaces = all_surfaces();
     let rust = surfaces.iter().find(|s| s.name() == "rust").unwrap();
 
-    // 1. Configurable facet yields no diagnostic
     let diags = validate_facets(
       rust.as_ref(),
       rust.name(),
@@ -757,7 +770,6 @@ mod tests {
     );
     assert!(diags.is_empty());
 
-    // 2. Fixed facet with matching value yields no diagnostic
     let diags_fixed_ok = validate_facets(
       rust.as_ref(),
       rust.name(),
@@ -765,7 +777,6 @@ mod tests {
     );
     assert!(diags_fixed_ok.is_empty());
 
-    // 3. Fixed facet with conflicting value yields warning diagnostic
     let diags_fixed_err = validate_facets(
       rust.as_ref(),
       rust.name(),
@@ -778,7 +789,6 @@ mod tests {
     );
     assert!(diags_fixed_err[0].message.contains("fixed value 'spaces'"));
 
-    // 4. Unsupported facet yields warning diagnostic
     let diags_unsupported = validate_facets(
       rust.as_ref(),
       rust.name(),
@@ -800,7 +810,6 @@ mod tests {
     let surfaces = all_surfaces();
     let json = surfaces.iter().find(|s| s.name() == "json").unwrap();
 
-    // Matching double quotes and no trailing commas
     let ok = validate_facets(
       json.as_ref(),
       json.name(),
@@ -812,7 +821,6 @@ mod tests {
     );
     assert!(ok.is_empty());
 
-    // Mismatches
     let mismatches = validate_facets(
       json.as_ref(),
       json.name(),

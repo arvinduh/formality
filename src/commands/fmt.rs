@@ -7,6 +7,8 @@ use crate::config::FormalityConfig;
 use crate::engine::{Runner, RunnerAction};
 use crate::errors::ExitStatus;
 
+/// Runs the `fml fmt` command: formats (or, with `check`, only verifies) the
+/// resolved target surfaces, optionally installing missing tools first.
 #[allow(clippy::too_many_arguments)]
 pub fn run_fmt(
   root: &Path,

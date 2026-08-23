@@ -26,9 +26,13 @@ use std::time::Instant;
 /// without requiring serde serialization overhead or an XML serializer crate.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct CheckstyleConfig {
+  /// Maximum line length rule limit.
   pub line_length: usize,
+  /// Basic offset indentation size in spaces.
   pub indent_size: usize,
+  /// Whether to check for unused imports.
   pub check_unused_imports: bool,
+  /// Whether to check import ordering rules.
   pub check_import_order: bool,
 }
 
@@ -90,6 +94,7 @@ impl NativeConfig for CheckstyleConfig {
   }
 }
 
+/// Java language surface implementation.
 #[derive(Debug, Default, Clone, Copy)]
 pub struct JavaSurface;
 
@@ -127,6 +132,7 @@ impl DeclaresFacets for JavaSurface {
   }
 }
 
+/// Standard file extensions recognized for Java source files.
 pub const JAVA_EXTENSIONS: &[&str] = &["java"];
 
 fn is_aosp_style(ctx: &ExecutionContext) -> bool {
@@ -400,6 +406,7 @@ impl LanguageSurface for JavaSurface {
 }
 
 #[cfg(test)]
+#[allow(missing_docs, clippy::missing_errors_doc, clippy::missing_panics_doc)]
 mod tests {
   use super::*;
   use crate::config::{ResolvedGlobalConfig, ResolvedLangConfig};

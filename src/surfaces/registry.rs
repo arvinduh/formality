@@ -188,16 +188,19 @@ impl SurfaceRegistry {
   }
 }
 
+/// Returns a vector containing boxed instances of all supported language surfaces.
 #[must_use]
 pub fn all_surfaces() -> Vec<Box<dyn LanguageSurface>> {
   SurfaceRegistry::default().all_surfaces()
 }
 
+/// Detects and returns all language surfaces active in `root`.
 #[must_use]
 pub fn detect_surfaces(root: &Path) -> Vec<Box<dyn LanguageSurface>> {
   SurfaceRegistry::default().detect_surfaces(root)
 }
 
+/// Detects and returns active language surfaces in `root` respecting `config` settings.
 #[must_use]
 pub fn detect_surfaces_smart(
   root: &Path,
@@ -206,17 +209,20 @@ pub fn detect_surfaces_smart(
   SurfaceRegistry::default().detect_surfaces_smart(root, config)
 }
 
+/// Finds and returns a boxed [`LanguageSurface`] matching `name` or an alias if found.
 #[must_use]
 pub fn get_surface_by_name(name: &str) -> Option<Box<dyn LanguageSurface>> {
   SurfaceRegistry::default().get_surface_by_name(name)
 }
 
+/// Resolves a surface name or alias to its canonical surface name.
 #[must_use]
 pub fn resolve_canonical_name(name_or_alias: &str) -> Option<&'static str> {
   SurfaceRegistry::default().resolve_canonical_name(name_or_alias)
 }
 
 #[cfg(test)]
+#[allow(missing_docs, clippy::missing_errors_doc, clippy::missing_panics_doc)]
 mod tests {
   use super::*;
 
@@ -293,7 +299,6 @@ mod tests {
         "Query '{query}' resolved to unexpected surface name"
       );
 
-      // Verify resolve_canonical_name
       assert_eq!(
         resolve_canonical_name(query),
         Some(canonical),
@@ -392,8 +397,6 @@ mod tests {
 
   #[test]
   fn test_detect_surfaces_finds_active_languages_only() {
-    // detect_surfaces() had no direct test at all — only the smart-detection
-    // variant's building blocks were exercised transitively via other tests.
     let temp = tempfile::TempDir::new().unwrap();
     let root = temp.path();
     std::fs::write(root.join("main.rs"), "fn main() {}").unwrap();
@@ -405,8 +408,6 @@ mod tests {
 
     assert!(names.contains(&"rust"));
     assert!(names.contains(&"python"));
-    // A language with no matching files/markers in the workspace must not be
-    // detected as active.
     assert!(!names.contains(&"kotlin"));
   }
 
@@ -416,8 +417,6 @@ mod tests {
 
     let temp = tempfile::TempDir::new().unwrap();
     let root = temp.path();
-    // Files present for all three, but only rust/python are in the
-    // allowlist and go is separately ignore_languages'd.
     std::fs::write(root.join("main.rs"), "fn main() {}").unwrap();
     std::fs::write(root.join("script.py"), "print(1)").unwrap();
     std::fs::write(root.join("main.go"), "package main").unwrap();
@@ -452,7 +451,6 @@ mod tests {
     let root = temp.path();
     std::fs::write(root.join("main.rs"), "fn main() {}").unwrap();
 
-    // rust is in the allowlist but explicitly disabled via [lang.rust].
     let toml = r#"
       [global]
       languages = ["rust"]
@@ -482,8 +480,6 @@ mod tests {
     std::fs::write(root.join("script.py"), "print(1)").unwrap();
     std::fs::write(root.join("Cargo.toml"), "[package]\nname=\"x\"").unwrap();
 
-    // No explicit `languages` allowlist: auto-detect, but ignore python and
-    // disable toml.
     let toml = r#"
       [global]
       ignore_languages = ["python"]
@@ -533,14 +529,12 @@ mod tests {
     let fleet_order = crate::surfaces::editorconfig::CANONICAL_FLEET_ORDER;
     let fleet_set: HashSet<&str> = fleet_order.iter().copied().collect();
 
-    // No duplicate entries in CANONICAL_FLEET_ORDER
     assert_eq!(
       fleet_order.len(),
       fleet_set.len(),
       "CANONICAL_FLEET_ORDER contains duplicate surface names"
     );
 
-    // Every surface in SurfaceRegistry::default() is present in CANONICAL_FLEET_ORDER
     for &name in &registered_names {
       assert!(
         fleet_set.contains(name),
@@ -548,7 +542,6 @@ mod tests {
       );
     }
 
-    // Every surface in CANONICAL_FLEET_ORDER corresponds to a registered surface
     for &name in fleet_order {
       assert!(
         registered_names.contains(name),
@@ -573,10 +566,6 @@ mod tests {
     let registered_names: HashSet<&str> =
       reg.surfaces().iter().map(|s| s.name()).collect();
 
-    // Intentional exemptions from child LSP passthrough server:
-    // - "markdown": diagnostics only via fml lint (markdownlint / biome); no child LSP server spawned.
-    // - "java": heavyweight Eclipse JDT LS not bundled; formatting and linting handled directly via google-java-format and Checkstyle.
-    // - "kotlin": standalone Kotlin language server not integrated; formatting and linting handled directly via ktlint.
     let documented_exemptions: &[(&str, &str)] = &[
       (
         "markdown",
@@ -597,7 +586,6 @@ mod tests {
       .map(|(name, _)| *name)
       .collect();
 
-    // Ensure all documented exemptions are valid registered surfaces
     for &(exempt_name, _) in documented_exemptions {
       assert!(
         registered_names.contains(exempt_name),
@@ -618,14 +606,12 @@ mod tests {
     let child_lsp_set: HashSet<&str> =
       child_lsp_surfaces.iter().copied().collect();
 
-    // No duplicate entries in CHILD_LSP_REGISTRY
     assert_eq!(
       child_lsp_surfaces.len(),
       child_lsp_set.len(),
       "CHILD_LSP_REGISTRY contains duplicate surface names"
     );
 
-    // Every entry in CHILD_LSP_REGISTRY is a recognized surface
     for &surface_name in &child_lsp_surfaces {
       assert!(
         registered_names.contains(surface_name),
@@ -633,7 +619,6 @@ mod tests {
       );
     }
 
-    // Ensure no overlap between active child LSPs and exemptions
     for &surface_name in &child_lsp_surfaces {
       assert!(
         !exemption_names.contains(surface_name),
@@ -641,7 +626,6 @@ mod tests {
       );
     }
 
-    // Every registered surface must either have a child LSP or be explicitly exempt
     for &name in &registered_names {
       let has_child_lsp = child_lsp_set.contains(name);
       let is_exempt = exemption_names.contains(name);
@@ -669,7 +653,6 @@ mod tests {
       }
     }
 
-    // Exhaustive partition: CHILD_LSP_REGISTRY + exemptions == all registered surfaces
     assert_eq!(
       child_lsp_surfaces.len() + documented_exemptions.len(),
       reg.len(),

@@ -15,6 +15,7 @@ use std::fs;
 use std::path::{Path, PathBuf};
 
 impl FormalityConfig {
+  /// Constructs an empty [`FormalityConfig`] with no global or language overrides.
   #[must_use]
   pub fn empty() -> Self {
     Self {
@@ -23,6 +24,7 @@ impl FormalityConfig {
     }
   }
 
+  /// Constructs a [`FormalityConfig`] initialized with standard global default settings.
   #[must_use]
   pub fn with_defaults() -> Self {
     Self {
@@ -57,6 +59,7 @@ impl FormalityConfig {
     Self::parse_str(&content, path)
   }
 
+  /// Merges `other` configuration settings into `self`.
   pub fn merge(&mut self, other: FormalityConfig) {
     if let Some(other_global) = other.global {
       if let Some(ref mut our_global) = self.global {
@@ -75,6 +78,7 @@ impl FormalityConfig {
     }
   }
 
+  /// Resolves the global configuration settings.
   #[must_use]
   pub fn resolve_global(&self) -> ResolvedGlobalConfig {
     let base = GlobalConfig::default();
@@ -129,6 +133,7 @@ impl FormalityConfig {
     }
   }
 
+  /// Resolves effective configuration settings for a specific named language surface.
   #[must_use]
   pub fn resolve_for_lang(&self, lang_name: &str) -> ResolvedLangConfig {
     let global = self.resolve_global();
@@ -345,6 +350,7 @@ impl FormalityConfig {
     out
   }
 }
+/// Searches parent directories starting from `start_dir` for project config files (`formality.toml` / `.formality.toml`).
 #[must_use]
 pub fn find_project_config(start_dir: &Path) -> Option<PathBuf> {
   let mut current = if start_dir.is_file() {

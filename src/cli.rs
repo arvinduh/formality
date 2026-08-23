@@ -1,6 +1,7 @@
 use clap::{Parser, Subcommand};
 use std::path::PathBuf;
 
+/// Top-level command-line arguments parser for formality.
 #[derive(Parser, Debug)]
 #[command(
   name = "fml",
@@ -18,10 +19,12 @@ pub struct Cli {
   #[arg(short = 'w', long, global = true, value_name = "DIR")]
   pub root: Option<PathBuf>,
 
+  /// The subcommand to execute.
   #[command(subcommand)]
   pub command: Commands,
 }
 
+/// Available subcommands for formality CLI.
 #[derive(Subcommand, Debug)]
 pub enum Commands {
   /// Format source files across detected or specified surfaces
@@ -175,11 +178,13 @@ pub enum Commands {
 
   /// Migrate project files to match the current formality release
   Migrate {
+    /// Which migration to run.
     #[command(subcommand)]
     command: MigrateCommands,
   },
 }
 
+/// Subcommands of `fml migrate`.
 #[derive(Subcommand, Debug)]
 pub enum MigrateCommands {
   /// Rewrite the `#:schema` directive in formality.toml / .formality.toml to

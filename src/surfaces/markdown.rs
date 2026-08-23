@@ -9,15 +9,22 @@ use serde::{Deserialize, Serialize};
 use std::path::{Path, PathBuf};
 use std::time::Instant;
 
+/// Native `.prettierrc.json` configuration representation for Markdown formatting.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "camelCase")]
 pub struct PrettierConfig {
+  /// Warning comment field.
   #[serde(rename = "$comment")]
   pub comment: String,
+  /// Indentation tab width in spaces.
   pub tab_width: usize,
+  /// Maximum print width limit.
   pub print_width: usize,
+  /// Whether tab indentation is enabled.
   pub use_tabs: bool,
+  /// End of line newline style.
   pub end_of_line: String,
+  /// Prose wrapping strategy string.
   pub prose_wrap: String,
 }
 
@@ -47,23 +54,33 @@ impl NativeConfig for PrettierConfig {
   }
 }
 
+/// Comment field container for markdownlint config.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct MarkdownlintComment {
+  /// Comment description string.
   pub description: String,
 }
 
+/// MD013 (line length) rule options for markdownlint.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct MarkdownlintMd013 {
+  /// Maximum line length allowed.
   pub line_length: usize,
+  /// Whether to check code blocks.
   pub code_blocks: bool,
+  /// Whether to check tables.
   pub tables: bool,
 }
 
+/// Native `.markdownlint.json` configuration representation for Markdown linting.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct MarkdownlintConfig {
+  /// Warning comment header block.
   #[serde(rename = "$comment")]
   pub comment: MarkdownlintComment,
+  /// Default rule enablement setting.
   pub default: bool,
+  /// MD013 line length rule settings.
   #[serde(rename = "MD013")]
   pub md013: MarkdownlintMd013,
 }
@@ -90,6 +107,7 @@ impl NativeConfig for MarkdownlintConfig {
   }
 }
 
+/// Builds argument vector for markdownlint-cli2 invocation.
 #[must_use]
 pub fn build_markdownlint_args(
   files: &[PathBuf],
@@ -107,6 +125,7 @@ pub fn build_markdownlint_args(
   args
 }
 
+/// Builds argument vector for prettier format invocation.
 #[must_use]
 pub fn build_prettier_fmt_args(
   files: &[PathBuf],
@@ -120,6 +139,7 @@ pub fn build_prettier_fmt_args(
   args
 }
 
+/// Markdown language surface implementation.
 #[derive(Debug, Default, Clone, Copy)]
 pub struct MarkdownSurface;
 
@@ -395,6 +415,7 @@ impl LanguageSurface for MarkdownSurface {
   }
 }
 
+/// Synchronizes `.prettierrc.json` native configuration for Markdown and JSON surfaces.
 #[must_use]
 pub fn sync_prettier_config(
   ctx: &ExecutionContext,
@@ -406,6 +427,7 @@ pub fn sync_prettier_config(
 }
 
 #[cfg(test)]
+#[allow(missing_docs, clippy::missing_errors_doc, clippy::missing_panics_doc)]
 mod tests {
   use super::*;
   use crate::config::{ResolvedGlobalConfig, ResolvedLangConfig};

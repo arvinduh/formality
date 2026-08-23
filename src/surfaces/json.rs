@@ -7,6 +7,7 @@ use super::{
 use std::path::Path;
 use std::time::Instant;
 
+/// JSON language surface implementation.
 #[derive(Debug, Default, Clone, Copy)]
 pub struct JsonSurface;
 
@@ -193,6 +194,7 @@ impl LanguageSurface for JsonSurface {
 }
 
 #[cfg(test)]
+#[allow(missing_docs, clippy::missing_errors_doc, clippy::missing_panics_doc)]
 mod tests {
   use super::*;
   use crate::config::{ResolvedGlobalConfig, ResolvedLangConfig};

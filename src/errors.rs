@@ -108,12 +108,16 @@ impl std::error::Error for GitError {}
 /// Error indicating a required binary tool for a surface is missing.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ToolMissingError {
+  /// Name of the missing executable binary.
   pub binary: String,
+  /// Name of the associated language surface.
   pub surface: String,
+  /// Optional installation hint/instruction for installing the missing binary.
   pub install_hint: Option<String>,
 }
 
 impl ToolMissingError {
+  /// Constructs a new [`ToolMissingError`].
   #[must_use]
   pub fn new(
     binary: impl Into<String>,
@@ -150,11 +154,26 @@ pub enum SurfaceError {
   /// Surface requested by name was not recognized in the registry.
   UnknownSurface(String),
   /// Serialization of native surface configuration failed.
-  SerializationFailed { surface: String, message: String },
+  SerializationFailed {
+    /// Surface name.
+    surface: String,
+    /// Detailed failure message.
+    message: String,
+  },
   /// Execution of tool within surface failed.
-  ExecutionFailed { surface: String, message: String },
+  ExecutionFailed {
+    /// Surface name.
+    surface: String,
+    /// Detailed failure message.
+    message: String,
+  },
   /// Generic surface error message.
-  Other { surface: String, message: String },
+  Other {
+    /// Surface name.
+    surface: String,
+    /// Detailed failure message.
+    message: String,
+  },
 }
 
 impl fmt::Display for SurfaceError {
@@ -182,11 +201,14 @@ impl std::error::Error for SurfaceError {}
 /// Standard IO error wrapper with optional path context.
 #[derive(Debug)]
 pub struct IoError {
+  /// File or directory path associated with the IO operation, if known.
   pub path: Option<PathBuf>,
+  /// Underlying standard IO error.
   pub source: std::io::Error,
 }
 
 impl IoError {
+  /// Constructs a new [`IoError`] with optional path context.
   #[must_use]
   pub fn new(path: Option<PathBuf>, source: std::io::Error) -> Self {
     Self { path, source }
@@ -323,6 +345,7 @@ impl From<&FormalityError> for ExitStatus {
 pub type Result<T, E = FormalityError> = std::result::Result<T, E>;
 
 #[cfg(test)]
+#[allow(missing_docs, clippy::missing_errors_doc, clippy::missing_panics_doc)]
 mod tests {
   use super::*;
 

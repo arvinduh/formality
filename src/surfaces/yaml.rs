@@ -8,38 +8,54 @@ use serde::{Deserialize, Serialize};
 use std::path::Path;
 use std::time::Instant;
 
+/// Toggle state enum for yamllint rules (`"enable"` or `"disable"`).
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "lowercase")]
 pub enum YamllintRuleToggle {
+  /// Enable rule.
   Enable,
+  /// Disable rule.
   Disable,
 }
 
+/// Line length rule parameters for yamllint.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct YamllintLineLengthRule {
+  /// Maximum line length limit.
   pub max: usize,
 }
 
+/// Indentation rule parameters for yamllint.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct YamllintIndentationRule {
+  /// Number of spaces per indent level.
   pub spaces: usize,
+  /// Whether to indent sequence items.
   #[serde(rename = "indent-sequences")]
   pub indent_sequences: bool,
 }
 
+/// Rules configuration subsection for `.yamllint.yaml`.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct YamllintRulesConfig {
+  /// Line length rule options.
   #[serde(rename = "line-length")]
   pub line_length: YamllintLineLengthRule,
+  /// Indentation rule options.
   pub indentation: YamllintIndentationRule,
+  /// Document start marker rule toggle.
   #[serde(rename = "document-start")]
   pub document_start: YamllintRuleToggle,
+  /// Boolean truthy check rule toggle.
   pub truthy: YamllintRuleToggle,
 }
 
+/// Native `.yamllint.yaml` configuration representation for YAML linting.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct YamllintConfig {
+  /// Parent configuration preset name to extend.
   pub extends: String,
+  /// Rules configuration subsection.
   pub rules: YamllintRulesConfig,
 }
 
@@ -80,6 +96,7 @@ impl NativeConfig for YamllintConfig {
   }
 }
 
+/// YAML language surface implementation.
 #[derive(Debug, Default, Clone, Copy)]
 pub struct YamlSurface;
 
@@ -335,6 +352,7 @@ impl LanguageSurface for YamlSurface {
 }
 
 #[cfg(test)]
+#[allow(missing_docs, clippy::missing_errors_doc, clippy::missing_panics_doc)]
 mod tests {
   use super::*;
   use crate::config::{ResolvedGlobalConfig, ResolvedLangConfig};

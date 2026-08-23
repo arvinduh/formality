@@ -10,18 +10,27 @@ use std::time::Instant;
 
 // Directly mirrors Taplo's upstream native schema formatting flags.
 #[allow(clippy::struct_excessive_bools)]
+/// Formatting section for `taplo.toml`.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct TaploFormattingConfig {
+  /// Whether to align entries across lines.
   pub align_entries: bool,
+  /// Target column width for wrapping.
   pub column_width: usize,
+  /// Whether to indent table entry keys.
   pub indent_entries: bool,
+  /// String sequence used for indentation (spaces or tabs).
   pub indent_string: String,
+  /// Whether to indent table contents.
   pub indent_tables: bool,
+  /// Whether to use CRLF line endings.
   pub crlf: bool,
 }
 
+/// Native `taplo.toml` configuration representation for TOML formatting.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct TaploConfig {
+  /// Formatting configuration subsection.
   pub formatting: TaploFormattingConfig,
 }
 
@@ -54,6 +63,7 @@ impl NativeConfig for TaploConfig {
   }
 }
 
+/// TOML language surface implementation.
 #[derive(Debug, Default, Clone, Copy)]
 pub struct TomlSurface;
 
@@ -307,6 +317,7 @@ impl LanguageSurface for TomlSurface {
 }
 
 #[cfg(test)]
+#[allow(missing_docs, clippy::missing_errors_doc, clippy::missing_panics_doc)]
 mod tests {
   use super::*;
   use crate::config::ResolvedGlobalConfig;

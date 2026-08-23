@@ -1,9 +1,11 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "title": "FormalityConfig",
+  "description": "Root formality configuration structure matching `formality.toml`.",
   "type": "object",
   "properties": {
     "global": {
+      "description": "Global defaults block (`[global]`).",
       "anyOf": [
         {
           "$ref": "#/$defs/GlobalConfig"
@@ -14,6 +16,7 @@
       ]
     },
     "lang": {
+      "description": "Per-language surface configuration map (`[lang.<name>]`).",
       "type": "object",
       "additionalProperties": {
         "$ref": "#/$defs/LangConfig"
@@ -26,63 +29,78 @@
       "type": "object",
       "properties": {
         "based_on_style": {
+          "description": "Base clang-format style (e.g. `\"Google\"`).",
           "type": ["string", "null"]
         },
         "break_before_braces": {
+          "description": "Brace breaking style.",
           "type": ["string", "null"]
         },
         "column_limit": {
+          "description": "Column limit for line wrapping.",
           "type": ["integer", "null"],
           "format": "uint",
           "minimum": 0
         },
         "pointer_alignment": {
+          "description": "Pointer alignment style (`\"Left\"`, `\"Right\"`, or `\"Middle\"`).",
           "type": ["string", "null"]
         },
         "sort_includes": {
+          "description": "Whether to sort `#include` directives alphabetically.",
           "type": ["boolean", "null"]
         },
         "standard": {
+          "description": "C++ language standard version (e.g. `\"c++20\"`).",
           "type": ["string", "null"]
         }
       }
     },
     "GlobalConfig": {
+      "description": "Global default settings applicable across all language surfaces.",
       "type": "object",
       "properties": {
         "charset": {
+          "description": "Default file encoding charset (e.g. `\"utf-8\"`).",
           "type": ["string", "null"]
         },
         "end_of_line": {
+          "description": "Default line ending format (`\"lf\"` or `\"crlf\"`).",
           "type": ["string", "null"]
         },
         "exclude": {
+          "description": "Global file path exclude patterns.",
           "type": "array",
           "items": {
             "type": "string"
           }
         },
         "ignore_languages": {
+          "description": "List of language surface names to ignore/skip.",
           "type": ["array", "null"],
           "items": {
             "type": "string"
           }
         },
         "indent_size": {
+          "description": "Default indentation width (spaces).",
           "type": ["integer", "null"],
           "format": "uint",
           "minimum": 0
         },
         "insert_final_newline": {
+          "description": "Whether files should end with a trailing newline.",
           "type": ["boolean", "null"]
         },
         "languages": {
+          "description": "Explicit list of active language surface names to manage.",
           "type": ["array", "null"],
           "items": {
             "type": "string"
           }
         },
         "layout": {
+          "description": "Optional layout facet settings override.",
           "anyOf": [
             {
               "$ref": "#/$defs/LayoutFacet"
@@ -93,14 +111,17 @@
           ]
         },
         "line_length": {
+          "description": "Default maximum line length.",
           "type": ["integer", "null"],
           "format": "uint",
           "minimum": 0
         },
         "trim_trailing_whitespace": {
+          "description": "Whether trailing whitespace on lines should be trimmed.",
           "type": ["boolean", "null"]
         },
         "use_tabs": {
+          "description": "Whether to use tabs instead of spaces for indentation.",
           "type": ["boolean", "null"]
         }
       }
@@ -137,15 +158,19 @@
       "type": "object",
       "properties": {
         "organize_imports": {
+          "description": "Whether to automatically organize import statements.",
           "type": ["boolean", "null"]
         },
         "quote_style": {
+          "description": "Preferred string quote style (`\"single\"` or `\"double\"`).",
           "type": ["string", "null"]
         },
         "semicolons": {
+          "description": "Semicolon policy (`\"always\"` or `\"as-needed\"`).",
           "type": ["string", "null"]
         },
         "trailing_comma": {
+          "description": "Trailing comma policy (`\"all\"`, `\"es5\"`, or `\"none\"`).",
           "type": ["string", "null"]
         }
       }
@@ -159,9 +184,11 @@
       "type": "object"
     },
     "LangConfig": {
+      "description": "Per-language configuration section (`[lang.<surface>]`).",
       "type": "object",
       "properties": {
         "cpp": {
+          "description": "C/C++ surface specific options.",
           "anyOf": [
             {
               "$ref": "#/$defs/CppOptions"
@@ -172,30 +199,36 @@
           ]
         },
         "enabled": {
+          "description": "Whether this language surface is enabled.",
           "type": ["boolean", "null"]
         },
         "exclude": {
+          "description": "Explicit file pattern exclusions for this surface.",
           "type": ["array", "null"],
           "items": {
             "type": "string"
           }
         },
         "extra_args": {
+          "description": "Additional command-line arguments to pass to the underlying tool.",
           "type": ["array", "null"],
           "items": {
             "type": "string"
           }
         },
         "files": {
+          "description": "Explicit file pattern inclusions for this surface.",
           "type": ["array", "null"],
           "items": {
             "type": "string"
           }
         },
         "format_tool": {
+          "description": "Custom formatter tool binary or command name override.",
           "type": ["string", "null"]
         },
         "go": {
+          "description": "Go surface specific options.",
           "anyOf": [
             {
               "$ref": "#/$defs/GoOptions"
@@ -206,11 +239,13 @@
           ]
         },
         "indent_size": {
+          "description": "Per-language indentation size override.",
           "type": ["integer", "null"],
           "format": "uint",
           "minimum": 0
         },
         "java": {
+          "description": "Java surface specific options.",
           "anyOf": [
             {
               "$ref": "#/$defs/JavaOptions"
@@ -221,6 +256,7 @@
           ]
         },
         "javascript": {
+          "description": "JavaScript/TypeScript surface specific options.",
           "anyOf": [
             {
               "$ref": "#/$defs/JavaScriptOptions"
@@ -231,6 +267,7 @@
           ]
         },
         "json": {
+          "description": "JSON surface specific options.",
           "anyOf": [
             {
               "$ref": "#/$defs/JsonOptions"
@@ -241,6 +278,7 @@
           ]
         },
         "kotlin": {
+          "description": "Kotlin surface specific options.",
           "anyOf": [
             {
               "$ref": "#/$defs/KotlinOptions"
@@ -251,6 +289,7 @@
           ]
         },
         "layout": {
+          "description": "Surface layout facet configuration.",
           "anyOf": [
             {
               "$ref": "#/$defs/LayoutFacet"
@@ -261,14 +300,17 @@
           ]
         },
         "line_length": {
+          "description": "Per-language line length override.",
           "type": ["integer", "null"],
           "format": "uint",
           "minimum": 0
         },
         "lint_tool": {
+          "description": "Custom linter tool binary or command name override.",
           "type": ["string", "null"]
         },
         "markdown": {
+          "description": "Markdown surface specific options.",
           "anyOf": [
             {
               "$ref": "#/$defs/MarkdownOptions"
@@ -279,9 +321,11 @@
           ]
         },
         "prose_wrap": {
+          "description": "Prose wrapping strategy (for Markdown, etc.).",
           "type": ["string", "null"]
         },
         "python": {
+          "description": "Python surface specific options.",
           "anyOf": [
             {
               "$ref": "#/$defs/PythonOptions"
@@ -292,6 +336,7 @@
           ]
         },
         "rust": {
+          "description": "Rust surface specific options.",
           "anyOf": [
             {
               "$ref": "#/$defs/RustOptions"
@@ -302,6 +347,7 @@
           ]
         },
         "toml": {
+          "description": "TOML surface specific options.",
           "anyOf": [
             {
               "$ref": "#/$defs/TomlOptions"
@@ -312,6 +358,7 @@
           ]
         },
         "typst": {
+          "description": "Typst surface specific options.",
           "anyOf": [
             {
               "$ref": "#/$defs/TypstOptions"
@@ -322,9 +369,11 @@
           ]
         },
         "use_tabs": {
+          "description": "Whether to use tabs for indentation in this surface.",
           "type": ["boolean", "null"]
         },
         "yaml": {
+          "description": "YAML surface specific options.",
           "anyOf": [
             {
               "$ref": "#/$defs/YamlOptions"
@@ -341,19 +390,23 @@
       "type": "object",
       "properties": {
         "indent_size": {
+          "description": "Indentation size in spaces.",
           "type": ["integer", "null"],
           "format": "uint",
           "minimum": 0
         },
         "line_length": {
+          "description": "Maximum line length limit.",
           "type": ["integer", "null"],
           "format": "uint",
           "minimum": 0
         },
         "prose_wrap": {
+          "description": "Prose wrapping strategy string.",
           "type": ["string", "null"]
         },
         "use_tabs": {
+          "description": "Whether to use tabs for indentation.",
           "type": ["boolean", "null"]
         }
       }
@@ -363,6 +416,7 @@
       "type": "object",
       "properties": {
         "prose_wrap": {
+          "description": "Prose wrapping strategy string (`\"always\"`, `\"never\"`, or `\"preserve\"`).",
           "type": ["string", "null"]
         }
       }
@@ -372,9 +426,11 @@
       "type": "object",
       "properties": {
         "quote_style": {
+          "description": "Quote style for strings (`\"single\"` or `\"double\"`).",
           "type": ["string", "null"]
         },
         "target_version": {
+          "description": "Python target version (e.g. `\"py310\"`).",
           "type": ["string", "null"]
         }
       }
@@ -384,9 +440,11 @@
       "type": "object",
       "properties": {
         "edition": {
+          "description": "Rust edition (e.g. `\"2021\"`).",
           "type": ["string", "null"]
         },
         "version": {
+          "description": "Rustfmt version.",
           "type": ["string", "null"]
         }
       }
@@ -404,12 +462,15 @@
       "type": "object",
       "properties": {
         "document_start": {
+          "description": "Whether to require `---` document start markers.",
           "type": ["boolean", "null"]
         },
         "indent_sequence": {
+          "description": "Whether to indent sequence items under mapping keys.",
           "type": ["boolean", "null"]
         },
         "truthy": {
+          "description": "Whether to enforce strict boolean truthy values.",
           "type": ["boolean", "null"]
         }
       }

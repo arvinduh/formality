@@ -7,6 +7,10 @@ use crate::config::{
 use crate::errors::{ExitStatus, FormalityError, IoError};
 use crate::surfaces::detect_surfaces_smart;
 
+/// Runs the `fml init` command: writes a starter config file (`formality.toml`
+/// by default, or the dotfile variant with `hidden`) pre-populated with the
+/// auto-detected surfaces, refusing to overwrite an existing config unless
+/// `force` is set.
 pub fn run_init(
   root: &Path,
   config: &FormalityConfig,

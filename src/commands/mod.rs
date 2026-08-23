@@ -1,15 +1,26 @@
 //! Standalone command implementations for the Formality CLI.
 
+/// Doctor diagnostic commands for workspace and toolchain verification.
 pub mod doctor;
+/// In-place autofix CLI command handler.
 pub mod fix;
+/// Code formatting CLI command handler.
 pub mod fmt;
+/// Configuration initialization CLI command handler.
 pub mod init;
+/// Code linting CLI command handler.
 pub mod lint;
+/// Language Server Protocol passthrough server implementation.
 pub mod lsp;
+/// Config schema-reference migration CLI command handler.
 pub mod migrate;
+/// JSON Schema generator CLI command handler.
 pub mod schema;
+/// Language surfaces inspector CLI command handler.
 pub mod surfaces;
+/// Native configuration synchronization CLI command handler.
 pub mod sync;
+/// Output table formatting helper CLI command.
 pub mod table;
 
 use std::path::{Path, PathBuf};
@@ -23,6 +34,8 @@ use crate::surfaces::{
   get_surface_by_name,
 };
 
+/// Prints a warning that one or more required tools failed to auto-install,
+/// so the affected language(s) may have been skipped for this `verb`.
 pub fn warn_tool_install_failed(verb: &str) {
   eprintln!(
     "{} One or more required tools failed to install automatically; {verb} may be skipped for affected languages.",
@@ -30,6 +43,14 @@ pub fn warn_tool_install_failed(verb: &str) {
   );
 }
 
+/// Resolves the target file paths for a command from its `--staged`/
+/// `--changed`/explicit-path flags. `staged` and `changed` are mutually
+/// exclusive; if neither is set, `explicit_paths` is returned as-is.
+///
+/// # Errors
+///
+/// Returns a [`FormalityError`] if both `staged` and `changed` are set, or if
+/// the underlying git query fails.
 pub fn resolve_git_paths(
   root: &Path,
   staged: bool,
@@ -102,6 +123,15 @@ pub fn get_git_changed_files(
   get_git_diff_files(root, false, "changed")
 }
 
+/// Resolves which language surfaces a command should act on: an explicit
+/// `lang_filter` wins outright, otherwise surfaces are narrowed to those with
+/// matching files under `paths`, falling back to full smart detection when
+/// neither is given.
+///
+/// # Errors
+///
+/// Returns a [`FormalityError`] if `lang_filter` names a surface that doesn't
+/// exist.
 pub fn resolve_target_surfaces(
   root: &Path,
   lang_filter: &[String],

@@ -22,14 +22,19 @@ pub fn default_go_linters() -> Vec<String> {
   ]
 }
 
+/// Linters configuration block for `.golangci.yml`.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct GolangciLintersConfig {
+  /// Enabled linter names.
   pub enable: Vec<String>,
 }
 
+/// Native `.golangci.yml` configuration representation for Go linting.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct GolangciLintConfig {
+  /// Schema/version identifier string for golangci-lint.
   pub version: String,
+  /// Linters configuration subsection.
   pub linters: GolangciLintersConfig,
 }
 
@@ -55,6 +60,7 @@ impl NativeConfig for GolangciLintConfig {
   }
 }
 
+/// Go language surface implementation.
 #[derive(Debug, Default, Clone, Copy)]
 pub struct GoSurface;
 
@@ -77,6 +83,7 @@ impl DeclaresFacets for GoSurface {
   }
 }
 
+/// Standard file extensions recognized for Go source files.
 pub const GO_EXTENSIONS: &[&str] = &["go"];
 
 /// Builds the argument list for `golangci-lint run`. Mirrors the
@@ -416,6 +423,7 @@ impl LanguageSurface for GoSurface {
 }
 
 #[cfg(test)]
+#[allow(missing_docs, clippy::missing_errors_doc, clippy::missing_panics_doc)]
 mod tests {
   use super::*;
   use crate::config::{GoOptions, ResolvedGlobalConfig, ResolvedLangConfig};

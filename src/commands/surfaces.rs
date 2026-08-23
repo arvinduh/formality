@@ -6,6 +6,8 @@ use crate::errors::ExitStatus;
 use crate::surfaces::{all_surfaces, detect_surfaces_smart};
 use crate::ui::table;
 
+/// Runs the `fml surfaces` command: prints every supported language surface
+/// with its active/inactive status and any aliases.
 pub fn run_surfaces(root: &Path, config: &FormalityConfig) -> ExitStatus {
   let detected = detect_surfaces_smart(root, config);
   let detected_names: Vec<&str> = detected.iter().map(|s| s.name()).collect();

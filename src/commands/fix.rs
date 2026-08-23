@@ -7,6 +7,8 @@ use crate::config::FormalityConfig;
 use crate::engine::{Runner, RunnerAction};
 use crate::errors::ExitStatus;
 
+/// Runs the `fml fix` command: applies automatic lint fixes to the resolved
+/// target surfaces, optionally installing missing tools first.
 pub fn run_fix(
   root: &Path,
   config: &FormalityConfig,

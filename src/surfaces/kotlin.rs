@@ -7,6 +7,7 @@ use super::{
 use std::path::Path;
 use std::time::Instant;
 
+/// Kotlin language surface implementation.
 #[derive(Debug, Default, Clone, Copy)]
 pub struct KotlinSurface;
 
@@ -32,6 +33,7 @@ impl DeclaresFacets for KotlinSurface {
   }
 }
 
+/// Standard file extensions recognized for Kotlin source files.
 pub const KOTLIN_EXTENSIONS: &[&str] = &["kt", "kts"];
 
 /// Builds the argument list for an in-place ktlint format ("Smart Format")
@@ -316,6 +318,7 @@ impl LanguageSurface for KotlinSurface {
 }
 
 #[cfg(test)]
+#[allow(missing_docs, clippy::missing_errors_doc, clippy::missing_panics_doc)]
 mod tests {
   use super::*;
   use crate::config::{ResolvedGlobalConfig, ResolvedLangConfig};

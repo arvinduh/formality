@@ -9,13 +9,20 @@ use std::path::{Path, PathBuf};
 use std::process::Command;
 use std::time::Instant;
 
+/// Native `.rustfmt.toml` configuration representation for Rust formatting.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct RustfmtConfig {
+  /// Indentation spaces count per level.
   pub tab_spaces: usize,
+  /// Maximum line width before wrapping.
   pub max_width: usize,
+  /// Line end newline style (`"Unix"`, `"Windows"`, or `"Auto"`).
   pub newline_style: String,
+  /// Small heuristics formatting setting.
   pub use_small_heuristics: String,
+  /// Target Rust edition.
   pub edition: String,
+  /// Whether to reorder import statements.
   pub reorder_imports: bool,
 }
 
@@ -53,6 +60,7 @@ impl NativeConfig for RustfmtConfig {
   }
 }
 
+/// Rust language surface implementation.
 #[derive(Debug, Default, Clone, Copy)]
 pub struct RustSurface;
 
@@ -72,6 +80,7 @@ impl DeclaresFacets for RustSurface {
   }
 }
 
+/// Builds argument vector for cargo clippy invocation.
 #[must_use]
 pub fn build_clippy_args(fix: bool, extra_args: &[String]) -> Vec<String> {
   let mut args = vec!["clippy".to_string()];
@@ -370,6 +379,7 @@ impl LanguageSurface for RustSurface {
 }
 
 #[cfg(test)]
+#[allow(missing_docs, clippy::missing_errors_doc, clippy::missing_panics_doc)]
 mod tests {
   use super::*;
   use crate::config::{ResolvedGlobalConfig, ResolvedLangConfig};

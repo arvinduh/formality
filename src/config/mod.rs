@@ -1,6 +1,10 @@
+/// Formatting and linting layout facet definitions.
 pub mod facets;
+/// Per-language strongly typed formatting options.
 pub mod options;
+/// Configuration parsing, cascade merging, and path resolution.
 pub mod resolve;
+/// JSON Schema generator for formality.toml configuration validation.
 pub mod schema;
 
 pub use facets::LayoutFacet;
@@ -21,32 +25,46 @@ use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
 use std::path::PathBuf;
 
+/// Default configuration filename (`formality.toml`).
 pub const DEFAULT_CONFIG_FILE_NAME: &str = "formality.toml";
+/// Supported configuration file candidates in lookup order.
 pub const CONFIG_FILE_CANDIDATES: &[&str] =
   &["formality.toml", ".formality.toml"];
 
+/// Global default settings applicable across all language surfaces.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 pub struct GlobalConfig {
+  /// Explicit list of active language surface names to manage.
   #[serde(skip_serializing_if = "Option::is_none")]
   pub languages: Option<Vec<String>>,
+  /// List of language surface names to ignore/skip.
   #[serde(skip_serializing_if = "Option::is_none")]
   pub ignore_languages: Option<Vec<String>>,
+  /// Default indentation width (spaces).
   #[serde(skip_serializing_if = "Option::is_none")]
   pub indent_size: Option<usize>,
+  /// Default maximum line length.
   #[serde(skip_serializing_if = "Option::is_none")]
   pub line_length: Option<usize>,
+  /// Default line ending format (`"lf"` or `"crlf"`).
   #[serde(skip_serializing_if = "Option::is_none")]
   pub end_of_line: Option<String>,
+  /// Default file encoding charset (e.g. `"utf-8"`).
   #[serde(skip_serializing_if = "Option::is_none")]
   pub charset: Option<String>,
+  /// Whether files should end with a trailing newline.
   #[serde(skip_serializing_if = "Option::is_none")]
   pub insert_final_newline: Option<bool>,
+  /// Whether trailing whitespace on lines should be trimmed.
   #[serde(skip_serializing_if = "Option::is_none")]
   pub trim_trailing_whitespace: Option<bool>,
+  /// Whether to use tabs instead of spaces for indentation.
   #[serde(skip_serializing_if = "Option::is_none")]
   pub use_tabs: Option<bool>,
+  /// Optional layout facet settings override.
   #[serde(skip_serializing_if = "Option::is_none")]
   pub layout: Option<LayoutFacet>,
+  /// Global file path exclude patterns.
   #[serde(default, skip_serializing_if = "Vec::is_empty")]
   pub exclude: Vec<PathBuf>,
 }
@@ -70,6 +88,7 @@ impl Default for GlobalConfig {
 }
 
 impl GlobalConfig {
+  /// Merges values from `other` into `self`, overwriting set fields.
   pub fn merge(&mut self, other: GlobalConfig) {
     if other.languages.is_some() {
       self.languages = other.languages;
@@ -143,68 +162,95 @@ where
   }
   opts
 }
+/// Per-language configuration section (`[lang.<surface>]`).
 #[derive(
   Debug, Clone, Default, PartialEq, Serialize, Deserialize, JsonSchema,
 )]
 pub struct LangConfig {
+  /// Custom formatter tool binary or command name override.
   #[serde(skip_serializing_if = "Option::is_none")]
   pub format_tool: Option<String>,
+  /// Custom linter tool binary or command name override.
   #[serde(skip_serializing_if = "Option::is_none")]
   pub lint_tool: Option<String>,
+  /// Per-language indentation size override.
   #[serde(skip_serializing_if = "Option::is_none")]
   pub indent_size: Option<usize>,
+  /// Per-language line length override.
   #[serde(skip_serializing_if = "Option::is_none")]
   pub line_length: Option<usize>,
+  /// Whether to use tabs for indentation in this surface.
   #[serde(skip_serializing_if = "Option::is_none")]
   pub use_tabs: Option<bool>,
+  /// Prose wrapping strategy (for Markdown, etc.).
   #[serde(skip_serializing_if = "Option::is_none")]
   pub prose_wrap: Option<String>,
+  /// Whether this language surface is enabled.
   #[serde(skip_serializing_if = "Option::is_none")]
   pub enabled: Option<bool>,
+  /// Additional command-line arguments to pass to the underlying tool.
   #[serde(skip_serializing_if = "Option::is_none")]
   pub extra_args: Option<Vec<String>>,
+  /// Explicit file pattern inclusions for this surface.
   #[serde(skip_serializing_if = "Option::is_none")]
   pub files: Option<Vec<PathBuf>>,
+  /// Explicit file pattern exclusions for this surface.
   #[serde(skip_serializing_if = "Option::is_none")]
   pub exclude: Option<Vec<PathBuf>>,
+  /// Surface layout facet configuration.
   #[serde(skip_serializing_if = "Option::is_none")]
   pub layout: Option<LayoutFacet>,
+  /// Rust surface specific options.
   #[serde(skip_serializing_if = "Option::is_none")]
   pub rust: Option<RustOptions>,
+  /// Python surface specific options.
   #[serde(skip_serializing_if = "Option::is_none")]
   pub python: Option<PythonOptions>,
+  /// C/C++ surface specific options.
   #[serde(skip_serializing_if = "Option::is_none")]
   pub cpp: Option<CppOptions>,
   // NOTE: `java` is intentionally kept as its own clearly-scoped block,
   // alphabetically between `cpp` and `markdown`, to keep merges with
   // sibling language-surface additions (JS/TS, Go, Kotlin) low-conflict.
+  /// Java surface specific options.
   #[serde(skip_serializing_if = "Option::is_none")]
   pub java: Option<JavaOptions>,
+  /// Go surface specific options.
   #[serde(skip_serializing_if = "Option::is_none")]
   pub go: Option<GoOptions>,
+  /// Markdown surface specific options.
   #[serde(skip_serializing_if = "Option::is_none")]
   pub markdown: Option<MarkdownOptions>,
+  /// YAML surface specific options.
   #[serde(skip_serializing_if = "Option::is_none")]
   pub yaml: Option<YamlOptions>,
+  /// JSON surface specific options.
   #[serde(skip_serializing_if = "Option::is_none")]
   pub json: Option<JsonOptions>,
+  /// TOML surface specific options.
   #[serde(skip_serializing_if = "Option::is_none")]
   pub toml: Option<TomlOptions>,
+  /// Typst surface specific options.
   #[serde(skip_serializing_if = "Option::is_none")]
   pub typst: Option<TypstOptions>,
+  /// JavaScript/TypeScript surface specific options.
   #[serde(skip_serializing_if = "Option::is_none")]
   pub javascript: Option<JavaScriptOptions>,
+  /// Kotlin surface specific options.
   #[serde(skip_serializing_if = "Option::is_none")]
   pub kotlin: Option<KotlinOptions>,
+  /// Untyped options table for custom options.
   #[serde(skip_serializing_if = "Option::is_none")]
   #[schemars(skip)]
   pub options: Option<toml::Value>,
+  /// Extra unrecognized fields parsed from TOML.
   #[serde(default, flatten, skip_serializing_if = "BTreeMap::is_empty")]
   #[schemars(skip)]
   pub extra: BTreeMap<String, toml::Value>,
 }
 
 impl LangConfig {
+  /// Merges `other` configuration settings into `self`.
   pub fn merge(&mut self, other: LangConfig) {
     if other.format_tool.is_some() {
       self.format_tool = other.format_tool;
@@ -271,6 +317,7 @@ impl LangConfig {
     }
   }
 
+  /// Extracts resolved [`RustOptions`].
   #[must_use]
   pub fn rust_options(&self) -> Option<RustOptions> {
     extract_options(
@@ -282,6 +329,7 @@ impl LangConfig {
     )
   }
 
+  /// Extracts resolved [`PythonOptions`].
   #[must_use]
   pub fn python_options(&self) -> Option<PythonOptions> {
     extract_options(
@@ -293,6 +341,7 @@ impl LangConfig {
     )
   }
 
+  /// Extracts resolved [`CppOptions`].
   #[must_use]
   pub fn cpp_options(&self) -> Option<CppOptions> {
     extract_options(
@@ -304,6 +353,7 @@ impl LangConfig {
     )
   }
 
+  /// Extracts resolved [`JavaOptions`].
   #[must_use]
   pub fn java_options(&self) -> Option<JavaOptions> {
     extract_options(
@@ -315,6 +365,7 @@ impl LangConfig {
     )
   }
 
+  /// Extracts resolved [`GoOptions`].
   #[must_use]
   pub fn go_options(&self) -> Option<GoOptions> {
     extract_options(
@@ -326,6 +377,7 @@ impl LangConfig {
     )
   }
 
+  /// Extracts resolved [`MarkdownOptions`].
   #[must_use]
   pub fn markdown_options(&self) -> Option<MarkdownOptions> {
     let mut opts = extract_options(
@@ -351,6 +403,7 @@ impl LangConfig {
     opts
   }
 
+  /// Extracts resolved [`YamlOptions`].
   #[must_use]
   pub fn yaml_options(&self) -> Option<YamlOptions> {
     extract_options(
@@ -362,6 +415,7 @@ impl LangConfig {
     )
   }
 
+  /// Extracts resolved [`JsonOptions`].
   #[must_use]
   pub fn json_options(&self) -> Option<JsonOptions> {
     extract_options(
@@ -373,6 +427,7 @@ impl LangConfig {
     )
   }
 
+  /// Extracts resolved [`TomlOptions`].
   #[must_use]
   pub fn toml_options(&self) -> Option<TomlOptions> {
     extract_options(
@@ -384,6 +439,7 @@ impl LangConfig {
     )
   }
 
+  /// Extracts resolved [`TypstOptions`].
   #[must_use]
   pub fn typst_options(&self) -> Option<TypstOptions> {
     extract_options(
@@ -395,6 +451,7 @@ impl LangConfig {
     )
   }
 
+  /// Extracts resolved [`JavaScriptOptions`].
   #[must_use]
   pub fn javascript_options(&self) -> Option<JavaScriptOptions> {
     extract_options(
@@ -406,6 +463,7 @@ impl LangConfig {
     )
   }
 
+  /// Extracts resolved [`KotlinOptions`].
   #[must_use]
   pub fn kotlin_options(&self) -> Option<KotlinOptions> {
     extract_options(
@@ -418,28 +476,43 @@ impl LangConfig {
   }
 }
 
+/// Root formality configuration structure matching `formality.toml`.
 #[derive(
   Debug, Clone, Default, PartialEq, Serialize, Deserialize, JsonSchema,
 )]
 pub struct FormalityConfig {
+  /// Global defaults block (`[global]`).
   #[serde(skip_serializing_if = "Option::is_none")]
   pub global: Option<GlobalConfig>,
+  /// Per-language surface configuration map (`[lang.<name>]`).
   #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
   pub lang: BTreeMap<String, LangConfig>,
 }
 
+/// Fully resolved global configuration with all default fallbacks applied.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ResolvedGlobalConfig {
+  /// Explicit active languages, if specified.
   pub languages: Option<Vec<String>>,
+  /// Ignored languages list, if specified.
   pub ignore_languages: Option<Vec<String>>,
+  /// Effective indentation size.
   pub indent_size: usize,
+  /// Effective line length limit.
   pub line_length: usize,
+  /// Effective line ending style.
   pub end_of_line: String,
+  /// Effective character encoding charset.
   pub charset: String,
+  /// Effective trailing newline requirement.
   pub insert_final_newline: bool,
+  /// Effective trailing whitespace trimming requirement.
   pub trim_trailing_whitespace: bool,
+  /// Whether tab indentation is enabled.
   pub use_tabs: bool,
+  /// Synthesized layout facet.
   pub layout: LayoutFacet,
+  /// Resolved global exclude file paths.
   pub exclude: Vec<PathBuf>,
 }
 
@@ -449,52 +522,87 @@ impl Default for ResolvedGlobalConfig {
   }
 }
 
+/// Fully resolved per-language surface configuration.
 #[derive(Debug, Clone, PartialEq)]
 pub struct ResolvedLangConfig {
+  /// Surface identifier name.
   pub name: String,
+  /// Selected formatting tool binary.
   pub format_tool: Option<String>,
+  /// Selected linting tool binary.
   pub lint_tool: Option<String>,
-  pub indent_size: usize,
+  /// Resolved indentation size.
   pub line_length: usize,
+  /// Resolved line length.
+  pub indent_size: usize,
+  /// Whether tab indentation is enabled.
   pub use_tabs: bool,
+  /// Resolved prose wrap strategy.
   pub prose_wrap: Option<String>,
+  /// Resolved surface layout facet.
   pub layout: LayoutFacet,
+  /// Whether this language surface is active/enabled.
   pub enabled: bool,
+  /// Extra CLI arguments for tools.
   pub extra_args: Vec<String>,
+  /// Targeted file path inclusions.
   pub files: Vec<PathBuf>,
+  /// Excluded file paths.
   pub exclude: Vec<PathBuf>,
+  /// Resolved Rust surface options.
   pub rust: Option<RustOptions>,
+  /// Resolved Python surface options.
   pub python: Option<PythonOptions>,
+  /// Resolved C/C++ surface options.
   pub cpp: Option<CppOptions>,
+  /// Resolved Java surface options.
   pub java: Option<JavaOptions>,
+  /// Resolved Go surface options.
   pub go: Option<GoOptions>,
+  /// Resolved Markdown surface options.
   pub markdown: Option<MarkdownOptions>,
+  /// Resolved YAML surface options.
   pub yaml: Option<YamlOptions>,
+  /// Resolved JSON surface options.
   pub json: Option<JsonOptions>,
+  /// Resolved TOML surface options.
   pub toml: Option<TomlOptions>,
+  /// Resolved Typst surface options.
   pub typst: Option<TypstOptions>,
+  /// Resolved JavaScript/TypeScript surface options.
   pub javascript: Option<JavaScriptOptions>,
+  /// Resolved Kotlin surface options.
   pub kotlin: Option<KotlinOptions>,
+  /// Extra key-value options.
   pub extra: BTreeMap<String, toml::Value>,
 }
 
 impl ResolvedLangConfig {
+  /// Creates a [`ResolvedLangConfig`] with default settings for the named surface.
   #[must_use]
   pub fn new(name: &str) -> Self {
     FormalityConfig::with_defaults().resolve_for_lang(name)
   }
 }
 
+/// Errors occurring during configuration loading, parsing, or validation.
 #[derive(Debug)]
 pub enum ConfigError {
+  /// File system IO error while reading configuration file.
   Io {
+    /// File path where IO error occurred.
     path: PathBuf,
+    /// Underlying IO error.
     source: std::io::Error,
   },
+  /// TOML deserialization or syntax error.
   Parse {
+    /// File path where parse error occurred.
     path: PathBuf,
+    /// Underlying TOML error.
     source: toml::de::Error,
   },
+  /// Logical or validation configuration error.
   Invalid(String),
 }
 
@@ -525,4 +633,5 @@ impl std::fmt::Display for ConfigError {
 impl std::error::Error for ConfigError {}
 
 #[cfg(test)]
+#[allow(missing_docs, clippy::missing_errors_doc, clippy::missing_panics_doc)]
 mod tests;

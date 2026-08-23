@@ -131,15 +131,22 @@ pub fn preflight_install(
   install_missing_tools(&missing)
 }
 
+/// Result of probing system installation and compatibility for a tool binary.
 pub struct ToolLookupResult {
+  /// Whether the binary was found on system PATH.
   pub is_installed: bool,
+  /// Path to the binary executable if found.
   pub path: Option<String>,
+  /// Raw version output string from `--version`.
   pub raw_version: Option<String>,
+  /// Parsed semver version structure.
   pub parsed_version: Option<Version>,
+  /// Compatibility status relative to MSTV.
   pub status: Option<ToolStatus>,
 }
 use crate::errors::ExitStatus;
 
+/// Executes the `fml doctor` diagnostic command to scan tools, environment, and hygiene.
 #[must_use]
 pub fn run_doctor(
   root: &Path,
@@ -548,4 +555,5 @@ fn print_schema_version_check(root: &Path, separator: &str) {
 }
 
 #[cfg(test)]
+#[allow(missing_docs, clippy::missing_errors_doc, clippy::missing_panics_doc)]
 mod tests;

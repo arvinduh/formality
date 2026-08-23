@@ -2,18 +2,27 @@
 
 use std::path::{Path, PathBuf};
 
+/// Indicates the origin of a detected Python virtual environment.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum VirtualEnvSource {
+  /// Virtual environment specified via `VIRTUAL_ENV` environment variable.
   EnvVar,
+  /// Virtual environment directory discovered within the workspace.
   Workspace(String),
+  /// No virtual environment detected.
   None,
 }
 
+/// Metadata about a detected Python virtual environment.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct VirtualEnvInfo {
+  /// Whether the virtual environment is currently active.
   pub is_active: bool,
+  /// Path to the virtual environment directory, if present.
   pub venv_path: Option<PathBuf>,
+  /// Path to the resolved Python interpreter executable, if present.
   pub interpreter_path: Option<PathBuf>,
+  /// Source mechanism through which the virtual environment was detected.
   pub source: VirtualEnvSource,
 }
 
@@ -45,6 +54,7 @@ pub fn detect_virtualenv(root: &Path) -> VirtualEnvInfo {
   )
 }
 
+/// Detects virtual environment status given optional explicit `VIRTUAL_ENV` path.
 #[must_use]
 pub fn detect_virtualenv_with_env(
   root: &Path,

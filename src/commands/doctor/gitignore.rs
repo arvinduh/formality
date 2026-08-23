@@ -3,15 +3,21 @@
 use crate::surfaces::LanguageSurface;
 use std::path::Path;
 
+/// Represents a missing `.gitignore` pattern category for a language surface.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct GitignoreHygieneIssue {
+  /// Category label (e.g. "Python", "Rust").
   pub category: &'static str,
+  /// List of unignored pattern strings.
   pub missing_patterns: Vec<&'static str>,
 }
 
+/// Overall report of `.gitignore` hygiene for the workspace.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct GitignoreHygieneReport {
+  /// Indicates whether `.gitignore` file exists in workspace root.
   pub gitignore_exists: bool,
+  /// Collection of identified hygiene issues.
   pub issues: Vec<GitignoreHygieneIssue>,
 }
 
@@ -108,6 +114,7 @@ pub fn check_gitignore_hygiene_content(
   }
 }
 
+/// Checks `.gitignore` hygiene at `root` for active language surfaces.
 #[must_use]
 pub fn check_gitignore_hygiene(
   root: &Path,

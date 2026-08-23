@@ -1,9 +1,20 @@
+//! Formality (`fml`) is a unified CLI for formatting, linting, and syncing configurations across multiple language surfaces.
+
+#![warn(missing_docs, clippy::missing_errors_doc, clippy::missing_panics_doc)]
+
+/// Command-line argument parsing definitions.
 pub mod cli;
+/// CLI command implementations.
 pub mod commands;
+/// Configuration loading, parsing, and resolving.
 pub mod config;
+/// Execution engine for running formatters, linters, and version checks.
 pub mod engine;
+/// Crate-wide error types and exit status handling.
 pub mod errors;
+/// Language surface definitions and registry.
 pub mod surfaces;
+/// Terminal UI components and layout rendering.
 pub mod ui;
 
 // Backward-compatible top-level module aliases so existing `crate::foo::*`
@@ -53,12 +64,14 @@ use config::FormalityConfig;
 pub use config::SCHEMA_VERSION;
 use std::path::PathBuf;
 
+/// Parses CLI arguments from `std::env::args()` and executes the command.
 #[must_use]
 pub fn run() -> ExitStatus {
   let args = Cli::parse();
   run_with_args(args)
 }
 
+/// Executes the CLI command specified by the provided [`Cli`] arguments.
 #[must_use]
 pub fn run_with_args(args: Cli) -> ExitStatus {
   if std::env::var("FORCE_COLOR").is_ok()

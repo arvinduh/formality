@@ -1,9 +1,13 @@
 //! Formatting/linting engine: subprocess orchestration, diffing, tool
 //! version detection, and self-update checking.
 
+/// Unified diff generation and rendering.
 pub mod diff;
+/// Execution runner for dispatching formatting and linting actions across surfaces.
 pub mod runner;
+/// Asynchronous self-update checker and release notice renderer.
 pub mod update;
+/// Tool version probing, semver parsing, and compatibility policy evaluation.
 pub mod version;
 
 pub use diff::render_diff;

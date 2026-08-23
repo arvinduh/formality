@@ -19,9 +19,13 @@ use std::str::FromStr;
 /// Represents a Semantic Version (`SemVer`) with optional prerelease identifier.
 #[derive(Debug, Clone, Eq, PartialEq, Hash)]
 pub struct Version {
+  /// Major version component.
   pub major: u64,
+  /// Minor version component.
   pub minor: u64,
+  /// Patch version component.
   pub patch: u64,
+  /// Optional prerelease metadata string.
   pub prerelease: Option<String>,
 }
 
@@ -350,28 +354,46 @@ pub fn get_raw_tool_version(binary: &str) -> Option<String> {
 /// Status of a tool relative to its minimum required version.
 #[derive(Debug, Clone, Eq, PartialEq)]
 pub enum ToolStatus {
-  Compatible { current: Version, minimum: Version },
-  Outdated { current: Version, minimum: Version },
+  /// Installed tool version satisfies or exceeds minimum supported tool version.
+  Compatible {
+    /// Currently installed version.
+    current: Version,
+    /// Minimum required version.
+    minimum: Version,
+  },
+  /// Installed tool version is below minimum supported tool version.
+  Outdated {
+    /// Currently installed version.
+    current: Version,
+    /// Minimum required version.
+    minimum: Version,
+  },
+  /// Tool binary was not found on PATH.
   NotFound,
+  /// Tool version string could not be parsed into semver.
   UnknownVersion(String),
 }
 
 impl ToolStatus {
+  /// Returns `true` if tool status is [`ToolStatus::Compatible`].
   #[must_use]
   pub fn is_compatible(&self) -> bool {
     matches!(self, ToolStatus::Compatible { .. })
   }
 
+  /// Returns `true` if tool status is [`ToolStatus::Outdated`].
   #[must_use]
   pub fn is_outdated(&self) -> bool {
     matches!(self, ToolStatus::Outdated { .. })
   }
 
+  /// Returns `true` if tool status is [`ToolStatus::NotFound`].
   #[must_use]
   pub fn is_not_found(&self) -> bool {
     matches!(self, ToolStatus::NotFound)
   }
 
+  /// Returns `true` if tool status is [`ToolStatus::UnknownVersion`].
   #[must_use]
   pub fn is_unknown_version(&self) -> bool {
     matches!(self, ToolStatus::UnknownVersion(_))
@@ -400,17 +422,20 @@ impl fmt::Display for ToolStatus {
 pub struct CompatibilityPolicy;
 
 impl CompatibilityPolicy {
+  /// Checks tool binary compatibility against a specific minimum version.
   #[must_use]
   pub fn check(binary: &str, minimum: &Version) -> ToolStatus {
     check_tool_compatibility(binary, minimum)
   }
 
+  /// Checks tool binary compatibility against its declared MSTV entry if present.
   #[must_use]
   pub fn check_mstv(binary: &str) -> Option<ToolStatus> {
     let min = minimum_supported_tool_version(binary)?;
     Some(Self::check(binary, &min))
   }
 
+  /// Evaluates compatibility status given optional parsed version and minimum requirement.
   #[must_use]
   pub fn evaluate(current: Option<&Version>, minimum: &Version) -> ToolStatus {
     match current {
@@ -431,6 +456,7 @@ impl CompatibilityPolicy {
     }
   }
 
+  /// Evaluates compatibility status considering raw version output fallback.
   #[must_use]
   pub fn evaluate_with_raw(
     current: Option<Version>,
@@ -481,4 +507,5 @@ pub fn check_tool_compatibility(binary: &str, minimum: &Version) -> ToolStatus {
 }
 
 #[cfg(test)]
+#[allow(missing_docs, clippy::missing_errors_doc, clippy::missing_panics_doc)]
 mod tests;

@@ -5,6 +5,9 @@ use crate::config::FormalityConfig;
 use crate::engine::{Runner, RunnerAction};
 use crate::errors::ExitStatus;
 
+/// Runs the `fml sync` command: synchronizes (or, with `check`, only
+/// verifies) the native tool configs generated from `formality.toml` for the
+/// resolved target surfaces.
 pub fn run_sync(
   root: &Path,
   config: &FormalityConfig,

@@ -14,27 +14,44 @@ use std::time::Instant;
 /// fallback) instead of duplicating the "is X available?" cascade per tool.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum InstallMethod {
+  /// `cargo binstall <package>`. Requires `cargo-binstall` on PATH.
   CargoBinstall(&'static str),
+  /// `npm install -g <package>`. Requires `npm` on PATH.
   Npm(&'static str),
+  /// `pnpm add -g <package>`. Requires `pnpm` on PATH.
   Pnpm(&'static str),
+  /// `yarn global add <package>`. Requires `yarn` on PATH.
   Yarn(&'static str),
+  /// `bun add -g <package>`. Requires `bun` on PATH.
   Bun(&'static str),
+  /// `uv tool install <package>`. Requires `uv` on PATH.
   Uv(&'static str),
+  /// `pipx install <package>`. Requires `pipx` on PATH.
   Pipx(&'static str),
+  /// `pip install --user <package>`. Requires `pip` on PATH.
   Pip(&'static str),
+  /// `pip3 install --user <package>`. Requires `pip3` on PATH.
   Pip3(&'static str),
+  /// `apt-get install -y <package>`. Requires `apt-get` on PATH.
   Apt(&'static str),
+  /// `brew install <package>`. Requires `brew` on PATH.
   Brew(&'static str),
+  /// `scoop install <package>`. Requires `scoop` on PATH.
   Scoop(&'static str),
   /// winget resolves the package by fuzzy name/id match.
   WingetName(&'static str),
   /// winget resolves the package via `--id=<id> -e`, an exact,
   /// unambiguous match.
   WingetId(&'static str),
+  /// `cargo install <package>`, optionally with `--locked`. Requires `cargo`
+  /// on PATH.
   Cargo {
+    /// The crate name to install.
     package: &'static str,
+    /// Whether to pass `--locked` to pin dependency versions.
     locked: bool,
   },
+  /// `rustup component add <component>`. Requires `rustup` on PATH.
   Rustup(&'static str),
   /// `go install <package>@latest`. Requires the Go toolchain (`go`) on PATH.
   GoInstall(&'static str),
@@ -315,6 +332,8 @@ pub(super) fn install_chain_for(
 
 static BINARY_CACHE: OnceLock<Mutex<HashMap<String, bool>>> = OnceLock::new();
 
+/// Returns whether `binary` is resolvable on `PATH`, memoized per-process so
+/// repeated checks for the same binary don't re-hit the filesystem.
 #[must_use]
 pub fn check_binary_exists(binary: &str) -> bool {
   let cache = BINARY_CACHE.get_or_init(|| Mutex::new(HashMap::new()));
@@ -349,6 +368,8 @@ pub fn tool_missing_result(
   }
 }
 
+/// Returns whether `cargo binstall` is usable: both `cargo` and
+/// `cargo-binstall` must be on `PATH`.
 #[must_use]
 pub fn has_cargo_binstall() -> bool {
   check_binary_exists("cargo") && check_binary_exists("cargo-binstall")

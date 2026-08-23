@@ -6,13 +6,16 @@ use serde::{Deserialize, Serialize};
   Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize, JsonSchema,
 )]
 pub struct RustOptions {
+  /// Rust edition (e.g. `"2021"`).
   #[serde(skip_serializing_if = "Option::is_none")]
   pub edition: Option<String>,
+  /// Rustfmt version.
   #[serde(skip_serializing_if = "Option::is_none")]
   pub version: Option<String>,
 }
 
 impl RustOptions {
+  /// Merges `other` options into `self`.
   pub fn merge(&mut self, other: RustOptions) {
     if other.edition.is_some() {
       self.edition = other.edition;
@@ -22,6 +25,7 @@ impl RustOptions {
     }
   }
 
+  /// Returns `true` if all fields are `None`.
   #[must_use]
   pub fn is_empty(&self) -> bool {
     self.edition.is_none() && self.version.is_none()
@@ -33,13 +37,16 @@ impl RustOptions {
   Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize, JsonSchema,
 )]
 pub struct PythonOptions {
+  /// Quote style for strings (`"single"` or `"double"`).
   #[serde(skip_serializing_if = "Option::is_none")]
   pub quote_style: Option<String>,
+  /// Python target version (e.g. `"py310"`).
   #[serde(skip_serializing_if = "Option::is_none")]
   pub target_version: Option<String>,
 }
 
 impl PythonOptions {
+  /// Merges `other` options into `self`.
   pub fn merge(&mut self, other: PythonOptions) {
     if other.quote_style.is_some() {
       self.quote_style = other.quote_style;
@@ -49,6 +56,7 @@ impl PythonOptions {
     }
   }
 
+  /// Returns `true` if all fields are `None`.
   #[must_use]
   pub fn is_empty(&self) -> bool {
     self.quote_style.is_none() && self.target_version.is_none()
@@ -60,36 +68,42 @@ impl PythonOptions {
   Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize, JsonSchema,
 )]
 pub struct CppOptions {
+  /// C++ language standard version (e.g. `"c++20"`).
   #[serde(
     skip_serializing_if = "Option::is_none",
     alias = "Standard",
     alias = "std"
   )]
   pub standard: Option<String>,
+  /// Column limit for line wrapping.
   #[serde(
     skip_serializing_if = "Option::is_none",
     alias = "ColumnLimit",
     alias = "column-limit"
   )]
   pub column_limit: Option<usize>,
+  /// Base clang-format style (e.g. `"Google"`).
   #[serde(
     skip_serializing_if = "Option::is_none",
     alias = "BasedOnStyle",
     alias = "based-on-style"
   )]
   pub based_on_style: Option<String>,
+  /// Pointer alignment style (`"Left"`, `"Right"`, or `"Middle"`).
   #[serde(
     skip_serializing_if = "Option::is_none",
     alias = "PointerAlignment",
     alias = "pointer-alignment"
   )]
   pub pointer_alignment: Option<String>,
+  /// Brace breaking style.
   #[serde(
     skip_serializing_if = "Option::is_none",
     alias = "BreakBeforeBraces",
     alias = "break-before-braces"
   )]
   pub break_before_braces: Option<String>,
+  /// Whether to sort `#include` directives alphabetically.
   #[serde(
     skip_serializing_if = "Option::is_none",
     alias = "SortIncludes",
@@ -99,6 +113,7 @@ pub struct CppOptions {
 }
 
 impl CppOptions {
+  /// Merges `other` options into `self`.
   pub fn merge(&mut self, other: CppOptions) {
     if other.standard.is_some() {
       self.standard = other.standard;
@@ -120,6 +135,7 @@ impl CppOptions {
     }
   }
 
+  /// Returns `true` if all fields are `None`.
   #[must_use]
   pub fn is_empty(&self) -> bool {
     self.standard.is_none()
@@ -143,12 +159,14 @@ pub struct JavaOptions {
 }
 
 impl JavaOptions {
+  /// Merges `other` options into `self`.
   pub fn merge(&mut self, other: JavaOptions) {
     if other.style.is_some() {
       self.style = other.style;
     }
   }
 
+  /// Returns `true` if all fields are `None`.
   #[must_use]
   pub fn is_empty(&self) -> bool {
     self.style.is_none()
@@ -160,17 +178,22 @@ impl JavaOptions {
   Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize, JsonSchema,
 )]
 pub struct JavaScriptOptions {
+  /// Preferred string quote style (`"single"` or `"double"`).
   #[serde(skip_serializing_if = "Option::is_none")]
   pub quote_style: Option<String>,
+  /// Trailing comma policy (`"all"`, `"es5"`, or `"none"`).
   #[serde(skip_serializing_if = "Option::is_none")]
   pub trailing_comma: Option<String>,
+  /// Semicolon policy (`"always"` or `"as-needed"`).
   #[serde(skip_serializing_if = "Option::is_none")]
   pub semicolons: Option<String>,
+  /// Whether to automatically organize import statements.
   #[serde(skip_serializing_if = "Option::is_none")]
   pub organize_imports: Option<bool>,
 }
 
 impl JavaScriptOptions {
+  /// Merges `other` options into `self`.
   pub fn merge(&mut self, other: JavaScriptOptions) {
     if other.quote_style.is_some() {
       self.quote_style = other.quote_style;
@@ -186,6 +209,7 @@ impl JavaScriptOptions {
     }
   }
 
+  /// Returns `true` if all fields are `None`.
   #[must_use]
   pub fn is_empty(&self) -> bool {
     self.quote_style.is_none()
@@ -211,6 +235,7 @@ pub struct GoOptions {
 }
 
 impl GoOptions {
+  /// Merges `other` options into `self`.
   pub fn merge(&mut self, other: GoOptions) {
     if other.local_prefixes.is_some() {
       self.local_prefixes = other.local_prefixes;
@@ -220,6 +245,7 @@ impl GoOptions {
     }
   }
 
+  /// Returns `true` if all fields are `None`.
   #[must_use]
   pub fn is_empty(&self) -> bool {
     self.local_prefixes.is_none() && self.linters.is_none()
@@ -231,17 +257,20 @@ impl GoOptions {
   Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize, JsonSchema,
 )]
 pub struct MarkdownOptions {
+  /// Prose wrapping strategy string (`"always"`, `"never"`, or `"preserve"`).
   #[serde(skip_serializing_if = "Option::is_none")]
   pub prose_wrap: Option<String>,
 }
 
 impl MarkdownOptions {
+  /// Merges `other` options into `self`.
   pub fn merge(&mut self, other: MarkdownOptions) {
     if other.prose_wrap.is_some() {
       self.prose_wrap = other.prose_wrap;
     }
   }
 
+  /// Returns `true` if all fields are `None`.
   #[must_use]
   pub fn is_empty(&self) -> bool {
     self.prose_wrap.is_none()
@@ -253,16 +282,19 @@ impl MarkdownOptions {
   Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize, JsonSchema,
 )]
 pub struct YamlOptions {
+  /// Whether to indent sequence items under mapping keys.
   #[serde(skip_serializing_if = "Option::is_none")]
   pub indent_sequence: Option<bool>,
+  /// Whether to require `---` document start markers.
   #[serde(skip_serializing_if = "Option::is_none")]
   pub document_start: Option<bool>,
+  /// Whether to enforce strict boolean truthy values.
   #[serde(skip_serializing_if = "Option::is_none")]
   pub truthy: Option<bool>,
 }
 
 impl YamlOptions {
-  // Maintains consistent `merge(&mut self, other: Self)` signature across all language option structs.
+  /// Maintains consistent `merge(&mut self, other: Self)` signature across all language option structs.
   #[allow(clippy::needless_pass_by_value)]
   pub fn merge(&mut self, other: YamlOptions) {
     if other.indent_sequence.is_some() {
@@ -276,6 +308,7 @@ impl YamlOptions {
     }
   }
 
+  /// Returns `true` if all fields are `None`.
   #[must_use]
   pub fn is_empty(&self) -> bool {
     self.indent_sequence.is_none()
@@ -291,8 +324,10 @@ impl YamlOptions {
 pub struct JsonOptions {}
 
 impl JsonOptions {
+  /// Merges `other` options into `self`.
   pub fn merge(&mut self, _other: JsonOptions) {}
 
+  /// Returns `true` if all fields are empty.
   #[must_use]
   pub fn is_empty(&self) -> bool {
     true
@@ -306,8 +341,10 @@ impl JsonOptions {
 pub struct TomlOptions {}
 
 impl TomlOptions {
+  /// Merges `other` options into `self`.
   pub fn merge(&mut self, _other: TomlOptions) {}
 
+  /// Returns `true` if all fields are empty.
   #[must_use]
   pub fn is_empty(&self) -> bool {
     true
@@ -321,8 +358,10 @@ impl TomlOptions {
 pub struct TypstOptions {}
 
 impl TypstOptions {
+  /// Merges `other` options into `self`.
   pub fn merge(&mut self, _other: TypstOptions) {}
 
+  /// Returns `true` if all fields are empty.
   #[must_use]
   pub fn is_empty(&self) -> bool {
     true
@@ -342,8 +381,10 @@ impl TypstOptions {
 pub struct KotlinOptions {}
 
 impl KotlinOptions {
+  /// Merges `other` options into `self`.
   pub fn merge(&mut self, _other: KotlinOptions) {}
 
+  /// Returns `true` if all fields are empty.
   #[must_use]
   pub fn is_empty(&self) -> bool {
     true

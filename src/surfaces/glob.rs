@@ -142,6 +142,7 @@ fn is_excluded_normalized(
   false
 }
 
+/// Performs simple glob matching supporting `*` and `?` wildcard patterns.
 #[must_use]
 pub fn simple_glob_match(pattern: &str, text: &str) -> bool {
   let norm_pattern = pattern.replace('\\', "/");
@@ -250,6 +251,7 @@ fn walk_dir_ext(dir: &Path, extensions: &[&str]) -> Vec<PathBuf> {
 }
 
 #[cfg(test)]
+#[allow(missing_docs, clippy::missing_errors_doc, clippy::missing_panics_doc)]
 mod tests {
   use super::*;
   use std::path::PathBuf;
@@ -314,9 +316,6 @@ mod tests {
 
   #[test]
   fn test_find_files_with_ext_default_walk_finds_nested_files() {
-    // The default walk_dir_ext path (no specific_paths, no files_override) —
-    // previously only exercised indirectly through the exclude test, never
-    // asserted on its own for a plain recursive directory walk.
     let temp = tempfile::TempDir::new().unwrap();
     let root = temp.path();
     let nested = root.join("src").join("nested");
@@ -338,10 +337,6 @@ mod tests {
 
   #[test]
   fn test_walk_dir_ext_skips_conventional_ignored_directories() {
-    // walk_dir_ext's filter_entry excludes target/, node_modules/, .git/,
-    // .venv/, vendor/, and fixtures/ by name — none of these exclusions had
-    // any test coverage, so a regression here (e.g. a typo'd directory name)
-    // would silently start scanning build artifacts / vendored deps.
     let temp = tempfile::TempDir::new().unwrap();
     let root = temp.path();
 
@@ -367,9 +362,6 @@ mod tests {
 
   #[test]
   fn test_is_excluded_standalone_function() {
-    // is_excluded is the public single-path variant of the normalized
-    // exclude-matching machinery find_files_with_ext uses internally; it had
-    // no direct test of its own.
     let temp = tempfile::TempDir::new().unwrap();
     let root = temp.path();
     let excluded_file = root.join("build").join("out.rs");
@@ -379,7 +371,6 @@ mod tests {
     assert!(is_excluded(&excluded_file, root, &exclude));
     assert!(!is_excluded(&kept_file, root, &exclude));
 
-    // An empty exclude list never excludes anything.
     assert!(!is_excluded(&excluded_file, root, &[]));
   }
 

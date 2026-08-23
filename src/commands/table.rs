@@ -3,6 +3,8 @@ use colored::Colorize;
 use crate::errors::{ExitStatus, FormalityError, IoError};
 use crate::ui::table;
 
+/// Runs the `fml table` command: renders a JSON table spec (from `json`, or
+/// read from stdin if not given) to formatted terminal output.
 pub fn run_table(json: Option<String>) -> ExitStatus {
   let json_str = if let Some(j) = json {
     j

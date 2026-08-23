@@ -8,20 +8,35 @@ use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::time::Instant;
 
+/// Action type dispatched by the runner across target language surfaces.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum RunnerAction {
-  Format { check: bool },
-  Lint { fix: bool },
-  Sync { check: bool },
+  /// Format files across surfaces.
+  Format {
+    /// If `true`, check formatting without writing changes to disk.
+    check: bool,
+  },
+  /// Lint files across surfaces.
+  Lint {
+    /// If `true`, attempt automatic fix application for lint errors.
+    fix: bool,
+  },
+  /// Sync native configuration files across surfaces.
+  Sync {
+    /// If `true`, check configuration sync state without writing changes.
+    check: bool,
+  },
+  /// Fix lint issues and reformat files across surfaces.
   Fix,
 }
 
 use crate::errors::ExitStatus;
 
+/// Orchestrates parallel tool execution across language surfaces.
 pub struct Runner;
 
 impl Runner {
-  // Dispatches parallel surface execution across fix/fmt/lint/sync stages, aggregates results, and renders status tables.
+  /// Dispatches parallel surface execution across fix/fmt/lint/sync stages, aggregates results, and renders status tables.
   #[allow(clippy::too_many_lines, clippy::needless_pass_by_value)]
   #[must_use]
   pub fn run(
@@ -596,4 +611,5 @@ fn normalize_diagnostics(raw: &str) -> String {
 }
 
 #[cfg(test)]
+#[allow(missing_docs, clippy::missing_errors_doc, clippy::missing_panics_doc)]
 mod tests;

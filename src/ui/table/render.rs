@@ -10,13 +10,17 @@ use unicode_width::{UnicodeWidthChar, UnicodeWidthStr};
 /// The top-level table specification.
 #[derive(Serialize, Deserialize, Clone, PartialEq, Eq, Debug, Default)]
 pub struct Table {
+  /// Column definitions.
   pub columns: Vec<Column>,
+  /// Row contents.
   pub rows: Vec<Row>,
+  /// Layout and width options.
   #[serde(default)]
   pub layout: Layout,
 }
 
 impl Table {
+  /// Creates a new [`Table`] with specified columns.
   #[must_use]
   pub fn new(columns: Vec<Column>) -> Self {
     Self {
@@ -26,28 +30,33 @@ impl Table {
     }
   }
 
+  /// Creates an empty [`Table`].
   #[must_use]
   pub fn empty() -> Self {
     Self::default()
   }
 
+  /// Adds a row to the table in place.
   pub fn add_row(&mut self, row: Row) -> &mut Self {
     self.rows.push(row);
     self
   }
 
+  /// Builder pattern to append a row to the table.
   #[must_use]
   pub fn with_row(mut self, row: Row) -> Self {
     self.rows.push(row);
     self
   }
 
+  /// Sets the layout policy for the table.
   #[must_use]
   pub fn layout(mut self, layout: Layout) -> Self {
     self.layout = layout;
     self
   }
 
+  /// Renders the table to a terminal string using the given color palette.
   #[must_use]
   pub fn render(&self, palette: &Palette) -> String {
     render(self, palette)

@@ -15,27 +15,39 @@ use unicode_width::UnicodeWidthStr;
 )]
 #[serde(rename_all = "snake_case")]
 pub enum Style {
+  /// Unstyled plain text.
   #[default]
   Plain,
+  /// Dimmed / muted text.
   Dim,
+  /// Bold / emphasized text.
   Strong,
+  /// File or directory path text.
   Path,
+  /// Tool binary name text.
   Tool,
+  /// Success status text (green).
   Ok,
+  /// Warning status text (yellow).
   Warn,
+  /// Error status text (red).
   Error,
+  /// Informational status text (blue/cyan).
   Info,
 }
 
 /// A styled segment of text.
 #[derive(Serialize, Deserialize, Clone, PartialEq, Eq, Debug, Default)]
 pub struct Span {
+  /// Text content string.
   pub text: String,
+  /// Semantic rendering style.
   #[serde(default)]
   pub style: Style,
 }
 
 impl Span {
+  /// Constructs a [`Span`] with given text and style.
   pub fn new(text: impl Into<String>, style: Style) -> Self {
     Self {
       text: text.into(),
@@ -43,14 +55,17 @@ impl Span {
     }
   }
 
+  /// Constructs a plain (unstyled) [`Span`].
   pub fn plain(text: impl Into<String>) -> Self {
     Self::new(text, Style::Plain)
   }
 
+  /// Constructs a styled [`Span`].
   pub fn styled(text: impl Into<String>, style: Style) -> Self {
     Self::new(text, style)
   }
 
+  /// Computes display character width of text.
   #[must_use]
   pub fn display_width(&self) -> usize {
     self.text.as_str().width()
@@ -75,9 +90,12 @@ impl From<String> for Span {
 )]
 #[serde(rename_all = "snake_case")]
 pub enum Align {
+  /// Left-align content.
   #[default]
   Left,
+  /// Center-align content.
   Center,
+  /// Right-align content.
   Right,
 }
 
@@ -85,12 +103,16 @@ pub enum Align {
 #[derive(Serialize, Deserialize, Clone, PartialEq, Eq, Debug, Default)]
 #[serde(rename_all = "snake_case")]
 pub enum Overflow {
+  /// Wrap overflowing lines.
   #[default]
   Wrap,
+  /// Truncate content with a suffix string.
   Truncate {
+    /// Suffix appended when truncating.
     #[serde(default = "default_truncate_suffix")]
     suffix: String,
   },
+  /// Clip overflowing content cleanly.
   Clip,
 }
 
@@ -99,6 +121,7 @@ fn default_truncate_suffix() -> String {
 }
 
 impl Overflow {
+  /// Constructs a [`Overflow::Truncate`] variant with given suffix.
   pub fn truncate(suffix: impl Into<String>) -> Self {
     Overflow::Truncate {
       suffix: suffix.into(),
@@ -109,14 +132,18 @@ impl Overflow {
 /// A single cell inside a table row, composed of semantic spans.
 #[derive(Serialize, Deserialize, Clone, PartialEq, Eq, Debug, Default)]
 pub struct Cell {
+  /// Spans comprising cell content.
   pub spans: Vec<Span>,
+  /// Optional cell alignment override.
   #[serde(default, skip_serializing_if = "Option::is_none")]
   pub align: Option<Align>,
+  /// Optional cell overflow policy override.
   #[serde(default, skip_serializing_if = "Option::is_none")]
   pub overflow: Option<Overflow>,
 }
 
 impl Cell {
+  /// Constructs a [`Cell`] from a vector of spans.
   #[must_use]
   pub fn new(spans: Vec<Span>) -> Self {
     Self {
@@ -126,6 +153,7 @@ impl Cell {
     }
   }
 
+  /// Constructs a single plain text [`Cell`].
   pub fn text(text: impl Into<String>) -> Self {
     Self {
       spans: vec![Span::plain(text)],
@@ -134,6 +162,7 @@ impl Cell {
     }
   }
 
+  /// Constructs a [`Cell`] containing a single span.
   #[must_use]
   pub fn span(span: Span) -> Self {
     Self {
@@ -143,6 +172,7 @@ impl Cell {
     }
   }
 
+  /// Constructs a styled text [`Cell`].
   pub fn styled(text: impl Into<String>, style: Style) -> Self {
     Self {
       spans: vec![Span::styled(text, style)],
@@ -151,23 +181,27 @@ impl Cell {
     }
   }
 
+  /// Computes display width of all spans in cell.
   #[must_use]
   pub fn display_width(&self) -> usize {
     self.spans.iter().map(Span::display_width).sum()
   }
 
+  /// Sets alignment override for this cell.
   #[must_use]
   pub fn align(mut self, align: Align) -> Self {
     self.align = Some(align);
     self
   }
 
+  /// Sets overflow policy override for this cell.
   #[must_use]
   pub fn overflow(mut self, overflow: Overflow) -> Self {
     self.overflow = Some(overflow);
     self
   }
 
+  /// Appends a span to cell.
   pub fn push(&mut self, span: Span) {
     self.spans.push(span);
   }
@@ -197,24 +231,30 @@ impl From<Span> for Cell {
 )]
 #[serde(rename_all = "snake_case")]
 pub enum PaletteMode {
+  /// Plain text without ANSI colors.
   None,
+  /// 16-color standard ANSI output.
   #[default]
   Ansi16,
+  /// 24-bit RGB truecolor output.
   Truecolor,
 }
 
 /// Semantic palette that maps `Style` to ANSI escape codes.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Palette {
+  /// Active palette mode.
   pub mode: PaletteMode,
 }
 
 impl Palette {
+  /// Creates a [`Palette`] for given mode.
   #[must_use]
   pub fn new(mode: PaletteMode) -> Self {
     Self { mode }
   }
 
+  /// Creates a plain uncolored [`Palette`].
   #[must_use]
   pub fn none() -> Self {
     Self {
@@ -222,6 +262,7 @@ impl Palette {
     }
   }
 
+  /// Creates an ANSI 16-color [`Palette`].
   #[must_use]
   pub fn ansi16() -> Self {
     Self {
@@ -229,6 +270,7 @@ impl Palette {
     }
   }
 
+  /// Creates a 24-bit RGB truecolor [`Palette`].
   #[must_use]
   pub fn truecolor() -> Self {
     Self {
@@ -236,6 +278,7 @@ impl Palette {
     }
   }
 
+  /// Returns palette mode.
   #[must_use]
   pub fn mode(&self) -> PaletteMode {
     self.mode
@@ -323,12 +366,18 @@ impl Palette {
 )]
 #[serde(rename_all = "snake_case")]
 pub enum WidthPolicy {
+  /// Automatic width determination based on content.
   #[default]
   Auto,
+  /// Fixed column width in characters.
   Fixed(u16),
+  /// Minimum column width.
   Min(u16),
+  /// Maximum column width.
   Max(u16),
+  /// Range of acceptable column widths (min, max).
   Range(u16, u16),
+  /// Percentage of available table width.
   Pct(u8),
 }
 
@@ -336,28 +385,38 @@ pub enum WidthPolicy {
 #[derive(Serialize, Deserialize, Clone, PartialEq, Eq, Debug, Default)]
 #[serde(rename_all = "snake_case")]
 pub enum RowKind {
+  /// Standard data row.
   #[default]
   Data,
+  /// Horizontal rule divider row.
   Rule,
+  /// Blank spacing row.
   Blank,
+  /// Group header row with title string.
   Group(String),
 }
 
 /// Column configuration including header, alignment, width policy, and overflow rule.
 #[derive(Serialize, Deserialize, Clone, PartialEq, Eq, Debug)]
 pub struct Column {
+  /// Column header cell content.
   pub header: Cell,
+  /// Default text alignment.
   #[serde(default)]
   pub align: Align,
+  /// Column width policy.
   #[serde(default)]
   pub width: WidthPolicy,
+  /// Column overflow policy.
   #[serde(default)]
   pub overflow: Overflow,
+  /// Column priority ranking for width allocation.
   #[serde(default)]
   pub priority: u8,
 }
 
 impl Column {
+  /// Creates a new [`Column`] with header cell.
   pub fn new(header: impl Into<Cell>) -> Self {
     Self {
       header: header.into(),
@@ -368,24 +427,28 @@ impl Column {
     }
   }
 
+  /// Sets column text alignment.
   #[must_use]
   pub fn align(mut self, align: Align) -> Self {
     self.align = align;
     self
   }
 
+  /// Sets column width policy.
   #[must_use]
   pub fn width(mut self, width: WidthPolicy) -> Self {
     self.width = width;
     self
   }
 
+  /// Sets column overflow policy.
   #[must_use]
   pub fn overflow(mut self, overflow: Overflow) -> Self {
     self.overflow = overflow;
     self
   }
 
+  /// Sets column layout priority.
   #[must_use]
   pub fn priority(mut self, priority: u8) -> Self {
     self.priority = priority;
@@ -396,14 +459,18 @@ impl Column {
 /// A row in the table containing cells and rendering metadata.
 #[derive(Serialize, Deserialize, Clone, PartialEq, Eq, Debug, Default)]
 pub struct Row {
+  /// Cells in row.
   pub cells: Vec<Cell>,
+  /// Optional maximum row height.
   #[serde(default, skip_serializing_if = "Option::is_none")]
   pub max_height: Option<usize>,
+  /// Row semantic kind.
   #[serde(default)]
   pub kind: RowKind,
 }
 
 impl Row {
+  /// Constructs a data [`Row`] with given cells.
   #[must_use]
   pub fn new(cells: Vec<Cell>) -> Self {
     Self {
@@ -413,11 +480,13 @@ impl Row {
     }
   }
 
+  /// Constructs a data [`Row`] with given cells.
   #[must_use]
   pub fn data(cells: Vec<Cell>) -> Self {
     Self::new(cells)
   }
 
+  /// Constructs a horizontal rule divider [`Row`].
   #[must_use]
   pub fn rule() -> Self {
     Self {
@@ -427,6 +496,7 @@ impl Row {
     }
   }
 
+  /// Constructs a blank spacing [`Row`].
   #[must_use]
   pub fn blank() -> Self {
     Self {
@@ -436,6 +506,7 @@ impl Row {
     }
   }
 
+  /// Constructs a group header [`Row`] with title.
   pub fn group(title: impl Into<String>) -> Self {
     Self {
       cells: Vec::new(),
@@ -444,6 +515,7 @@ impl Row {
     }
   }
 
+  /// Sets maximum height constraint for row.
   #[must_use]
   pub fn max_height(mut self, height: usize) -> Self {
     self.max_height = Some(height);
@@ -457,22 +529,29 @@ impl Row {
 )]
 #[serde(rename_all = "snake_case")]
 pub enum Density {
+  /// Compact table spacing.
   #[default]
   Compact,
+  /// Comfortable spacious table layout.
   Comfortable,
 }
 
 /// Geometry and layout settings for table rendering.
 #[derive(Serialize, Deserialize, Clone, PartialEq, Eq, Debug)]
 pub struct Layout {
+  /// Maximum overall table width in characters.
   #[serde(default = "default_max_width")]
   pub max_width: u16,
+  /// Whether to constrain table width to terminal window dimensions.
   #[serde(default = "default_clamp_to_terminal")]
   pub clamp_to_terminal: bool,
+  /// Cell padding (left, right) in spaces.
   #[serde(default = "default_padding")]
   pub padding: (u16, u16),
+  /// Table layout density setting.
   #[serde(default)]
   pub density: Density,
+  /// Left indentation offset spaces for table.
   #[serde(default)]
   pub indent: u16,
 }
@@ -502,6 +581,7 @@ impl Default for Layout {
 }
 
 impl Layout {
+  /// Creates compact layout settings.
   #[must_use]
   pub fn compact() -> Self {
     Self {
@@ -511,6 +591,7 @@ impl Layout {
     }
   }
 
+  /// Creates comfortable layout settings.
   #[must_use]
   pub fn comfortable() -> Self {
     Self {
@@ -520,24 +601,28 @@ impl Layout {
     }
   }
 
+  /// Sets maximum table width constraint.
   #[must_use]
   pub fn max_width(mut self, width: u16) -> Self {
     self.max_width = width;
     self
   }
 
+  /// Sets left indentation offset.
   #[must_use]
   pub fn indent(mut self, indent: u16) -> Self {
     self.indent = indent;
     self
   }
 
+  /// Sets cell padding (left, right).
   #[must_use]
   pub fn padding(mut self, left: u16, right: u16) -> Self {
     self.padding = (left, right);
     self
   }
 
+  /// Sets terminal width clamping flag.
   #[must_use]
   pub fn clamp_to_terminal(mut self, clamp: bool) -> Self {
     self.clamp_to_terminal = clamp;
@@ -546,4 +631,6 @@ impl Layout {
 }
 
 #[cfg(test)]
+#[allow(missing_docs, clippy::missing_errors_doc, clippy::missing_panics_doc)]
+#[path = "tests.rs"]
 mod tests;

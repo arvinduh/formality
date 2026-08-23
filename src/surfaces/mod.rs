@@ -2,23 +2,41 @@
 //! implementations, and the shared machinery (registry, glob matching, tool
 //! discovery, config sync) they're all built on.
 
+/// C/C++ language surface implementation.
 pub mod cpp;
+/// .editorconfig generation and synchronization.
 pub mod editorconfig;
+/// Glob matching and file path resolution helpers.
 pub mod glob;
+/// Go language surface implementation.
 pub mod go;
+/// Java language surface implementation.
 pub mod java;
+/// JavaScript/TypeScript language surface implementation.
 pub mod javascript;
+/// JSON language surface implementation.
 pub mod json;
+/// Kotlin language surface implementation.
 pub mod kotlin;
+/// Markdown language surface implementation.
 pub mod markdown;
+/// Native configuration generator and serializer.
 pub mod native;
+/// Python language surface implementation.
 pub mod python;
+/// Surface registry and auto-detection engine.
 pub mod registry;
+/// Rust language surface implementation.
 pub mod rust;
+/// Config file sync helpers.
 pub mod sync;
+/// TOML language surface implementation.
 pub mod toml;
+/// Tool execution and command creation utilities.
 pub mod tooling;
+/// Typst language surface implementation.
 pub mod typst;
+/// YAML language surface implementation.
 pub mod yaml;
 
 pub use native::{
@@ -56,19 +74,30 @@ pub use tooling::{
 /// makes that a cheap refcount bump instead of an O(paths.len()) copy.
 #[derive(Debug, Clone)]
 pub struct ExecutionContext {
+  /// Target workspace root directory path.
   pub root: PathBuf,
+  /// Target path arguments.
   pub paths: Arc<Vec<PathBuf>>,
+  /// Resolved global configuration settings.
   pub global_config: Arc<ResolvedGlobalConfig>,
+  /// Resolved per-language configuration settings for this surface.
   pub lang_config: ResolvedLangConfig,
+  /// Whether to perform check-only mode without mutating files.
   pub check_only: bool,
 }
 
+/// Metadata describing a binary executable tool required by a surface.
 #[derive(Debug, Clone)]
 pub struct ToolInfo {
+  /// Executable binary name.
   pub binary: &'static str,
+  /// Human-readable tool description.
   pub description: &'static str,
+  /// Installation instructions hint.
   pub install_hint: &'static str,
+  /// Whether this tool is required for formatting.
   pub is_required_for_fmt: bool,
+  /// Whether this tool is required for linting.
   pub is_required_for_lint: bool,
 }
 
@@ -85,47 +114,72 @@ impl ToolInfo {
   }
 }
 
+/// Outcome status resulting from running a tool operation on a surface.
 #[derive(Debug, Clone)]
 pub enum SurfaceStatus {
+  /// All checks passed cleanly with no violations.
   Passed,
+  /// Tool completed but rule violations or formatting drift were found.
   ViolationsFound {
+    /// Summary message of violations.
     message: String,
+    /// Rendered diff string if available.
     diff: Option<String>,
   },
+  /// Required tool binary was not found on system PATH.
   ToolMissing {
+    /// Missing binary name.
     binary: String,
+    /// Installation hint instruction.
     install_hint: String,
   },
+  /// Tool execution failed with non-zero exit code or error output.
   ExecutionError {
+    /// Error message detailing the failure.
     message: String,
   },
+  /// Surface execution was skipped.
   Skipped {
+    /// Reason string for skipping execution.
     reason: String,
   },
+  /// Native tool configuration was updated or created in sync.
   ConfigSynced {
+    /// Synced configuration filename.
     file: String,
+    /// Whether the file was newly created.
     created: bool,
   },
+  /// Native tool configuration is out of sync with canonical formality settings.
   ConfigDrifted {
+    /// Config filename.
     file: String,
+    /// Rendered diff showing configuration drift.
     diff: String,
   },
   /// Existing native config lacks the auto-generation header — it was written
   /// by hand. Overwriting silently would destroy intentional customization.
   ManualConfig {
+    /// Config filename.
     file: String,
+    /// User suggestion hint message.
     suggestion: String,
   },
 }
 
+/// Result returned from a surface action (format, lint, sync).
 #[derive(Debug, Clone)]
 pub struct SurfaceResult {
+  /// Name of the language surface.
   pub surface_name: &'static str,
+  /// Status of the execution.
   pub status: SurfaceStatus,
+  /// Execution duration.
   pub duration: Duration,
 }
 
 impl SurfaceResult {
+  /// Returns `true` if the status represents a clean success or skipped operation.
   #[must_use]
   pub fn is_success(&self) -> bool {
     matches!(
@@ -136,6 +190,7 @@ impl SurfaceResult {
     )
   }
 
+  /// Returns `true` if the status represents a formatting or lint violation.
   #[must_use]
   pub fn is_violation(&self) -> bool {
     matches!(
@@ -146,6 +201,7 @@ impl SurfaceResult {
     )
   }
 
+  /// Returns `true` if the status represents an execution error or missing tool.
   #[must_use]
   pub fn is_error(&self) -> bool {
     matches!(
@@ -155,25 +211,37 @@ impl SurfaceResult {
   }
 }
 
+/// Core abstraction for language surface tools and configuration sync.
 pub trait LanguageSurface: DeclaresFacets + Send + Sync {
+  /// Canonical surface identifier name (e.g. `"rust"`, `"python"`).
   fn name(&self) -> &'static str;
+  /// Human-readable display name.
   fn display_name(&self) -> &'static str {
     self.name()
   }
+  /// Alternative alias names recognized for this surface.
   fn aliases(&self) -> &[&'static str] {
     &[]
   }
+  /// Supported file extensions for auto-matching.
   fn file_extensions(&self) -> &[&'static str] {
     &[]
   }
+  /// Detects whether this language surface is active in workspace `root`.
   fn detect(&self, root: &Path) -> bool;
+  /// Returns information about required tools for this surface.
   fn tool_info(&self, config: &ResolvedLangConfig) -> Vec<ToolInfo>;
+  /// Formats source files using underlying tools.
   fn format(&self, ctx: &ExecutionContext) -> SurfaceResult;
+  /// Lints source files using underlying tools.
   fn lint(&self, ctx: &ExecutionContext, fix: bool) -> SurfaceResult;
+  /// Indicates whether this surface supports automatic lint fixing.
   fn supports_lint_fix(&self) -> bool {
     false
   }
+  /// Synchronizes native tool configuration file.
   fn sync_config(&self, ctx: &ExecutionContext, check: bool) -> SurfaceResult;
+  /// Clones the surface into a boxed trait object.
   fn clone_box(&self) -> Box<dyn LanguageSurface>;
 }
 
@@ -184,6 +252,7 @@ impl Clone for Box<dyn LanguageSurface> {
 }
 
 #[cfg(test)]
+#[allow(missing_docs, clippy::missing_errors_doc, clippy::missing_panics_doc)]
 mod tests {
   use super::*;
   use crate::surfaces::{
@@ -209,12 +278,6 @@ mod tests {
 
   #[test]
   fn test_surface_result_predicates_cover_every_status_variant() {
-    // SurfaceResult::is_success / is_violation / is_error are the tri-state
-    // classification every downstream consumer (the runner's exit-code
-    // logic, doctor summaries, table rendering) relies on. Each of the 7
-    // SurfaceStatus variants had never been checked against these
-    // predicates directly — only indirectly, via a handful of individual
-    // surfaces' own integration tests.
     fn result_for(status: SurfaceStatus) -> SurfaceResult {
       SurfaceResult {
         surface_name: "test",
@@ -285,10 +348,6 @@ mod tests {
 
   #[test]
   fn test_box_dyn_language_surface_clone_preserves_identity() {
-    // Clone for Box<dyn LanguageSurface> delegates to clone_box() on every
-    // concrete surface; verify the round trip actually produces an
-    // independent, equally-named clone rather than e.g. aliasing or
-    // panicking, across a representative sample of surfaces.
     let originals: Vec<Box<dyn LanguageSurface>> = vec![
       Box::new(rust::RustSurface),
       Box::new(python::PythonSurface),
