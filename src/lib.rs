@@ -38,6 +38,7 @@ use clap::Parser;
 use cli::{Cli, Commands};
 use colored::Colorize;
 use config::FormalityConfig;
+pub use config::SCHEMA_VERSION;
 use std::path::PathBuf;
 
 #[must_use]
@@ -55,8 +56,14 @@ pub fn run_with_args(args: Cli) -> ExitStatus {
     colored::control::set_override(true);
   }
 
+  let root = args.root.clone().unwrap_or_else(|| {
+    std::env::current_dir().unwrap_or_else(|_| PathBuf::from("."))
+  });
+
   let update_notifier = update::spawn_update_check();
+  let schema_notifier = schema::spawn_schema_check(&root);
   let status = run_command_inner(args);
+  schema::print_schema_notice(schema_notifier);
   update::print_update_notice(update_notifier);
   status
 }

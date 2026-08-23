@@ -10,7 +10,11 @@ pub use options::{
   TypstOptions, YamlOptions,
 };
 pub use resolve::{find_project_config, find_user_config};
-pub use schema::generate_schema;
+pub use schema::{
+  SCHEMA_VERSION, SchemaStatus, check_schema_version_content,
+  check_schema_version_file, generate_schema, parse_schema_version,
+  print_schema_notice, spawn_schema_check,
+};
 
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};

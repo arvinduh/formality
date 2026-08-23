@@ -12,19 +12,7 @@ struct UpdateCache {
 }
 
 fn get_cache_path() -> PathBuf {
-  let base_dir = if let Ok(local_app_data) = std::env::var("LOCALAPPDATA") {
-    PathBuf::from(local_app_data).join("formality")
-  } else if let Ok(cache_home) = std::env::var("XDG_CACHE_HOME") {
-    PathBuf::from(cache_home).join("formality")
-  } else if let Ok(home) =
-    std::env::var("HOME").or_else(|_| std::env::var("USERPROFILE"))
-  {
-    PathBuf::from(home).join(".cache").join("formality")
-  } else {
-    std::env::temp_dir().join("formality")
-  };
-
-  base_dir.join("update_check.json")
+  super::cache_path("update_check.json")
 }
 
 // Outer Option represents cache validity (fresh vs expired); inner Option is the cached latest tag.

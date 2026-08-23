@@ -192,6 +192,9 @@ pub fn run_doctor(
   // .gitignore Cache Hygiene Check
   print_gitignore_hygiene(root, &surfaces, &separator);
 
+  // Configuration Schema Version Check
+  print_schema_version_check(root, &separator);
+
   // Auto-install mode
   let mut install_failed = false;
   if install
@@ -511,6 +514,36 @@ fn print_gitignore_hygiene(
       "Tip:".cyan().bold(),
       ".gitignore".bold()
     );
+  }
+}
+
+fn print_schema_version_check(root: &Path, separator: &str) {
+  if let Some(config_path) = crate::config::find_project_config(root) {
+    let status = crate::config::schema::check_schema_version_file(&config_path);
+    if let crate::config::schema::SchemaStatus::Stale { version, expected } =
+      status
+    {
+      let filename = config_path
+        .file_name()
+        .and_then(|n| n.to_str())
+        .unwrap_or("formality.toml");
+
+      println!("\n{}", separator.dimmed());
+      println!("{}", "Configuration Schema Version:".yellow().bold());
+      println!(
+        "  • {} {} references outdated schema version 's{}' (current: 's{}')",
+        "[WARN] ".yellow().bold(),
+        filename.bold(),
+        version.to_string().yellow().bold(),
+        expected.to_string().green().bold()
+      );
+      println!(
+        "    {} Update #:schema directive in {} to pin 's{}'.",
+        "Tip:".cyan().bold(),
+        filename.bold(),
+        expected.to_string().bold()
+      );
+    }
   }
 }
 

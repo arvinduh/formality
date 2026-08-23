@@ -154,3 +154,40 @@ fn test_check_gitignore_hygiene_no_file() {
   assert!(report.issues.iter().any(|i| i.category == "Python"));
   assert!(report.issues.iter().any(|i| i.category == "Rust"));
 }
+
+#[test]
+fn test_doctor_schema_version_check_stale() {
+  let temp = tempdir().unwrap();
+  let config_file = temp.path().join("formality.toml");
+  std::fs::write(
+    &config_file,
+    "#:schema https://github.com/arvinduh/formality/releases/download/s0/formality.schema.json\n[global]\n",
+  )
+  .unwrap();
+
+  let status = crate::config::schema::check_schema_version_file(&config_file);
+  assert_eq!(
+    status,
+    crate::config::schema::SchemaStatus::Stale {
+      version: 0,
+      expected: crate::config::SCHEMA_VERSION,
+    }
+  );
+}
+
+#[test]
+fn test_doctor_schema_version_check_uptodate() {
+  let temp = tempdir().unwrap();
+  let config_file = temp.path().join("formality.toml");
+  std::fs::write(
+    &config_file,
+    "#:schema https://github.com/arvinduh/formality/releases/download/s1/formality.schema.json\n[global]\n",
+  )
+  .unwrap();
+
+  let status = crate::config::schema::check_schema_version_file(&config_file);
+  assert_eq!(
+    status,
+    crate::config::schema::SchemaStatus::UpToDate { version: 1 }
+  );
+}
