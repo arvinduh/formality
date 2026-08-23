@@ -10,13 +10,14 @@ use std::path::Path;
 
 use crate::config::find_project_config;
 use crate::config::schema::{
-  SCHEMA_VERSION, SchemaStatus, check_schema_version_content,
+  SCHEMA_VERSION, SchemaStatus, SchemaVersion, check_schema_version_content,
 };
 use crate::errors::{ExitStatus, FormalityError, IoError};
 
-/// Builds the canonical schema release download URL for a given `s{N}` tag.
+/// Builds the canonical schema release download URL for a given
+/// `s{major}.{minor}` tag.
 #[must_use]
-fn schema_url(version: u32) -> String {
+fn schema_url(version: SchemaVersion) -> String {
   format!(
     "https://github.com/arvinduh/formality/releases/download/s{version}/formality.schema.json"
   )
@@ -33,9 +34,16 @@ fn schema_url(version: u32) -> String {
 /// one is inserted as the first line of the file, since `#:schema` directives
 /// conventionally appear at the top.
 #[must_use]
-pub fn rewrite_schema_line(content: &str, new_version: u32) -> String {
+pub fn rewrite_schema_line(
+  content: &str,
+  new_version: SchemaVersion,
+) -> String {
   let new_line = format!("#:schema {}", schema_url(new_version));
-  let separator = if content.contains("\r\n") { "\r\n" } else { "\n" };
+  let separator = if content.contains("\r\n") {
+    "\r\n"
+  } else {
+    "\n"
+  };
 
   let mut found = false;
   let mut lines: Vec<String> = content
@@ -153,22 +161,24 @@ mod tests {
 
   #[test]
   fn test_rewrite_schema_line_replaces_stale_directive() {
-    let content = "#:schema https://github.com/arvinduh/formality/releases/download/s0/formality.schema.json\n[global]\nindent_size = 2\n";
-    let updated = rewrite_schema_line(content, 1);
+    let content = "#:schema https://github.com/arvinduh/formality/releases/download/s0.9/formality.schema.json\n[global]\nindent_size = 2\n";
+    let updated =
+      rewrite_schema_line(content, SchemaVersion { major: 1, minor: 0 });
     assert_eq!(
       updated,
-      "#:schema https://github.com/arvinduh/formality/releases/download/s1/formality.schema.json\n[global]\nindent_size = 2\n"
+      "#:schema https://github.com/arvinduh/formality/releases/download/s1.0/formality.schema.json\n[global]\nindent_size = 2\n"
     );
   }
 
   #[test]
   fn test_rewrite_schema_line_preserves_rest_of_file() {
-    let content = "# a leading comment\n#:schema s0\n[global]\nindent_size = 2\n\n[lang.rust]\nline_width = 100\n";
-    let updated = rewrite_schema_line(content, 3);
+    let content = "# a leading comment\n#:schema s0.9\n[global]\nindent_size = 2\n\n[lang.rust]\nline_width = 100\n";
+    let updated =
+      rewrite_schema_line(content, SchemaVersion { major: 3, minor: 1 });
     assert!(updated.contains("# a leading comment\n"));
     assert!(updated.contains("[lang.rust]\nline_width = 100\n"));
     assert!(updated.contains(
-      "#:schema https://github.com/arvinduh/formality/releases/download/s3/formality.schema.json"
+      "#:schema https://github.com/arvinduh/formality/releases/download/s3.1/formality.schema.json"
     ));
     // Only the schema line changed.
     assert_eq!(updated.lines().count(), content.lines().count());
@@ -177,12 +187,13 @@ mod tests {
   #[test]
   fn test_rewrite_schema_line_inserts_when_missing() {
     let content = "[global]\nindent_size = 2\n";
-    let updated = rewrite_schema_line(content, 1);
+    let updated =
+      rewrite_schema_line(content, SchemaVersion { major: 1, minor: 0 });
     let mut lines = updated.lines();
     assert_eq!(
       lines.next(),
       Some(
-        "#:schema https://github.com/arvinduh/formality/releases/download/s1/formality.schema.json"
+        "#:schema https://github.com/arvinduh/formality/releases/download/s1.0/formality.schema.json"
       )
     );
     assert_eq!(lines.next(), Some("[global]"));
@@ -191,8 +202,9 @@ mod tests {
 
   #[test]
   fn test_rewrite_schema_line_preserves_crlf_line_endings() {
-    let content = "#:schema s0\r\n[global]\r\nindent_size = 2\r\n";
-    let updated = rewrite_schema_line(content, 1);
+    let content = "#:schema s0.9\r\n[global]\r\nindent_size = 2\r\n";
+    let updated =
+      rewrite_schema_line(content, SchemaVersion { major: 1, minor: 0 });
     assert!(
       !updated.contains('\n') || updated.matches("\r\n").count() == 3,
       "CRLF file must stay CRLF throughout: {updated:?}"
@@ -206,16 +218,17 @@ mod tests {
     // Pathological input with two `#:schema`-looking lines; only the first
     // should be rewritten, matching `parse_schema_version`'s "first match
     // wins" behavior.
-    let content = "#:schema s0\n#:schema s5\n[global]\n";
-    let updated = rewrite_schema_line(content, 2);
+    let content = "#:schema s0.9\n#:schema s5.2\n[global]\n";
+    let updated =
+      rewrite_schema_line(content, SchemaVersion { major: 2, minor: 0 });
     let mut lines = updated.lines();
     assert_eq!(
       lines.next(),
       Some(
-        "#:schema https://github.com/arvinduh/formality/releases/download/s2/formality.schema.json"
+        "#:schema https://github.com/arvinduh/formality/releases/download/s2.0/formality.schema.json"
       )
     );
-    assert_eq!(lines.next(), Some("#:schema s5"));
+    assert_eq!(lines.next(), Some("#:schema s5.2"));
   }
 
   #[test]

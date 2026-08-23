@@ -1,12 +1,18 @@
 # Compatibility Matrix
 
 This document outlines the compatibility between `fml` CLI binary versions and
-versioned JSON Schema releases (`s{N}`).
+versioned JSON Schema releases (`s{major}.{minor}`).
 
 ## Schema Versioning Overview
 
-`fml` uses independent schema releases tagged as `s{N}` (e.g., `s1`, `s2`)
-alongside CLI binary releases tagged as `v*` (e.g., `v0.1.0`).
+`fml` uses independent schema releases tagged as `s{major}.{minor}` (e.g.,
+`s1.0`, `s1.1`, `s2.0`) alongside CLI binary releases tagged as `v*` (e.g.,
+`v0.1.0`). The two counters are deliberately independent, not mirrored — a
+schema change and a binary release happen at different rates, so a schema tag
+that tried to track the binary's semver (e.g. `s0.1.0` mirroring `v0.1.0`) would
+either need bumping on every unrelated binary release or silently drift out of a
+parity it never really had. `major` bumps on a breaking schema change; `minor`
+bumps on an additive/compatible one.
 
 - **Binary Releases (`v*`)**: Target multi-platform executable builds for the
   `fml` CLI and editor plugins.
@@ -17,10 +23,10 @@ alongside CLI binary releases tagged as `v*` (e.g., `v0.1.0`).
 ### Referencing Schema Releases
 
 In `formality.toml` or `.formality.toml`, reference a specific schema tag
-(`s{N}`):
+(`s{major}.{minor}`):
 
 ```toml
-#:schema https://github.com/arvinduh/formality/releases/download/s1/formality.schema.json
+#:schema https://github.com/arvinduh/formality/releases/download/s1.0/formality.schema.json
 
 [global]
 indent_size = 2
@@ -29,15 +35,16 @@ line_length = 80
 
 ## Version Compatibility Matrix
 
-| `fml` Binary Version | Recommended Schema Tag | Schema Release URL                                                                 | Status & Notes                                                                          |
-| :------------------- | :--------------------- | :--------------------------------------------------------------------------------- | :-------------------------------------------------------------------------------------- |
-| `v0.1.x`             | `s1`                   | `https://github.com/arvinduh/formality/releases/download/s1/formality.schema.json` | Active (Initial schema revision covering canonical globals and per-language overrides). |
+| `fml` Binary Version | Recommended Schema Tag | Schema Release URL                                                                   | Status & Notes                                                                          |
+| :------------------- | :--------------------- | :----------------------------------------------------------------------------------- | :-------------------------------------------------------------------------------------- |
+| `v0.1.x`             | `s1.0`                 | `https://github.com/arvinduh/formality/releases/download/s1.0/formality.schema.json` | Active (Initial schema revision covering canonical globals and per-language overrides). |
 
 ## Compatibility Guarantees
 
 1. **Backwards Compatibility**: Newer `fml` binaries retain backwards
-   compatibility with configurations valid under older `s{N}` schema releases.
+   compatibility with configurations valid under older `s{major}.{minor}` schema
+   releases.
 2. **Schema Evolution**: Non-breaking schema additions (such as adding new
-   optional surface settings) remain within the active `s{N}` tag range.
-   Breaking schema structure changes trigger a bump to the next schema tag
-   (e.g., `s2`).
+   optional surface settings) bump the `minor` component (e.g. `s1.0` -> `s1.1`)
+   and stay within the active major range. Breaking schema structure changes
+   bump `major` and reset `minor` to `0` (e.g. `s1.5` -> `s2.0`).

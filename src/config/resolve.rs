@@ -294,12 +294,13 @@ impl FormalityConfig {
     let mut out = String::new();
     out.push_str("# formality configuration file\n");
     out.push_str("# https://github.com/arvinduh/formality\n");
-    // Reference the schema from the versioned GitHub Release asset under the schema tag (s1) —
-    // never from a raw git branch URL — so users are always pinned to a specific
-    // schema release rather than an ever-changing main branch.
-    out.push_str(
-      "#:schema https://github.com/arvinduh/formality/releases/download/s1/formality.schema.json\n\n",
-    );
+    // Reference the schema from the versioned GitHub Release asset under the schema tag
+    // (s{major}.{minor}, e.g. s1.0) — never from a raw git branch URL — so users are
+    // always pinned to a specific schema release rather than an ever-changing main branch.
+    out.push_str(&format!(
+      "#:schema https://github.com/arvinduh/formality/releases/download/s{}/formality.schema.json\n\n",
+      crate::config::schema::SCHEMA_VERSION
+    ));
     out.push_str("[global]\n");
     out.push_str("indent_size = 2\n");
     out.push_str("line_length = 80\n");

@@ -161,7 +161,7 @@ fn test_doctor_schema_version_check_stale() {
   let config_file = temp.path().join("formality.toml");
   std::fs::write(
     &config_file,
-    "#:schema https://github.com/arvinduh/formality/releases/download/s0/formality.schema.json\n[global]\n",
+    "#:schema https://github.com/arvinduh/formality/releases/download/s0.9/formality.schema.json\n[global]\n",
   )
   .unwrap();
 
@@ -169,7 +169,7 @@ fn test_doctor_schema_version_check_stale() {
   assert_eq!(
     status,
     crate::config::schema::SchemaStatus::Stale {
-      version: 0,
+      version: crate::config::schema::SchemaVersion { major: 0, minor: 9 },
       expected: crate::config::SCHEMA_VERSION,
     }
   );
@@ -181,13 +181,18 @@ fn test_doctor_schema_version_check_uptodate() {
   let config_file = temp.path().join("formality.toml");
   std::fs::write(
     &config_file,
-    "#:schema https://github.com/arvinduh/formality/releases/download/s1/formality.schema.json\n[global]\n",
+    format!(
+      "#:schema https://github.com/arvinduh/formality/releases/download/s{}/formality.schema.json\n[global]\n",
+      crate::config::SCHEMA_VERSION
+    ),
   )
   .unwrap();
 
   let status = crate::config::schema::check_schema_version_file(&config_file);
   assert_eq!(
     status,
-    crate::config::schema::SchemaStatus::UpToDate { version: 1 }
+    crate::config::schema::SchemaStatus::UpToDate {
+      version: crate::config::SCHEMA_VERSION
+    }
   );
 }

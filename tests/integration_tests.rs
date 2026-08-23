@@ -358,7 +358,7 @@ fn test_migrate_schema_command() {
   // 2. Stale #:schema line gets rewritten to the current version.
   fs::write(
     root.join("formality.toml"),
-    "#:schema https://github.com/arvinduh/formality/releases/download/s0/formality.schema.json\n[global]\nindent_size = 2\n",
+    "#:schema https://github.com/arvinduh/formality/releases/download/s0.9/formality.schema.json\n[global]\nindent_size = 2\n",
   )
   .unwrap();
 

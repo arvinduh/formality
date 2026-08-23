@@ -6,9 +6,33 @@ use serde::{Deserialize, Serialize};
 use std::path::{Path, PathBuf};
 use std::time::{SystemTime, UNIX_EPOCH};
 
-/// The current `s{N}` schema version this build of `fml` expects a project's
-/// `#:schema` directive to reference.
-pub const SCHEMA_VERSION: u32 = 1;
+/// A schema release version: `major.minor`. A major bump means a breaking
+/// schema change; a minor bump means an additive/compatible one.
+/// Deliberately two components, not full semver — unlike the binary/
+/// extension's `v{semver}` tag, a schema has no meaningful patch-level
+/// distinction (there's no such thing as a schema patch that changes
+/// nothing schema-relevant), and it's tracked independently of the binary
+/// version rather than mirroring it, since the two change at different
+/// rates (see #126).
+#[derive(
+  Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize,
+)]
+pub struct SchemaVersion {
+  /// Bumped on a breaking schema change.
+  pub major: u32,
+  /// Bumped on an additive/compatible schema change.
+  pub minor: u32,
+}
+
+impl std::fmt::Display for SchemaVersion {
+  fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+    write!(f, "{}.{}", self.major, self.minor)
+  }
+}
+
+/// The current `s{major}.{minor}` schema version this build of `fml`
+/// expects a project's `#:schema` directive to reference.
+pub const SCHEMA_VERSION: SchemaVersion = SchemaVersion { major: 1, minor: 0 };
 const SCHEMA_CHECK_INTERVAL_SECS: u64 = 24 * 60 * 60; // 24 hours
 
 /// A config file's schema version status relative to [`SCHEMA_VERSION`].
@@ -17,14 +41,14 @@ pub enum SchemaStatus {
   /// The config's `#:schema` directive references the current version.
   UpToDate {
     /// The version found in the config's `#:schema` directive.
-    version: u32,
+    version: SchemaVersion,
   },
   /// The config's `#:schema` directive references an older version.
   Stale {
     /// The version found in the config's `#:schema` directive.
-    version: u32,
+    version: SchemaVersion,
     /// The current [`SCHEMA_VERSION`].
-    expected: u32,
+    expected: SchemaVersion,
   },
   /// The config has no `#:schema` directive at all.
   Missing,
@@ -35,13 +59,13 @@ pub enum SchemaStatus {
 #[derive(Serialize, Deserialize, Debug)]
 struct SchemaCheckCache {
   last_checked_unix: u64,
-  stale_version: Option<u32>,
+  stale_version: Option<SchemaVersion>,
 }
 
 /// Holds a pending stale-schema notice to be printed later via
 /// [`print_schema_notice`], once command output has settled.
 pub struct SchemaNotifier {
-  stale_info: Option<(PathBuf, u32, u32)>,
+  stale_info: Option<(PathBuf, SchemaVersion, SchemaVersion)>,
 }
 
 /// Generates the JSON Schema for formality configuration dynamically using schemars.
@@ -51,9 +75,27 @@ pub fn generate_schema() -> String {
   serde_json::to_string_pretty(&schema).unwrap_or_default()
 }
 
-/// Parses the `s{N}` version number from a `#:schema` directive in config content.
+/// Parses a `major.minor` pair out of a schema tag's digits (the part after
+/// the `s`/`S` prefix, e.g. `"1.0"` from `"s1.0"`).
+fn parse_version_digits(digits: &str) -> Option<SchemaVersion> {
+  let (major_str, minor_str) = digits.split_once('.')?;
+  if major_str.is_empty()
+    || minor_str.is_empty()
+    || !major_str.chars().all(|c| c.is_ascii_digit())
+    || !minor_str.chars().all(|c| c.is_ascii_digit())
+  {
+    return None;
+  }
+  Some(SchemaVersion {
+    major: major_str.parse().ok()?,
+    minor: minor_str.parse().ok()?,
+  })
+}
+
+/// Parses the `s{major}.{minor}` version from a `#:schema` directive in
+/// config content.
 #[must_use]
-pub fn parse_schema_version(content: &str) -> Option<u32> {
+pub fn parse_schema_version(content: &str) -> Option<SchemaVersion> {
   for line in content.lines() {
     let trimmed = line.trim();
     if let Some(idx) = trimmed.find("#:schema") {
@@ -66,10 +108,9 @@ pub fn parse_schema_version(content: &str) -> Option<u32> {
             .strip_prefix('s')
             .or_else(|| clean_seg.strip_prefix('S'))
             && !digits.is_empty()
-            && digits.chars().all(|c| c.is_ascii_digit())
-            && let Ok(v) = digits.parse::<u32>()
+            && let Some(version) = parse_version_digits(digits)
           {
-            return Some(v);
+            return Some(version);
           }
         }
       }
@@ -111,7 +152,7 @@ fn read_schema_cache() -> Option<SchemaCheckCache> {
   serde_json::from_str(&data).ok()
 }
 
-fn write_schema_cache(stale_version: Option<u32>) {
+fn write_schema_cache(stale_version: Option<SchemaVersion>) {
   let path = cache_path("schema_check.json");
   if let Some(parent) = path.parent() {
     let _ = std::fs::create_dir_all(parent);
@@ -221,48 +262,77 @@ mod tests {
 
   #[test]
   fn test_schema_version_constant() {
-    assert_eq!(SCHEMA_VERSION, 1);
+    assert_eq!(SCHEMA_VERSION, SchemaVersion { major: 1, minor: 0 });
+  }
+
+  #[test]
+  fn test_schema_version_display_and_ord() {
+    assert_eq!(SchemaVersion { major: 1, minor: 0 }.to_string(), "1.0");
+    assert!(
+      SchemaVersion { major: 1, minor: 0 }
+        < SchemaVersion { major: 1, minor: 5 }
+    );
+    assert!(
+      SchemaVersion { major: 1, minor: 9 }
+        < SchemaVersion { major: 2, minor: 0 }
+    );
   }
 
   #[test]
   fn test_parse_schema_version() {
-    let sample = "#:schema https://github.com/arvinduh/formality/releases/download/s1/formality.schema.json";
-    assert_eq!(parse_schema_version(sample), Some(1));
+    let sample = "#:schema https://github.com/arvinduh/formality/releases/download/s1.0/formality.schema.json";
+    assert_eq!(
+      parse_schema_version(sample),
+      Some(SchemaVersion { major: 1, minor: 0 })
+    );
 
-    let stale = "#:schema https://github.com/arvinduh/formality/releases/download/s0/formality.schema.json";
-    assert_eq!(parse_schema_version(stale), Some(0));
+    let stale = "#:schema https://github.com/arvinduh/formality/releases/download/s0.9/formality.schema.json";
+    assert_eq!(
+      parse_schema_version(stale),
+      Some(SchemaVersion { major: 0, minor: 9 })
+    );
 
-    let tag_only = "#:schema s5";
-    assert_eq!(parse_schema_version(tag_only), Some(5));
+    let tag_only = "#:schema s5.2";
+    assert_eq!(
+      parse_schema_version(tag_only),
+      Some(SchemaVersion { major: 5, minor: 2 })
+    );
 
     let no_schema = "[global]\nindent_size = 2\n";
     assert_eq!(parse_schema_version(no_schema), None);
 
     let invalid_schema = "#:schema https://example.com/schema.json";
     assert_eq!(parse_schema_version(invalid_schema), None);
+
+    let no_minor = "#:schema s1";
+    assert_eq!(parse_schema_version(no_minor), None);
   }
 
   #[test]
   fn test_check_schema_version_content() {
-    let stale_content = "#:schema https://github.com/arvinduh/formality/releases/download/s0/formality.schema.json\n[global]\n";
+    let stale_content = "#:schema https://github.com/arvinduh/formality/releases/download/s0.9/formality.schema.json\n[global]\n";
     assert_eq!(
       check_schema_version_content(stale_content),
       SchemaStatus::Stale {
-        version: 0,
+        version: SchemaVersion { major: 0, minor: 9 },
         expected: SCHEMA_VERSION,
       }
     );
 
-    let current_content = "#:schema https://github.com/arvinduh/formality/releases/download/s1/formality.schema.json\n[global]\n";
+    let current_content = "#:schema https://github.com/arvinduh/formality/releases/download/s1.0/formality.schema.json\n[global]\n";
     assert_eq!(
       check_schema_version_content(current_content),
-      SchemaStatus::UpToDate { version: 1 }
+      SchemaStatus::UpToDate {
+        version: SchemaVersion { major: 1, minor: 0 }
+      }
     );
 
-    let future_content = "#:schema https://github.com/arvinduh/formality/releases/download/s2/formality.schema.json\n[global]\n";
+    let future_content = "#:schema https://github.com/arvinduh/formality/releases/download/s1.5/formality.schema.json\n[global]\n";
     assert_eq!(
       check_schema_version_content(future_content),
-      SchemaStatus::UpToDate { version: 2 }
+      SchemaStatus::UpToDate {
+        version: SchemaVersion { major: 1, minor: 5 }
+      }
     );
 
     let missing_content = "[global]\nindent_size = 2\n";

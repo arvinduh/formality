@@ -116,15 +116,22 @@ semver bump (`feat` -> minor, `fix` -> patch, `!`/`BREAKING CHANGE` -> major).
 ## Schema Releases (`s*` tags)
 
 In addition to binary releases (`v*`), `fml` supports independent schema
-releases tagged with the `s{N}` pattern (e.g. `s1`, `s2`).
+releases tagged with the `s{major}.{minor}` pattern (e.g. `s1.0`, `s1.1`,
+`s2.0`). A major bump means a breaking schema change; a minor bump means an
+additive/compatible one. This is deliberately independent of the binary's
+`v{semver}` tag — the two change at different rates, and forcing them to track
+each other (e.g. `s0.1.0` mirroring `v0.1.0`) would either churn the schema tag
+on every binary release or let it silently drift out of a parity it never really
+had. See [`SchemaVersion`](../src/config/schema.rs) and #126 for the original
+design rationale.
 
 Schema releases publish `schema/formality.schema.json` as an independent GitHub
-Release asset under the corresponding `s{N}` tag so users can pin their
-`formality.toml` or `.formality.toml` configuration files to stable schema
+Release asset under the corresponding `s{major}.{minor}` tag so users can pin
+their `formality.toml` or `.formality.toml` configuration files to stable schema
 versions via `#:schema` directives:
 
 ```toml
-#:schema https://github.com/arvinduh/formality/releases/download/s1/formality.schema.json
+#:schema https://github.com/arvinduh/formality/releases/download/s1.0/formality.schema.json
 ```
 
 ### Schema Release Procedure
@@ -140,8 +147,8 @@ versions via `#:schema` directives:
 2. **Tag the schema release.**
 
    ```sh
-   git tag -a s1 -m "s1 schema release"
-   git push origin s1
+   git tag -a s1.0 -m "s1.0 schema release"
+   git push origin s1.0
    ```
 
 3. **CI Automation.**
@@ -149,20 +156,20 @@ versions via `#:schema` directives:
    Pushing an `s*` tag triggers `.github/workflows/schema-release.yml`, which:
    - Builds `fml` from the tagged commit.
    - Generates `schema/formality.schema.json`.
-   - Creates a GitHub Release for tag `s{N}` and uploads `formality.schema.json`
-     as a release asset.
+   - Creates a GitHub Release for tag `s{major}.{minor}` and uploads
+     `formality.schema.json` as a release asset.
 
 4. **Verify the schema release.**
 
-   Check the GitHub Releases page for tag `s{N}` and confirm that
+   Check the GitHub Releases page for tag `s{major}.{minor}` and confirm that
    `formality.schema.json` is attached to the release.
 
 5. **Update documentation & matrix.**
 
    Update [COMPATIBILITY.md](../COMPATIBILITY.md) and example `#:schema`
-   directives in documentation if a new schema version (e.g. `s2`) was cut.
-   Individual users don't need to hand-edit their own `formality.toml` —
-   `fml migrate schema` rewrites their `#:schema` line to the current tag.
+   directives in documentation if a new schema version (e.g. `s1.1` or `s2.0`)
+   was cut. Individual users don't need to hand-edit their own `formality.toml`
+   — `fml migrate schema` rewrites their `#:schema` line to the current tag.
 
 ## Changelog conventions
 

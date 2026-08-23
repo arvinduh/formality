@@ -187,9 +187,10 @@ YAML's `yamllint`, TOML's `taplo lint`).
 ### Minimal setup (zero boilerplate)
 
 ```toml
-# Always pin to a specific schema tag (e.g. s1) — the schema is a release asset,
-# not a raw branch file.
-#:schema https://github.com/arvinduh/formality/releases/download/s1/formality.schema.json
+# Always pin to a specific schema tag (e.g. s1.0) — the schema is a release
+# asset, not a raw branch file. Tagged independently of the binary's v* release
+# (major.minor: major = breaking schema change, minor = additive/compatible).
+#:schema https://github.com/arvinduh/formality/releases/download/s1.0/formality.schema.json
 
 [global]
 languages = ["rust", "toml", "markdown"]  # Explicit active surfaces
@@ -204,7 +205,7 @@ schema change, since that's a human decision.
 
 ```text
 $ fml migrate schema
-[OK] Updated formality.toml schema reference: s0 -> s1
+[OK] Updated formality.toml schema reference: s0.9 -> s1.0
 ```
 
 ### Full configuration with overrides
