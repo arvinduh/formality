@@ -10,7 +10,8 @@ every surface in parallel for near-instant feedback.
 cross-language config vocabulary) ·
 [Language Surface Guides](docs/language-surfaces.md) (per-surface tools, config,
 and behavior) · [Adding a New Surface](docs/new-surface-guide.md) ·
-[`fml table` Spec](docs/table-spec.md) · [Release Procedure](docs/release.md)
+[`fml table` Spec](docs/table-spec.md) · [Style Guide](docs/style-guide.md) ·
+[Release Procedure](docs/release.md)
 
 ---
 

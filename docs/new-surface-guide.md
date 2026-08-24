@@ -37,14 +37,17 @@ repository:
     `CANONICAL_FLEET_ORDER` entry.
   - Prose surface counts in doc comments and documentation (e.g.
     `SurfaceRegistry::new()` doc comment).
-- [ ] **6. Test coverage**:
-  - Surface unit tests in `src/surfaces/<lang>.rs` (or `<lang>_tests.rs`).
-  - Registry tests in `src/surfaces/registry_tests.rs` (fleet count assertion,
+- [ ] **6. Test coverage** (see
+      [Style Guide §1](style-guide.md#1-modulefile-hierarchy) for the
+      inline-`mod tests`-vs-sibling-`tests.rs` convention):
+  - Surface unit tests inline in `src/surfaces/<lang>.rs`
+    (`#[cfg(test)] mod tests { ... }`).
+  - Registry tests inline in `src/surfaces/registry.rs` (fleet count assertion,
     name list in `test_all_fleet_surfaces_present()`, alias & case-insensitive
     lookup test cases).
-  - Fleet lint-fix test in `src/surfaces/mod_tests.rs`
+  - Fleet lint-fix test inline in `src/surfaces/mod.rs`
     (`test_surface_supports_lint_fix()`).
-  - Facet Rosetta golden table in `src/config/facets_tests.rs`
+  - Facet Rosetta golden table inline in `src/config/facets.rs`
     (`test_surface_facet_declarations()` and surface count assertions).
 - [ ] **7. JSON Schema & Documentation**:
   - `cargo run -q -- schema -o schema/formality.schema.json`
@@ -353,6 +356,7 @@ If the tool has no native config file (driven entirely by CLI flags or
     ```
 
   - Add `"foo"` to `CANONICAL_FLEET_ORDER`.
+
 - **Prose surface counts**: Update doc comments and prose mentioning the fleet
   count (e.g. `SurfaceRegistry::new()` doc comment "default fleet of 12 language
   surfaces", `cli.rs`, `README.md`).
@@ -363,21 +367,22 @@ If the tool has no native config file (driven entirely by CLI flags or
 
 Add tests across the test suites:
 
-1. **Per-surface unit tests**: In `src/surfaces/<lang>.rs` (or
-   `<lang>_tests.rs`), test `facet_support()` across all `Facet::ALL`,
-   `detect()` with positive/negative temp fixtures, `tool_info()`, and
-   `supports_lint_fix()`.
-2. **Registry tests (`src/surfaces/registry_tests.rs`)**:
+1. **Per-surface unit tests**: Inline in `src/surfaces/<lang>.rs`
+   (`#[cfg(test)] mod tests { ... }` — see
+   [Style Guide §1](style-guide.md#1-modulefile-hierarchy)), test
+   `facet_support()` across all `Facet::ALL`, `detect()` with positive/negative
+   temp fixtures, `tool_info()`, and `supports_lint_fix()`.
+2. **Registry tests (inline in `src/surfaces/registry.rs`)**:
    - In `test_all_fleet_surfaces_present()`: update
      `assert_eq!(surfaces.len(), N)` and add `"foo"` to the `expected` list.
    - In `test_get_surface_by_name_canonical_and_aliases()`: add canonical and
      alias test cases.
    - In `test_get_surface_by_name_case_insensitive()`: add case-insensitive
      variations.
-3. **Lint-fix assertion (`src/surfaces/mod_tests.rs`)**:
+3. **Lint-fix assertion (inline in `src/surfaces/mod.rs`)**:
    - Add `assert!(foo::FooSurface.supports_lint_fix())` (or `!`) to
      `test_surface_supports_lint_fix()`.
-4. **Facet Rosetta golden table (`src/config/facets_tests.rs`)**:
+4. **Facet Rosetta golden table (inline in `src/config/facets.rs`)**:
    - Add the surface's expected facet row to
      `test_surface_facet_declarations()`.
    - Update `assert_eq!(surfaces.len(), N)` and `assert_eq!(golden.len(), N)`.

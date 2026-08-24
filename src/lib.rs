@@ -216,3 +216,61 @@ fn warn_unrecognized_lang_sections(config: &FormalityConfig) {
     );
   }
 }
+
+#[cfg(test)]
+#[allow(missing_docs, clippy::missing_errors_doc, clippy::missing_panics_doc)]
+mod tests {
+  // Tier-2 enforcement for the module/file hierarchy rule documented in
+  // docs/style-guide.md ("`*_tests.rs` vs `#[cfg(test)] mod tests`"): a
+  // `#[test]` walking the filesystem, same mechanism `registry.rs`'s fleet
+  // side-table checks established (#113) — reused here, not reinvented.
+  //
+  // The rule: test modules live inline (`#[cfg(test)] mod tests { ... }`) in
+  // the file under test. The one sanctioned exception is a directory module
+  // (`some/mod.rs`) large enough that its tests live in a sibling `tests.rs`
+  // declared via `mod tests;` — never any other `*_tests.rs` name. #120
+  // deliberately collapsed every previous `<name>_tests.rs` file back inline;
+  // this test keeps that convention from silently drifting back.
+  #[test]
+  fn test_no_stray_test_files_outside_sanctioned_pattern() {
+    let manifest_dir = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+    let src_dir = manifest_dir.join("src");
+
+    let mut violations = Vec::new();
+    for entry in walkdir::WalkDir::new(&src_dir)
+      .into_iter()
+      .filter_map(Result::ok)
+      .filter(|e| e.file_type().is_file())
+    {
+      let path = entry.path();
+      let Some(file_name) = path.file_name().and_then(|n| n.to_str()) else {
+        continue;
+      };
+      if file_name == "tests.rs" {
+        // Sanctioned only as a sibling of a directory module's `mod.rs`.
+        let has_sibling_mod_rs = path.with_file_name("mod.rs").is_file();
+        if !has_sibling_mod_rs {
+          violations.push(format!(
+            "{}: `tests.rs` with no sibling `mod.rs` — inline the tests in \
+             the module file instead",
+            path.display()
+          ));
+        }
+      } else if file_name.ends_with("_tests.rs") {
+        violations.push(format!(
+          "{}: `*_tests.rs` naming is not the sanctioned pattern — inline \
+           `#[cfg(test)] mod tests {{ ... }}` in the module file, or (only \
+           for a directory module) use a sibling file named exactly \
+           `tests.rs`",
+          path.display()
+        ));
+      }
+    }
+
+    assert!(
+      violations.is_empty(),
+      "module/file hierarchy violation(s) — see docs/style-guide.md §1:\n{}",
+      violations.join("\n")
+    );
+  }
+}
