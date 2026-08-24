@@ -112,6 +112,33 @@ pub fn build_golangci_lint_args(
   args
 }
 
+/// Builds argument vector for a machine-readable `golangci-lint run`
+/// invocation, used by the LSP server (`fml lsp`, Fixes #159, #165) to
+/// translate individual violations into per-file `Diagnostic`s instead of
+/// one generic warning. Mirrors [`build_golangci_lint_args`] but requests
+/// `--output.json.path=stdout` output instead of `--fix`. Verified against
+/// a real golangci-lint v2.5.0 run — v2 renamed the old (v1) `--out-format`
+/// flag to the `--output.<format>.path` family; this module targets v2 only,
+/// consistent with [`golangci_lint_supports_enable_only`] already assuming a
+/// v2 install for `fml lint`'s own inline-linter-set path.
+#[must_use]
+pub fn build_golangci_lint_json_args(
+  files: &[PathBuf],
+  extra_args: &[String],
+) -> Vec<String> {
+  let mut args =
+    vec!["run".to_string(), "--output.json.path=stdout".to_string()];
+  if files.is_empty() {
+    args.push("./...".to_string());
+  } else {
+    for f in files {
+      args.push(f.to_string_lossy().to_string());
+    }
+  }
+  args.extend(extra_args.iter().cloned());
+  args
+}
+
 /// Renders the resolved linter set as the `--enable-only <comma-list>` flag
 /// golangci-lint v2 accepts inline, so `fml lint` can apply
 /// formality.toml's configured linter set without writing `.golangci.yml`
@@ -578,6 +605,33 @@ mod tests {
         "main.go".to_string(),
         "util.go".to_string(),
         "--timeout=5m".to_string(),
+      ]
+    );
+  }
+
+  #[test]
+  fn test_build_golangci_lint_json_args_default_scope() {
+    let args = build_golangci_lint_json_args(&[], &[]);
+    assert_eq!(
+      args,
+      vec![
+        "run".to_string(),
+        "--output.json.path=stdout".to_string(),
+        "./...".to_string(),
+      ]
+    );
+  }
+
+  #[test]
+  fn test_build_golangci_lint_json_args_with_files() {
+    let files = vec![PathBuf::from("main.go")];
+    let args = build_golangci_lint_json_args(&files, &[]);
+    assert_eq!(
+      args,
+      vec![
+        "run".to_string(),
+        "--output.json.path=stdout".to_string(),
+        "main.go".to_string(),
       ]
     );
   }

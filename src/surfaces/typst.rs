@@ -28,6 +28,32 @@ impl DeclaresFacets for TypstSurface {
 
 const TYPST_EXTENSIONS: &[&str] = &["typ"];
 
+/// Builds argument vector for a `typst compile` invocation whose stderr is
+/// safe to parse for the LSP server (`fml lsp`, Fixes #159, #165). Typst has
+/// no dedicated `check`/`lint` subcommand distinct from `compile` — this
+/// surface's own [`TypstSurface::lint`] already delegates to `typstyle`'s
+/// format-check for that reason. `typst compile` itself does carry real
+/// diagnostics (undefined variables, type errors, missing fonts) that
+/// typstyle never sees, so this targets `compile` directly with
+/// `--diagnostic-format short`, verified against a real typst 0.15.1 run to
+/// print `path:line:col: severity: message` on stderr, one line per
+/// diagnostic (`human`, the default, additionally prints a source excerpt
+/// per diagnostic that `short` omits). `output` should be a throwaway
+/// scratch path (the caller discards it) since `compile` always needs
+/// somewhere to write, even when only the diagnostics are wanted.
+#[must_use]
+pub fn build_typst_check_args(file: &Path, output: &Path) -> Vec<String> {
+  vec![
+    "compile".to_string(),
+    "--diagnostic-format".to_string(),
+    "short".to_string(),
+    "-f".to_string(),
+    "pdf".to_string(),
+    file.to_string_lossy().to_string(),
+    output.to_string_lossy().to_string(),
+  ]
+}
+
 impl LanguageSurface for TypstSurface {
   fn name(&self) -> &'static str {
     "typst"
@@ -204,6 +230,26 @@ mod tests {
   use crate::config::{ResolvedGlobalConfig, ResolvedLangConfig};
   use std::sync::Arc;
   use tempfile::TempDir;
+
+  #[test]
+  fn test_build_typst_check_args() {
+    let args = build_typst_check_args(
+      Path::new("bad.typ"),
+      Path::new("/tmp/scratch/out.pdf"),
+    );
+    assert_eq!(
+      args,
+      vec![
+        "compile".to_string(),
+        "--diagnostic-format".to_string(),
+        "short".to_string(),
+        "-f".to_string(),
+        "pdf".to_string(),
+        "bad.typ".to_string(),
+        "/tmp/scratch/out.pdf".to_string(),
+      ]
+    );
+  }
 
   fn ctx_for(
     temp: &TempDir,

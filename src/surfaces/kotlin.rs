@@ -81,6 +81,35 @@ pub fn build_ktlint_lint_args(
   args
 }
 
+/// Builds argument vector for a machine-readable `ktlint` invocation, used
+/// by the LSP server (`fml lsp`, Fixes #159, #165) to translate individual
+/// violations into per-file `Diagnostic`s instead of one generic warning.
+/// Mirrors [`build_ktlint_lint_args`] but requests `--reporter=json` output
+/// instead of `-F` (this is a read-only diagnostics pass, never a fix).
+/// Verified against a real ktlint 1.8.0 run — its JSON reporter writes to
+/// stdout, but ktlint's own SLF4J logger can also print a `WARN ...`
+/// banner line to stdout *before* the JSON array when violations are
+/// autocorrectable (observed; not documented behavior), so the parser must
+/// locate the JSON array's start rather than assume stdout is JSON from
+/// byte zero.
+#[must_use]
+pub fn build_ktlint_json_args(
+  files: &[std::path::PathBuf],
+  extra_args: &[String],
+) -> Vec<String> {
+  let mut args = vec!["--reporter=json".to_string()];
+  if files.is_empty() {
+    args.push("**/*.kt".to_string());
+    args.push("**/*.kts".to_string());
+  } else {
+    for f in files {
+      args.push(f.to_string_lossy().to_string());
+    }
+  }
+  args.extend(extra_args.iter().cloned());
+  args
+}
+
 impl LanguageSurface for KotlinSurface {
   fn name(&self) -> &'static str {
     "kotlin"
@@ -428,6 +457,31 @@ mod tests {
     let files = vec![PathBuf::from("Main.kt")];
     let with_fix = build_ktlint_lint_args(&files, true, &[]);
     assert_eq!(with_fix, vec!["-F".to_string(), "Main.kt".to_string()]);
+  }
+
+  #[test]
+  fn test_build_ktlint_json_args() {
+    let no_files = build_ktlint_json_args(&[], &[]);
+    assert_eq!(
+      no_files,
+      vec![
+        "--reporter=json".to_string(),
+        "**/*.kt".to_string(),
+        "**/*.kts".to_string(),
+      ]
+    );
+
+    let files = vec![PathBuf::from("Main.kt")];
+    let extra = vec!["--relative".to_string()];
+    let with_files = build_ktlint_json_args(&files, &extra);
+    assert_eq!(
+      with_files,
+      vec![
+        "--reporter=json".to_string(),
+        "Main.kt".to_string(),
+        "--relative".to_string(),
+      ]
+    );
   }
 
   #[test]

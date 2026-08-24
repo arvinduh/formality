@@ -33,6 +33,13 @@ repository:
 - [ ] **5. Soft / optional tables**:
   - `src/commands/lsp.rs`: `CHILD_LSP_REGISTRY` entry for child language server
     (if applicable).
+  - `src/commands/lsp_diagnostics.rs`: a `parse_<tool>_*` / `<tool>_diagnostics`
+    pair plus a `diagnostics_runner_for_surface()` arm, so `fml lsp` publishes
+    one `Diagnostic` per violation rather than a single generic warning. This is
+    **not** optional for a surface that has a linter —
+    `test_every_surface_except_json_has_a_structured_parser()` fails if a newly
+    registered surface has no arm. A format-only surface with no linter at all
+    (`json`) is the one sanctioned exception, named explicitly in that test.
   - `src/surfaces/editorconfig.rs`: `glob_for_surface()` match arm and
     `CANONICAL_FLEET_ORDER` entry.
   - Prose surface counts in doc comments and documentation (e.g.

@@ -135,6 +135,29 @@ impl DeclaresFacets for JavaSurface {
 /// Standard file extensions recognized for Java source files.
 pub const JAVA_EXTENSIONS: &[&str] = &["java"];
 
+/// Builds argument vector for a `checkstyle -f plain` invocation whose
+/// output is safe to parse for the LSP server (`fml lsp`, Fixes #159,
+/// #165). Checkstyle has both an `-f xml` and `-f plain` machine-readable
+/// mode; `plain` is used here since it needs no XML-parsing crate and its
+/// shape — `[LEVEL] path:line[:col]: message [RuleName]` (verified against
+/// a real checkstyle 10.20.2 run) — is a single line per violation, like
+/// every other surface's structured-diagnostics parser in this module.
+/// Does not include the `-c <config>` flag — the caller supplies that
+/// separately, matching [`JavaSurface::lint`]'s own self-healing
+/// `checkstyle.xml` generation.
+#[must_use]
+pub fn build_checkstyle_plain_args(
+  files: &[std::path::PathBuf],
+  extra_args: &[String],
+) -> Vec<String> {
+  let mut args = vec!["-f".to_string(), "plain".to_string()];
+  for f in files {
+    args.push(f.to_string_lossy().to_string());
+  }
+  args.extend(extra_args.iter().cloned());
+  args
+}
+
 fn is_aosp_style(ctx: &ExecutionContext) -> bool {
   ctx
     .lang_config
@@ -439,6 +462,23 @@ mod tests {
   use crate::config::{ResolvedGlobalConfig, ResolvedLangConfig};
   use std::sync::Arc;
   use tempfile::TempDir;
+
+  #[test]
+  fn test_build_checkstyle_plain_args() {
+    let files = vec![std::path::PathBuf::from("Main.java")];
+    let extra = vec!["--exclude".to_string(), "generated".to_string()];
+    let args = build_checkstyle_plain_args(&files, &extra);
+    assert_eq!(
+      args,
+      vec![
+        "-f".to_string(),
+        "plain".to_string(),
+        "Main.java".to_string(),
+        "--exclude".to_string(),
+        "generated".to_string(),
+      ]
+    );
+  }
 
   #[test]
   fn test_java_facet_support() {

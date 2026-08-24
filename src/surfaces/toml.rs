@@ -87,6 +87,31 @@ pub fn build_taplo_inline_config_args(cfg: &TaploConfig) -> Vec<String> {
   ]
 }
 
+/// Builds argument vector for a `taplo lint` invocation whose output is
+/// safe to parse for the LSP server (`fml lsp`, Fixes #159, #165). taplo has
+/// no JSON/structured reporter reachable by CLI flag — only a
+/// codespan-reporting-style human diagnostic block (`error: <message>` then
+/// a `┌─ path:line:col` location line, verified against a real taplo v0.10.0
+/// run) — so `--colors never` is the only flag needed to make that text
+/// output parseable (colored output otherwise interleaves ANSI escapes into
+/// the location line).
+#[must_use]
+pub fn build_taplo_lsp_lint_args(
+  files: &[std::path::PathBuf],
+  extra_args: &[String],
+) -> Vec<String> {
+  let mut args = vec![
+    "lint".to_string(),
+    "--colors".to_string(),
+    "never".to_string(),
+  ];
+  for f in files {
+    args.push(f.to_string_lossy().to_string());
+  }
+  args.extend(extra_args.iter().cloned());
+  args
+}
+
 /// TOML language surface implementation.
 #[derive(Debug, Default, Clone, Copy)]
 pub struct TomlSurface;
@@ -471,6 +496,21 @@ mod tests {
     assert!(args.contains(&"column_width=100".to_string()));
     assert!(args.contains(&"indent_string=    ".to_string()));
     assert!(args.contains(&"crlf=true".to_string()));
+  }
+
+  #[test]
+  fn test_build_taplo_lsp_lint_args() {
+    let files = vec![std::path::PathBuf::from("a.toml")];
+    let args = build_taplo_lsp_lint_args(&files, &[]);
+    assert_eq!(
+      args,
+      vec![
+        "lint".to_string(),
+        "--colors".to_string(),
+        "never".to_string(),
+        "a.toml".to_string(),
+      ]
+    );
   }
 
   #[test]
