@@ -12,15 +12,14 @@
 //!
 //! Coverage
 //! ========
-//! Only `rust` (clippy) and `python` (ruff) are wired up to structured
-//! diagnostics today, matching the issue's own guidance to start with the
-//! most common surfaces rather than force-fitting all 12. Every other
-//! surface — cpp, go, java, javascript, json, kotlin, markdown, toml, typst,
-//! yaml — falls back to the caller's generic single warning
-//! (`lsp.rs::did_save`) until a follow-up issue adds JSON/structured output
-//! parsing for the tools those surfaces shell out to (most of which do
-//! support a machine-readable mode, e.g. `eslint --format=json`, `yamllint
-//! -f parsable`, but each has its own schema to model).
+//! `rust` (clippy), `python` (ruff), `javascript`/`typescript` (biome),
+//! `yaml` (yamllint), and `markdown` (markdownlint-cli2/markdownlint) are
+//! wired up to structured diagnostics (Fixes #159, #165). Every other
+//! surface — cpp, go, java, json, kotlin, toml, typst — falls back to the
+//! caller's generic single warning (`lsp.rs::did_save`) until a follow-up
+//! issue adds structured-output parsing for the tools those surfaces shell
+//! out to. `json` has no linter at all (prettier-only, format-only surface),
+//! so it has nothing to add structured diagnostics for.
 //!
 //! Neither invocation currently threads through `formality.toml`'s
 //! `extra_args`/per-language overrides the way `fml lint` proper does — the
@@ -285,6 +284,336 @@ fn ruff_diagnostics(root: &Path, file: &Path) -> Vec<Diagnostic> {
 }
 
 // ---------------------------------------------------------------------------
+// JavaScript/TypeScript — biome lint --reporter=json
+// ---------------------------------------------------------------------------
+
+#[derive(Debug, Deserialize)]
+struct BiomeOutput {
+  diagnostics: Vec<BiomeDiagnostic>,
+}
+
+#[derive(Debug, Deserialize)]
+struct BiomeDiagnostic {
+  severity: String,
+  message: String,
+  category: Option<String>,
+  location: Option<BiomeLocation>,
+}
+
+#[derive(Debug, Deserialize)]
+struct BiomeLocation {
+  path: String,
+  start: BiomePosition,
+  end: BiomePosition,
+}
+
+#[derive(Debug, Deserialize)]
+struct BiomePosition {
+  line: u32,
+  column: u32,
+}
+
+/// Parses `biome lint --reporter=json` output (a single JSON object, see
+/// [`crate::surfaces::javascript::build_biome_lint_json_args`]) into
+/// `Diagnostic`s for violations reported against `target_file`. Biome's
+/// `line`/`column` positions are 1-based, like clippy's and unlike ruff's
+/// (which is also 1-based, incidentally — all three tools agree here).
+/// Diagnostics with no `location` (none observed in practice, but the field
+/// is optional in biome's schema) are skipped rather than guessed at.
+#[must_use]
+pub fn parse_biome_json(
+  json_output: &str,
+  target_file: &Path,
+) -> Vec<Diagnostic> {
+  let Ok(output) = serde_json::from_str::<BiomeOutput>(json_output) else {
+    return Vec::new();
+  };
+
+  output
+    .diagnostics
+    .into_iter()
+    .filter_map(|d| {
+      let location = d.location?;
+      if !paths_match(&location.path, target_file) {
+        return None;
+      }
+      let severity = match d.severity.as_str() {
+        "error" => DiagnosticSeverity::ERROR,
+        "information" => DiagnosticSeverity::INFORMATION,
+        _ => DiagnosticSeverity::WARNING,
+      };
+      Some(Diagnostic {
+        range: Range {
+          start: Position {
+            line: location.start.line.saturating_sub(1),
+            character: location.start.column.saturating_sub(1),
+          },
+          end: Position {
+            line: location.end.line.saturating_sub(1),
+            character: location.end.column.saturating_sub(1),
+          },
+        },
+        severity: Some(severity),
+        code: d.category.map(NumberOrString::String),
+        source: Some("biome".to_string()),
+        message: d.message,
+        ..Default::default()
+      })
+    })
+    .collect()
+}
+
+/// Runs `biome lint --reporter=json <file>` in `root` and returns
+/// `Diagnostic`s for `file`'s violations. Returns an empty vec (not an
+/// error) when biome is missing or the invocation otherwise fails to
+/// produce output.
+fn biome_diagnostics(root: &Path, file: &Path) -> Vec<Diagnostic> {
+  if !check_binary_exists("biome") {
+    return Vec::new();
+  }
+
+  let mut cmd = Command::new("biome");
+  cmd.args(crate::surfaces::javascript::build_biome_lint_json_args(
+    file,
+  ));
+  cmd.current_dir(root);
+
+  match cmd.output() {
+    Ok(output) => {
+      parse_biome_json(&String::from_utf8_lossy(&output.stdout), file)
+    }
+    Err(_) => Vec::new(),
+  }
+}
+
+// ---------------------------------------------------------------------------
+// YAML — yamllint -f parsable
+// ---------------------------------------------------------------------------
+
+/// Parses one line of `yamllint -f parsable` output —
+/// `path:line:col: [level] message (rule)` — into its component fields.
+/// Returns `None` for a line that doesn't match that shape (blank lines,
+/// stray tool banners, etc.) so the caller can skip it rather than panic.
+fn parse_yamllint_line(
+  line: &str,
+) -> Option<(&str, u32, u32, &str, &str, &str)> {
+  let (location, rest) = line.split_once(": [")?;
+  let (severity, rest) = rest.split_once("] ")?;
+  let rule_start = rest.rfind(" (")?;
+  let message = &rest[..rule_start];
+  let rule = rest
+    .get(rule_start + 2..rest.len().saturating_sub(1))
+    .filter(|_| rest.ends_with(')'))?;
+
+  let mut parts = location.rsplitn(3, ':');
+  let col: u32 = parts.next()?.parse().ok()?;
+  let line_num: u32 = parts.next()?.parse().ok()?;
+  let path = parts.next()?;
+
+  Some((path, line_num, col, severity, message, rule))
+}
+
+/// Parses `yamllint -f parsable` output (one violation per line, see
+/// [`crate::surfaces::yaml::build_yamllint_parsable_args`]) into
+/// `Diagnostic`s for violations reported against `target_file`. yamllint has
+/// no end position of its own, so each diagnostic's range is a zero-width
+/// point at its reported line/column. `line`/`col` are 1-based.
+#[must_use]
+pub fn parse_yamllint_parsable(
+  text_output: &str,
+  target_file: &Path,
+) -> Vec<Diagnostic> {
+  text_output
+    .lines()
+    .filter_map(parse_yamllint_line)
+    .filter(|(path, ..)| paths_match(path, target_file))
+    .map(|(_, line_num, col, severity, message, rule)| {
+      let position = Position {
+        line: line_num.saturating_sub(1),
+        character: col.saturating_sub(1),
+      };
+      let severity = if severity == "error" {
+        DiagnosticSeverity::ERROR
+      } else {
+        DiagnosticSeverity::WARNING
+      };
+      Diagnostic {
+        range: Range {
+          start: position,
+          end: position,
+        },
+        severity: Some(severity),
+        code: Some(NumberOrString::String(rule.to_string())),
+        source: Some("yamllint".to_string()),
+        message: message.to_string(),
+        ..Default::default()
+      }
+    })
+    .collect()
+}
+
+/// Runs `yamllint -f parsable <file>` in `root` and returns `Diagnostic`s
+/// for `file`'s violations. Returns an empty vec (not an error) when
+/// yamllint is missing or the invocation otherwise fails to produce output.
+fn yamllint_diagnostics(root: &Path, file: &Path) -> Vec<Diagnostic> {
+  if !check_binary_exists("yamllint") {
+    return Vec::new();
+  }
+
+  let mut cmd = Command::new("yamllint");
+  cmd.args(crate::surfaces::yaml::build_yamllint_parsable_args(file));
+  cmd.current_dir(root);
+
+  match cmd.output() {
+    Ok(output) => {
+      parse_yamllint_parsable(&String::from_utf8_lossy(&output.stdout), file)
+    }
+    Err(_) => Vec::new(),
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Markdown — markdownlint-cli2 / markdownlint text output
+// ---------------------------------------------------------------------------
+
+/// Parses a markdownlint location prefix — `path:line` or `path:line:col` —
+/// into `(path, line, col)`, defaulting the column to 1 when the tool didn't
+/// report one. A Windows drive letter (`C:\docs\a.md:3`) is left attached to
+/// the path rather than mistaken for a line number, since the segment before
+/// the last colon only counts as a line/column when it parses as a number.
+fn parse_markdownlint_location(location: &str) -> Option<(&str, u32, u32)> {
+  let (head, last) = location.rsplit_once(':')?;
+  let last_num: u32 = last.parse().ok()?;
+  // `path:line:col` when the segment before the last colon is itself a
+  // number; otherwise `path:line`, with the column defaulted to 1.
+  let with_column = head
+    .rsplit_once(':')
+    .and_then(|(path, mid)| Some((path, mid.parse::<u32>().ok()?, last_num)));
+  Some(with_column.unwrap_or((head, last_num, 1)))
+}
+
+/// Parses one line of markdownlint's default text report —
+/// `path:line[:col] [level ]rule1/rule2 description...` — into its component
+/// fields. Returns `None` for a line that doesn't match that shape.
+///
+/// Two shapes are accepted because the severity word is not universal:
+/// markdownlint-cli2 only started prefixing violations with `error` in
+/// recent releases (absent in v0.17.2, present in v0.23.2, both checked
+/// directly), and the `markdownlint` (markdownlint-cli) fallback binary this
+/// module also shells out to never emits it. Requiring it would silently
+/// shift every field by one token — the rule id parsed as the severity and
+/// the first word of the description parsed as the rule id — against those
+/// versions, so it's treated as optional and defaulted to `error`, which is
+/// the only severity those releases can mean.
+///
+/// The location is split at the first space whose prefix actually parses as
+/// `path:line[:col]`, not blindly at the first space in the line, so a path
+/// containing spaces (`my doc.md:3:1 ...`) still parses.
+fn parse_markdownlint_line(
+  line: &str,
+) -> Option<(&str, u32, u32, &str, &str, &str)> {
+  let (path, line_num, col, rest) =
+    line.match_indices(' ').find_map(|(idx, _)| {
+      let (location, rest) = (&line[..idx], &line[idx + 1..]);
+      let (path, line_num, col) = parse_markdownlint_location(location)?;
+      Some((path, line_num, col, rest))
+    })?;
+
+  let (first, remainder) = rest.split_once(' ').unwrap_or((rest, ""));
+  let (severity, rule, description) = if first == "error" || first == "warning"
+  {
+    let (rule, description) =
+      remainder.split_once(' ').unwrap_or((remainder, ""));
+    (first, rule, description)
+  } else {
+    ("error", first, remainder)
+  };
+
+  Some((path, line_num, col, severity, rule, description))
+}
+
+/// Parses markdownlint's default (non-JSON) text report — one violation per
+/// line on stderr, see [`crate::surfaces::markdown::build_markdownlint_args`]
+/// — into `Diagnostic`s for violations reported against `target_file`.
+/// markdownlint-cli2 — the binary preferred here and by
+/// [`crate::surfaces::markdown::MarkdownSurface::lint`] — has no JSON
+/// reporter reachable by CLI flag (its `--help` lists only `--config`,
+/// `--configPointer`, `--fix`, `--format`, `--help` and `--no-globs`; JSON
+/// output requires an `outputFormatters` block in a config file written to
+/// disk, which this module avoids per the same simplification noted for
+/// clippy/ruff's `extra_args`). The older `markdownlint` fallback binary
+/// does have a `-j/--json` flag, but its schema is unrelated to cli2's text
+/// report and modelling both would mean two parsers for one surface, so the
+/// text format — identical across both binaries — is parsed instead.
+/// `line`/`col` are 1-based; markdownlint reports no end position, so each
+/// diagnostic's range is a zero-width point.
+#[must_use]
+pub fn parse_markdownlint_text(
+  text_output: &str,
+  target_file: &Path,
+) -> Vec<Diagnostic> {
+  text_output
+    .lines()
+    .filter_map(parse_markdownlint_line)
+    .filter(|(path, ..)| paths_match(path, target_file))
+    .map(|(_, line_num, col, severity, rule, description)| {
+      let position = Position {
+        line: line_num.saturating_sub(1),
+        character: col.saturating_sub(1),
+      };
+      let severity = if severity == "warning" {
+        DiagnosticSeverity::WARNING
+      } else {
+        DiagnosticSeverity::ERROR
+      };
+      Diagnostic {
+        range: Range {
+          start: position,
+          end: position,
+        },
+        severity: Some(severity),
+        code: Some(NumberOrString::String(rule.to_string())),
+        source: Some("markdownlint".to_string()),
+        message: description.to_string(),
+        ..Default::default()
+      }
+    })
+    .collect()
+}
+
+/// Runs markdownlint-cli2 (falling back to markdownlint) against `file` in
+/// `root` and returns `Diagnostic`s for its violations. Both tools report
+/// violations on stderr with a successful exit status meaning "no
+/// violations" (matching [`crate::surfaces::markdown::MarkdownSurface::lint`]'s
+/// own stderr-first message selection). Returns an empty vec (not an error)
+/// when neither binary is present or the invocation otherwise fails to
+/// produce output.
+fn markdownlint_diagnostics(root: &Path, file: &Path) -> Vec<Diagnostic> {
+  let binary = if check_binary_exists("markdownlint-cli2") {
+    "markdownlint-cli2"
+  } else if check_binary_exists("markdownlint") {
+    "markdownlint"
+  } else {
+    return Vec::new();
+  };
+
+  let mut cmd = Command::new(binary);
+  cmd.args(crate::surfaces::markdown::build_markdownlint_args(
+    &[file.to_path_buf()],
+    false,
+    &[],
+  ));
+  cmd.current_dir(root);
+
+  match cmd.output() {
+    Ok(output) => {
+      parse_markdownlint_text(&String::from_utf8_lossy(&output.stderr), file)
+    }
+    Err(_) => Vec::new(),
+  }
+}
+
+// ---------------------------------------------------------------------------
 // Public entry point
 // ---------------------------------------------------------------------------
 
@@ -300,6 +629,9 @@ pub fn diagnostics_for_file(
   match surface_name_for_file(file)? {
     "rust" => Some(clippy_diagnostics(root, file)),
     "python" => Some(ruff_diagnostics(root, file)),
+    "javascript" => Some(biome_diagnostics(root, file)),
+    "yaml" => Some(yamllint_diagnostics(root, file)),
+    "markdown" => Some(markdownlint_diagnostics(root, file)),
     _ => None,
   }
 }
@@ -449,10 +781,228 @@ mod tests {
   #[test]
   fn test_diagnostics_for_file_unsupported_surface_returns_none() {
     assert!(
-      diagnostics_for_file(Path::new("."), Path::new("notes.md")).is_none()
+      diagnostics_for_file(Path::new("."), Path::new("main.cpp")).is_none()
     );
     assert!(
-      diagnostics_for_file(Path::new("."), Path::new("config.yaml")).is_none()
+      diagnostics_for_file(Path::new("."), Path::new("config.toml")).is_none()
     );
+  }
+
+  #[test]
+  fn test_parse_biome_json_extracts_diagnostics_for_target_file() {
+    // Captured from a real `biome lint --reporter=json` run.
+    let sample = r#"{"summary":{"changed":0,"unchanged":1,"matches":0,"duration":2763878,"errors":1,"warnings":1,"infos":0,"skipped":0,"suggestedFixesSkipped":0,"diagnosticsNotPrinted":0,"scannerDuration":446471},"diagnostics":[{"severity":"warning","message":"This variable unused is unused.","category":"lint/correctness/noUnusedVariables","location":{"path":"bad.js","start":{"line":4,"column":5},"end":{"line":4,"column":11}},"advices":[]},{"severity":"error","message":"Using == may be unsafe if you are relying on type coercion.","category":"lint/suspicious/noDoubleEquals","location":{"path":"bad.js","start":{"line":1,"column":7},"end":{"line":1,"column":9}},"advices":[]}],"command":"lint"}"#;
+
+    let diagnostics = parse_biome_json(sample, Path::new("/proj/bad.js"));
+
+    assert_eq!(diagnostics.len(), 2);
+    assert_eq!(diagnostics[0].severity, Some(DiagnosticSeverity::WARNING));
+    assert_eq!(diagnostics[0].message, "This variable unused is unused.");
+    assert_eq!(diagnostics[0].source.as_deref(), Some("biome"));
+    assert_eq!(
+      diagnostics[0].code,
+      Some(NumberOrString::String(
+        "lint/correctness/noUnusedVariables".to_string()
+      ))
+    );
+    // biome is 1-based; LSP Position is 0-based.
+    assert_eq!(diagnostics[0].range.start.line, 3);
+    assert_eq!(diagnostics[0].range.start.character, 4);
+
+    assert_eq!(diagnostics[1].severity, Some(DiagnosticSeverity::ERROR));
+    assert_eq!(diagnostics[1].range.start.line, 0);
+    assert_eq!(diagnostics[1].range.start.character, 6);
+  }
+
+  #[test]
+  fn test_parse_biome_json_filters_other_files_and_handles_malformed_input() {
+    let sample = r#"{"diagnostics":[{"severity":"error","message":"x","category":"lint/a","location":{"path":"other.js","start":{"line":1,"column":1},"end":{"line":1,"column":2}},"advices":[]}]}"#;
+    assert!(parse_biome_json(sample, Path::new("/proj/bad.js")).is_empty());
+    assert!(parse_biome_json("not json", Path::new("/proj/bad.js")).is_empty());
+  }
+
+  #[test]
+  fn test_parse_yamllint_parsable_extracts_diagnostics() {
+    // Captured from a real `yamllint -f parsable` run.
+    let sample = "bad.yaml:1:1: [warning] missing document start \"---\" (document-start)\nbad.yaml:1:6: [error] too many spaces after colon (colons)\n";
+
+    let diagnostics =
+      parse_yamllint_parsable(sample, Path::new("/proj/bad.yaml"));
+
+    assert_eq!(diagnostics.len(), 2);
+    assert_eq!(diagnostics[0].severity, Some(DiagnosticSeverity::WARNING));
+    assert_eq!(diagnostics[0].message, "missing document start \"---\"");
+    assert_eq!(diagnostics[0].source.as_deref(), Some("yamllint"));
+    assert_eq!(
+      diagnostics[0].code,
+      Some(NumberOrString::String("document-start".to_string()))
+    );
+    assert_eq!(diagnostics[0].range.start.line, 0);
+    assert_eq!(diagnostics[0].range.start.character, 0);
+
+    assert_eq!(diagnostics[1].severity, Some(DiagnosticSeverity::ERROR));
+    assert_eq!(diagnostics[1].range.start.character, 5);
+  }
+
+  #[test]
+  fn test_parse_yamllint_parsable_filters_other_files_and_malformed_lines() {
+    let sample = "not a yamllint line\nother.yaml:1:1: [error] bad (rule)\n";
+    let diagnostics =
+      parse_yamllint_parsable(sample, Path::new("/proj/bad.yaml"));
+    assert!(diagnostics.is_empty());
+  }
+
+  #[test]
+  fn test_parse_markdownlint_text_extracts_diagnostics() {
+    // Captured from a real `markdownlint-cli2` run (stderr).
+    let sample = concat!(
+      "bad.md:3:1 error MD018/no-missing-space-atx No space after hash on atx style heading [Context: \"##Heading without space\"]\n",
+      "bad.md:5 error MD032/blanks-around-lists Lists should be surrounded by blank lines [Context: \"* item\"]\n",
+    );
+
+    let diagnostics =
+      parse_markdownlint_text(sample, Path::new("/proj/bad.md"));
+
+    assert_eq!(diagnostics.len(), 2);
+    assert_eq!(diagnostics[0].severity, Some(DiagnosticSeverity::ERROR));
+    assert_eq!(diagnostics[0].source.as_deref(), Some("markdownlint"));
+    assert_eq!(
+      diagnostics[0].code,
+      Some(NumberOrString::String(
+        "MD018/no-missing-space-atx".to_string()
+      ))
+    );
+    assert!(diagnostics[0].message.starts_with("No space after hash"));
+    // markdownlint is 1-based; LSP Position is 0-based.
+    assert_eq!(diagnostics[0].range.start.line, 2);
+    assert_eq!(diagnostics[0].range.start.character, 0);
+
+    // Second violation has no column reported — defaults to column 1 (0-based 0).
+    assert_eq!(diagnostics[1].range.start.line, 4);
+    assert_eq!(diagnostics[1].range.start.character, 0);
+  }
+
+  #[test]
+  fn test_parse_markdownlint_text_without_severity_token() {
+    // Captured from `markdownlint-cli2@0.17.2` and from the `markdownlint`
+    // (markdownlint-cli) fallback binary — neither prefixes the rule with a
+    // severity word, so the parser must not shift every field by one token.
+    let sample = concat!(
+      "bad.md:1:1 MD018/no-missing-space-atx No space after hash on atx style heading [Context: \"#Heading\"]\n",
+      "bad.md:4 MD032/blanks-around-lists Lists should be surrounded by blank lines [Context: \"* item\"]\n",
+    );
+
+    let diagnostics =
+      parse_markdownlint_text(sample, Path::new("/proj/bad.md"));
+
+    assert_eq!(diagnostics.len(), 2);
+    assert_eq!(
+      diagnostics[0].code,
+      Some(NumberOrString::String(
+        "MD018/no-missing-space-atx".to_string()
+      ))
+    );
+    assert!(diagnostics[0].message.starts_with("No space after hash"));
+    assert_eq!(diagnostics[0].severity, Some(DiagnosticSeverity::ERROR));
+    assert_eq!(diagnostics[0].range.start.line, 0);
+    assert_eq!(diagnostics[0].range.start.character, 0);
+
+    assert_eq!(
+      diagnostics[1].code,
+      Some(NumberOrString::String(
+        "MD032/blanks-around-lists".to_string()
+      ))
+    );
+    assert_eq!(diagnostics[1].range.start.line, 3);
+    assert_eq!(diagnostics[1].range.start.character, 0);
+  }
+
+  #[test]
+  fn test_parse_markdownlint_text_path_with_spaces() {
+    let sample =
+      "my doc.md:3:1 error MD018/no-missing-space-atx No space after hash\n";
+    let diagnostics =
+      parse_markdownlint_text(sample, Path::new("/proj/my doc.md"));
+
+    assert_eq!(diagnostics.len(), 1);
+    assert_eq!(diagnostics[0].message, "No space after hash");
+    assert_eq!(diagnostics[0].range.start.line, 2);
+  }
+
+  #[test]
+  fn test_parsers_treat_empty_output_as_no_violations() {
+    assert!(parse_markdownlint_text("", Path::new("/proj/bad.md")).is_empty());
+    assert!(
+      parse_yamllint_parsable("", Path::new("/proj/bad.yaml")).is_empty()
+    );
+    // biome always emits a JSON object, with an empty `diagnostics` array
+    // when the file is clean.
+    assert!(
+      parse_biome_json(
+        r#"{"summary":{"errors":0},"diagnostics":[],"command":"lint"}"#,
+        Path::new("/proj/bad.js")
+      )
+      .is_empty()
+    );
+  }
+
+  #[test]
+  fn test_parse_yamllint_parsable_syntax_error_line() {
+    // Captured from a real `yamllint -f parsable` run over invalid YAML —
+    // the message itself contains a colon, which must stay in the message.
+    let sample = "syn.yaml:2:3: [error] syntax error: mapping values are not allowed here (syntax)\n";
+    let diagnostics =
+      parse_yamllint_parsable(sample, Path::new("/proj/syn.yaml"));
+
+    assert_eq!(diagnostics.len(), 1);
+    assert_eq!(diagnostics[0].severity, Some(DiagnosticSeverity::ERROR));
+    assert_eq!(
+      diagnostics[0].message,
+      "syntax error: mapping values are not allowed here"
+    );
+    assert_eq!(
+      diagnostics[0].code,
+      Some(NumberOrString::String("syntax".to_string()))
+    );
+    assert_eq!(diagnostics[0].range.start.line, 1);
+    assert_eq!(diagnostics[0].range.start.character, 2);
+  }
+
+  #[test]
+  fn test_parse_yamllint_parsable_absolute_reported_path() {
+    // yamllint echoes back whatever path it was given — absolute when the
+    // LSP passes the document's own absolute path.
+    let sample = "/proj/bad.yaml:1:1: [warning] missing document start \"---\" (document-start)\n";
+    assert_eq!(
+      parse_yamllint_parsable(sample, Path::new("/proj/bad.yaml")).len(),
+      1
+    );
+  }
+
+  #[test]
+  fn test_parse_biome_json_parse_error_diagnostic() {
+    // Captured from a real `biome lint --reporter=json` run over a file with
+    // a syntax error: `category` is `parse`, not `lint/...`.
+    let sample = r#"{"diagnostics":[{"severity":"error","message":"expected a name for the function in a function declaration, but found none","category":"parse","location":{"path":"syntax.js","start":{"line":1,"column":10},"end":{"line":1,"column":11}},"advices":[]}],"command":"lint"}"#;
+
+    let diagnostics = parse_biome_json(sample, Path::new("/proj/syntax.js"));
+
+    assert_eq!(diagnostics.len(), 1);
+    assert_eq!(diagnostics[0].severity, Some(DiagnosticSeverity::ERROR));
+    assert_eq!(
+      diagnostics[0].code,
+      Some(NumberOrString::String("parse".to_string()))
+    );
+    assert_eq!(diagnostics[0].range.start.line, 0);
+    assert_eq!(diagnostics[0].range.start.character, 9);
+    assert_eq!(diagnostics[0].range.end.character, 10);
+  }
+
+  #[test]
+  fn test_parse_markdownlint_text_filters_other_files_and_malformed_lines() {
+    let sample = "not a markdownlint line\nother.md:1:1 error MD001/x desc\n";
+    let diagnostics =
+      parse_markdownlint_text(sample, Path::new("/proj/bad.md"));
+    assert!(diagnostics.is_empty());
   }
 }

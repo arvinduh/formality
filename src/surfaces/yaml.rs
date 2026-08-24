@@ -112,6 +112,24 @@ pub fn build_yamllint_inline_config(cfg: &YamllintConfig) -> String {
   serde_yaml::to_string(cfg).unwrap_or_default()
 }
 
+/// Builds the argument vector for `yamllint -f parsable <file>`, used by
+/// `fml lsp`'s structured-diagnostics path (Fixes #165). `parsable` is
+/// yamllint's long-stable gcc-style line format —
+/// `path:line:col: [level] message (rule)` — verified against a locally
+/// installed yamllint. Like the existing clippy/ruff diagnostics paths, this
+/// intentionally runs with yamllint's own default rule set rather than
+/// threading through `build_yamllint_inline_config`'s resolved
+/// `formality.toml` settings — the same known simplification noted in this
+/// module's callers (see `lsp_diagnostics.rs` module docs).
+#[must_use]
+pub fn build_yamllint_parsable_args(file: &Path) -> Vec<String> {
+  vec![
+    "-f".to_string(),
+    "parsable".to_string(),
+    file.to_string_lossy().to_string(),
+  ]
+}
+
 /// YAML language surface implementation.
 #[derive(Debug, Default, Clone, Copy)]
 pub struct YamlSurface;
@@ -432,6 +450,19 @@ mod tests {
     assert!(rendered.contains("indent-sequences: true"));
     assert!(rendered.contains("document-start: disable"));
     assert!(rendered.contains("truthy: disable"));
+  }
+
+  #[test]
+  fn test_build_yamllint_parsable_args() {
+    let args = build_yamllint_parsable_args(Path::new("config/app.yaml"));
+    assert_eq!(
+      args,
+      vec![
+        "-f".to_string(),
+        "parsable".to_string(),
+        "config/app.yaml".to_string(),
+      ]
+    );
   }
 
   #[test]

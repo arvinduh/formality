@@ -280,6 +280,22 @@ pub fn build_biome_lint_args(
   args
 }
 
+/// Builds the argument vector for `biome lint --reporter=json <file>`, used
+/// by `fml lsp`'s structured-diagnostics path (Fixes #165) to get
+/// machine-readable per-violation output instead of parsing biome's
+/// human-readable terminal report. `--reporter=json` is marked experimental
+/// by biome as of 2.x but its diagnostic shape (`diagnostics[].location.path`
+/// / `.start`/`.end` `{line, column}`, both 1-based) has been stable across
+/// the versions this was verified against.
+#[must_use]
+pub fn build_biome_lint_json_args(file: &Path) -> Vec<String> {
+  vec![
+    "lint".to_string(),
+    "--reporter=json".to_string(),
+    file.to_string_lossy().to_string(),
+  ]
+}
+
 impl LanguageSurface for JavaScriptSurface {
   fn name(&self) -> &'static str {
     "javascript"
@@ -559,6 +575,19 @@ mod tests {
         "a.ts".to_string(),
         "b.tsx".to_string(),
         "--no-errors-on-unmatched".to_string(),
+      ]
+    );
+  }
+
+  #[test]
+  fn test_build_biome_lint_json_args() {
+    let args = build_biome_lint_json_args(Path::new("src/a.ts"));
+    assert_eq!(
+      args,
+      vec![
+        "lint".to_string(),
+        "--reporter=json".to_string(),
+        "src/a.ts".to_string(),
       ]
     );
   }
