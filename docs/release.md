@@ -87,7 +87,6 @@ semver bump (`feat` -> minor, `fix` -> patch, `!`/`BREAKING CHANGE` -> major).
    ```
 
    Pushing the tag triggers `.github/workflows/release.yml`, which:
-
    - Builds the `fml` binary for Linux (x86_64, aarch64), macOS (x86_64,
      aarch64), and Windows (x86_64) and uploads each archive to the GitHub
      Release.

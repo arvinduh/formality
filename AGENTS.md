@@ -27,12 +27,12 @@ cargo run -q -- sync --check
 - Format fixes belong in `fml fmt` (mechanical); `fml lint` is semantic-only.
 - Always run the freshly built binary (`cargo run -q -- ...`), never a stale
   global `fml` on PATH.
-- Check `docs/` before reading source to understand structure or conventions
-  already documented there — don't re-derive what's written down.
 
 ## Always
 
 - Run `cargo test --lib -q && cargo clippy -q` before any commit.
+- Check `docs/INDEX.md` before reading source to understand structure or
+  conventions already documented there.
 
 ## Ask first
 

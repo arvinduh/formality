@@ -6,12 +6,14 @@
 single canonical configuration (`formality.toml` or `.formality.toml`), running
 every surface in parallel for near-instant feedback.
 
-**Further reading**: [Facet Rosetta](docs/facet-rosetta.md) (the canonical
+**Further reading**: [Documentation Index](docs/INDEX.md) (what each doc
+answers, when to read it) · [Architecture](docs/architecture.md) (whole-repo
+module map) · [Facet Rosetta](docs/facet-rosetta.md) (the canonical
 cross-language config vocabulary) ·
 [Language Surface Guides](docs/language-surfaces.md) (per-surface tools, config,
 and behavior) · [Adding a New Surface](docs/new-surface-guide.md) ·
 [`fml table` Spec](docs/table-spec.md) · [Style Guide](docs/style-guide.md) ·
-[Release Procedure](docs/release.md)
+[Release Procedure](docs/release.md) · [ADRs](docs/adr/README.md)
 
 ---
 
