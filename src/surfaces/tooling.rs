@@ -369,7 +369,9 @@ pub fn tool_missing_result(
 }
 
 /// Returns whether `cargo binstall` is usable: both `cargo` and
-/// `cargo-binstall` must be on `PATH`.
+/// `cargo-binstall` must be on `PATH`. This is a pure `PATH` lookup (via
+/// [`check_binary_exists`]/`which`) for both binaries -- it never spawns a
+/// child process (e.g. `cargo binstall --version`) to probe availability.
 #[must_use]
 pub fn has_cargo_binstall() -> bool {
   check_binary_exists("cargo") && check_binary_exists("cargo-binstall")
@@ -618,6 +620,49 @@ mod tests {
       !ok,
       "Should return false when tool cannot be auto-installed"
     );
+  }
+
+  #[test]
+  fn test_has_cargo_binstall_is_pure_path_lookup() {
+    // has_cargo_binstall must resolve purely via check_binary_exists
+    // (which::which under the hood) for both "cargo" and "cargo-binstall" --
+    // no subprocess (e.g. `cargo binstall --version`) is spawned to probe
+    // availability.
+    //
+    // Comparing the return value against `check_binary_exists("cargo") &&
+    // check_binary_exists("cargo-binstall")` would NOT lock that contract: a
+    // subprocess-based probe agrees with the PATH lookup in both environments
+    // that matter (binstall installed and working / not installed at all), so
+    // such an assertion passes either way. What actually discriminates the two
+    // designs is the side effect: only the PATH-lookup implementation leaves
+    // entries in BINARY_CACHE. "cargo-binstall" is looked up nowhere else in
+    // the crate, so its presence there is attributable to this call alone.
+    let result = has_cargo_binstall();
+
+    let cache = BINARY_CACHE.get().expect("cache should be initialized");
+    let guard = cache.lock().unwrap_or_else(|e| e.into_inner());
+
+    let cargo_on_path = guard.get("cargo").copied().expect(
+      "has_cargo_binstall must resolve `cargo` through check_binary_exists",
+    );
+
+    if cargo_on_path {
+      // Short-circuiting means the second lookup only happens when the first
+      // succeeded; when it does happen it must go through the PATH cache too,
+      // and it must be what the return value is derived from.
+      let binstall_on_path = guard.get("cargo-binstall").copied().expect(
+        "has_cargo_binstall must resolve `cargo-binstall` through check_binary_exists",
+      );
+      assert_eq!(
+        result, binstall_on_path,
+        "return value must be the `cargo-binstall` PATH lookup, not a subprocess probe"
+      );
+    } else {
+      assert!(
+        !result,
+        "has_cargo_binstall must be false when `cargo` is not on PATH"
+      );
+    }
   }
 
   #[test]

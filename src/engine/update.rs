@@ -1,6 +1,6 @@
 use colored::Colorize;
 use serde::{Deserialize, Serialize};
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::time::{SystemTime, UNIX_EPOCH};
 
 const UPDATE_CHECK_INTERVAL_SECS: u64 = 24 * 60 * 60; // 24 hours
@@ -30,8 +30,12 @@ fn read_cached_tag() -> Option<Option<String>> {
   }
 }
 
-fn write_cached_tag(tag: Option<&str>) {
-  let path = get_cache_path();
+/// Writes the update-check cache to an explicit `path`, unconditionally
+/// stamping `last_checked_unix` regardless of whether `tag` is present.
+/// Takes the path explicitly (rather than calling [`get_cache_path`]
+/// itself) so tests can point it at a temp file instead of the real
+/// per-user cache directory.
+fn write_cached_tag_at(path: &Path, tag: Option<&str>) {
   if let Some(parent) = path.parent() {
     let _ = std::fs::create_dir_all(parent);
   }
@@ -45,6 +49,23 @@ fn write_cached_tag(tag: Option<&str>) {
   if let Ok(json) = serde_json::to_string(&cache) {
     let _ = std::fs::write(path, json);
   }
+}
+
+/// Processes a GitHub releases API response body: parses the latest release
+/// tag and caches the check timestamp regardless of whether that parse
+/// succeeds, so a persistently malformed/unexpected API response only
+/// triggers a network call once per [`UPDATE_CHECK_INTERVAL_SECS`] instead of
+/// on every invocation — the same throttling the success path already gets.
+/// Returns the latest tag only when it represents a version newer than
+/// `current_version`.
+fn process_release_response_at(
+  cache_path: &Path,
+  body: &str,
+  current_version: &str,
+) -> Option<String> {
+  let tag = parse_latest_tag_from_json(body);
+  write_cached_tag_at(cache_path, tag.as_deref());
+  tag.filter(|t| is_newer_version(t, current_version))
 }
 
 /// Safely parse the `tag_name` field from GitHub release JSON response.
@@ -144,13 +165,11 @@ pub fn spawn_update_check() -> Option<UpdateNotifier> {
       && output.status.success()
     {
       let body = String::from_utf8_lossy(&output.stdout);
-      let tag = parse_latest_tag_from_json(&body);
-      write_cached_tag(tag.as_deref());
-      if let Some(ref tag) = tag
-        && is_newer_version(tag, current_version)
-      {
-        return Some(tag.clone());
-      }
+      return process_release_response_at(
+        &get_cache_path(),
+        &body,
+        current_version,
+      );
     }
     None
   });
@@ -225,6 +244,68 @@ mod tests {
     assert!(!is_newer_version("v0.0.9", "0.1.0"));
     assert!(!is_newer_version("https", "0.1.0"));
     assert!(!is_newer_version("", "0.1.0"));
+  }
+
+  #[test]
+  fn test_process_release_response_caches_timestamp_on_malformed_json() {
+    let temp = tempfile::TempDir::new().unwrap();
+    let cache_path = temp.path().join("update_check.json");
+
+    let before = SystemTime::now()
+      .duration_since(UNIX_EPOCH)
+      .unwrap()
+      .as_secs();
+    let result =
+      process_release_response_at(&cache_path, "not valid json {{{", "0.1.0");
+    let after = SystemTime::now()
+      .duration_since(UNIX_EPOCH)
+      .unwrap()
+      .as_secs();
+
+    assert_eq!(result, None);
+
+    let data = std::fs::read_to_string(&cache_path)
+      .expect("cache file must be written even when the tag fails to parse");
+    let cache: UpdateCache =
+      serde_json::from_str(&data).expect("cache file must be valid JSON");
+    assert_eq!(cache.latest_tag, None);
+    assert!(
+      cache.last_checked_unix >= before && cache.last_checked_unix <= after,
+      "last_checked_unix should be stamped with the current time even on parse failure"
+    );
+  }
+
+  #[test]
+  fn test_process_release_response_caches_timestamp_on_missing_tag_name() {
+    let temp = tempfile::TempDir::new().unwrap();
+    let cache_path = temp.path().join("update_check.json");
+
+    // Valid JSON, but no `tag_name` field -- parse_latest_tag_from_json
+    // returns None even though the response body itself parsed fine.
+    let body = r#"{"message": "rate limited"}"#;
+    let result = process_release_response_at(&cache_path, body, "0.1.0");
+    assert_eq!(result, None);
+
+    let data = std::fs::read_to_string(&cache_path)
+      .expect("cache file must be written even without a tag_name field");
+    let cache: UpdateCache =
+      serde_json::from_str(&data).expect("cache file must be valid JSON");
+    assert_eq!(cache.latest_tag, None);
+    assert!(cache.last_checked_unix > 0);
+  }
+
+  #[test]
+  fn test_process_release_response_caches_and_returns_newer_tag() {
+    let temp = tempfile::TempDir::new().unwrap();
+    let cache_path = temp.path().join("update_check.json");
+
+    let body = r#"{"tag_name":"v9.9.9"}"#;
+    let result = process_release_response_at(&cache_path, body, "0.1.0");
+    assert_eq!(result, Some("v9.9.9".to_string()));
+
+    let data = std::fs::read_to_string(&cache_path).unwrap();
+    let cache: UpdateCache = serde_json::from_str(&data).unwrap();
+    assert_eq!(cache.latest_tag, Some("v9.9.9".to_string()));
   }
 
   #[test]
