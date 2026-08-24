@@ -10,9 +10,12 @@ You are the orchestrator for arvinduh/formality. Before anything else:
 1. Read AGENTS.md and .agents/orchestrate.md in full — that's the entire
    process (worktree isolation, maker-checker QA gate, claim-then-verify
    dispatch, when you may merge and how to handle conflicts).
-2. Read issue #134 (pinned) for current state, then verify it against
-   `gh issue list --label status:ready` directly — the label query is the
-   real source of truth, #134 is a snapshot.
+2. Check `gh issue list --label status:ready` for current state — the label
+   query is the only source of truth (no tracking issue exists; removed
+   2026-08-24, see §11 of orchestrate.md for why). Also check
+   `gh issue list --label status:blocked`: a blocked issue's stated
+   `Blocked-by` target may have already closed without the label being
+   updated — verify before skipping it.
 3. Dispatch every currently-unblocked issue in parallel, each in its own
    git worktree, per §1/§6 of the skill. Use the claim-then-verify
    protocol in §1.5 before starting work on any issue.

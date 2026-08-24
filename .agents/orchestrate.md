@@ -2,9 +2,9 @@
 
 This is the _process_ — how work on this repo gets planned, dispatched,
 reviewed, and merged. It replaces the old git-ignored `.artifacts/PLAN.md`.
-State (what's ready, blocked, in review) lives in GitHub issue `status:*` labels
-and the pinned master tracking issue, not in this file — this file only changes
-when the _process itself_ changes.
+State (what's ready, blocked, in review) lives entirely in GitHub issue
+`status:*` labels, not in this file — this file only changes when the _process
+itself_ changes.
 
 ## How to use this file
 
@@ -18,17 +18,13 @@ _is_ read automatically by both Antigravity and Claude Code.
 - **Read this before dispatching or picking up any formality work.** If you're
   an agent that just landed on this repo cold, this file plus `AGENTS.md` is
   everything you need — don't re-derive the process from git history.
-- **Finding current work:** `gh issue list --label status:ready` is the live
-  source of truth. The pinned master tracking issue is a generated snapshot of
-  the same query for humans skimming on the web — if the two ever disagree,
-  trust the label query, not the tracking issue's cached text (see "Tracking
-  issue" below for why).
-- **Automation honesty check, right now:** the tracking-issue regeneration is
-  **not** yet automated (no GitHub Action wired up) — it's a manual
-  `gh issue list` + edit whenever an orchestrator touches it. Don't assume it's
-  always fresh. Automating it (Action on `issues: [labeled, unlabeled, closed]`,
-  with a `concurrency:` group) is future work, not done yet — update this
-  paragraph the day it lands instead of leaving it stale.
+- **Finding current work:** `gh issue list --label status:ready` is the _only_
+  source of truth. There used to be a pinned master tracking issue generated
+  from this same query for humans skimming on the web; it's gone (2026-08-24) —
+  its regeneration was manual, went stale between sessions, and a second source
+  of truth that can silently disagree with the real one is worse than no
+  snapshot at all. Query labels directly instead of trusting any cached summary,
+  tracking issue or otherwise.
 
 ## 1. Worktree isolation
 
@@ -298,20 +294,23 @@ Every issue: ≥1 topical label (`architecture`, `dx`, `documentation`, `rust`,
 `ci`, `compatibility`, `surface`) + exactly one `status:*` label
 (`status:ready`, `status:blocked`, `status:design-phase`, `status:in-progress`,
 `status:in-review`). A blocked issue states `Blocked-by: #N` once in its own
-body, set at filing time, never edited into a shared document afterward (see
-"Tracking issue" below for why that distinction matters). Spinoff issues carry a
-"Spun off from #N" line.
+body, set at filing time. **This goes stale easily — a `Blocked-by` target
+closing doesn't automatically flip the label.** Before trusting a
+`status:blocked` label, check whether its named blocker(s) are actually still
+open; if not, unblock it (remove `status:blocked`, add `status:ready` or
+whatever's next, and leave a comment explaining why) rather than leaving a label
+that's lying about the real state. Spinoff issues carry a `Spun off from #N`
+line.
 
-## Tracking issue — why it's generated, never hand-edited
+### Why state lives only on per-issue labels, not a shared document
 
-GitHub's issue-update API has no optimistic concurrency (no ETag/ If-Match) —
-two agents editing the same issue body around the same time is a real, silent
-lost-update race. The fix isn't "only the orchestrator writes it" as a protocol
-rule (nothing stops a second concurrent session, and the failure mode — silent
-overwrite — is worse than a stale file, because it looks authoritative).
-Instead: **state lives on `status:*` labels on each individual issue** (narrow,
-low-contention writes); **the tracking issue's body is a full-overwrite
-regeneration** of a `gh issue list --label status:X` query, never a
-diff/incremental edit. Two concurrent regenerations computing the same answer
-from the same labels can't diverge, so last-write-wins is harmless there even
-though GitHub itself doesn't prevent it.
+GitHub's issue-update API has no optimistic concurrency (no ETag/If-Match) — two
+agents editing the same shared document around the same time is a real, silent
+lost-update race, and a stale cached summary that looks authoritative is worse
+than no summary at all (this repo used to keep one — a pinned tracking issue
+regenerated from a `status:*` query — and it went stale between sessions with
+nothing forcing a refresh; removed 2026-08-24). `status:*` labels on each
+individual issue are narrow, low-contention writes: two sessions touching
+different issues' labels can't collide, and there's no aggregate snapshot to
+fall out of sync. The cost is that nothing pushes a stale `Blocked-by` to
+correct itself — see above.
