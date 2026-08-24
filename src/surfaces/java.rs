@@ -399,15 +399,33 @@ impl LanguageSurface for JavaSurface {
     }
   }
 
-  // Left as a documented exception to #151 for this pass, not converted to
-  // inline config: checkstyle's config is an XML *module tree* (see
-  // `CheckstyleConfig::render` above), not a flat key=value map — checkstyle
-  // has no CLI flag for passing a module tree inline, only `-c <path>`
-  // (accepting either a file path or one of its built-in bundled config
-  // names like `google_checks.xml`, neither of which is "inline data").
-  // google-java-format (the actual formatter tool) has a fixed, unconfigurable
-  // style already, so it was never reading this file in the first place —
-  // this exception is specific to checkstyle, the linter.
+  // Left as a documented exception, verified not feasible for #157:
+  // checkstyle's config is an XML *module tree* (see
+  // `CheckstyleConfig::render` above), not a flat key=value map. Confirmed
+  // against checkstyle 10.20.2's own `-h` output (actually installed and
+  // run, not just docs): `-c=<configurationFile>` is described as
+  // "Specifies the location of the file that defines the configuration
+  // modules. The location can either be a filesystem location, or a name
+  // passed to the ClassLoader.getResource() method" — i.e. a file path or
+  // one of its built-in bundled resource names (`/google_checks.xml`,
+  // `/sun_checks.xml`), never inline module-tree text. No other flag in
+  // `checkstyle -h` (`-p` properties file, `-b` xpath query, etc.) accepts a
+  // literal module tree either, and there is no stdin-config mechanism.
+  // `-c` cannot take a `-` (stdin) sentinel the way `golangci-lint --config`
+  // or `taplo -o` do, because the value is passed straight to
+  // `ClassLoader.getResource()` — piping XML through stdin isn't a resource
+  // location, and there's no separate flag to switch that interpretation.
+  // Writing a fresh temp file per invocation instead of `checkstyle.xml` in
+  // the project root was considered (per the issue's own suggested
+  // fallback) but rejected: it still requires the same
+  // resolve-config/render/write/pass-`-c`/cleanup machinery this exception
+  // exists to avoid, without actually eliminating a file write — it would
+  // just relocate it outside the repo, adding cleanup-on-panic risk for no
+  // real benefit over the current self-healing `checkstyle.xml` write
+  // already done at the top of `lint()` above. google-java-format (the
+  // actual formatter tool) has a fixed, unconfigurable style already, so it
+  // was never reading this file in the first place — this exception is
+  // specific to checkstyle, the linter.
   fn sync_config(&self, ctx: &ExecutionContext, check: bool) -> SurfaceResult {
     let start = Instant::now();
     sync_native_config::<CheckstyleConfig>(ctx, check, start, self.name())

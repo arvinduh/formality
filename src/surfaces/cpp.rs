@@ -137,6 +137,45 @@ impl DeclaresFacets for CppSurface {
   }
 }
 
+/// Renders a [`ClangFormatConfig`] as the inline `{Key: Value, ...}` YAML-flow
+/// style string accepted by clang-format's `-style=` flag, so `fml fmt` can
+/// apply the resolved formality.toml settings without writing
+/// `.clang-format` to disk. Only `fml sync` writes that file now (see
+/// [`CppSurface::sync_config`]). Verified byte-identical against the
+/// file-based path for both the LLVM/2-space defaults and a custom
+/// Google/4-space/Allman configuration (Fixes #157).
+#[must_use]
+pub fn build_clang_format_inline_style(cfg: &ClangFormatConfig) -> String {
+  format!(
+    "{{Language: {}, BasedOnStyle: {}, IndentWidth: {}, ColumnLimit: {}, UseTab: {}, LineEnding: {}, PointerAlignment: {}, BreakBeforeBraces: {}, SortIncludes: {}}}",
+    cfg.language,
+    cfg.based_on_style,
+    cfg.indent_width,
+    cfg.column_limit,
+    cfg.use_tab,
+    cfg.line_ending,
+    cfg.pointer_alignment,
+    cfg.break_before_braces,
+    cfg.sort_includes,
+  )
+}
+
+/// Renders a [`ClangTidyConfig`] as the inline `{Key: Value, ...}` YAML-flow
+/// string accepted by clang-tidy's `--config=` flag, so `fml lint` can apply
+/// the resolved checks without writing `.clang-tidy` to disk. Only `fml
+/// sync` writes that file now (see [`CppSurface::sync_config`]). Verified
+/// byte-identical against the file-based path (Fixes #157).
+#[must_use]
+pub fn build_clang_tidy_inline_config(cfg: &ClangTidyConfig) -> String {
+  format!(
+    "{{Checks: '{}', WarningsAsErrors: '{}', HeaderFilterRegex: '{}', FormatStyle: {}}}",
+    cfg.checks,
+    cfg.warnings_as_errors,
+    cfg.header_filter_regex,
+    cfg.format_style,
+  )
+}
+
 /// Standard file extensions recognized for C/C++ source and header files.
 pub const CPP_EXTENSIONS: &[&str] =
   &["c", "cpp", "cc", "cxx", "h", "hpp", "hxx"];
@@ -315,11 +354,18 @@ impl LanguageSurface for CppSurface {
       };
     }
 
+    // Inline `-style='{...}'` instead of writing `.clang-format` to disk —
+    // see `build_clang_format_inline_style` (Fixes #157). `fml sync` remains
+    // the only path that materializes the file.
+    let inline_style =
+      build_clang_format_inline_style(&ClangFormatConfig::from_context(ctx));
+
     if ctx.check_only {
       return diff_check_via_tempcopy(
         &files,
         |scratch| {
           let mut cmd = create_tool_command("clang-format");
+          cmd.arg(format!("-style={inline_style}"));
           cmd.arg("-i").arg(scratch);
           cmd.args(&ctx.lang_config.extra_args);
           cmd.current_dir(&ctx.root);
@@ -331,6 +377,7 @@ impl LanguageSurface for CppSurface {
     }
 
     let mut cmd = create_tool_command("clang-format");
+    cmd.arg(format!("-style={inline_style}"));
     cmd.arg("-i");
 
     for f in &files {
@@ -424,10 +471,17 @@ impl LanguageSurface for CppSurface {
         .filter(|(flist, _)| !flist.is_empty())
         .collect();
 
+    // Inline `--config='{...}'` instead of reading `.clang-tidy` off disk —
+    // see `build_clang_tidy_inline_config` (Fixes #157). `fml sync` remains
+    // the only path that materializes the file.
+    let inline_config =
+      build_clang_tidy_inline_config(&ClangTidyConfig::from_context(ctx));
+
     let mut failed_outputs = Vec::new();
 
     for (flist, std_flag) in groups {
       let mut cmd = create_tool_command("clang-tidy");
+      cmd.arg(format!("--config={inline_config}"));
       let args = build_clang_tidy_args(
         &flist,
         fix,
@@ -492,19 +546,20 @@ impl LanguageSurface for CppSurface {
     }
   }
 
-  // Left as a documented exception to #151 for this pass, not converted to
-  // inline config: `clang-format` accepts an inline style via
-  // `-style='{...}'` (JSON-like), and modern `clang-tidy` accepts inline
-  // YAML text via `--config=`, so both tools individually *can* take config
-  // inline. What's not verified is whether that combination is safe here —
-  // `.clang-format`/`.clang-tidy` together cover a much larger option
-  // surface (BasedOnStyle, per-check argument maps, header filters, ...)
-  // than rustfmt/ruff/taplo/biome's simpler flat key=value model, and this
-  // environment has neither tool installed to verify byte-identical output
-  // against the file-based path before committing to it. Converting this
-  // surface is real, doable follow-up work — just not a low-risk one to
-  // fold into the same pass as the surfaces above without that
-  // verification.
+  // `fml fmt`/`fml lint` no longer go through this path (Fixes #157): they
+  // pass the resolved config to clang-format/clang-tidy inline via
+  // `-style='{...}'`/`--config='{...}'` (see `build_clang_format_inline_style`
+  // and `build_clang_tidy_inline_config`, used in `format()`/`lint()`
+  // above). This was left as a documented exception in #151 because neither
+  // tool was installed in that pass's environment to verify byte-identical
+  // output — verified here with LLVM 22.1.8 (clang-format/clang-tidy)
+  // actually installed and invoked: both the LLVM/2-space default style and
+  // a custom Google/4-space/Right-pointer/Allman style produce
+  // byte-identical formatted output via `-style=` vs a `.clang-format` file,
+  // and clang-tidy's diagnostic output is identical via `--config=` vs a
+  // `.clang-tidy` file. This method is now reached only by `fml sync`, for
+  // users who explicitly want the native files materialized on disk (e.g.
+  // for editor/clangd integration outside of `fml`).
   fn sync_config(&self, ctx: &ExecutionContext, check: bool) -> SurfaceResult {
     let start = Instant::now();
     let format_res =
@@ -808,5 +863,91 @@ mod tests {
 
     let check_res = surface.sync_config(&ctx, true);
     assert!(matches!(check_res.status, SurfaceStatus::Passed));
+  }
+
+  #[test]
+  fn test_build_clang_format_inline_style_shape() {
+    let cfg = ClangFormatConfig {
+      language: "Cpp".to_string(),
+      based_on_style: "Google".to_string(),
+      indent_width: 4,
+      column_limit: 100,
+      use_tab: "Never".to_string(),
+      line_ending: "LF".to_string(),
+      pointer_alignment: "Right".to_string(),
+      break_before_braces: "Allman".to_string(),
+      sort_includes: false,
+    };
+    let inline = build_clang_format_inline_style(&cfg);
+    assert_eq!(
+      inline,
+      "{Language: Cpp, BasedOnStyle: Google, IndentWidth: 4, ColumnLimit: 100, UseTab: Never, LineEnding: LF, PointerAlignment: Right, BreakBeforeBraces: Allman, SortIncludes: false}"
+    );
+  }
+
+  #[test]
+  fn test_build_clang_tidy_inline_config_shape() {
+    let cfg = ClangTidyConfig::default();
+    let inline = build_clang_tidy_inline_config(&cfg);
+    assert!(inline.starts_with("{Checks: '*,-fuchsia-*"));
+    assert!(inline.contains("FormatStyle: none"));
+  }
+
+  #[test]
+  fn test_cpp_format_does_not_write_clang_format() {
+    // Fixes #157: `fml fmt` must not write `.clang-format` as a side
+    // effect; only `fml sync` should materialize the native config file.
+    if !check_binary_exists("clang-format") {
+      return;
+    }
+    let temp = tempdir().unwrap();
+    std::fs::write(temp.path().join("main.cpp"), "int main(){return 0;}\n")
+      .unwrap();
+
+    let cfg = FormalityConfig::default();
+    let ctx = ExecutionContext {
+      root: temp.path().to_path_buf(),
+      paths: Arc::new(Vec::new()),
+      global_config: Arc::new(cfg.resolve_global()),
+      lang_config: cfg.resolve_for_lang("cpp"),
+      check_only: false,
+    };
+
+    let surface = CppSurface;
+    let _ = surface.format(&ctx);
+
+    assert!(
+      !temp.path().join(".clang-format").exists(),
+      "fml fmt must not write .clang-format"
+    );
+  }
+
+  #[test]
+  fn test_cpp_lint_does_not_write_clang_tidy() {
+    // Fixes #157: `fml lint` must not write `.clang-tidy` as a side effect;
+    // only `fml sync` should materialize the native config file.
+    if !check_binary_exists("clang-tidy") {
+      return;
+    }
+    let temp = tempdir().unwrap();
+    std::fs::write(temp.path().join("main.cpp"), "int main() { return 0; }\n")
+      .unwrap();
+
+    let cfg = FormalityConfig::default();
+    let ctx = ExecutionContext {
+      root: temp.path().to_path_buf(),
+      paths: Arc::new(Vec::new()),
+      global_config: Arc::new(cfg.resolve_global()),
+      lang_config: cfg.resolve_for_lang("cpp"),
+      check_only: false,
+    };
+
+    let surface = CppSurface;
+    let _ = surface.lint(&ctx, false);
+
+    assert!(
+      !temp.path().join(".clang-tidy").exists(),
+      "fml lint must not write .clang-tidy"
+    );
   }
 }

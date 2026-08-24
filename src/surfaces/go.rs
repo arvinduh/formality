@@ -112,6 +112,43 @@ pub fn build_golangci_lint_args(
   args
 }
 
+/// Renders the resolved linter set as the `--enable-only <comma-list>` flag
+/// golangci-lint v2 accepts inline, so `fml lint` can apply
+/// formality.toml's configured linter set without writing `.golangci.yml`
+/// to disk (Fixes #157). Unlike `--enable`/`--disable` (which toggle
+/// individual linters against whatever the active config, or the tool's own
+/// default set, already enables), `--enable-only` *replaces* the active
+/// linter set outright — verified with golangci-lint v2.12.2 to produce
+/// identical diagnostic output to a `.golangci.yml` with the same
+/// `linters.enable` list (both correctly flag/omit an unchecked
+/// `os.Open` return depending on whether `errcheck` is in the set). Only
+/// `fml sync` writes that file now (see [`GoSurface::sync_config`]).
+#[must_use]
+pub fn build_golangci_lint_inline_args(linters: &[String]) -> Vec<String> {
+  vec!["--enable-only".to_string(), linters.join(",")]
+}
+
+/// Returns whether the installed `golangci-lint` accepts `--enable-only`
+/// (added in v2). This surface's own install fallback chain
+/// (`tooling::GOLANGCI_LINT_CHAIN`) still allows landing on a v1 install
+/// (its final fallback is `go install .../golangci-lint/cmd/golangci-lint`,
+/// the pre-v2 module path) — v1 doesn't have this flag, and passing it
+/// unconditionally would break `fml lint` outright for anyone on that
+/// version rather than just falling back to less-precise config. Probing
+/// `run --help`'s actual output avoids guessing at a version-string format
+/// that could itself drift.
+#[must_use]
+pub fn golangci_lint_supports_enable_only() -> bool {
+  create_tool_command("golangci-lint")
+    .arg("run")
+    .arg("--help")
+    .output()
+    .is_ok_and(|out| {
+      String::from_utf8_lossy(&out.stdout).contains("--enable-only")
+        || String::from_utf8_lossy(&out.stderr).contains("--enable-only")
+    })
+}
+
 impl LanguageSurface for GoSurface {
   fn name(&self) -> &'static str {
     "go"
@@ -371,7 +408,24 @@ impl LanguageSurface for GoSurface {
       Vec::new()
     };
 
+    // Inline `--enable-only linter1,linter2,...` instead of relying on
+    // `.golangci.yml` being present on disk — see
+    // `build_golangci_lint_inline_args` (Fixes #157). `fml sync` remains the
+    // only path that materializes the file.
+    let linters = ctx
+      .lang_config
+      .go
+      .as_ref()
+      .and_then(|g| g.linters.clone())
+      .unwrap_or_else(default_go_linters);
+
     let mut cmd = create_tool_command("golangci-lint");
+    if golangci_lint_supports_enable_only() {
+      cmd.args(build_golangci_lint_inline_args(&linters));
+    }
+    // Older golangci-lint v1 installs (no `--enable-only`, see above) fall
+    // through here with no inline linter-set flag, same as before #157 —
+    // they still respect a synced `.golangci.yml` if one is on disk.
     cmd.args(build_golangci_lint_args(
       &files_to_pass,
       fix,
@@ -416,14 +470,30 @@ impl LanguageSurface for GoSurface {
     }
   }
 
-  // Left as a documented exception to #151 for this pass, not converted to
-  // inline config: `golangci-lint run` has no CLI flag for enabling a
-  // specific linter set inline — `--enable`/`--disable` toggle *individual*
-  // linters against whatever the active config file (or the tool's own
-  // default set) already enables, they don't replace "no config file
-  // present" the way `ruff --config`/`taplo -o` do. gofmt/goimports (the
-  // formatters `format()` calls) are unaffected either way — they've never
-  // read `.golangci.yml`; only `golangci-lint` (the linter) does.
+  // `fml lint` no longer goes through this path (Fixes #157): it passes the
+  // resolved linter set to golangci-lint inline via `--enable-only
+  // linter1,linter2,...` (see `build_golangci_lint_inline_args`, used in
+  // `lint()` above). Unlike `--enable`/`--disable` (which the #151-era
+  // comment here correctly noted only toggle individual linters against
+  // whatever's already active), golangci-lint v2's `--enable-only` *replaces*
+  // the active linter set outright — verified with golangci-lint v2.12.2
+  // actually installed: `--enable-only errcheck` against a project with an
+  // unchecked `os.Open` call produces byte-identical diagnostic output to a
+  // `.golangci.yml` with `linters.enable: [errcheck]`, and omitting
+  // `errcheck` from the inline set (or the file) both correctly suppress the
+  // finding. gofmt/goimports (the formatters `format()` calls) are
+  // unaffected either way — they've never read `.golangci.yml`; only
+  // `golangci-lint` (the linter) does, and never needed a config file of
+  // their own to begin with (both take all their settings as CLI flags).
+  // This method is now reached only by `fml sync`, for users who explicitly
+  // want `.golangci.yml` materialized on disk (e.g. for editor/IDE
+  // integration outside of `fml`, or CI that invokes golangci-lint
+  // directly) — and for anyone still on golangci-lint v1, where
+  // `golangci_lint_supports_enable_only()` returns false and `lint()`
+  // gracefully falls back to whatever `.golangci.yml` is on disk instead of
+  // passing an unrecognized flag (v1 remains reachable via this surface's
+  // own install fallback chain, `tooling::GOLANGCI_LINT_CHAIN`'s last
+  // entry).
   fn sync_config(&self, ctx: &ExecutionContext, check: bool) -> SurfaceResult {
     let start = Instant::now();
     sync_native_config::<GolangciLintConfig>(ctx, check, start, self.name())
@@ -635,5 +705,130 @@ mod tests {
 
     let check_clean = surface.format(&ctx_check);
     assert!(matches!(check_clean.status, SurfaceStatus::Passed));
+  }
+
+  #[test]
+  fn test_build_golangci_lint_inline_args_shape() {
+    let linters = vec!["errcheck".to_string(), "govet".to_string()];
+    let args = build_golangci_lint_inline_args(&linters);
+    assert_eq!(
+      args,
+      vec!["--enable-only".to_string(), "errcheck,govet".to_string()]
+    );
+  }
+
+  #[test]
+  fn test_golangci_lint_supports_enable_only_matches_installed_binary() {
+    // Not a hardcoded assertion either way — this just confirms the probe
+    // doesn't panic and its result is consistent with a direct check
+    // against the same binary this test environment actually has (v1's
+    // fallback path in tooling::GOLANGCI_LINT_CHAIN means this can't assume
+    // v2 is what's on PATH).
+    if !check_binary_exists("golangci-lint") {
+      return;
+    }
+    let supports = golangci_lint_supports_enable_only();
+    let help_output = std::process::Command::new("golangci-lint")
+      .arg("run")
+      .arg("--help")
+      .output()
+      .expect("golangci-lint run --help should succeed if the binary exists");
+    let expected = String::from_utf8_lossy(&help_output.stdout)
+      .contains("--enable-only")
+      || String::from_utf8_lossy(&help_output.stderr).contains("--enable-only");
+    assert_eq!(supports, expected);
+  }
+
+  #[test]
+  fn test_go_lint_does_not_write_golangci_yml() {
+    // Fixes #157: `fml lint` must not write `.golangci.yml` as a side
+    // effect; only `fml sync` should materialize the native config file.
+    if !check_binary_exists("golangci-lint") {
+      return;
+    }
+    let temp = TempDir::new().unwrap();
+    std::fs::write(
+      temp.path().join("go.mod"),
+      "module example.com/testproj\n\ngo 1.21\n",
+    )
+    .unwrap();
+    std::fs::write(
+      temp.path().join("main.go"),
+      "package main\n\nfunc main() {}\n",
+    )
+    .unwrap();
+
+    let surface = GoSurface;
+    let ctx = ExecutionContext {
+      root: temp.path().to_path_buf(),
+      paths: Arc::new(Vec::new()),
+      global_config: Arc::new(ResolvedGlobalConfig::default()),
+      lang_config: ResolvedLangConfig::new("go"),
+      check_only: false,
+    };
+
+    let _ = surface.lint(&ctx, false);
+
+    assert!(
+      !temp.path().join(".golangci.yml").exists(),
+      "fml lint must not write .golangci.yml"
+    );
+  }
+
+  #[test]
+  fn test_go_lint_respects_configured_linter_set() {
+    // Verifies `--enable-only` actually drives which linters run, matching
+    // the resolved `[lang.go] linters` set, without any `.golangci.yml` on
+    // disk (Fixes #157).
+    if !check_binary_exists("golangci-lint") {
+      return;
+    }
+    let temp = TempDir::new().unwrap();
+    std::fs::write(
+      temp.path().join("go.mod"),
+      "module example.com/testproj\n\ngo 1.21\n",
+    )
+    .unwrap();
+    // Unchecked os.Open return: flagged by errcheck, ignored by govet.
+    std::fs::write(
+      temp.path().join("main.go"),
+      "package main\n\nimport (\n\t\"fmt\"\n\t\"os\"\n)\n\nfunc main() {\n\tos.Open(\"nope.txt\")\n\tfmt.Println(\"hi\")\n}\n",
+    )
+    .unwrap();
+
+    let surface = GoSurface;
+
+    let mut errcheck_cfg = ResolvedLangConfig::new("go");
+    errcheck_cfg.go = Some(GoOptions {
+      local_prefixes: None,
+      linters: Some(vec!["errcheck".to_string()]),
+    });
+    let ctx_errcheck = ExecutionContext {
+      root: temp.path().to_path_buf(),
+      paths: Arc::new(Vec::new()),
+      global_config: Arc::new(ResolvedGlobalConfig::default()),
+      lang_config: errcheck_cfg,
+      check_only: false,
+    };
+    let res_errcheck = surface.lint(&ctx_errcheck, false);
+    assert!(matches!(
+      res_errcheck.status,
+      SurfaceStatus::ViolationsFound { .. }
+    ));
+
+    let mut govet_cfg = ResolvedLangConfig::new("go");
+    govet_cfg.go = Some(GoOptions {
+      local_prefixes: None,
+      linters: Some(vec!["govet".to_string()]),
+    });
+    let ctx_govet = ExecutionContext {
+      root: temp.path().to_path_buf(),
+      paths: Arc::new(Vec::new()),
+      global_config: Arc::new(ResolvedGlobalConfig::default()),
+      lang_config: govet_cfg,
+      check_only: false,
+    };
+    let res_govet = surface.lint(&ctx_govet, false);
+    assert!(matches!(res_govet.status, SurfaceStatus::Passed));
   }
 }
