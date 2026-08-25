@@ -1,9 +1,19 @@
 name: CI
 
-# Full toolchain integration suite: fmt/lint/sync dogfooding, the full test
-# suite, and a security audit. Runs only on push to main, since it installs
-# 10+ toolchains and is too slow for per-PR feedback. Fast PR-time checks
-# live in pr-check.yml instead.
+# Post-merge safety net for main. As of #184, pr-check.yml's three jobs
+# (Library Tests, Formality Dogfooding, Security Audit) already cover every
+# check this workflow runs, gated on every PR before merge - so by the time
+# a commit lands here via a normal PR, it has usually already passed all of
+# this. This workflow still earns its keep in two cases: a direct push to
+# main or an admin merge that bypassed required checks entirely, and the
+# more mundane case where branch protection doesn't require a PR branch to
+# be up to date before merging - two PRs can each be individually green
+# against an older main, both merge, and the resulting main tip was never
+# actually tested as a whole. Since nothing here is racing a PR author for
+# fast feedback, it's consolidated into a single job instead of
+# pr-check.yml's parallel split - there's no reader waiting on partial
+# results, so one straightforward failure summary is simpler to maintain
+# than three duplicated ones.
 on:
   push:
     branches: ["main"]
@@ -14,16 +24,26 @@ env:
   FORCE_COLOR: "1"
 
 jobs:
-  check-and-test:
-    name: Format, Lint & Test (Dogfooding fml)
+  safety-net:
+    name: Full Dogfooding & Audit (main safety net)
     runs-on: ubuntu-latest
     steps:
       - name: Checkout repository
         uses: actions/checkout@v7
 
+      # Runs right after checkout, ahead of the build: it doesn't need a
+      # built fml, and hoisting it here means an earlier dogfooding failure
+      # below can no longer silently skip the audit step further down the
+      # job (it used to run last, after everything else).
+      - name: Install prebuilt cargo-audit
+        uses: taiki-e/install-action@cargo-audit
+
+      - name: Run cargo audit
+        run: cargo audit
+
       - name: Set up Rust toolchain
         # Pinned to match rust-toolchain.toml; this action does not read
-        # that file itself, so bump both together.
+        # that file itself, so bump both together (see pr-check.yml).
         uses: dtolnay/rust-toolchain@1.97.1
         with:
           components: rustfmt, clippy
@@ -31,33 +51,23 @@ jobs:
       - name: Set up Rust cache
         uses: Swatinem/rust-cache@v2
 
+      - name: Run clippy
+        run: cargo clippy --all-targets -- -D warnings
+
       - name: Build fml
         run: cargo build
 
       - name: Install tool dependencies via fml
         run: ./target/debug/fml install
 
-      - name: Verify Config Sync
+      - name: Verify config sync
         run: ./target/debug/fml sync --check
 
-      - name: Check Formatting
+      - name: Check formatting
         run: ./target/debug/fml fmt --check
 
-      - name: Lint Surfaces
+      - name: Lint surfaces
         run: ./target/debug/fml lint
 
-      - name: Run Test Suite
+      - name: Run test suite
         run: cargo test --verbose
-
-  security-audit:
-    name: Security Audit (cargo audit)
-    runs-on: ubuntu-latest
-    steps:
-      - name: Checkout repository
-        uses: actions/checkout@v7
-
-      - name: Install prebuilt cargo-audit
-        uses: taiki-e/install-action@cargo-audit
-
-      - name: Run cargo audit
-        run: cargo audit

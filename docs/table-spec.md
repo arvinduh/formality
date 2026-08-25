@@ -26,15 +26,9 @@ The Rust types backing this spec live in `src/ui/table/mod.rs` and
 
 ```jsonc
 {
-  "columns": [
-    /* Column[] */
-  ],
-  "rows": [
-    /* Row[] */
-  ],
-  "layout": {
-    /* Layout, optional */
-  },
+  "columns": [/* Column[] */],
+  "rows": [/* Row[] */],
+  "layout": {/* Layout, optional */},
 }
 ```
 
@@ -73,9 +67,7 @@ The Rust types backing this spec live in `src/ui/table/mod.rs` and
 
 ```jsonc
 {
-  "cells": [
-    /* Cell[] */
-  ],
+  "cells": [/* Cell[] */],
   "max_height": 3, // optional cap on wrapped-line count for this row
   "kind": "data", // RowKind — default "data"
 }

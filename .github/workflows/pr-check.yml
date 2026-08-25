@@ -1,14 +1,46 @@
 name: PR Check
 
-# Fast presubmit feedback for pull requests: just the library unit tests
-# (including the version lockstep check in tests/version_lockstep.rs).
-# This intentionally skips the full toolchain install, fmt/lint/sync
-# dogfooding, and security audit that ci.yml runs on push to main, so PR
-# authors get signal in well under a minute instead of waiting on 10+
-# toolchains.
+# Pre-merge gating for pull requests, split into 3 independent parallel jobs
+# so a failure in one surface doesn't block feedback from the others:
+#
+#   1. Library Tests - clippy (all targets) + the full test suite
+#      (cargo test --verbose covers unit tests, tests/version_lockstep.rs,
+#      and the integration tests in tests/integration_tests.rs /
+#      tests/fix_command.rs). Both exercise every surface (toml,
+#      javascript, markdown, ...) via the real external tool binaries
+#      (taplo, biome, markdownlint-cli2, ...) - integration_tests.rs by
+#      spawning the built fml binary directly (CARGO_BIN_EXE_fml),
+#      fix_command.rs by calling fml::run_with_args(...) in-process - so
+#      this job already behaviorally validates that fmt/lint/sync produce
+#      correct output. That's also why this job builds fml and runs
+#      `fml install` before the test suite: this job's runner starts with
+#      none of those tools installed, and it's a separate parallel runner
+#      from Job 2, so Job 2 installing its own copies doesn't help it.
+#   2. Formality Dogfooding - runs fml against THIS repo's own live tree.
+#      Job 1 already proves fmt/lint/sync *work correctly*; this job proves
+#      this repo's checked-in state actually *complies* with them right
+#      now - both native config drift from formality.toml and real
+#      formatting/lint violations in tracked files (e.g. an unformatted
+#      Markdown code fence - the concrete failure mode #184 was filed
+#      over). `fml sync --check` alone only compares generated native
+#      config files (.rustfmt.toml, .prettierrc, ...) against
+#      formality.toml; it never inspects source file contents, so it can't
+#      catch a Prettier-reformatted Markdown code fence. That's why the
+#      full fmt --check / lint pass stays here rather than narrowing to
+#      sync --check alone (see #184 discussion / design note).
+#   3. Security Audit - cargo audit against the advisory database.
+#
+# "Library Tests" is the required branch-protection status check name -
+# GitHub branch protection matches on job `name`, not job id, so keep that
+# name exactly if this job is ever renamed or restructured, or update
+# branch protection in lockstep.
 on:
   pull_request:
     branches: ["main"]
+
+concurrency:
+  group: pr-${{ github.head_ref || github.run_id }}
+  cancel-in-progress: true
 
 env:
   CARGO_TERM_COLOR: always
@@ -25,17 +57,81 @@ jobs:
 
       - name: Set up Rust toolchain
         # Pinned to match rust-toolchain.toml; this action does not read
-        # that file itself, so bump both together (see ci.yml).
+        # that file itself, so bump both together (see ci.yml). rustfmt is
+        # required (not just clippy) because the integration tests below
+        # spawn the real fml binary, which shells out to rustfmt for the
+        # rust surface.
         uses: dtolnay/rust-toolchain@1.97.1
+        with:
+          components: clippy, rustfmt
 
       - name: Set up Rust cache
         uses: Swatinem/rust-cache@v2
 
-      - name: Run library tests
-        run: cargo test --lib
+      - name: Run clippy
+        run: cargo clippy --all-targets -- -D warnings
 
-      - name: Run version lockstep check
-        # Cheap integration test (no external toolchain installs), kept
-        # in pr-check so version drift between Cargo.toml and the VS Code
-        # extension's package.json is caught before merge.
-        run: cargo test --test version_lockstep
+      - name: Build fml
+        run: cargo build
+
+      - name: Install tool dependencies via fml
+        # tests/integration_tests.rs and tests/fix_command.rs spawn the
+        # real built fml binary against synthetic TempDir project layouts
+        # covering every surface, so the external tool binaries they shell
+        # out to (taplo, biome, markdownlint-cli2, yamllint, ...) must be
+        # on PATH before `cargo test --verbose` runs, mirroring Job 2 and
+        # the old ci.yml. Without this, e.g. fix_command.rs's TOML-surface
+        # tests fail on a clean runner with no taplo installed.
+        run: ./target/debug/fml install
+
+      - name: Run full test suite
+        run: cargo test --verbose
+
+  dogfooding:
+    name: Formality Dogfooding
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v7
+
+      - name: Set up Rust toolchain
+        # clippy is required (not just rustfmt) because `fml lint` on the
+        # rust surface is `cargo clippy` - without the component, `fml
+        # install`/`fml doctor` won't catch the gap either: they probe
+        # clippy-driver via `which`, and rustup's shim at
+        # ~/.cargo/bin/clippy-driver exists even when the component isn't
+        # installed, so it false-positives as [READY].
+        uses: dtolnay/rust-toolchain@1.97.1
+        with:
+          components: rustfmt, clippy
+
+      - name: Set up Rust cache
+        uses: Swatinem/rust-cache@v2
+
+      - name: Build fml
+        run: cargo build
+
+      - name: Install tool dependencies via fml
+        run: ./target/debug/fml install
+
+      - name: Verify config sync
+        run: ./target/debug/fml sync --check
+
+      - name: Check formatting
+        run: ./target/debug/fml fmt --check
+
+      - name: Lint surfaces
+        run: ./target/debug/fml lint
+
+  security-audit:
+    name: Security Audit
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v7
+
+      - name: Install prebuilt cargo-audit
+        uses: taiki-e/install-action@cargo-audit
+
+      - name: Run cargo audit
+        run: cargo audit

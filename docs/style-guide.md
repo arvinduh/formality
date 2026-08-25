@@ -24,13 +24,16 @@ or 2 should be.
 
 1. **Tool-native lint** — `rustfmt` defaults, or a `clippy` lint enabled in this
    crate. Authoritative: this document exists only for what these tools don't
-   already cover, and never repeats their behavior. Checked in CI via
-   `fml fmt --check` / `fml lint` (`cargo clippy --all-targets -- -D warnings`),
-   which is `fml` dogfooding itself in `.github/workflows/ci.yml`.
-2. **Repo-local test assertion** — a `#[test]` (in `--lib`, so it runs in the
-   fast `Library Tests` PR check, not just the slower `main`-only CI) that walks
-   the filesystem, the surface registry, or another in-crate side-table and
-   fails if the rule is violated. The established pattern is
+   already cover, and never repeats their behavior. Checked pre-merge on every
+   PR via `fml fmt --check` / `fml lint`
+   (`cargo clippy --all-targets -- -D warnings`), which is `fml` dogfooding
+   itself in the `Formality Dogfooding` / `Library Tests` jobs of
+   `.github/workflows/pr-check.yml` (`ci.yml` re-runs the same checks on `main`
+   as a post-merge safety net — see #184).
+2. **Repo-local test assertion** — a `#[test]` (part of the full test suite that
+   runs in the `Library Tests` PR check, gating every PR before merge) that
+   walks the filesystem, the surface registry, or another in-crate side-table
+   and fails if the rule is violated. The established pattern is
    `src/surfaces/registry.rs`'s fleet-consistency tests from `#113`
    (`test_all_fleet_surfaces_present`, alias/case-insensitive lookup) — reuse
    that mechanism for a new mechanically-checkable rule rather than inventing
