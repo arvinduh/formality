@@ -107,7 +107,7 @@ pub const CHILD_LSP_REGISTRY: &[ChildLsp] = &[
     surface: "typst",
     binary: "tinymist",
     args: &[],
-    install_hint: "cargo binstall tinymist  OR  npm install -g @myriaddreamin/tinymist  OR  brew install tinymist",
+    install_hint: "cargo binstall tinymist  OR  brew install tinymist",
   },
   ChildLsp {
     surface: "yaml",

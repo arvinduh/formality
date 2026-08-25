@@ -235,14 +235,15 @@ const TYPSTYLE_CHAIN: &[InstallMethod] = &[
   },
 ];
 
-// Note: `Npm("@myriaddreamin/tinymist")` below doesn't correspond to any
-// real published package (404 on npm; the real unscoped `tinymist` package
-// is a WASM analyzer module, not this CLI) — a correctness bug independent
-// of version pinning, out of scope here, tracked as #195. Left unpinned
-// rather than pinning a version of a package that doesn't exist.
+// `Npm("@myriaddreamin/tinymist")` used to live here but never corresponded
+// to a real published package (404 on npm; the whole `@myriaddreamin` scope
+// only publishes Typst.ts WASM bindings, not this CLI, and the unscoped
+// `tinymist` package is likewise a WASM analyzer module) -- confirmed by
+// direct registry lookup while fixing #195. Dropped rather than pinned: no
+// npm distribution of this CLI exists to pin a version of. cargo-binstall
+// (first below) and the plain `cargo install` fallback already cover it.
 const TINYMIST_CHAIN: &[InstallMethod] = &[
   InstallMethod::CargoBinstall("tinymist@0.15.2"),
-  InstallMethod::Npm("@myriaddreamin/tinymist"),
   InstallMethod::Brew("tinymist"),
   InstallMethod::Scoop("tinymist"),
   InstallMethod::WingetName("Myriad-Dreamin.tinymist"),
@@ -325,27 +326,28 @@ const CLANG_TIDY_CHAIN: &[InstallMethod] = &[
 
 // Note: `Npm("google-java-format")` below IS real (the
 // `invertase/nodejs-google-java-format` npm wrapper, pinned) and is pinned
-// like any other npm entry. `Pipx("google-java-format")` and
-// `Npm("checkstyle")`, by contrast, are pre-existing entries that don't
-// correspond to any real published package (no PyPI `google-java-format`,
-// no npm `checkstyle`) — a correctness bug independent of version pinning,
-// out of scope here (tracked in the spinoff issue tracked as
-// #195). Left
-// unpinned rather than pinning a version of a package that doesn't exist.
+// like any other npm entry. A `Pipx("google-java-format")` entry used to sit
+// below it but never corresponded to a real PyPI distribution -- confirmed
+// by direct registry lookup while fixing #195 (no `google-java-format` on
+// PyPI; the closest name match, `gjf`, is an unrelated GeoJSON-fixing tool).
+// Dropped rather than pinned: the working `Npm` entry above already covers
+// this tool, and no PyPI wrapper exists to pin a version of.
 const GOOGLE_JAVA_FORMAT_CHAIN: &[InstallMethod] = &[
   InstallMethod::Brew("google-java-format"),
   InstallMethod::Npm("google-java-format@2.3.0"),
-  InstallMethod::Pipx("google-java-format"),
 ];
 
-// Note: `Npm("checkstyle")` below doesn't correspond to any real published
-// package (404 on npm) — a correctness bug independent of version pinning,
-// out of scope here, tracked as #195. Left unpinned rather than pinning a
-// version of a package that doesn't exist.
+// An `Npm("checkstyle")` entry used to sit here but never corresponded to a
+// real published package (404 on npm, confirmed by direct registry lookup
+// while fixing #195; searching npm for "checkstyle" turns up only adapters
+// that consume some *other* tool's output and reformat it as Checkstyle XML,
+// not a wrapper that installs the actual `checkstyle` Java tool). Dropped
+// rather than pinned: no npm distribution of this tool exists, and the
+// Brew/Apt entries above already cover the platforms that have a real
+// install path.
 const CHECKSTYLE_CHAIN: &[InstallMethod] = &[
   InstallMethod::Brew("checkstyle"),
   InstallMethod::Apt("checkstyle"),
-  InstallMethod::Npm("checkstyle"),
 ];
 
 const RUSTFMT_CHAIN: &[InstallMethod] = &[InstallMethod::Rustup("rustfmt")];
@@ -368,16 +370,26 @@ const GOLANGCI_LINT_CHAIN: &[InstallMethod] = &[
 
 // ktlint ships as a prebuilt executable jar; there is no cargo fallback, so
 // the chain is otherwise limited to system package managers (mirrors the
-// CLANG_FORMAT_CHAIN / CLANG_TIDY_CHAIN pattern above). `Npm("ktlint")`
-// resolves to a real but unrelated 2018 package, not the actual ktlint tool
-// — a correctness bug independent of version pinning, out of scope here,
-// tracked as #195. It's still pinned (to that package's one and only
-// published version) so it's at least deterministic in the meantime, but
-// pinning doesn't make it the right package.
+// CLANG_FORMAT_CHAIN / CLANG_TIDY_CHAIN pattern above). The unscoped
+// `Npm("ktlint@0.0.5")` this used to point at is an abandoned, single-version
+// 2018 package (its npm "version" 0.0.5 has never tracked the real tool's
+// version at all) whose preinstall script shells out to `curl` a *hardcoded*
+// `shyiko/ktlint` 0.29.0 binary straight from GitHub, bypassing npm's
+// registry entirely -- so pinning its npm arg wouldn't have pinned its
+// actual behavior, the whole point of the #191/#194 pinning convention.
+// Confirmed by extracting the published tarball and reading its
+// preinstall.js while fixing #195. Replaced with `@naturalcycles/ktlint`, a
+// maintained npm wrapper (23 published versions, tracking upstream) that
+// republishes the actual `com.pinterest.ktlint` self-executable jar under
+// `resources/ktlint` (verified by extracting the published tarball and
+// confirming the `com/pinterest/ktlint/Main.class` entry, and by actually
+// installing and running it end to end: `ktlint version` reports the real
+// tool's `1.8.0`). Requires a JVM on PATH at run time, same as the
+// Brew/Scoop/Apt entries below.
 const KTLINT_CHAIN: &[InstallMethod] = &[
   InstallMethod::Brew("ktlint"),
   InstallMethod::Scoop("ktlint"),
-  InstallMethod::Npm("ktlint@0.0.5"),
+  InstallMethod::Npm("@naturalcycles/ktlint@1.16.1"),
   InstallMethod::Apt("ktlint"),
 ];
 
@@ -607,32 +619,6 @@ mod tests {
     );
   }
 
-  /// Chain entries known, and confirmed by direct registry lookup, to point
-  /// at a package that doesn't actually exist under that install method --
-  /// a correctness bug independent of version pinning, tracked as #195.
-  /// Keyed on `(binary, InstallMethod variant tag, package arg)` rather than
-  /// just `(binary, package arg)`: two different `InstallMethod` variants
-  /// for the same binary can carry the identical package string (e.g.
-  /// `Npm("google-java-format")` is real, `Pipx("google-java-format")` is
-  /// not) and a package-string-only key would silently over-exempt both.
-  fn is_known_dead_package(
-    binary: &str,
-    method: &InstallMethod,
-    pkg_arg: &str,
-  ) -> bool {
-    let variant_tag = match method {
-      InstallMethod::Npm(_) => "npm",
-      InstallMethod::Pipx(_) => "pipx",
-      _ => "",
-    };
-    matches!(
-      (binary, variant_tag, pkg_arg),
-      ("tinymist", "npm", "@myriaddreamin/tinymist")
-        | ("checkstyle", "npm", "checkstyle")
-        | ("google-java-format", "pipx", "google-java-format")
-    )
-  }
-
   #[test]
   fn test_registry_resolved_install_methods_are_version_pinned() {
     // Every chain entry that resolves against a floating package registry
@@ -641,10 +627,16 @@ mod tests {
     // above the chain constants. System package managers (apt/brew/scoop/
     // winget) are exempt: they resolve against a distro/tap snapshot rather
     // than a single global "latest" tag, so they drift far less, and their
-    // inline version syntax isn't uniform. `is_known_dead_package` above
-    // covers chain entries that don't correspond to a real package at all
-    // (#195) -- pinning a version of a nonexistent package wouldn't make it
-    // exist.
+    // inline version syntax isn't uniform.
+    //
+    // This test used to also carry an `is_known_dead_package` escape hatch
+    // for chain entries that didn't correspond to a real package at all
+    // under a given install method (#195) -- pinning a version of a
+    // nonexistent package wouldn't make it exist. #195 fixed or dropped
+    // every entry that needed it, so the exemption list emptied out; it was
+    // removed rather than left as permanently-unused dead code. Re-add the
+    // same mechanism if a future audit finds another dead chain entry that
+    // can't be fixed immediately.
     //
     // Iterates ALL_CHAINS itself (the same side-table `install_chain_for`
     // and the coverage test below use) rather than a separately maintained
@@ -679,9 +671,6 @@ mod tests {
             .last()
             .expect("registry install command should have a package arg")
         };
-        if is_known_dead_package(binary, method, pkg_arg) {
-          continue;
-        }
         assert!(
           has_version_pin(pkg_arg),
           "{binary}: {method:?} resolves package {pkg_arg:?} with no \
