@@ -5,10 +5,22 @@ use std::time::{SystemTime, UNIX_EPOCH};
 
 const UPDATE_CHECK_INTERVAL_SECS: u64 = 24 * 60 * 60; // 24 hours
 
+// A curl-level failure (missing binary, DNS failure, or the connect/max-time
+// budget exceeded -- offline, captive portal, flaky link) gets a much shorter
+// backoff than a successful check. This keeps `fml` from re-spawning curl on
+// every single invocation while offline, without silently disabling update
+// checks for a full day once the network comes back.
+const UPDATE_CHECK_FAILURE_BACKOFF_SECS: u64 = 15 * 60; // 15 minutes
+
 #[derive(Serialize, Deserialize, Debug)]
 struct UpdateCache {
   last_checked_unix: u64,
   latest_tag: Option<String>,
+  /// Set when this entry records a curl-level failure (no response at all)
+  /// rather than a completed check, so it can be retried after the shorter
+  /// [`UPDATE_CHECK_FAILURE_BACKOFF_SECS`] instead of the full 24h TTL.
+  #[serde(default)]
+  failed: bool,
 }
 
 fn get_cache_path() -> PathBuf {
@@ -18,12 +30,26 @@ fn get_cache_path() -> PathBuf {
 // Outer Option represents cache validity (fresh vs expired); inner Option is the cached latest tag.
 #[allow(clippy::option_option)]
 fn read_cached_tag() -> Option<Option<String>> {
-  let path = get_cache_path();
+  read_cached_tag_at(&get_cache_path())
+}
+
+/// Reads and validates the update-check cache at an explicit `path`. Takes
+/// the path explicitly (rather than calling [`get_cache_path`] itself) so
+/// tests can point it at a temp file instead of the real per-user cache
+/// directory.
+#[allow(clippy::option_option)]
+fn read_cached_tag_at(path: &Path) -> Option<Option<String>> {
   let data = std::fs::read_to_string(path).ok()?;
   let cache: UpdateCache = serde_json::from_str(&data).ok()?;
 
+  let interval = if cache.failed {
+    UPDATE_CHECK_FAILURE_BACKOFF_SECS
+  } else {
+    UPDATE_CHECK_INTERVAL_SECS
+  };
+
   let now = SystemTime::now().duration_since(UNIX_EPOCH).ok()?.as_secs();
-  if now.saturating_sub(cache.last_checked_unix) < UPDATE_CHECK_INTERVAL_SECS {
+  if now.saturating_sub(cache.last_checked_unix) < interval {
     Some(cache.latest_tag)
   } else {
     None
@@ -45,6 +71,28 @@ fn write_cached_tag_at(path: &Path, tag: Option<&str>) {
   let cache = UpdateCache {
     last_checked_unix: now,
     latest_tag: tag.map(std::string::ToString::to_string),
+    failed: false,
+  };
+  if let Ok(json) = serde_json::to_string(&cache) {
+    let _ = std::fs::write(path, json);
+  }
+}
+
+/// Writes the update-check cache to record a curl-level failure (no response
+/// body at all) at `path`, stamping `last_checked_unix` so the next
+/// invocation retries after [`UPDATE_CHECK_FAILURE_BACKOFF_SECS`] instead of
+/// re-spawning curl immediately.
+fn write_failed_check_at(path: &Path) {
+  if let Some(parent) = path.parent() {
+    let _ = std::fs::create_dir_all(parent);
+  }
+  let now = SystemTime::now()
+    .duration_since(UNIX_EPOCH)
+    .map_or(0, |d| d.as_secs());
+  let cache = UpdateCache {
+    last_checked_unix: now,
+    latest_tag: None,
+    failed: true,
   };
   if let Ok(json) = serde_json::to_string(&cache) {
     let _ = std::fs::write(path, json);
@@ -171,6 +219,11 @@ pub fn spawn_update_check() -> Option<UpdateNotifier> {
         current_version,
       );
     }
+    // curl itself failed to produce a response (binary missing, DNS
+    // failure, or the connect/max-time budget exceeded). Still stamp the
+    // cache -- with a short failure backoff, not the full 24h TTL -- so the
+    // very next invocation doesn't re-spawn curl and eat the same latency.
+    write_failed_check_at(&get_cache_path());
     None
   });
 
@@ -306,6 +359,85 @@ mod tests {
     let data = std::fs::read_to_string(&cache_path).unwrap();
     let cache: UpdateCache = serde_json::from_str(&data).unwrap();
     assert_eq!(cache.latest_tag, Some("v9.9.9".to_string()));
+  }
+
+  #[test]
+  fn test_write_failed_check_stamps_cache_with_short_backoff_marker() {
+    let temp = tempfile::TempDir::new().unwrap();
+    let cache_path = temp.path().join("update_check.json");
+
+    let before = SystemTime::now()
+      .duration_since(UNIX_EPOCH)
+      .unwrap()
+      .as_secs();
+    write_failed_check_at(&cache_path);
+    let after = SystemTime::now()
+      .duration_since(UNIX_EPOCH)
+      .unwrap()
+      .as_secs();
+
+    let data = std::fs::read_to_string(&cache_path)
+      .expect("cache file must be written even when curl itself fails");
+    let cache: UpdateCache =
+      serde_json::from_str(&data).expect("cache file must be valid JSON");
+    assert_eq!(cache.latest_tag, None);
+    assert!(cache.failed);
+    assert!(
+      cache.last_checked_unix >= before && cache.last_checked_unix <= after,
+      "last_checked_unix should be stamped with the current time on a curl failure"
+    );
+  }
+
+  #[test]
+  fn test_recent_failed_check_suppresses_recheck_without_full_day_ttl() {
+    let temp = tempfile::TempDir::new().unwrap();
+    let cache_path = temp.path().join("update_check.json");
+
+    const {
+      assert!(
+        UPDATE_CHECK_FAILURE_BACKOFF_SECS < UPDATE_CHECK_INTERVAL_SECS,
+        "failure backoff must be distinguishable from (shorter than) the \
+         24h success TTL, so a transient outage doesn't silently disable \
+         update checks for a full day"
+      );
+    }
+
+    let now = SystemTime::now()
+      .duration_since(UNIX_EPOCH)
+      .unwrap()
+      .as_secs();
+
+    // A failure recorded just under the failure backoff ago is still
+    // "fresh" -- the very next invocation must not re-spawn curl.
+    let fresh_failure = UpdateCache {
+      last_checked_unix: now - (UPDATE_CHECK_FAILURE_BACKOFF_SECS - 1),
+      latest_tag: None,
+      failed: true,
+    };
+    std::fs::write(&cache_path, serde_json::to_string(&fresh_failure).unwrap())
+      .unwrap();
+    assert_eq!(
+      read_cached_tag_at(&cache_path),
+      Some(None),
+      "a recent curl-level failure should be treated as a valid (empty) \
+       cache entry, not force a fresh curl spawn"
+    );
+
+    // A failure recorded longer ago than the failure backoff -- but well
+    // within the 24h success TTL -- must expire and allow a fresh check.
+    let stale_failure = UpdateCache {
+      last_checked_unix: now - (UPDATE_CHECK_FAILURE_BACKOFF_SECS + 1),
+      latest_tag: None,
+      failed: true,
+    };
+    std::fs::write(&cache_path, serde_json::to_string(&stale_failure).unwrap())
+      .unwrap();
+    assert_eq!(
+      read_cached_tag_at(&cache_path),
+      None,
+      "a failure older than the short backoff window must expire well \
+       before the 24h success TTL would"
+    );
   }
 
   #[test]
