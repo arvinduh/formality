@@ -29,6 +29,10 @@ re-derive is already written down.
   tags, schema (`s*`) tags, changelog generation via `git-cliff`? Read this
   before cutting a release, or when you need to know what a given tag prefix
   means.
+- **[compatibility.md](compatibility.md)** — Which binary versions support which
+  schema (`s*`) versions? Read this before cutting a release, or when a user
+  reports a version mismatch between their installed `fml` and a project's
+  `#:schema` directive.
 - **[adr/](adr/README.md)** — Why was a specific non-obvious architectural or
   process decision made, and who/what PR made it? Read one when you're about to
   second-guess or rework something that was already a deliberate choice, before
@@ -41,7 +45,6 @@ where several common questions actually get answered:
 
 - `README.md` — project overview, installation, quick start. Its own "Further
   reading" section links every doc listed above.
-- `COMPATIBILITY.md` — binary-version-to-schema-version matrix.
 - `AGENTS.md` — the short agent-facing brief (commands, layout, conventions,
   ask-first list) that points at this index.
 - `.agents/orchestrate.md` — the multi-agent orchestration process: worktree

@@ -165,10 +165,10 @@ versions via `#:schema` directives:
 
 5. **Update documentation & matrix.**
 
-   Update [COMPATIBILITY.md](../COMPATIBILITY.md) and example `#:schema`
-   directives in documentation if a new schema version (e.g. `s1.1` or `s2.0`)
-   was cut. Individual users don't need to hand-edit their own `formality.toml`
-   — `fml migrate schema` rewrites their `#:schema` line to the current tag.
+   Update [compatibility.md](compatibility.md) and example `#:schema` directives
+   in documentation if a new schema version (e.g. `s1.1` or `s2.0`) was cut.
+   Individual users don't need to hand-edit their own `formality.toml` —
+   `fml migrate schema` rewrites their `#:schema` line to the current tag.
 
 ## Changelog conventions
 

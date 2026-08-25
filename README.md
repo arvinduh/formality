@@ -13,7 +13,8 @@ cross-language config vocabulary) ·
 [Language Surface Guides](docs/language-surfaces.md) (per-surface tools, config,
 and behavior) · [Adding a New Surface](docs/new-surface-guide.md) ·
 [`fml table` Spec](docs/table-spec.md) · [Style Guide](docs/style-guide.md) ·
-[Release Procedure](docs/release.md) · [ADRs](docs/adr/README.md)
+[Release Procedure](docs/release.md) ·
+[Compatibility Matrix](docs/compatibility.md) · [ADRs](docs/adr/README.md)
 
 ---
 
