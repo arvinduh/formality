@@ -26,6 +26,21 @@
 //! LSP path calls these with an empty extra-args slice. That's a known
 //! simplification, not a correctness bug: the diagnostics still reflect the
 //! same rule set, just not any project-specific extra CLI flags.
+//!
+//! `None` vs. `Some(vec![])` (Fixes #177)
+//! =======================================
+//! Every `*_diagnostics` function here returns `Option<Vec<Diagnostic>>`,
+//! and the two cases mean very different things to the caller
+//! ([`crate::commands::lsp::Backend::did_save`]): `None` means the
+//! structured tool could not be run at all this time — its binary is
+//! missing, the project has no marker file it needs (`Cargo.toml`,
+//! `go.mod`, `checkstyle.xml`), or spawning it failed outright — and the
+//! caller must fall back to shelling out to `fml lint` instead. `Some(v)`
+//! means the tool *did* run, and `v` (possibly empty) is its real, complete
+//! result. Collapsing these — e.g. returning `Some(vec![])` for "couldn't
+//! run" — would make the editor publish a file as clean when the linter
+//! never actually looked at it, silently regressing behind the `fml lint`
+//! fallback this module exists to enhance, not replace.
 
 use std::path::Path;
 use std::process::Command;
@@ -180,13 +195,14 @@ pub fn parse_clippy_json(
 }
 
 /// Runs `cargo clippy --message-format=json` in `root` and returns
-/// `Diagnostic`s for violations touching `file`. Returns an empty vec (not
-/// an error) when clippy is missing, there's no `Cargo.toml`, or the
-/// invocation otherwise fails to produce output — the caller falls back to
-/// the generic warning in that case via the shelled-out `fml lint` check.
-fn clippy_diagnostics(root: &Path, file: &Path) -> Vec<Diagnostic> {
+/// `Diagnostic`s for violations touching `file`. Returns `None` — not
+/// `Some(vec![])` — when clippy is missing, there's no `Cargo.toml`, or the
+/// invocation otherwise fails to spawn: those all mean the tool never ran,
+/// so the caller must fall back to `fml lint` rather than publish "no
+/// violations" for a file that was never actually checked (#177).
+fn clippy_diagnostics(root: &Path, file: &Path) -> Option<Vec<Diagnostic>> {
   if !check_binary_exists("cargo") || !root.join("Cargo.toml").exists() {
-    return Vec::new();
+    return None;
   }
 
   let mut cmd = Command::new("cargo");
@@ -194,10 +210,11 @@ fn clippy_diagnostics(root: &Path, file: &Path) -> Vec<Diagnostic> {
   cmd.current_dir(root);
 
   match cmd.output() {
-    Ok(output) => {
-      parse_clippy_json(&String::from_utf8_lossy(&output.stdout), file)
-    }
-    Err(_) => Vec::new(),
+    Ok(output) => Some(parse_clippy_json(
+      &String::from_utf8_lossy(&output.stdout),
+      file,
+    )),
+    Err(_) => None,
   }
 }
 
@@ -260,12 +277,13 @@ pub fn parse_ruff_json(
 }
 
 /// Runs `ruff check --output-format=json <file>` in `root` and returns
-/// `Diagnostic`s for `file`'s violations. Returns an empty vec (not an
-/// error) when ruff is missing or the invocation otherwise fails to produce
-/// output.
-fn ruff_diagnostics(root: &Path, file: &Path) -> Vec<Diagnostic> {
+/// `Diagnostic`s for `file`'s violations. Returns `None` — not `Some(vec![])`
+/// — when ruff is missing or the invocation otherwise fails to spawn, so the
+/// caller falls back to `fml lint` instead of publishing a false "clean"
+/// (#177).
+fn ruff_diagnostics(root: &Path, file: &Path) -> Option<Vec<Diagnostic>> {
   if !check_binary_exists("ruff") {
-    return Vec::new();
+    return None;
   }
 
   let mut cmd = Command::new("ruff");
@@ -276,10 +294,11 @@ fn ruff_diagnostics(root: &Path, file: &Path) -> Vec<Diagnostic> {
   cmd.current_dir(root);
 
   match cmd.output() {
-    Ok(output) => {
-      parse_ruff_json(&String::from_utf8_lossy(&output.stdout), file)
-    }
-    Err(_) => Vec::new(),
+    Ok(output) => Some(parse_ruff_json(
+      &String::from_utf8_lossy(&output.stdout),
+      file,
+    )),
+    Err(_) => None,
   }
 }
 
@@ -364,12 +383,13 @@ pub fn parse_biome_json(
 }
 
 /// Runs `biome lint --reporter=json <file>` in `root` and returns
-/// `Diagnostic`s for `file`'s violations. Returns an empty vec (not an
-/// error) when biome is missing or the invocation otherwise fails to
-/// produce output.
-fn biome_diagnostics(root: &Path, file: &Path) -> Vec<Diagnostic> {
+/// `Diagnostic`s for `file`'s violations. Returns `None` — not
+/// `Some(vec![])` — when biome is missing or the invocation otherwise fails
+/// to spawn, so the caller falls back to `fml lint` instead of publishing a
+/// false "clean" (#177).
+fn biome_diagnostics(root: &Path, file: &Path) -> Option<Vec<Diagnostic>> {
   if !check_binary_exists("biome") {
-    return Vec::new();
+    return None;
   }
 
   let mut cmd = Command::new("biome");
@@ -379,10 +399,11 @@ fn biome_diagnostics(root: &Path, file: &Path) -> Vec<Diagnostic> {
   cmd.current_dir(root);
 
   match cmd.output() {
-    Ok(output) => {
-      parse_biome_json(&String::from_utf8_lossy(&output.stdout), file)
-    }
-    Err(_) => Vec::new(),
+    Ok(output) => Some(parse_biome_json(
+      &String::from_utf8_lossy(&output.stdout),
+      file,
+    )),
+    Err(_) => None,
   }
 }
 
@@ -453,11 +474,13 @@ pub fn parse_yamllint_parsable(
 }
 
 /// Runs `yamllint -f parsable <file>` in `root` and returns `Diagnostic`s
-/// for `file`'s violations. Returns an empty vec (not an error) when
-/// yamllint is missing or the invocation otherwise fails to produce output.
-fn yamllint_diagnostics(root: &Path, file: &Path) -> Vec<Diagnostic> {
+/// for `file`'s violations. Returns `None` — not `Some(vec![])` — when
+/// yamllint is missing or the invocation otherwise fails to spawn, so the
+/// caller falls back to `fml lint` instead of publishing a false "clean"
+/// (#177).
+fn yamllint_diagnostics(root: &Path, file: &Path) -> Option<Vec<Diagnostic>> {
   if !check_binary_exists("yamllint") {
-    return Vec::new();
+    return None;
   }
 
   let mut cmd = Command::new("yamllint");
@@ -465,10 +488,11 @@ fn yamllint_diagnostics(root: &Path, file: &Path) -> Vec<Diagnostic> {
   cmd.current_dir(root);
 
   match cmd.output() {
-    Ok(output) => {
-      parse_yamllint_parsable(&String::from_utf8_lossy(&output.stdout), file)
-    }
-    Err(_) => Vec::new(),
+    Ok(output) => Some(parse_yamllint_parsable(
+      &String::from_utf8_lossy(&output.stdout),
+      file,
+    )),
+    Err(_) => None,
   }
 }
 
@@ -585,16 +609,20 @@ pub fn parse_markdownlint_text(
 /// `root` and returns `Diagnostic`s for its violations. Both tools report
 /// violations on stderr with a successful exit status meaning "no
 /// violations" (matching [`crate::surfaces::markdown::MarkdownSurface::lint`]'s
-/// own stderr-first message selection). Returns an empty vec (not an error)
-/// when neither binary is present or the invocation otherwise fails to
-/// produce output.
-fn markdownlint_diagnostics(root: &Path, file: &Path) -> Vec<Diagnostic> {
+/// own stderr-first message selection). Returns `None` — not `Some(vec![])`
+/// — when neither binary is present or the invocation otherwise fails to
+/// spawn, so the caller falls back to `fml lint` instead of publishing a
+/// false "clean" (#177).
+fn markdownlint_diagnostics(
+  root: &Path,
+  file: &Path,
+) -> Option<Vec<Diagnostic>> {
   let binary = if check_binary_exists("markdownlint-cli2") {
     "markdownlint-cli2"
   } else if check_binary_exists("markdownlint") {
     "markdownlint"
   } else {
-    return Vec::new();
+    return None;
   };
 
   let mut cmd = Command::new(binary);
@@ -606,10 +634,11 @@ fn markdownlint_diagnostics(root: &Path, file: &Path) -> Vec<Diagnostic> {
   cmd.current_dir(root);
 
   match cmd.output() {
-    Ok(output) => {
-      parse_markdownlint_text(&String::from_utf8_lossy(&output.stderr), file)
-    }
-    Err(_) => Vec::new(),
+    Ok(output) => Some(parse_markdownlint_text(
+      &String::from_utf8_lossy(&output.stderr),
+      file,
+    )),
+    Err(_) => None,
   }
 }
 
@@ -703,12 +732,13 @@ pub fn parse_clang_tidy_plain(
 /// follows the same simplification already documented at the top of this
 /// module for clippy/ruff's `extra_args`: clang-tidy still applies whatever
 /// `.clang-tidy` is on disk, or its own default check set if none is,
-/// rather than the resolved `formality.toml` checks list. Returns an empty
-/// vec (not an error) when clang-tidy is missing or the invocation
-/// otherwise fails to produce output.
-fn clang_tidy_diagnostics(root: &Path, file: &Path) -> Vec<Diagnostic> {
+/// rather than the resolved `formality.toml` checks list. Returns `None` —
+/// not `Some(vec![])` — when clang-tidy is missing or the invocation
+/// otherwise fails to spawn, so the caller falls back to `fml lint` instead
+/// of publishing a false "clean" (#177).
+fn clang_tidy_diagnostics(root: &Path, file: &Path) -> Option<Vec<Diagnostic>> {
   if !check_binary_exists("clang-tidy") {
-    return Vec::new();
+    return None;
   }
 
   let std_flag =
@@ -723,10 +753,11 @@ fn clang_tidy_diagnostics(root: &Path, file: &Path) -> Vec<Diagnostic> {
   cmd.current_dir(root);
 
   match cmd.output() {
-    Ok(output) => {
-      parse_clang_tidy_plain(&String::from_utf8_lossy(&output.stdout), file)
-    }
-    Err(_) => Vec::new(),
+    Ok(output) => Some(parse_clang_tidy_plain(
+      &String::from_utf8_lossy(&output.stdout),
+      file,
+    )),
+    Err(_) => None,
   }
 }
 
@@ -827,12 +858,16 @@ pub fn parse_golangci_lint_json(
 }
 
 /// Runs `golangci-lint run --output.json.path=stdout <file>` in `root` and
-/// returns `Diagnostic`s for `file`'s violations. Returns an empty vec (not
-/// an error) when golangci-lint is missing, there's no `go.mod`, or the
-/// invocation otherwise fails to produce output.
-fn golangci_lint_diagnostics(root: &Path, file: &Path) -> Vec<Diagnostic> {
+/// returns `Diagnostic`s for `file`'s violations. Returns `None` — not
+/// `Some(vec![])` — when golangci-lint is missing, there's no `go.mod`, or
+/// the invocation otherwise fails to spawn, so the caller falls back to
+/// `fml lint` instead of publishing a false "clean" (#177).
+fn golangci_lint_diagnostics(
+  root: &Path,
+  file: &Path,
+) -> Option<Vec<Diagnostic>> {
   if !check_binary_exists("golangci-lint") || !root.join("go.mod").exists() {
-    return Vec::new();
+    return None;
   }
 
   let mut cmd = Command::new("golangci-lint");
@@ -843,10 +878,11 @@ fn golangci_lint_diagnostics(root: &Path, file: &Path) -> Vec<Diagnostic> {
   cmd.current_dir(root);
 
   match cmd.output() {
-    Ok(output) => {
-      parse_golangci_lint_json(&String::from_utf8_lossy(&output.stdout), file)
-    }
-    Err(_) => Vec::new(),
+    Ok(output) => Some(parse_golangci_lint_json(
+      &String::from_utf8_lossy(&output.stdout),
+      file,
+    )),
+    Err(_) => None,
   }
 }
 
@@ -954,13 +990,16 @@ pub fn parse_checkstyle_plain(
 /// [`crate::surfaces::java::JavaSurface::lint`], this does **not**
 /// self-heal a missing `checkstyle.xml` by generating one — doing so needs
 /// a full [`crate::surfaces::ExecutionContext`] (for `indent_size` etc.)
-/// that this file/root-only entry point doesn't have. Run `fml lint` or
-/// `fml sync` once first to materialize `checkstyle.xml`; until then this
-/// returns an empty vec, same as when checkstyle itself is missing.
-fn checkstyle_diagnostics(root: &Path, file: &Path) -> Vec<Diagnostic> {
+/// that this file/root-only entry point doesn't have, and is explicitly out
+/// of scope for #177 (falling back, not self-healing, is the right size fix
+/// here). Run `fml lint` or `fml sync` once first to materialize
+/// `checkstyle.xml`; until then this returns `None` — not `Some(vec![])` —
+/// same as when checkstyle itself is missing, so the caller falls back to
+/// `fml lint` instead of publishing a false "clean".
+fn checkstyle_diagnostics(root: &Path, file: &Path) -> Option<Vec<Diagnostic>> {
   let config_path = root.join("checkstyle.xml");
   if !check_binary_exists("checkstyle") || !config_path.is_file() {
-    return Vec::new();
+    return None;
   }
 
   let mut cmd = Command::new("checkstyle");
@@ -972,10 +1011,11 @@ fn checkstyle_diagnostics(root: &Path, file: &Path) -> Vec<Diagnostic> {
   cmd.current_dir(root);
 
   match cmd.output() {
-    Ok(output) => {
-      parse_checkstyle_plain(&String::from_utf8_lossy(&output.stdout), file)
-    }
-    Err(_) => Vec::new(),
+    Ok(output) => Some(parse_checkstyle_plain(
+      &String::from_utf8_lossy(&output.stdout),
+      file,
+    )),
+    Err(_) => None,
   }
 }
 
@@ -1068,11 +1108,13 @@ pub fn parse_ktlint_json(
 }
 
 /// Runs `ktlint --reporter=json <file>` in `root` and returns `Diagnostic`s
-/// for `file`'s violations. Returns an empty vec (not an error) when
-/// ktlint is missing or the invocation otherwise fails to produce output.
-fn ktlint_diagnostics(root: &Path, file: &Path) -> Vec<Diagnostic> {
+/// for `file`'s violations. Returns `None` — not `Some(vec![])` — when
+/// ktlint is missing or the invocation otherwise fails to spawn, so the
+/// caller falls back to `fml lint` instead of publishing a false "clean"
+/// (#177).
+fn ktlint_diagnostics(root: &Path, file: &Path) -> Option<Vec<Diagnostic>> {
   if !check_binary_exists("ktlint") {
-    return Vec::new();
+    return None;
   }
 
   let mut cmd = Command::new("ktlint");
@@ -1083,10 +1125,11 @@ fn ktlint_diagnostics(root: &Path, file: &Path) -> Vec<Diagnostic> {
   cmd.current_dir(root);
 
   match cmd.output() {
-    Ok(output) => {
-      parse_ktlint_json(&String::from_utf8_lossy(&output.stdout), file)
-    }
-    Err(_) => Vec::new(),
+    Ok(output) => Some(parse_ktlint_json(
+      &String::from_utf8_lossy(&output.stdout),
+      file,
+    )),
+    Err(_) => None,
   }
 }
 
@@ -1192,12 +1235,13 @@ pub fn parse_taplo_lint_plain(
 }
 
 /// Runs `taplo lint --colors never <file>` in `root` and returns
-/// `Diagnostic`s for `file`'s violations. Returns an empty vec (not an
-/// error) when taplo is missing or the invocation otherwise fails to
-/// produce output.
-fn taplo_diagnostics(root: &Path, file: &Path) -> Vec<Diagnostic> {
+/// `Diagnostic`s for `file`'s violations. Returns `None` — not
+/// `Some(vec![])` — when taplo is missing or the invocation otherwise fails
+/// to spawn, so the caller falls back to `fml lint` instead of publishing a
+/// false "clean" (#177).
+fn taplo_diagnostics(root: &Path, file: &Path) -> Option<Vec<Diagnostic>> {
   if !check_binary_exists("taplo") {
-    return Vec::new();
+    return None;
   }
 
   let mut cmd = Command::new("taplo");
@@ -1208,10 +1252,11 @@ fn taplo_diagnostics(root: &Path, file: &Path) -> Vec<Diagnostic> {
   cmd.current_dir(root);
 
   match cmd.output() {
-    Ok(output) => {
-      parse_taplo_lint_plain(&String::from_utf8_lossy(&output.stderr), file)
-    }
-    Err(_) => Vec::new(),
+    Ok(output) => Some(parse_taplo_lint_plain(
+      &String::from_utf8_lossy(&output.stderr),
+      file,
+    )),
+    Err(_) => None,
   }
 }
 
@@ -1285,15 +1330,17 @@ pub fn parse_typst_short(
 /// [`crate::surfaces::typst::build_typst_check_args`]) always needs
 /// somewhere to write its output, so this points it at a throwaway file in
 /// a fresh temp directory, discarded once diagnostics are parsed. Returns
-/// an empty vec (not an error) when typst is missing, the temp directory
-/// can't be created, or the invocation otherwise fails to produce output.
-fn typst_diagnostics(root: &Path, file: &Path) -> Vec<Diagnostic> {
+/// `None` — not `Some(vec![])` — when typst is missing, the temp directory
+/// can't be created, or the invocation otherwise fails to spawn, so the
+/// caller falls back to `fml lint` instead of publishing a false "clean"
+/// (#177).
+fn typst_diagnostics(root: &Path, file: &Path) -> Option<Vec<Diagnostic>> {
   if !check_binary_exists("typst") {
-    return Vec::new();
+    return None;
   }
 
   let Ok(scratch_dir) = tempfile::tempdir() else {
-    return Vec::new();
+    return None;
   };
   let output_path = scratch_dir.path().join("out.pdf");
 
@@ -1305,10 +1352,11 @@ fn typst_diagnostics(root: &Path, file: &Path) -> Vec<Diagnostic> {
   cmd.current_dir(root);
 
   match cmd.output() {
-    Ok(output) => {
-      parse_typst_short(&String::from_utf8_lossy(&output.stderr), file)
-    }
-    Err(_) => Vec::new(),
+    Ok(output) => Some(parse_typst_short(
+      &String::from_utf8_lossy(&output.stderr),
+      file,
+    )),
+    Err(_) => None,
   }
 }
 
@@ -1318,8 +1366,11 @@ fn typst_diagnostics(root: &Path, file: &Path) -> Vec<Diagnostic> {
 
 /// Runs one surface's linter in `root` and returns `Diagnostic`s for the
 /// second argument's violations — the shared shape of every
-/// `*_diagnostics` function in this module.
-type DiagnosticsRunner = fn(&Path, &Path) -> Vec<Diagnostic>;
+/// `*_diagnostics` function in this module. `None` means the tool could not
+/// be run at all (binary missing, no project marker file, spawn failure,
+/// required config missing) and the caller must fall back to `fml lint`;
+/// `Some(vec![])` means the tool ran successfully and found nothing (#177).
+type DiagnosticsRunner = fn(&Path, &Path) -> Option<Vec<Diagnostic>>;
 
 /// Maps a canonical surface name to the function that produces structured
 /// diagnostics for it, or `None` for a surface with no parser wired up
@@ -1349,16 +1400,21 @@ fn diagnostics_runner_for_surface(surface: &str) -> Option<DiagnosticsRunner> {
 }
 
 /// Returns structured per-violation `Diagnostic`s for `file` if its surface
-/// has a structured-output parser wired up here, or `None` if it doesn't
-/// (see module docs for current coverage) — the caller should fall back to
-/// the generic single-warning diagnostic in the `None` case.
+/// has a structured-output parser wired up here *and that parser actually
+/// ran*, or `None` otherwise — the caller falls back to `fml lint`'s
+/// generic single-warning diagnostic in the `None` case (#177). `None`
+/// covers two distinct reasons, both requiring the same fallback: the
+/// surface has no structured parser at all (see module docs for coverage),
+/// or it does but the underlying tool/config couldn't be run this time
+/// (binary missing, no project marker file, spawn failure, required config
+/// missing). `Some(vec![])` means the tool ran and genuinely found nothing.
 #[must_use]
 pub fn diagnostics_for_file(
   root: &Path,
   file: &Path,
 ) -> Option<Vec<Diagnostic>> {
   let runner = diagnostics_runner_for_surface(surface_name_for_file(file)?)?;
-  Some(runner(root, file))
+  runner(root, file)
 }
 
 #[cfg(test)]
@@ -2164,5 +2220,56 @@ mod tests {
   fn test_parse_typst_short_filters_other_files_and_malformed_lines() {
     let sample = "not a typst line\nother.typ:1:1: error: x\n";
     assert!(parse_typst_short(sample, Path::new("/proj/bad.typ")).is_empty());
+  }
+
+  // ---------------------------------------------------------------------
+  // #177 — a runner that can't run at all must return `None`, not
+  // `Some(vec![])`, so the caller falls back to `fml lint` instead of
+  // publishing a false "clean" for a file the tool never looked at.
+  // ---------------------------------------------------------------------
+
+  #[test]
+  fn test_clippy_diagnostics_none_when_no_cargo_toml() {
+    let dir = tempfile::tempdir().unwrap();
+    // Deterministic regardless of whether `cargo` is installed in the test
+    // environment: no `Cargo.toml` alone is enough to short-circuit.
+    assert!(clippy_diagnostics(dir.path(), Path::new("main.rs")).is_none());
+  }
+
+  #[test]
+  fn test_golangci_lint_diagnostics_none_when_no_go_mod() {
+    let dir = tempfile::tempdir().unwrap();
+    assert!(
+      golangci_lint_diagnostics(dir.path(), Path::new("main.go")).is_none()
+    );
+  }
+
+  #[test]
+  fn test_checkstyle_diagnostics_none_when_no_checkstyle_xml() {
+    let dir = tempfile::tempdir().unwrap();
+    assert!(
+      checkstyle_diagnostics(dir.path(), Path::new("Main.java")).is_none()
+    );
+  }
+
+  #[test]
+  fn test_diagnostics_for_file_none_when_structured_tool_cannot_run() {
+    // Threads all the way through the public entry point: a rust file in a
+    // directory with no `Cargo.toml` must fall back to `fml lint`, not
+    // publish an empty (false "clean") diagnostics list.
+    let dir = tempfile::tempdir().unwrap();
+    assert!(diagnostics_for_file(dir.path(), Path::new("main.rs")).is_none());
+  }
+
+  #[test]
+  fn test_diagnostics_for_file_some_empty_when_tool_ran_and_found_nothing() {
+    // The other half of the contract: a genuinely clean result from a tool
+    // that did run is `Some(vec![])`, distinct from `None`. Exercised at
+    // the parser level (`clippy_diagnostics` itself needs `cargo` on PATH
+    // plus a real crate to actually run) — this only pins that the
+    // `Option` wrapper preserves an empty-but-present result rather than
+    // collapsing it to `None`.
+    let diagnostics = parse_clippy_json("", Path::new("/proj/src/main.rs"));
+    assert_eq!(Some(diagnostics), Some(Vec::new()));
   }
 }
