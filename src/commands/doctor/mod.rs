@@ -252,11 +252,49 @@ pub fn run_doctor(
   }
 }
 
+/// Whether a subprocess invocation's result indicates the tool actually ran
+/// and exited successfully — as opposed to merely existing on disk. Split
+/// out from [`clippy_probe_succeeds`] so the success decision is
+/// unit-testable without spawning any subprocess at all (see `tests.rs`).
+#[must_use]
+fn command_ran_successfully(
+  result: &std::io::Result<std::process::Output>,
+) -> bool {
+  matches!(result, Ok(output) if output.status.success())
+}
+
+/// Whether the `clippy` component is actually installed and functional, by
+/// invoking `<driver_bin> --version` and falling back to
+/// `<cargo_bin> clippy --version` (mirroring `get_raw_tool_version`'s own
+/// clippy fallback) — a bare `which` presence check is not enough, because
+/// `clippy-driver` is a rustup shim that exists on disk whenever rustup is
+/// installed, regardless of whether the `clippy` component itself is (see
+/// #192). Parameterized over the binary names so tests can substitute a
+/// real stand-in binary (e.g. `false`) for a broken shim without mutating
+/// `PATH`.
+#[must_use]
+fn clippy_probe_succeeds(driver_bin: &str, cargo_bin: &str) -> bool {
+  command_ran_successfully(
+    &create_tool_command(driver_bin).arg("--version").output(),
+  ) || command_ran_successfully(
+    &create_tool_command(cargo_bin)
+      .args(["clippy", "--version"])
+      .output(),
+  )
+}
+
 fn lookup_tool_info(binary: &'static str) -> ToolLookupResult {
-  let is_installed = which::which(binary).is_ok()
-    || (binary == "clippy"
-      && (which::which("clippy-driver").is_ok()
-        || which::which("cargo").is_ok()));
+  // The rust surface (and `probe_tool_version`/`get_raw_tool_version`
+  // elsewhere in this crate) register/accept the clippy tool under any of
+  // these three names — match all of them, not just the literal `"clippy"`
+  // that production code never actually passes (`src/surfaces/rust.rs`
+  // registers it as `"clippy-driver"`).
+  let is_installed =
+    if matches!(binary, "clippy" | "clippy-driver" | "cargo-clippy") {
+      clippy_probe_succeeds("clippy-driver", "cargo")
+    } else {
+      which::which(binary).is_ok()
+    };
 
   if is_installed {
     let path = which::which(binary)

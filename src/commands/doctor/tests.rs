@@ -176,6 +176,87 @@ fn test_doctor_schema_version_check_stale() {
 }
 
 #[test]
+fn test_command_ran_successfully_true_on_zero_exit() {
+  let output = std::process::Command::new("sh")
+    .args(["-c", "exit 0"])
+    .output();
+  assert!(command_ran_successfully(&output));
+}
+
+#[test]
+fn test_command_ran_successfully_false_on_nonzero_exit() {
+  let output = std::process::Command::new("sh")
+    .args(["-c", "exit 1"])
+    .output();
+  assert!(!command_ran_successfully(&output));
+}
+
+#[test]
+fn test_command_ran_successfully_false_on_spawn_error() {
+  // A binary name that should never exist on PATH — spawning it fails
+  // outright, which must not be mistaken for a successful run.
+  let output =
+    std::process::Command::new("definitely_not_a_real_binary_xyz_192").output();
+  assert!(!command_ran_successfully(&output));
+}
+
+/// Regression test for #192: `clippy_probe_succeeds` (what `lookup_tool_info`
+/// gates `is_installed` on for every alias clippy can be registered under —
+/// `"clippy"`, `"clippy-driver"`, `"cargo-clippy"`) must require an actual
+/// successful invocation, not just presence on `PATH`. Parameterized over
+/// the binary names lets this substitute the real `true`/`false` binaries as
+/// deterministic stand-ins for a functional vs. a present-but-broken shim,
+/// with no `PATH` mutation needed.
+#[test]
+fn test_clippy_probe_succeeds_requires_functional_driver() {
+  // Both the driver and the cargo fallback are broken (`false` always exits
+  // 1) — this is the shim-present-but-component-missing case from #192, and
+  // must be reported as NOT installed.
+  assert!(!clippy_probe_succeeds("false", "false"));
+
+  // Driver alone works.
+  assert!(clippy_probe_succeeds("true", "false"));
+
+  // Driver is broken but the `cargo clippy` fallback works.
+  assert!(clippy_probe_succeeds("false", "true"));
+
+  // Neither binary exists at all (not even a broken shim on PATH).
+  assert!(!clippy_probe_succeeds(
+    "definitely_not_a_real_binary_xyz_192_driver",
+    "definitely_not_a_real_binary_xyz_192_cargo"
+  ));
+}
+
+/// Regression test for #192: `lookup_tool_info` must dispatch to the
+/// functional clippy probe for the actual binary name production code
+/// passes it (`src/surfaces/rust.rs` registers the tool as
+/// `"clippy-driver"`, never the bare string `"clippy"`) — a guard that only
+/// matched `"clippy"` would silently fall through to the unfixed bare
+/// `which` check on the real call path.
+#[test]
+fn test_lookup_tool_info_dispatches_clippy_probe_for_all_aliases() {
+  for alias in ["clippy", "clippy-driver", "cargo-clippy"] {
+    let result = lookup_tool_info(alias);
+    assert_eq!(
+      result.is_installed,
+      clippy_probe_succeeds("clippy-driver", "cargo"),
+      "lookup_tool_info({alias:?}) did not use the functional clippy probe"
+    );
+  }
+}
+
+#[test]
+fn test_lookup_tool_info_clippy_live_probe() {
+  // Live-probe style (see `test_live_probe_rustfmt` in
+  // `engine/version/tests.rs`): only assert when clippy is actually usable
+  // in this environment, but when it is, `lookup_tool_info` must agree with
+  // a direct functional check rather than a bare `which` presence check.
+  let clippy_functional = clippy_probe_succeeds("clippy-driver", "cargo");
+  let result = lookup_tool_info("clippy-driver");
+  assert_eq!(result.is_installed, clippy_functional);
+}
+
+#[test]
 fn test_doctor_schema_version_check_uptodate() {
   let temp = tempdir().unwrap();
   let config_file = temp.path().join("formality.toml");
