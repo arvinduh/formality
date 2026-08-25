@@ -14,23 +14,37 @@ use std::time::Instant;
 /// fallback) instead of duplicating the "is X available?" cascade per tool.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum InstallMethod {
-  /// `cargo binstall <package>`. Requires `cargo-binstall` on PATH.
+  /// `cargo binstall <package>`. Requires `cargo-binstall` on PATH. `package`
+  /// may carry a pinned version via cargo's `name@version` syntax (e.g.
+  /// `"taplo-cli@0.10.0"`) — see the pinned-versions note above the chain
+  /// constants below.
   CargoBinstall(&'static str),
-  /// `npm install -g <package>`. Requires `npm` on PATH.
+  /// `npm install -g <package>`. Requires `npm` on PATH. `package` may carry
+  /// a pinned version via npm's `name@version` syntax (e.g.
+  /// `"prettier@3.9.6"`, or `"@scope/name@version"` for scoped packages) —
+  /// see the pinned-versions note above the chain constants below.
   Npm(&'static str),
-  /// `pnpm add -g <package>`. Requires `pnpm` on PATH.
+  /// `pnpm add -g <package>`. Requires `pnpm` on PATH. Same `name@version`
+  /// pinning convention as [`InstallMethod::Npm`].
   Pnpm(&'static str),
-  /// `yarn global add <package>`. Requires `yarn` on PATH.
+  /// `yarn global add <package>`. Requires `yarn` on PATH. Same
+  /// `name@version` pinning convention as [`InstallMethod::Npm`].
   Yarn(&'static str),
-  /// `bun add -g <package>`. Requires `bun` on PATH.
+  /// `bun add -g <package>`. Requires `bun` on PATH. Same `name@version`
+  /// pinning convention as [`InstallMethod::Npm`].
   Bun(&'static str),
-  /// `uv tool install <package>`. Requires `uv` on PATH.
+  /// `uv tool install <package>`. Requires `uv` on PATH. `package` may carry
+  /// a pinned version via PEP 440's `name==version` syntax (e.g.
+  /// `"ruff==0.16.4"`).
   Uv(&'static str),
-  /// `pipx install <package>`. Requires `pipx` on PATH.
+  /// `pipx install <package>`. Requires `pipx` on PATH. Same `name==version`
+  /// pinning convention as [`InstallMethod::Uv`].
   Pipx(&'static str),
-  /// `pip install --user <package>`. Requires `pip` on PATH.
+  /// `pip install --user <package>`. Requires `pip` on PATH. Same
+  /// `name==version` pinning convention as [`InstallMethod::Uv`].
   Pip(&'static str),
-  /// `pip3 install --user <package>`. Requires `pip3` on PATH.
+  /// `pip3 install --user <package>`. Requires `pip3` on PATH. Same
+  /// `name==version` pinning convention as [`InstallMethod::Uv`].
   Pip3(&'static str),
   /// `apt-get install -y <package>`. Requires `apt-get` on PATH.
   Apt(&'static str),
@@ -44,16 +58,21 @@ pub enum InstallMethod {
   /// unambiguous match.
   WingetId(&'static str),
   /// `cargo install <package>`, optionally with `--locked`. Requires `cargo`
-  /// on PATH.
+  /// on PATH. `package` may carry a pinned version via cargo's
+  /// `name@version` syntax (e.g. `"taplo-cli@0.10.0"`); `locked` only pins
+  /// *that release's* dependency graph, not the release itself.
   Cargo {
-    /// The crate name to install.
+    /// The crate name to install, optionally as `name@version`.
     package: &'static str,
     /// Whether to pass `--locked` to pin dependency versions.
     locked: bool,
   },
   /// `rustup component add <component>`. Requires `rustup` on PATH.
   Rustup(&'static str),
-  /// `go install <package>@latest`. Requires the Go toolchain (`go`) on PATH.
+  /// `go install <package>`. Requires the Go toolchain (`go`) on PATH.
+  /// `package` must include an explicit `@version` (or `@latest`) suffix —
+  /// unlike the other variants this one never appends one implicitly, so a
+  /// pinned version (e.g. `"...@v0.49.0"`) is exactly what gets requested.
   GoInstall(&'static str),
 }
 
@@ -147,98 +166,140 @@ impl InstallMethod {
       }
       InstallMethod::GoInstall(pkg) => (
         "go".to_string(),
-        vec!["install".to_string(), format!("{pkg}@latest")],
+        vec!["install".to_string(), pkg.to_string()],
       ),
     }
   }
 }
 
+// --- Pinned tool versions -------------------------------------------------
+//
+// `fml install` used to ask package managers for these tools with no
+// version at all (`npm install -g prettier`), so the exact bits it pulled
+// down were whatever that registry happened to resolve as "latest" *at
+// install time* — for npm/PyPI/crates.io that can, and does, change between
+// two otherwise-identical CI runs. That made CI nondeterministic: a commit
+// that was green today could turn red tomorrow with zero code changes,
+// purely because an upstream tool shipped a release that formats or lints
+// something differently (concretely reproduced in #191: `docs/table-spec.md`
+// passed locally against prettier 3.8.1 but failed on a CI runner that
+// resolved 3.9.6).
+//
+// The fix is the same idea `rust-toolchain.toml` already applies to the Rust
+// toolchain and `dtolnay/rust-toolchain@1.97.1` applies to the GitHub Action
+// itself: pin to an exact version instead of floating on "latest". Below,
+// every package-manager-resolved entry (npm/pnpm/yarn/bun, uv/pipx/pip,
+// cargo/cargo-binstall, `go install`) embeds an explicit version directly in
+// the package specifier passed to that manager — `"prettier@3.9.6"` for
+// npm-family managers, `"ruff==0.16.4"` for pip-family ones, `"pkg@version"`
+// for cargo/cargo-binstall/go install. This file is the single place that
+// version lives: CI workflows never re-declare it in YAML, they just run
+// `fml install` and get whatever's pinned here.
+//
+// System package managers (apt/brew/scoop/winget) are deliberately left
+// unpinned: their inline version syntax isn't uniform across managers, and
+// they resolve against a distro/tap snapshot rather than a single global
+// "latest" tag, so they drift far less than npm/PyPI/crates.io do. `fml
+// doctor`'s MSTV floor (`engine::version::mstv`) still catches a
+// system-package install that's too old to work at all.
+//
+// Bumping a pin is a deliberate action, same as bumping
+// `rust-toolchain.toml`: update the literal(s) here, re-run the presubmit
+// dogfooding (`fmt`/`lint`/`doctor --all`/`install`) to confirm the new
+// version doesn't reformat/re-lint this repo's own tree differently, then
+// commit.
+
 const TAPLO_CHAIN: &[InstallMethod] = &[
-  InstallMethod::CargoBinstall("taplo-cli"),
-  InstallMethod::Npm("@taplo/cli"),
-  InstallMethod::Pnpm("@taplo/cli"),
-  InstallMethod::Yarn("@taplo/cli"),
-  InstallMethod::Bun("@taplo/cli"),
+  InstallMethod::CargoBinstall("taplo-cli@0.10.0"),
+  InstallMethod::Npm("@taplo/cli@0.7.0"),
+  InstallMethod::Pnpm("@taplo/cli@0.7.0"),
+  InstallMethod::Yarn("@taplo/cli@0.7.0"),
+  InstallMethod::Bun("@taplo/cli@0.7.0"),
   InstallMethod::Brew("taplo"),
   InstallMethod::Scoop("taplo"),
   InstallMethod::WingetId("tamasfe.taplo"),
   InstallMethod::Cargo {
-    package: "taplo-cli",
+    package: "taplo-cli@0.10.0",
     locked: true,
   },
 ];
 
 const TYPSTYLE_CHAIN: &[InstallMethod] = &[
-  InstallMethod::CargoBinstall("typstyle"),
+  InstallMethod::CargoBinstall("typstyle@0.15.1"),
   InstallMethod::Brew("typstyle"),
   InstallMethod::Scoop("typstyle"),
   InstallMethod::WingetName("typstyle"),
   InstallMethod::Cargo {
-    package: "typstyle",
+    package: "typstyle@0.15.1",
     locked: true,
   },
 ];
 
+// Note: `Npm("@myriaddreamin/tinymist")` below doesn't correspond to any
+// real published package (404 on npm; the real unscoped `tinymist` package
+// is a WASM analyzer module, not this CLI) — a correctness bug independent
+// of version pinning, out of scope here, tracked as #195. Left unpinned
+// rather than pinning a version of a package that doesn't exist.
 const TINYMIST_CHAIN: &[InstallMethod] = &[
-  InstallMethod::CargoBinstall("tinymist"),
+  InstallMethod::CargoBinstall("tinymist@0.15.2"),
   InstallMethod::Npm("@myriaddreamin/tinymist"),
   InstallMethod::Brew("tinymist"),
   InstallMethod::Scoop("tinymist"),
   InstallMethod::WingetName("Myriad-Dreamin.tinymist"),
   InstallMethod::Cargo {
-    package: "tinymist",
+    package: "tinymist@0.15.2",
     locked: true,
   },
 ];
 
 const RUFF_CHAIN: &[InstallMethod] = &[
-  InstallMethod::Uv("ruff"),
-  InstallMethod::Pipx("ruff"),
-  InstallMethod::Pip("ruff"),
-  InstallMethod::Pip3("ruff"),
+  InstallMethod::Uv("ruff==0.16.4"),
+  InstallMethod::Pipx("ruff==0.16.4"),
+  InstallMethod::Pip("ruff==0.16.4"),
+  InstallMethod::Pip3("ruff==0.16.4"),
   InstallMethod::Brew("ruff"),
-  InstallMethod::CargoBinstall("ruff"),
+  InstallMethod::CargoBinstall("ruff@0.16.4"),
   InstallMethod::Scoop("ruff"),
   InstallMethod::WingetName("Astral-sh.ruff"),
   InstallMethod::Cargo {
-    package: "ruff",
+    package: "ruff@0.16.4",
     locked: true,
   },
 ];
 
 const PRETTIER_CHAIN: &[InstallMethod] = &[
-  InstallMethod::Npm("prettier"),
-  InstallMethod::Pnpm("prettier"),
-  InstallMethod::Yarn("prettier"),
-  InstallMethod::Bun("prettier"),
+  InstallMethod::Npm("prettier@3.9.6"),
+  InstallMethod::Pnpm("prettier@3.9.6"),
+  InstallMethod::Yarn("prettier@3.9.6"),
+  InstallMethod::Bun("prettier@3.9.6"),
   InstallMethod::Brew("prettier"),
   InstallMethod::Scoop("prettier"),
   InstallMethod::WingetName("Prettier.Prettier"),
 ];
 
 const BIOME_CHAIN: &[InstallMethod] = &[
-  InstallMethod::Npm("@biomejs/biome"),
-  InstallMethod::Pnpm("@biomejs/biome"),
-  InstallMethod::Yarn("@biomejs/biome"),
-  InstallMethod::Bun("@biomejs/biome"),
+  InstallMethod::Npm("@biomejs/biome@2.5.10"),
+  InstallMethod::Pnpm("@biomejs/biome@2.5.10"),
+  InstallMethod::Yarn("@biomejs/biome@2.5.10"),
+  InstallMethod::Bun("@biomejs/biome@2.5.10"),
   InstallMethod::Brew("biome"),
   InstallMethod::Scoop("biome"),
 ];
 
 const MARKDOWNLINT_CHAIN: &[InstallMethod] = &[
-  InstallMethod::Npm("markdownlint-cli2"),
-  InstallMethod::Pnpm("markdownlint-cli2"),
-  InstallMethod::Yarn("markdownlint-cli2"),
-  InstallMethod::Bun("markdownlint-cli2"),
+  InstallMethod::Npm("markdownlint-cli2@0.23.2"),
+  InstallMethod::Pnpm("markdownlint-cli2@0.23.2"),
+  InstallMethod::Yarn("markdownlint-cli2@0.23.2"),
+  InstallMethod::Bun("markdownlint-cli2@0.23.2"),
   InstallMethod::Brew("markdownlint-cli2"),
   InstallMethod::Scoop("markdownlint-cli2"),
 ];
 
 const YAMLLINT_CHAIN: &[InstallMethod] = &[
-  InstallMethod::Uv("yamllint"),
-  InstallMethod::Pipx("yamllint"),
-  InstallMethod::Pip("yamllint"),
-  InstallMethod::Pip3("yamllint"),
+  InstallMethod::Uv("yamllint==1.38.0"),
+  InstallMethod::Pipx("yamllint==1.38.0"),
+  InstallMethod::Pip("yamllint==1.38.0"),
+  InstallMethod::Pip3("yamllint==1.38.0"),
   InstallMethod::Apt("yamllint"),
   InstallMethod::Brew("yamllint"),
   InstallMethod::Scoop("yamllint"),
@@ -248,9 +309,9 @@ const YAMLLINT_CHAIN: &[InstallMethod] = &[
 const CLANG_FORMAT_CHAIN: &[InstallMethod] = &[
   InstallMethod::Apt("clang-format"),
   InstallMethod::Brew("clang-format"),
-  InstallMethod::Pipx("clang-format"),
-  InstallMethod::Pip("clang-format"),
-  InstallMethod::Pip3("clang-format"),
+  InstallMethod::Pipx("clang-format==22.1.8"),
+  InstallMethod::Pip("clang-format==22.1.8"),
+  InstallMethod::Pip3("clang-format==22.1.8"),
   InstallMethod::WingetName("LLVM.LLVM"),
   InstallMethod::Scoop("llvm"),
 ];
@@ -262,12 +323,25 @@ const CLANG_TIDY_CHAIN: &[InstallMethod] = &[
   InstallMethod::Scoop("llvm"),
 ];
 
+// Note: `Npm("google-java-format")` below IS real (the
+// `invertase/nodejs-google-java-format` npm wrapper, pinned) and is pinned
+// like any other npm entry. `Pipx("google-java-format")` and
+// `Npm("checkstyle")`, by contrast, are pre-existing entries that don't
+// correspond to any real published package (no PyPI `google-java-format`,
+// no npm `checkstyle`) — a correctness bug independent of version pinning,
+// out of scope here (tracked in the spinoff issue tracked as
+// #195). Left
+// unpinned rather than pinning a version of a package that doesn't exist.
 const GOOGLE_JAVA_FORMAT_CHAIN: &[InstallMethod] = &[
   InstallMethod::Brew("google-java-format"),
-  InstallMethod::Npm("google-java-format"),
+  InstallMethod::Npm("google-java-format@2.3.0"),
   InstallMethod::Pipx("google-java-format"),
 ];
 
+// Note: `Npm("checkstyle")` below doesn't correspond to any real published
+// package (404 on npm) — a correctness bug independent of version pinning,
+// out of scope here, tracked as #195. Left unpinned rather than pinning a
+// version of a package that doesn't exist.
 const CHECKSTYLE_CHAIN: &[InstallMethod] = &[
   InstallMethod::Brew("checkstyle"),
   InstallMethod::Apt("checkstyle"),
@@ -277,57 +351,84 @@ const CHECKSTYLE_CHAIN: &[InstallMethod] = &[
 const RUSTFMT_CHAIN: &[InstallMethod] = &[InstallMethod::Rustup("rustfmt")];
 const CLIPPY_CHAIN: &[InstallMethod] = &[InstallMethod::Rustup("clippy")];
 
-const GOIMPORTS_CHAIN: &[InstallMethod] =
-  &[InstallMethod::GoInstall("golang.org/x/tools/cmd/goimports")];
+const GOIMPORTS_CHAIN: &[InstallMethod] = &[InstallMethod::GoInstall(
+  "golang.org/x/tools/cmd/goimports@v0.49.0",
+)];
 
 const GOLANGCI_LINT_CHAIN: &[InstallMethod] = &[
   InstallMethod::Brew("golangci-lint"),
   InstallMethod::Scoop("golangci-lint"),
   InstallMethod::GoInstall(
-    "github.com/golangci/golangci-lint/v2/cmd/golangci-lint",
+    "github.com/golangci/golangci-lint/v2/cmd/golangci-lint@v2.13.1",
   ),
   InstallMethod::GoInstall(
-    "github.com/golangci/golangci-lint/cmd/golangci-lint",
+    "github.com/golangci/golangci-lint/cmd/golangci-lint@v1.64.8",
   ),
 ];
 
-// ktlint ships as a prebuilt executable jar; there is no cargo/npm fallback,
-// so the chain is limited to system package managers (mirrors the
-// CLANG_FORMAT_CHAIN / CLANG_TIDY_CHAIN pattern above).
+// ktlint ships as a prebuilt executable jar; there is no cargo fallback, so
+// the chain is otherwise limited to system package managers (mirrors the
+// CLANG_FORMAT_CHAIN / CLANG_TIDY_CHAIN pattern above). `Npm("ktlint")`
+// resolves to a real but unrelated 2018 package, not the actual ktlint tool
+// — a correctness bug independent of version pinning, out of scope here,
+// tracked as #195. It's still pinned (to that package's one and only
+// published version) so it's at least deterministic in the meantime, but
+// pinning doesn't make it the right package.
 const KTLINT_CHAIN: &[InstallMethod] = &[
   InstallMethod::Brew("ktlint"),
   InstallMethod::Scoop("ktlint"),
-  InstallMethod::Npm("ktlint"),
+  InstallMethod::Npm("ktlint@0.0.5"),
   InstallMethod::Apt("ktlint"),
 ];
 
-/// Looks up the ordered installer preference chain for a tool binary name.
-/// This is the single place that maps a tool to its installers — adding a
-/// new tool means adding a chain constant and one arm here, not copying a
-/// whole if/else-if cascade.
+/// The (canonical binary name, install chain) side-table every tool in the
+/// fleet is registered in exactly once. This is what `install_chain_for`
+/// below looks up, and what both `test_tool_info_auto_install_cmd_coverage`
+/// and `test_registry_resolved_install_methods_are_version_pinned` iterate —
+/// per `docs/style-guide.md`'s tier-2 convention ("walk ... an in-crate
+/// side-table", not a hand-copied literal array), a new chain constant only
+/// needs adding here to automatically get both install-time lookup and test
+/// coverage; forgetting a row here is what let the `clang-format` pinning
+/// gap through unnoticed in an earlier pass of this same table (previously a
+/// hand-maintained `match` plus a hand-copied test array that had already
+/// drifted apart from each other).
+const ALL_CHAINS: &[(&str, &[InstallMethod])] = &[
+  ("taplo", TAPLO_CHAIN),
+  ("typstyle", TYPSTYLE_CHAIN),
+  ("tinymist", TINYMIST_CHAIN),
+  ("ruff", RUFF_CHAIN),
+  ("prettier", PRETTIER_CHAIN),
+  ("biome", BIOME_CHAIN),
+  ("markdownlint-cli2", MARKDOWNLINT_CHAIN),
+  ("yamllint", YAMLLINT_CHAIN),
+  ("clang-format", CLANG_FORMAT_CHAIN),
+  ("clang-tidy", CLANG_TIDY_CHAIN),
+  ("google-java-format", GOOGLE_JAVA_FORMAT_CHAIN),
+  ("checkstyle", CHECKSTYLE_CHAIN),
+  ("rustfmt", RUSTFMT_CHAIN),
+  ("clippy-driver", CLIPPY_CHAIN),
+  ("goimports", GOIMPORTS_CHAIN),
+  ("golangci-lint", GOLANGCI_LINT_CHAIN),
+  ("ktlint", KTLINT_CHAIN),
+];
+
+/// Looks up the ordered installer preference chain for a tool binary name,
+/// via [`ALL_CHAINS`] above. `markdownlint`/`clippy` are legacy aliases for
+/// their canonical `ALL_CHAINS` row (`markdownlint-cli2`/`clippy-driver`) —
+/// resolved here rather than duplicated as their own rows, so the side-table
+/// stays one row per actual chain.
 pub(super) fn install_chain_for(
   binary: &str,
 ) -> Option<&'static [InstallMethod]> {
-  match binary {
-    "taplo" => Some(TAPLO_CHAIN),
-    "typstyle" => Some(TYPSTYLE_CHAIN),
-    "tinymist" => Some(TINYMIST_CHAIN),
-    "ruff" => Some(RUFF_CHAIN),
-    "prettier" => Some(PRETTIER_CHAIN),
-    "biome" => Some(BIOME_CHAIN),
-    "markdownlint-cli2" | "markdownlint" => Some(MARKDOWNLINT_CHAIN),
-    "yamllint" => Some(YAMLLINT_CHAIN),
-    "clang-format" => Some(CLANG_FORMAT_CHAIN),
-    "clang-tidy" => Some(CLANG_TIDY_CHAIN),
-    "google-java-format" => Some(GOOGLE_JAVA_FORMAT_CHAIN),
-    "checkstyle" => Some(CHECKSTYLE_CHAIN),
-    "rustfmt" => Some(RUSTFMT_CHAIN),
-    "clippy" | "clippy-driver" => Some(CLIPPY_CHAIN),
-    "goimports" => Some(GOIMPORTS_CHAIN),
-    "golangci-lint" => Some(GOLANGCI_LINT_CHAIN),
-    "ktlint" => Some(KTLINT_CHAIN),
-    _ => None,
-  }
+  let canonical = match binary {
+    "markdownlint" => "markdownlint-cli2",
+    "clippy" => "clippy-driver",
+    other => other,
+  };
+  ALL_CHAINS
+    .iter()
+    .find(|(name, _)| *name == canonical)
+    .map(|(_, chain)| *chain)
 }
 
 static BINARY_CACHE: OnceLock<Mutex<HashMap<String, bool>>> = OnceLock::new();
@@ -411,29 +512,188 @@ mod tests {
   use super::*;
   use crate::surfaces::ToolInfo;
 
+  /// Returns whether `pkg` (the final argument passed to a package-manager
+  /// install command) carries an explicit version pin, recognizing both the
+  /// npm/cargo/go `name@version` convention and the pip-family
+  /// `name==version` convention. A single leading `@` (npm scope, e.g.
+  /// `@taplo/cli@0.7.0`) is stripped first so it isn't mistaken for the
+  /// version separator.
+  fn has_version_pin(pkg: &str) -> bool {
+    if pkg.contains("==") {
+      return true;
+    }
+    pkg.strip_prefix('@').unwrap_or(pkg).contains('@')
+  }
+
+  #[test]
+  fn test_has_version_pin_helper() {
+    assert!(has_version_pin("prettier@3.9.6"));
+    assert!(has_version_pin("@taplo/cli@0.7.0"));
+    assert!(has_version_pin("ruff==0.16.4"));
+    assert!(has_version_pin("golang.org/x/tools/cmd/goimports@v0.49.0"));
+    assert!(!has_version_pin("prettier"));
+    assert!(!has_version_pin("@myriaddreamin/tinymist"));
+  }
+
+  #[test]
+  fn test_pinned_chain_command_shapes() {
+    // A handful of concrete, exact assertions (not just "is it pinned") for
+    // the tools #191 called out by name, so a future accidental revert back
+    // to an unversioned package string fails loudly and specifically.
+    let prettier = install_chain_for("prettier").unwrap();
+    assert_eq!(
+      prettier[0].command(),
+      (
+        "npm".to_string(),
+        vec![
+          "install".to_string(),
+          "-g".to_string(),
+          "prettier@3.9.6".to_string()
+        ]
+      )
+    );
+
+    let taplo = install_chain_for("taplo").unwrap();
+    assert_eq!(
+      taplo[1].command(),
+      (
+        "npm".to_string(),
+        vec![
+          "install".to_string(),
+          "-g".to_string(),
+          "@taplo/cli@0.7.0".to_string()
+        ]
+      )
+    );
+
+    let ruff = install_chain_for("ruff").unwrap();
+    assert_eq!(
+      ruff[0].command(),
+      (
+        "uv".to_string(),
+        vec![
+          "tool".to_string(),
+          "install".to_string(),
+          "ruff==0.16.4".to_string()
+        ]
+      )
+    );
+
+    let goimports = install_chain_for("goimports").unwrap();
+    assert_eq!(
+      goimports[0].command(),
+      (
+        "go".to_string(),
+        vec![
+          "install".to_string(),
+          "golang.org/x/tools/cmd/goimports@v0.49.0".to_string()
+        ]
+      )
+    );
+  }
+
+  #[test]
+  fn test_go_install_never_appends_implicit_latest() {
+    // GoInstall used to always append "@latest" itself, which is exactly
+    // the floating-version behavior #191 is about; command() must now pass
+    // the package spec through unchanged so the chain constants are the
+    // only place a version (pinned or "@latest") gets decided.
+    assert_eq!(
+      InstallMethod::GoInstall("example.com/tool@v1.2.3").command(),
+      (
+        "go".to_string(),
+        vec!["install".to_string(), "example.com/tool@v1.2.3".to_string()]
+      )
+    );
+  }
+
+  /// Chain entries known, and confirmed by direct registry lookup, to point
+  /// at a package that doesn't actually exist under that install method --
+  /// a correctness bug independent of version pinning, tracked as #195.
+  /// Keyed on `(binary, InstallMethod variant tag, package arg)` rather than
+  /// just `(binary, package arg)`: two different `InstallMethod` variants
+  /// for the same binary can carry the identical package string (e.g.
+  /// `Npm("google-java-format")` is real, `Pipx("google-java-format")` is
+  /// not) and a package-string-only key would silently over-exempt both.
+  fn is_known_dead_package(
+    binary: &str,
+    method: &InstallMethod,
+    pkg_arg: &str,
+  ) -> bool {
+    let variant_tag = match method {
+      InstallMethod::Npm(_) => "npm",
+      InstallMethod::Pipx(_) => "pipx",
+      _ => "",
+    };
+    matches!(
+      (binary, variant_tag, pkg_arg),
+      ("tinymist", "npm", "@myriaddreamin/tinymist")
+        | ("checkstyle", "npm", "checkstyle")
+        | ("google-java-format", "pipx", "google-java-format")
+    )
+  }
+
+  #[test]
+  fn test_registry_resolved_install_methods_are_version_pinned() {
+    // Every chain entry that resolves against a floating package registry
+    // (npm-family, pip-family, cargo/cargo-binstall, `go install`) must
+    // request an explicit version -- see the "Pinned tool versions" note
+    // above the chain constants. System package managers (apt/brew/scoop/
+    // winget) are exempt: they resolve against a distro/tap snapshot rather
+    // than a single global "latest" tag, so they drift far less, and their
+    // inline version syntax isn't uniform. `is_known_dead_package` above
+    // covers chain entries that don't correspond to a real package at all
+    // (#195) -- pinning a version of a nonexistent package wouldn't make it
+    // exist.
+    //
+    // Iterates ALL_CHAINS itself (the same side-table `install_chain_for`
+    // and the coverage test below use) rather than a separately maintained
+    // binary list, so a new chain constant automatically gets checked here
+    // too the moment it's added to ALL_CHAINS.
+    for &(binary, chain) in ALL_CHAINS {
+      for method in chain {
+        let is_registry_resolved = matches!(
+          method,
+          InstallMethod::Npm(_)
+            | InstallMethod::Pnpm(_)
+            | InstallMethod::Yarn(_)
+            | InstallMethod::Bun(_)
+            | InstallMethod::Uv(_)
+            | InstallMethod::Pipx(_)
+            | InstallMethod::Pip(_)
+            | InstallMethod::Pip3(_)
+            | InstallMethod::CargoBinstall(_)
+            | InstallMethod::Cargo { .. }
+            | InstallMethod::GoInstall(_)
+        );
+        if !is_registry_resolved {
+          continue;
+        }
+        let (_, args) = method.command();
+        // `Cargo` appends `--locked` after the package; every other
+        // registry-resolved variant's command puts the package last.
+        let pkg_arg = if matches!(method, InstallMethod::Cargo { .. }) {
+          &args[1]
+        } else {
+          args
+            .last()
+            .expect("registry install command should have a package arg")
+        };
+        if is_known_dead_package(binary, method, pkg_arg) {
+          continue;
+        }
+        assert!(
+          has_version_pin(pkg_arg),
+          "{binary}: {method:?} resolves package {pkg_arg:?} with no \
+           version pin -- fml install would float on \"latest\""
+        );
+      }
+    }
+  }
+
   #[test]
   fn test_tool_info_auto_install_cmd_coverage() {
-    let tools = [
-      "taplo",
-      "typstyle",
-      "tinymist",
-      "ruff",
-      "prettier",
-      "biome",
-      "markdownlint-cli2",
-      "yamllint",
-      "clang-format",
-      "clang-tidy",
-      "google-java-format",
-      "checkstyle",
-      "rustfmt",
-      "clippy-driver",
-      "goimports",
-      "golangci-lint",
-      "ktlint",
-    ];
-
-    for binary in tools {
+    for &(binary, _) in ALL_CHAINS {
       let info = ToolInfo {
         binary,
         description: "test tool",
