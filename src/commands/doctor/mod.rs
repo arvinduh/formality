@@ -193,6 +193,75 @@ pub fn preflight_install(
   install_missing_tools(&to_install)
 }
 
+/// Preflight check for `fml fmt`, `fml lint`, and `fml fix` without `--install`:
+/// scans all required tools for the active target surfaces and emits a non-blocking
+/// warning to stderr if any tool is present but [`ToolStatus::Stale`] relative to
+/// its pinned version.
+pub fn preflight_warn_stale_tools(
+  surfaces: &[Box<dyn LanguageSurface>],
+  config: &FormalityConfig,
+  for_fmt: bool,
+  for_lint: bool,
+) {
+  let mut seen: HashSet<&'static str> = HashSet::new();
+
+  for surface in surfaces {
+    let resolved = config.resolve_for_lang(surface.name());
+    for tool in surface.tool_info(&resolved) {
+      if seen.contains(tool.binary) {
+        continue;
+      }
+      let needed = (for_fmt && tool.is_required_for_fmt)
+        || (for_lint && tool.is_required_for_lint);
+      if !needed {
+        continue;
+      }
+      seen.insert(tool.binary);
+
+      let lookup = lookup_tool_info(tool.binary);
+      if lookup.is_installed
+        && let Some(ToolStatus::Stale { current, pinned }) =
+          lookup.status.as_ref()
+      {
+        let warning = format_stale_tool_warning(tool.binary, current, pinned);
+        eprintln!("{} {warning}", "[WARN]".yellow().bold());
+      }
+    }
+  }
+}
+
+/// Formats a preflight warning message for a tool whose installed version is
+/// stale relative to its pinned version.
+#[must_use]
+pub fn format_stale_tool_warning(
+  binary: &str,
+  current: &Version,
+  pinned: &Version,
+) -> String {
+  format!(
+    "tool '{binary}' is stale (v{current} != pinned v{pinned}); run 'fml doctor --install' or pass '--install' to update"
+  )
+}
+
+/// Pure helper that collects stale tool warning messages for a sequence of
+/// (tool_binary_name, status) pairs, deduplicating tool names.
+#[must_use]
+pub fn collect_stale_tool_warnings<'a>(
+  tools: impl IntoIterator<Item = (&'a str, Option<&'a ToolStatus>)>,
+) -> Vec<String> {
+  let mut warnings = Vec::new();
+  let mut seen = HashSet::new();
+  for (binary, status) in tools {
+    if !seen.insert(binary) {
+      continue;
+    }
+    if let Some(ToolStatus::Stale { current, pinned }) = status {
+      warnings.push(format_stale_tool_warning(binary, current, pinned));
+    }
+  }
+  warnings
+}
+
 /// Whether a tool needs (re)installing: genuinely absent, or present but
 /// [`ToolStatus::Stale`] *and* the selected installer carries an inline pin
 /// matching `expected_binary_version`. If the tool is stale but the selected

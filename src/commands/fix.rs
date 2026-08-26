@@ -48,6 +48,10 @@ pub fn run_fix(
       warn_tool_install_failed("fixes");
       install_failed = true;
     }
+  } else {
+    crate::commands::doctor::preflight_warn_stale_tools(
+      &surfaces, config, true, true,
+    );
   }
 
   let status =
