@@ -613,6 +613,18 @@ pub fn parse_markdownlint_text(
 /// — when neither binary is present or the invocation otherwise fails to
 /// spawn, so the caller falls back to `fml lint` instead of publishing a
 /// false "clean" (#177).
+///
+/// KNOWN GAP (flagged, not fixed here — see issue #1's PR discussion):
+/// unlike [`crate::surfaces::markdown::MarkdownSurface::lint`], this path
+/// has no resolved `ExecutionContext`/`ResolvedLangConfig` available — the
+/// shared `DiagnosticsRunner` fn-pointer type this is registered under
+/// (`fn(&Path, &Path) -> Option<Vec<Diagnostic>>`) carries no config, for
+/// every surface, not just markdown. So it still runs markdownlint-cli2
+/// with no `--config`, i.e. whatever `.markdownlint.json` happens to be on
+/// disk, or the tool's own (stricter) built-in defaults if there is none —
+/// the same gap `MarkdownSurface::lint` used to have. Threading resolved
+/// config through `DiagnosticsRunner` for every surface is a larger,
+/// separate change than this fix; not folded in here.
 fn markdownlint_diagnostics(
   root: &Path,
   file: &Path,
@@ -629,6 +641,7 @@ fn markdownlint_diagnostics(
   cmd.args(crate::surfaces::markdown::build_markdownlint_args(
     &[file.to_path_buf()],
     false,
+    None,
     &[],
   ));
   cmd.current_dir(root);

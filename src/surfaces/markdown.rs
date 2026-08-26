@@ -131,22 +131,62 @@ impl NativeConfig for MarkdownlintConfig {
   }
 }
 
-/// Builds argument vector for markdownlint-cli2 invocation.
+/// Builds argument vector for markdownlint-cli2 invocation. `config_path`,
+/// when given, is passed as `--config <path>` ahead of the file list so it
+/// takes effect for both the `--fix` pass and the plain lint pass — the only
+/// way to hand markdownlint-cli2 formality.toml's resolved settings, since
+/// unlike prettier/rustfmt it has no per-flag inline config mechanism (see
+/// [`write_markdownlint_temp_config`]).
 #[must_use]
 pub fn build_markdownlint_args(
   files: &[PathBuf],
   fix: bool,
+  config_path: Option<&Path>,
   extra_args: &[String],
 ) -> Vec<String> {
   let mut args = Vec::new();
   if fix {
     args.push("--fix".to_string());
   }
+  if let Some(path) = config_path {
+    args.push("--config".to_string());
+    args.push(path.to_string_lossy().to_string());
+  }
   for f in files {
     args.push(f.to_string_lossy().to_string());
   }
   args.extend(extra_args.iter().cloned());
   args
+}
+
+/// Renders the resolved [`MarkdownlintConfig`] to a throwaway temp file and
+/// returns the guard holding it, so `fml fmt`/`fml lint` can pass
+/// `--config <temp-path>` to markdownlint-cli2 without ever writing
+/// `.markdownlint.json` into the project tree. markdownlint-cli2 only
+/// accepts a config *path* (no per-flag inline settings like prettier or
+/// rustfmt get), so a temp file is the only way to hand it formality.toml's
+/// resolved settings inline. The returned [`tempfile::NamedTempFile`] must
+/// be kept alive for the duration of the command it's passed to — it is
+/// deleted from disk when dropped, which also guarantees cleanup on an
+/// early-return/error path. Only `fml sync` writes the persistent
+/// `.markdownlint.json` now (see [`MarkdownSurface::sync_config`]).
+fn write_markdownlint_temp_config(
+  ctx: &ExecutionContext,
+) -> std::io::Result<tempfile::NamedTempFile> {
+  use std::io::Write;
+
+  let cfg = MarkdownlintConfig::from_context(ctx);
+  let content = cfg
+    .render()
+    .map_err(|e| std::io::Error::other(e.to_string()))?;
+
+  let mut file = tempfile::Builder::new()
+    .prefix(".markdownlint-")
+    .suffix(".json")
+    .tempfile()?;
+  file.write_all(content.as_bytes())?;
+  file.flush()?;
+  Ok(file)
 }
 
 /// Builds argument vector for prettier format invocation.
@@ -274,14 +314,36 @@ impl LanguageSurface for MarkdownSurface {
     // Inline `--tab-width`/`--print-width`/etc. instead of writing
     // `.prettierrc.json` to disk — see `build_prettier_inline_args` (Fixes
     // #151). `fml sync` remains the only path that materializes the file.
-    // markdownlint-cli2's own `--fix` pass above has no equivalent inline
-    // flag (it only accepts `--config <path>`), so it still runs with
-    // whatever `.markdownlint.json` happens to be on disk, or its own
-    // built-in defaults if there is none — that pass is a structural/mechanical
-    // fixer (list markers, heading style, ...), not layout, so it isn't
-    // affected by the formality.toml settings this issue is about.
     let inline_config =
       build_prettier_inline_args(&PrettierConfig::from_context(ctx));
+
+    // markdownlint-cli2's own `--fix` pass has no per-flag inline config
+    // (it only accepts `--config <path>`), so the resolved settings are
+    // rendered to a throwaway temp file and passed via `--config` instead —
+    // see `write_markdownlint_temp_config`. Only created when a markdownlint
+    // binary was actually found; kept alive across both the check-only and
+    // write branches below so the file exists for the duration of every
+    // invocation that references its path.
+    let md_temp_cfg = if md_binary.is_some() {
+      match write_markdownlint_temp_config(ctx) {
+        Ok(f) => Some(f),
+        Err(e) => {
+          return SurfaceResult {
+            surface_name: self.name(),
+            status: SurfaceStatus::ExecutionError {
+              message: format!(
+                "Failed to write temporary markdownlint config: {e}"
+              ),
+            },
+            duration: start.elapsed(),
+          };
+        }
+      }
+    } else {
+      None
+    };
+    let md_temp_cfg_path =
+      md_temp_cfg.as_ref().map(tempfile::NamedTempFile::path);
 
     if ctx.check_only {
       return diff_check_via_tempcopy(
@@ -289,7 +351,11 @@ impl LanguageSurface for MarkdownSurface {
         |scratch| {
           if let Some(bin) = md_binary {
             let mut md_cmd = create_tool_command(bin);
-            md_cmd.arg("--fix").arg(scratch);
+            md_cmd.arg("--fix");
+            if let Some(cfg_path) = md_temp_cfg_path {
+              md_cmd.arg("--config").arg(cfg_path);
+            }
+            md_cmd.arg(scratch);
             md_cmd.current_dir(ctx.root.as_path());
             let _ = md_cmd.output();
           }
@@ -313,6 +379,9 @@ impl LanguageSurface for MarkdownSurface {
     if let Some(bin) = md_binary {
       let mut md_cmd = create_tool_command(bin);
       md_cmd.arg("--fix");
+      if let Some(cfg_path) = md_temp_cfg_path {
+        md_cmd.arg("--config").arg(cfg_path);
+      }
       for f in &files {
         md_cmd.arg(f);
       }
@@ -395,10 +464,31 @@ impl LanguageSurface for MarkdownSurface {
       };
     }
 
+    // See `write_markdownlint_temp_config`: markdownlint-cli2 only accepts
+    // config via `--config <path>`, so the resolved formality.toml settings
+    // are rendered to a throwaway temp file rather than depending on
+    // `.markdownlint.json` being present on disk. `md_temp_cfg` must stay
+    // alive until `cmd.output()` below returns.
+    let md_temp_cfg = match write_markdownlint_temp_config(ctx) {
+      Ok(f) => f,
+      Err(e) => {
+        return SurfaceResult {
+          surface_name: self.name(),
+          status: SurfaceStatus::ExecutionError {
+            message: format!(
+              "Failed to write temporary markdownlint config: {e}"
+            ),
+          },
+          duration: start.elapsed(),
+        };
+      }
+    };
+
     let mut cmd = create_tool_command(binary);
     cmd.args(build_markdownlint_args(
       &files,
       fix,
+      Some(md_temp_cfg.path()),
       &ctx.lang_config.extra_args,
     ));
     cmd.current_dir(ctx.root.as_path());
@@ -527,22 +617,112 @@ mod tests {
 
   #[test]
   fn test_build_markdownlint_args_with_and_without_fix() {
-    let no_fix = build_markdownlint_args(&[], false, &[]);
+    let no_fix = build_markdownlint_args(&[], false, None, &[]);
     assert_eq!(no_fix, Vec::<String>::new());
 
     let files = vec![PathBuf::from("a.md"), PathBuf::from("b.md")];
-    let extra = vec!["--config".to_string(), ".custom-mdl.json".to_string()];
-    let with_fix = build_markdownlint_args(&files, true, &extra);
+    let extra = vec!["--loglevel".to_string(), "warn".to_string()];
+    let with_fix = build_markdownlint_args(&files, true, None, &extra);
     assert_eq!(
       with_fix,
       vec![
         "--fix".to_string(),
         "a.md".to_string(),
         "b.md".to_string(),
-        "--config".to_string(),
-        ".custom-mdl.json".to_string(),
+        "--loglevel".to_string(),
+        "warn".to_string(),
       ]
     );
+  }
+
+  #[test]
+  fn test_build_markdownlint_args_with_config_path() {
+    let files = vec![PathBuf::from("a.md")];
+    let cfg_path = PathBuf::from("/tmp/some-config.json");
+    let args =
+      build_markdownlint_args(&files, true, Some(cfg_path.as_path()), &[]);
+    assert_eq!(
+      args,
+      vec![
+        "--fix".to_string(),
+        "--config".to_string(),
+        cfg_path.to_string_lossy().to_string(),
+        "a.md".to_string(),
+      ]
+    );
+  }
+
+  #[test]
+  fn test_write_markdownlint_temp_config_reflects_formality_toml() {
+    // Regression test for the gap CI caught on issue #1: markdownlint-cli2
+    // has no per-flag inline config, so `fml lint`/`fml fmt` used to run it
+    // with whatever `.markdownlint.json` happened to be on disk (or its own
+    // stricter built-in defaults — MD013 `code_blocks`/`tables: true` — if
+    // that file was absent). The temp-file config must carry
+    // formality.toml's actual resolved MD013 settings.
+    let mut lang_cfg = ResolvedLangConfig::new("markdown");
+    lang_cfg.line_length = 100;
+
+    let ctx = ExecutionContext {
+      root: Arc::new(PathBuf::from(".")),
+      paths: Arc::new(Vec::new()),
+      global_config: Arc::new(ResolvedGlobalConfig::default()),
+      lang_config: lang_cfg,
+      check_only: false,
+    };
+
+    let temp_cfg = write_markdownlint_temp_config(&ctx).unwrap();
+    let content = std::fs::read_to_string(temp_cfg.path()).unwrap();
+    let parsed: serde_json::Value = serde_json::from_str(&content).unwrap();
+
+    assert_eq!(parsed["MD013"]["line_length"], 100);
+    assert_eq!(parsed["MD013"]["code_blocks"], false);
+    assert_eq!(parsed["MD013"]["tables"], false);
+  }
+
+  #[test]
+  fn test_lint_respects_formality_toml_md013_with_no_config_on_disk() {
+    // End-to-end regression test for the same gap: with no
+    // `.markdownlint.json` anywhere on disk (the actual state of this repo's
+    // own root after issue #1), `lint()` must still enforce formality.toml's
+    // MD013 settings (via the temp-config `--config` pass), not
+    // markdownlint-cli2's stricter built-in defaults.
+    if !check_binary_exists("markdownlint-cli2")
+      && !check_binary_exists("markdownlint")
+    {
+      return;
+    }
+
+    let temp = TempDir::new().unwrap();
+    // A code fence line over 80 chars: markdownlint-cli2's built-in MD013
+    // default (`code_blocks: true`) flags this; formality.toml's default
+    // (`code_blocks: false`, set in `MarkdownlintConfig::from_context`)
+    // must not.
+    let long_line = "x".repeat(90);
+    std::fs::write(
+      temp.path().join("a.md"),
+      format!("# Title\n\n```text\n{long_line}\n```\n"),
+    )
+    .unwrap();
+    assert!(!temp.path().join(".markdownlint.json").exists());
+
+    let surface = MarkdownSurface;
+    let ctx = ExecutionContext {
+      root: Arc::new(temp.path().to_path_buf()),
+      paths: Arc::new(Vec::new()),
+      global_config: Arc::new(ResolvedGlobalConfig::default()),
+      lang_config: ResolvedLangConfig::new("markdown"),
+      check_only: false,
+    };
+
+    let res = surface.lint(&ctx, false);
+    assert!(
+      res.is_success(),
+      "expected clean lint with no .markdownlint.json on disk, got: {:?}",
+      res.status
+    );
+    // Still no native config file was written as a side effect.
+    assert!(!temp.path().join(".markdownlint.json").exists());
   }
 
   #[test]
