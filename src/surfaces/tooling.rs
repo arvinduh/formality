@@ -78,8 +78,10 @@ pub enum InstallMethod {
 }
 
 impl InstallMethod {
+  /// Returns whether this install method's underlying package manager is
+  /// currently available on the system `PATH`.
   #[must_use]
-  pub(super) fn is_available(&self) -> bool {
+  pub fn is_available(&self) -> bool {
     match self {
       InstallMethod::CargoBinstall(_) => has_cargo_binstall(),
       InstallMethod::Npm(_) => check_binary_exists("npm"),
@@ -102,7 +104,10 @@ impl InstallMethod {
     }
   }
 
-  pub(super) fn command(&self) -> (String, Vec<String>) {
+  /// Builds the executable command tuple `(program, args)` to execute this
+  /// installation method.
+  #[must_use]
+  pub fn command(&self) -> (String, Vec<String>) {
     fn strs(v: &[&str]) -> Vec<String> {
       v.iter().map(std::string::ToString::to_string).collect()
     }
@@ -183,17 +188,8 @@ impl InstallMethod {
   /// `rustup component add` never carry an inline version — see the
   /// "Pinned tool versions" note below — so those return `None`, same as a
   /// spec whose trailing segment doesn't parse as a version at all.
-  ///
-  /// Test-only: production code no longer derives `[STALE]` comparisons
-  /// from this (see `ToolChain::expected_binary_version`'s doc comment for
-  /// why a package-spec pin and a binary's self-reported version are two
-  /// different things) — this now only backs
-  /// `test_expected_binary_version_agrees_with_chain_pins`, a regression
-  /// guard that a chain's literal pins still agree with each other wherever
-  /// `expected_binary_version` claims they do.
-  #[cfg(test)]
   #[must_use]
-  fn pinned_version(&self) -> Option<Version> {
+  pub fn pinned_version(&self) -> Option<Version> {
     match self {
       InstallMethod::CargoBinstall(pkg)
       | InstallMethod::Npm(pkg)
@@ -218,6 +214,30 @@ impl InstallMethod {
       | InstallMethod::WingetName(_)
       | InstallMethod::WingetId(_)
       | InstallMethod::Rustup(_) => None,
+    }
+  }
+
+  /// Returns the user-facing name of this installer (e.g. `"cargo-binstall"`,
+  /// `"npm"`, `"brew"`).
+  #[must_use]
+  pub fn installer_name(&self) -> &'static str {
+    match self {
+      InstallMethod::CargoBinstall(_) => "cargo-binstall",
+      InstallMethod::Npm(_) => "npm",
+      InstallMethod::Pnpm(_) => "pnpm",
+      InstallMethod::Yarn(_) => "yarn",
+      InstallMethod::Bun(_) => "bun",
+      InstallMethod::Uv(_) => "uv",
+      InstallMethod::Pipx(_) => "pipx",
+      InstallMethod::Pip(_) => "pip",
+      InstallMethod::Pip3(_) => "pip3",
+      InstallMethod::Apt(_) => "apt",
+      InstallMethod::Brew(_) => "brew",
+      InstallMethod::Scoop(_) => "scoop",
+      InstallMethod::WingetName(_) | InstallMethod::WingetId(_) => "winget",
+      InstallMethod::Cargo { .. } => "cargo",
+      InstallMethod::Rustup(_) => "rustup",
+      InstallMethod::GoInstall(_) => "go",
     }
   }
 }
@@ -617,9 +637,8 @@ fn canonical_chain_binary(binary: &str) -> &str {
 
 /// Looks up the ordered installer preference chain for a tool binary name,
 /// via [`ALL_CHAINS`] above.
-pub(super) fn install_chain_for(
-  binary: &str,
-) -> Option<&'static [InstallMethod]> {
+#[must_use]
+pub fn install_chain_for(binary: &str) -> Option<&'static [InstallMethod]> {
   let canonical = canonical_chain_binary(binary);
   ALL_CHAINS
     .iter()
@@ -645,6 +664,35 @@ pub fn pinned_version_for(binary: &str) -> Option<Version> {
     .find(|entry| entry.binary == canonical)?
     .expected_binary_version
     .clone()
+}
+
+/// Returns the first available installer in `binary`'s preference chain,
+/// or `None` if no installer in the chain is currently available on PATH.
+#[must_use]
+pub fn selected_install_method_for(binary: &str) -> Option<InstallMethod> {
+  install_chain_for(binary)?
+    .iter()
+    .copied()
+    .find(InstallMethod::is_available)
+}
+
+/// Returns the pinned version of the first available installer in `binary`'s
+/// preference chain, or `None` if no installer is available or the available
+/// installer has no inline pin.
+#[must_use]
+pub fn selected_pinned_version_for(binary: &str) -> Option<Version> {
+  selected_install_method_for(binary).and_then(|m| m.pinned_version())
+}
+
+/// Returns the name of the first installer in `binary`'s preference chain that
+/// carries an inline version pin matching `expected_binary_version`, if any.
+#[must_use]
+pub fn pinned_installer_for(binary: &str) -> Option<&'static str> {
+  let expected = pinned_version_for(binary)?;
+  install_chain_for(binary)?
+    .iter()
+    .find(|m| m.pinned_version().as_ref() == Some(&expected))
+    .map(InstallMethod::installer_name)
 }
 
 static BINARY_CACHE: OnceLock<Mutex<HashMap<String, bool>>> = OnceLock::new();
@@ -875,6 +923,72 @@ mod tests {
       pinned_version_for("golangci-lint"),
       Some(Version::new(2, 13, 1))
     );
+  }
+
+  #[test]
+  fn test_installer_names() {
+    assert_eq!(
+      InstallMethod::CargoBinstall("ruff@0.16.4").installer_name(),
+      "cargo-binstall"
+    );
+    assert_eq!(InstallMethod::Npm("prettier@3.9.6").installer_name(), "npm");
+    assert_eq!(
+      InstallMethod::Pnpm("prettier@3.9.6").installer_name(),
+      "pnpm"
+    );
+    assert_eq!(
+      InstallMethod::Yarn("prettier@3.9.6").installer_name(),
+      "yarn"
+    );
+    assert_eq!(InstallMethod::Bun("prettier@3.9.6").installer_name(), "bun");
+    assert_eq!(InstallMethod::Uv("ruff==0.16.4").installer_name(), "uv");
+    assert_eq!(InstallMethod::Pipx("ruff==0.16.4").installer_name(), "pipx");
+    assert_eq!(InstallMethod::Pip("ruff==0.16.4").installer_name(), "pip");
+    assert_eq!(InstallMethod::Pip3("ruff==0.16.4").installer_name(), "pip3");
+    assert_eq!(InstallMethod::Apt("yamllint").installer_name(), "apt");
+    assert_eq!(InstallMethod::Brew("prettier").installer_name(), "brew");
+    assert_eq!(InstallMethod::Scoop("prettier").installer_name(), "scoop");
+    assert_eq!(
+      InstallMethod::WingetName("LLVM.LLVM").installer_name(),
+      "winget"
+    );
+    assert_eq!(
+      InstallMethod::WingetId("tamasfe.taplo").installer_name(),
+      "winget"
+    );
+    assert_eq!(
+      InstallMethod::Cargo {
+        package: "ruff@0.16.4",
+        locked: true
+      }
+      .installer_name(),
+      "cargo"
+    );
+    assert_eq!(InstallMethod::Rustup("clippy").installer_name(), "rustup");
+    assert_eq!(
+      InstallMethod::GoInstall("golang.org/x/tools/cmd/goimports@v0.49.0")
+        .installer_name(),
+      "go"
+    );
+  }
+
+  #[test]
+  fn test_pinned_installer_for() {
+    assert_eq!(pinned_installer_for("prettier"), Some("npm"));
+    assert_eq!(pinned_installer_for("ruff"), Some("uv"));
+    assert_eq!(pinned_installer_for("typstyle"), Some("cargo-binstall"));
+    assert_eq!(pinned_installer_for("tinymist"), Some("cargo-binstall"));
+    assert_eq!(pinned_installer_for("biome"), Some("npm"));
+    assert_eq!(pinned_installer_for("markdownlint-cli2"), Some("npm"));
+    assert_eq!(pinned_installer_for("yamllint"), Some("uv"));
+    assert_eq!(pinned_installer_for("golangci-lint"), Some("go"));
+
+    // Tools without expected_binary_version return None
+    assert_eq!(pinned_installer_for("taplo"), None);
+    assert_eq!(pinned_installer_for("clang-format"), None);
+    assert_eq!(pinned_installer_for("clang-tidy"), None);
+    assert_eq!(pinned_installer_for("rustfmt"), None);
+    assert_eq!(pinned_installer_for("not-a-real-tool"), None);
   }
 
   #[test]

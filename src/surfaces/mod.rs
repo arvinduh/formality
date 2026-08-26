@@ -59,8 +59,10 @@ pub use registry::{
 };
 pub use sync::{diff_check_via_tempcopy, is_auto_generated, sync_file_helper};
 pub use tooling::{
-  check_binary_exists, create_tool_command, has_cargo_binstall,
-  pinned_version_for, tool_missing_result,
+  InstallMethod, check_binary_exists, create_tool_command, has_cargo_binstall,
+  install_chain_for, pinned_installer_for, pinned_version_for,
+  selected_install_method_for, selected_pinned_version_for,
+  tool_missing_result,
 };
 
 /// Execution context shared with every [`LanguageSurface`] invocation for a
@@ -110,15 +112,21 @@ pub struct ToolInfo {
 }
 
 impl ToolInfo {
+  /// Returns the first available installer in this tool's preference chain.
+  #[must_use]
+  pub fn selected_install_method(&self) -> Option<InstallMethod> {
+    tooling::selected_install_method_for(self.binary)
+  }
+
   /// Returns the (program, args) for the first available installer in this
   /// tool's preference chain: prebuilt binary package managers first,
   /// falling back to `cargo install ... --locked` source compilation where
   /// the tool ships as a crate.
+  #[must_use]
   pub fn get_auto_install_cmd(&self) -> Option<(String, Vec<String>)> {
-    tooling::install_chain_for(self.binary)?
-      .iter()
-      .find(|method| method.is_available())
-      .map(tooling::InstallMethod::command)
+    self
+      .selected_install_method()
+      .map(|method| method.command())
   }
 }
 

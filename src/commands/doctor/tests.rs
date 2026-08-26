@@ -177,16 +177,26 @@ fn test_doctor_schema_version_check_stale() {
 
 #[test]
 fn test_command_ran_successfully_true_on_zero_exit() {
+  #[cfg(unix)]
   let output = std::process::Command::new("sh")
     .args(["-c", "exit 0"])
+    .output();
+  #[cfg(windows)]
+  let output = std::process::Command::new("cmd")
+    .args(["/C", "exit 0"])
     .output();
   assert!(command_ran_successfully(&output));
 }
 
 #[test]
 fn test_command_ran_successfully_false_on_nonzero_exit() {
+  #[cfg(unix)]
   let output = std::process::Command::new("sh")
     .args(["-c", "exit 1"])
+    .output();
+  #[cfg(windows)]
+  let output = std::process::Command::new("cmd")
+    .args(["/C", "exit 1"])
     .output();
   assert!(!command_ran_successfully(&output));
 }
@@ -207,6 +217,7 @@ fn test_command_ran_successfully_false_on_spawn_error() {
 /// the binary names lets this substitute the real `true`/`false` binaries as
 /// deterministic stand-ins for a functional vs. a present-but-broken shim,
 /// with no `PATH` mutation needed.
+#[cfg(unix)]
 #[test]
 fn test_clippy_probe_succeeds_requires_functional_driver() {
   // Both the driver and the cargo fallback are broken (`false` always exits
@@ -256,26 +267,53 @@ fn test_lookup_tool_info_clippy_live_probe() {
   assert_eq!(result.is_installed, clippy_functional);
 }
 
-/// Regression coverage for #5: `fml install`'s "already satisfied, skip"
+/// Regression coverage for #5 and #11: `fml install`'s "already satisfied, skip"
 /// decision (`preflight_install`, and `fml doctor`'s auto-install path) must
-/// treat a `[STALE]` tool the same as a genuinely `[MISS]`ing one, and must
-/// leave a matching `[READY]` tool alone. `needs_install` is the pure
-/// decision function both paths route through -- tested directly here so
-/// the reinstall trigger doesn't depend on a real stale/pinned binary
-/// existing on the test machine's `PATH`.
+/// treat a `[STALE]` tool as needing reinstall *only* if the selected installer
+/// carries a matching inline pin. A stale tool with an unpinned selected installer
+/// (or mismatched pin) must NOT schedule a futile reinstall (#11).
 #[test]
 fn test_needs_install_true_for_missing_tool() {
-  assert!(needs_install(false, None));
-  assert!(needs_install(false, Some(&ToolStatus::NotFound)));
+  assert!(needs_install(false, None, None));
+  assert!(needs_install(false, Some(&ToolStatus::NotFound), None));
+  assert!(needs_install(
+    false,
+    Some(&ToolStatus::NotFound),
+    Some(&Version::new(3, 9, 6))
+  ));
 }
 
 #[test]
-fn test_needs_install_true_for_stale_tool() {
+fn test_needs_install_true_for_stale_tool_with_matching_pin() {
   let stale = ToolStatus::Stale {
     current: Version::new(3, 8, 1),
     pinned: Version::new(3, 9, 6),
   };
-  assert!(needs_install(true, Some(&stale)));
+  let matching_pin = Version::new(3, 9, 6);
+  assert!(needs_install(true, Some(&stale), Some(&matching_pin)));
+}
+
+#[test]
+fn test_needs_install_false_for_stale_tool_with_unpinned_selected_installer() {
+  // Fixes #11: When the selected installer has no inline pin (e.g. `brew`),
+  // running `fml install` cannot produce the pinned version — reinstall is skipped.
+  let stale = ToolStatus::Stale {
+    current: Version::new(3, 8, 1),
+    pinned: Version::new(3, 9, 6),
+  };
+  assert!(!needs_install(true, Some(&stale), None));
+}
+
+#[test]
+fn test_needs_install_false_for_stale_tool_with_mismatched_selected_installer_pin()
+ {
+  // If the available installer pins a different version than expected, reinstall is skipped.
+  let stale = ToolStatus::Stale {
+    current: Version::new(3, 8, 1),
+    pinned: Version::new(3, 9, 6),
+  };
+  let different_pin = Version::new(3, 8, 0);
+  assert!(!needs_install(true, Some(&stale), Some(&different_pin)));
 }
 
 #[test]
@@ -284,10 +322,11 @@ fn test_needs_install_false_for_version_matched_ready_tool() {
     current: Version::new(3, 9, 6),
     minimum: Version::new(2, 0, 0),
   };
-  assert!(!needs_install(true, Some(&compatible)));
+  let pin = Version::new(3, 9, 6);
+  assert!(!needs_install(true, Some(&compatible), Some(&pin)));
   // Present with no MSTV/pin registered at all (status: None) -- still
   // just READY, never reinstalled.
-  assert!(!needs_install(true, None));
+  assert!(!needs_install(true, None, None));
 }
 
 #[test]
@@ -299,7 +338,20 @@ fn test_needs_install_false_for_outdated_tool() {
     current: Version::new(1, 0, 0),
     minimum: Version::new(1, 4, 0),
   };
-  assert!(!needs_install(true, Some(&outdated)));
+  let pin = Version::new(1, 4, 0);
+  assert!(!needs_install(true, Some(&outdated), Some(&pin)));
+}
+
+#[test]
+fn test_stale_unpinnable_explanation() {
+  let expl = stale_unpinnable_explanation(
+    "prettier",
+    &Version::new(3, 8, 1),
+    &Version::new(3, 9, 6),
+  );
+  assert!(expl.contains("prettier is stale (v3.8.1 != pinned v3.9.6)"));
+  assert!(expl.contains("can't pin to v3.9.6"));
+  assert!(expl.contains("or accept this drift"));
 }
 
 #[test]
