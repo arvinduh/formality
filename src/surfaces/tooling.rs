@@ -413,9 +413,6 @@ const GOLANGCI_LINT_CHAIN: &[InstallMethod] = &[
   InstallMethod::GoInstall(
     "github.com/golangci/golangci-lint/v2/cmd/golangci-lint@v2.13.1",
   ),
-  InstallMethod::GoInstall(
-    "github.com/golangci/golangci-lint/cmd/golangci-lint@v1.64.8",
-  ),
 ];
 
 // ktlint ships as a prebuilt executable jar; there is no cargo fallback, so
@@ -488,7 +485,7 @@ struct ToolChain {
 ///
 /// `expected_binary_version` status per row, and why:
 /// - `Some(...)`: `typstyle`, `tinymist`, `ruff`, `prettier`, `biome`,
-///   `markdownlint-cli2`, `yamllint` — each ships its own CLI directly
+///   `markdownlint-cli2`, `yamllint`, `golangci-lint` — each ships its own CLI directly
 ///   (not a repackaging of some other project's binary) and every
 ///   registry-resolved pin in its chain agrees on the same version, so the
 ///   package-manager pin and the binary's self-reported version are the
@@ -507,14 +504,6 @@ struct ToolChain {
 ///   *module* version tag, not a tool release version — `goimports` has no
 ///   meaningful `--version` output to compare against at all). Treat these
 ///   the same as a confirmed mismatch until someone verifies otherwise.
-/// - `None`, deliberately-divergent chain: `golangci-lint` — its two
-///   `GoInstall` entries intentionally pin *different* real versions
-///   (`v2.13.1` on the v2 module path, `v1.64.8` as the legacy v1
-///   fallback) so a v1-only environment still gets something recent; that
-///   is by design, not chain drift, but it does mean "the one true pinned
-///   version" isn't well-defined for this tool under this scheme. The MSTV
-///   floor (`engine::version::mstv`) still catches a golangci-lint too old
-///   to function at all.
 /// - `None`, no registry-resolved pin to compare at all: `clang-tidy`,
 ///   `checkstyle`, `rustfmt`, `clippy-driver` — every entry in these chains
 ///   is an unpinned system-package-manager/rustup install.
@@ -605,7 +594,7 @@ const ALL_CHAINS: &[ToolChain] = &[
   ToolChain {
     binary: "golangci-lint",
     chain: GOLANGCI_LINT_CHAIN,
-    expected_binary_version: None,
+    expected_binary_version: Some(Version::new(2, 13, 1)),
   },
   ToolChain {
     binary: "ktlint",
@@ -818,6 +807,20 @@ mod tests {
         ]
       )
     );
+
+    let golangci = install_chain_for("golangci-lint").unwrap();
+    assert_eq!(golangci.len(), 3);
+    assert_eq!(
+      golangci[2].command(),
+      (
+        "go".to_string(),
+        vec![
+          "install".to_string(),
+          "github.com/golangci/golangci-lint/v2/cmd/golangci-lint@v2.13.1"
+            .to_string(),
+        ]
+      )
+    );
   }
 
   #[test]
@@ -856,6 +859,21 @@ mod tests {
       InstallMethod::GoInstall("golang.org/x/tools/cmd/goimports@v0.49.0")
         .pinned_version(),
       Some(Version::new(0, 49, 0))
+    );
+    assert_eq!(
+      InstallMethod::GoInstall(
+        "github.com/golangci/golangci-lint/v2/cmd/golangci-lint@v2.13.1"
+      )
+      .pinned_version(),
+      Some(Version::new(2, 13, 1))
+    );
+  }
+
+  #[test]
+  fn test_pinned_version_for_golangci_lint() {
+    assert_eq!(
+      pinned_version_for("golangci-lint"),
+      Some(Version::new(2, 13, 1))
     );
   }
 
@@ -993,9 +1011,7 @@ mod tests {
     // TAPLO_CHAIN's npm-vs-cargo-binstall pins used to do, silently), this
     // must fail loudly instead of quietly producing false `[STALE]`
     // verdicts again. A row with `expected_binary_version: None` is making
-    // no such claim, so internal disagreement there (e.g.
-    // GOLANGCI_LINT_CHAIN's deliberate v1/v2 fallback pins) is expected and
-    // not checked.
+    // no such claim.
     for entry in ALL_CHAINS {
       let Some(expected) = &entry.expected_binary_version else {
         continue;

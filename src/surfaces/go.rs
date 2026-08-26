@@ -160,14 +160,12 @@ pub fn build_golangci_lint_inline_args(linters: &[String]) -> Vec<String> {
 }
 
 /// Returns whether the installed `golangci-lint` accepts `--enable-only`
-/// (added in v2). This surface's own install fallback chain
-/// (`tooling::GOLANGCI_LINT_CHAIN`) still allows landing on a v1 install
-/// (its final fallback is `go install .../golangci-lint/cmd/golangci-lint`,
-/// the pre-v2 module path) — v1 doesn't have this flag, and passing it
-/// unconditionally would break `fml lint` outright for anyone on that
-/// version rather than just falling back to less-precise config. Probing
-/// `run --help`'s actual output avoids guessing at a version-string format
-/// that could itself drift.
+/// (added in v2). While `tooling::GOLANGCI_LINT_CHAIN` installs v2, users
+/// may already have an older v1 install on PATH — v1 doesn't have this flag,
+/// and passing it unconditionally would break `fml lint` outright for anyone
+/// on that version rather than just falling back to less-precise config.
+/// Probing `run --help`'s actual output avoids guessing at a version-string
+/// format that could itself drift.
 #[must_use]
 pub fn golangci_lint_supports_enable_only() -> bool {
   create_tool_command("golangci-lint")
@@ -522,9 +520,7 @@ impl LanguageSurface for GoSurface {
   // directly) — and for anyone still on golangci-lint v1, where
   // `golangci_lint_supports_enable_only()` returns false and `lint()`
   // gracefully falls back to whatever `.golangci.yml` is on disk instead of
-  // passing an unrecognized flag (v1 remains reachable via this surface's
-  // own install fallback chain, `tooling::GOLANGCI_LINT_CHAIN`'s last
-  // entry).
+  // passing an unrecognized flag.
   fn sync_config(&self, ctx: &ExecutionContext, check: bool) -> SurfaceResult {
     let start = Instant::now();
     sync_native_config::<GolangciLintConfig>(ctx, check, start, self.name())
@@ -779,9 +775,8 @@ mod tests {
   fn test_golangci_lint_supports_enable_only_matches_installed_binary() {
     // Not a hardcoded assertion either way — this just confirms the probe
     // doesn't panic and its result is consistent with a direct check
-    // against the same binary this test environment actually has (v1's
-    // fallback path in tooling::GOLANGCI_LINT_CHAIN means this can't assume
-    // v2 is what's on PATH).
+    // against the same binary this test environment actually has (when
+    // golangci-lint is on PATH).
     if !check_binary_exists("golangci-lint") {
       return;
     }
