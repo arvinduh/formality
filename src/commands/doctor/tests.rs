@@ -323,3 +323,11 @@ fn test_doctor_schema_version_check_uptodate() {
     }
   );
 }
+
+#[test]
+fn test_pinned_version_for_golangci_lint() {
+  assert_eq!(
+    crate::surfaces::pinned_version_for("golangci-lint"),
+    Some(Version::new(2, 13, 1))
+  );
+}
