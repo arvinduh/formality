@@ -89,9 +89,9 @@ or merge.
        `cargo clippy --all-targets -- -D warnings` and full unit/integration
        test suite (`cargo test --verbose`).
     2. `Formality Dogfooding`: `fml fmt --check` and `fml lint` against this
-       repo, plus schema-drift verification
-       (`fml schema --output schema/formality.schema.json && fml fmt schema/formality.schema.json && git diff --exit-code`)
-       and `SCHEMA_VERSION` progression enforcement in `src/config/schema.rs`.
+       repo, plus schema-drift verification (`fml schema --output ...` /
+       `fml fmt` / `git diff --exit-code`) and `SCHEMA_VERSION` progression
+       enforcement in `src/config/schema.rs`.
     3. `Security Audit`: `cargo audit`.
 - Before every commit: standard presubmit command suite:
   `cargo test --lib -q && cargo clippy --all-targets -- -D warnings`, dogfooded
