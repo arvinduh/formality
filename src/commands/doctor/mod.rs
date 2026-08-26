@@ -321,16 +321,10 @@ pub fn run_doctor(
     }
   };
 
-  let (
-    doctor_table,
-    missing_unique_tools,
-    installed_unique_tools,
-    outdated_unique_tools,
-    stale_unique_tools,
-  ) = scan_tools_and_build_table(&surfaces, config);
+  let scan = scan_tools_and_build_table(&surfaces, config);
 
   let palette = Palette::detect();
-  let rendered_table = render(&doctor_table, &palette);
+  let rendered_table = render(&scan.table, &palette);
   let separator = crate::ui::table::separator_for_content(&rendered_table);
 
   println!(
@@ -363,11 +357,11 @@ pub fn run_doctor(
   // selected installer carries a matching pin are reinstalled. If a stale tool's
   // selected installer cannot pin to `expected_binary_version`, reinstall is
   // skipped and explained (#11).
-  let mut to_install: Vec<ToolInfo> = missing_unique_tools.clone();
+  let mut to_install: Vec<ToolInfo> = scan.missing.clone();
   let mut unpinnable_stale_tools: Vec<(ToolInfo, Version, Version)> =
     Vec::new();
 
-  for tool in &stale_unique_tools {
+  for tool in &scan.stale {
     let expected = crate::surfaces::pinned_version_for(tool.binary);
     let selected_pin =
       crate::surfaces::selected_pinned_version_for(tool.binary);
@@ -394,34 +388,37 @@ pub fn run_doctor(
   }
 
   println!("{}", separator.dimmed());
-  let outdated_str = if outdated_unique_tools.is_empty() {
+  let outdated_str = if scan.outdated.is_empty() {
     String::new()
   } else {
-    format!(" ({} outdated)", outdated_unique_tools.len())
+    format!(" ({} outdated)", scan.outdated.len())
       .yellow()
       .to_string()
   };
-  let stale_str = if stale_unique_tools.is_empty() {
+  let stale_str = if scan.stale.is_empty() {
     String::new()
   } else {
-    format!(" ({} stale)", stale_unique_tools.len())
+    format!(" ({} stale)", scan.stale.len())
+      .yellow()
+      .to_string()
+  };
+  let unknown_str = if scan.unknown.is_empty() {
+    String::new()
+  } else {
+    format!(" ({} unknown)", scan.unknown.len())
       .yellow()
       .to_string()
   };
   println!(
-    "  {} installed{}{}, {} missing{}\n",
-    installed_unique_tools.len().to_string().green().bold(),
+    "  {} installed{}{}{}, {} missing{}\n",
+    scan.installed.len().to_string().green().bold(),
     outdated_str,
     stale_str,
-    if missing_unique_tools.is_empty() {
+    unknown_str,
+    if scan.missing.is_empty() {
       "0".green().bold().to_string()
     } else {
-      missing_unique_tools
-        .len()
-        .to_string()
-        .yellow()
-        .bold()
-        .to_string()
+      scan.missing.len().to_string().yellow().bold().to_string()
     },
     if !to_install.is_empty() && !install {
       " (run 'fml install' to install missing/stale tools)"
@@ -432,7 +429,7 @@ pub fn run_doctor(
     }
   );
 
-  if (missing_unique_tools.is_empty() || install) && !install_failed {
+  if (scan.missing.is_empty() || install) && !install_failed {
     ExitStatus::Clean
   } else {
     ExitStatus::Error
@@ -497,15 +494,16 @@ fn lookup_tool_info(binary: &'static str) -> ToolLookupResult {
     // against — a tool with neither (no MSTV entry, no known pin) keeps the
     // prior behavior of `status: None`, rendered as a plain `[READY]` by
     // `scan_tools_and_build_table`'s catch-all arm.
-    let status = if mstv.is_some() || pinned.is_some() {
-      Some(evaluate_tool_status(
-        parsed_version.clone(),
+    let status = match parsed_version.clone() {
+      Some(curr) => Some(evaluate_tool_status(
+        Some(curr),
         raw_version.clone(),
         mstv.as_ref(),
         pinned.as_ref(),
-      ))
-    } else {
-      None
+      )),
+      None => Some(ToolStatus::UnknownVersion(
+        raw_version.clone().unwrap_or_default(),
+      )),
     };
 
     ToolLookupResult {
@@ -526,16 +524,19 @@ fn lookup_tool_info(binary: &'static str) -> ToolLookupResult {
   }
 }
 
+struct DoctorScanResult {
+  table: Table,
+  missing: Vec<ToolInfo>,
+  installed: HashSet<&'static str>,
+  outdated: HashSet<&'static str>,
+  stale: Vec<ToolInfo>,
+  unknown: HashSet<&'static str>,
+}
+
 fn scan_tools_and_build_table(
   surfaces: &[Box<dyn LanguageSurface>],
   config: &FormalityConfig,
-) -> (
-  Table,
-  Vec<ToolInfo>,
-  HashSet<&'static str>,
-  HashSet<&'static str>,
-  Vec<ToolInfo>,
-) {
+) -> DoctorScanResult {
   let mut cache: HashMap<&'static str, ToolLookupResult> = HashMap::new();
   let mut missing_unique_tools: Vec<ToolInfo> = Vec::new();
   let mut installed_unique_tools = HashSet::new();
@@ -546,9 +547,10 @@ fn scan_tools_and_build_table(
   // `installed_unique_tools`/`outdated_unique_tools`) because `fml install`
   // needs the full `ToolInfo` to reinstall it, same as `missing_unique_tools`.
   let mut stale_unique_tools: Vec<ToolInfo> = Vec::new();
+  let mut unknown_unique_tools = HashSet::new();
 
   let mut doctor_table = Table::new(vec![
-    Column::new(Cell::text("")).width(WidthPolicy::Fixed(8)),
+    Column::new(Cell::text("")).width(WidthPolicy::Fixed(10)),
     Column::new(Cell::text("")).width(WidthPolicy::Fixed(20)),
     Column::new(Cell::text("")).width(WidthPolicy::Fixed(10)),
     Column::new(Cell::text("")).width(WidthPolicy::Auto),
@@ -611,6 +613,24 @@ fn scan_tools_and_build_table(
               ]);
               doctor_table.add_row(row);
             }
+            Some(ToolStatus::UnknownVersion(raw)) => {
+              unknown_unique_tools.insert(tool.binary);
+              let v_info = if raw.trim().is_empty() {
+                " (version unprobeable)".to_string()
+              } else {
+                format!(" ({})", raw.trim())
+              };
+              let row = Row::new(vec![
+                Cell::styled("[UNKNOWN]", Style::Warn),
+                Cell::styled(tool.binary, Style::Warn),
+                Cell::styled(surface.name(), Style::Dim),
+                Cell::new(vec![
+                  Span::styled(path_str, Style::Dim),
+                  Span::styled(v_info, Style::Warn),
+                ]),
+              ]);
+              doctor_table.add_row(row);
+            }
             _ => {
               let v_info = if let Some(ref v) = lookup.parsed_version {
                 format!(" (v{v})")
@@ -646,13 +666,14 @@ fn scan_tools_and_build_table(
     }
   }
 
-  (
-    doctor_table,
-    missing_unique_tools,
-    installed_unique_tools,
-    outdated_unique_tools,
-    stale_unique_tools,
-  )
+  DoctorScanResult {
+    table: doctor_table,
+    missing: missing_unique_tools,
+    installed: installed_unique_tools,
+    outdated: outdated_unique_tools,
+    stale: stale_unique_tools,
+    unknown: unknown_unique_tools,
+  }
 }
 
 fn print_unconfigured_languages(

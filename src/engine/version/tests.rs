@@ -641,3 +641,18 @@ fn test_live_probe_rustfmt() {
     assert!(status.is_compatible(), "rustfmt should satisfy MSTV 1.4.0");
   }
 }
+
+#[test]
+fn test_tool_status_unknown_version_display_and_predicates() {
+  let status_raw = ToolStatus::UnknownVersion("nightly-2026".to_string());
+  assert!(status_raw.is_unknown_version());
+  assert!(!status_raw.is_compatible());
+  assert!(!status_raw.is_not_found());
+  assert_eq!(status_raw.to_string(), "Unknown Version (nightly-2026)");
+
+  let status_empty = ToolStatus::UnknownVersion(String::new());
+  assert!(status_empty.is_unknown_version());
+  assert!(!status_empty.is_compatible());
+  assert!(!status_empty.is_not_found());
+  assert_eq!(status_empty.to_string(), "Unknown Version (probe failed)");
+}
