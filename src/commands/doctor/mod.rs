@@ -44,7 +44,7 @@ pub fn install_missing_tools(missing: &[ToolInfo]) -> bool {
 
   let separator = crate::ui::table::separator_line(0);
   println!("\n{}", separator.dimmed());
-  println!("{}", "Auto-installing Missing Toolchains:".bold().cyan());
+  println!("{}", "Installing Missing / Stale Toolchains:".bold().cyan());
 
   let mut all_ok = true;
 
@@ -63,11 +63,48 @@ pub fn install_missing_tools(missing: &[ToolInfo]) -> bool {
 
       match cmd.status() {
         Ok(status) if status.success() => {
-          println!(
-            "    {} Successfully installed {}",
-            "[OK]  ".green().bold(),
-            tool.binary.bold()
-          );
+          // Convergence guard: a successful install exit code only proves
+          // the package manager *ran* to completion, not that the binary it
+          // produced actually reports the pinned version — re-probe and
+          // warn (once, this invocation) rather than silently claiming
+          // success on a tool that would still show `[STALE]` on the very
+          // next `fml doctor`. This can only fire for a legitimately
+          // misconfigured pin now (an `expected_binary_version` that
+          // doesn't actually match what gets installed) -- see
+          // `surfaces::tooling::ToolChain`'s doc comment for why most tools
+          // deliberately opt out of the pin comparison entirely rather than
+          // risk exactly this.
+          if let Some(expected) =
+            crate::surfaces::pinned_version_for(tool.binary)
+          {
+            let actual = probe_tool_version(tool.binary);
+            if actual.as_ref() == Some(&expected) {
+              println!(
+                "    {} Successfully installed {} ({expected})",
+                "[OK]  ".green().bold(),
+                tool.binary.bold()
+              );
+            } else {
+              let actual_str = actual
+                .map(|v| v.to_string())
+                .unwrap_or_else(|| "an unparseable version".to_string());
+              println!(
+                "    {} Installed {}, but it still reports {actual_str} \
+                 (expected {expected}) -- the pin for this tool may not \
+                 match what the binary itself reports; not retrying \
+                 automatically.",
+                "[WARN]".yellow().bold(),
+                tool.binary.bold()
+              );
+              all_ok = false;
+            }
+          } else {
+            println!(
+              "    {} Successfully installed {}",
+              "[OK]  ".green().bold(),
+              tool.binary.bold()
+            );
+          }
         }
         Ok(status) => {
           println!(

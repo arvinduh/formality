@@ -120,14 +120,6 @@ impl ToolInfo {
       .find(|method| method.is_available())
       .map(tooling::InstallMethod::command)
   }
-
-  /// The exact version `fml install` would pin this tool to right now, per
-  /// [`tooling::pinned_version_for`] — `None` when no pin is known (see that
-  /// function's doc for why that's a normal, non-error outcome).
-  #[must_use]
-  pub fn pinned_version(&self) -> Option<crate::engine::version::Version> {
-    tooling::pinned_version_for(self.binary)
-  }
 }
 
 /// Outcome status resulting from running a tool operation on a surface.

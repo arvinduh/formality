@@ -556,34 +556,6 @@ pub fn evaluate_tool_status(
   }
 }
 
-/// Probes `binary` fresh (spawning its `--version` subprocess) and combines
-/// the MSTV-floor and exact-pin checks via [`evaluate_tool_status`]. Prefer
-/// this over calling [`check_tool_compatibility`] and a separate pin check
-/// back to back — this probes the binary exactly once.
-#[must_use]
-pub fn check_tool_status(
-  binary: &str,
-  minimum: Option<&Version>,
-  pinned: Option<&Version>,
-) -> ToolStatus {
-  if which::which(binary).is_err() {
-    if binary == "clippy" {
-      if which::which("clippy-driver").is_err()
-        && which::which("cargo").is_err()
-      {
-        return ToolStatus::NotFound;
-      }
-    } else {
-      return ToolStatus::NotFound;
-    }
-  }
-
-  let raw = get_raw_tool_version(binary);
-  let probed = probe_tool_version(binary);
-
-  evaluate_tool_status(probed, raw, minimum, pinned)
-}
-
 /// Check the compatibility status of an installed tool against a minimum required version.
 #[must_use]
 pub fn check_tool_compatibility(binary: &str, minimum: &Version) -> ToolStatus {

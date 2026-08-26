@@ -618,16 +618,6 @@ fn test_evaluate_tool_status_unparsed_version_fails_soft_to_unknown() {
 }
 
 #[test]
-fn test_check_tool_status_missing_tool_is_not_found() {
-  let status = check_tool_status(
-    "nonexistent_binary_xyz_456",
-    Some(&Version::new(1, 0, 0)),
-    Some(&Version::new(1, 0, 0)),
-  );
-  assert_eq!(status, ToolStatus::NotFound);
-}
-
-#[test]
 fn test_tool_status_stale_display_and_predicate() {
   let status = ToolStatus::Stale {
     current: Version::new(3, 8, 1),
