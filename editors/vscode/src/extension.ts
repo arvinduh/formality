@@ -21,7 +21,7 @@ const SUPPORTED_LANGUAGES = [
   "typst",
 ];
 
-let outputChannel: vscode.OutputChannel;
+let outputChannel: vscode.LogOutputChannel;
 let client: LanguageClient | undefined;
 // Fallback formatting provider, only registered per-language if the LSP
 // client fails to start (e.g. an old or missing `fml` binary that doesn't
@@ -29,7 +29,9 @@ let client: LanguageClient | undefined;
 let fallbackFormattingProviders: vscode.Disposable[] = [];
 
 export async function activate(context: vscode.ExtensionContext) {
-  outputChannel = vscode.window.createOutputChannel("Formality");
+  outputChannel = vscode.window.createOutputChannel("Formality", {
+    log: true,
+  });
   context.subscriptions.push(outputChannel);
 
   // Status bar item
