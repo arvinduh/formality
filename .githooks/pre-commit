@@ -1,8 +1,9 @@
 #!/usr/bin/env bash
 # formality pre-commit hook
 # Activated via: git config core.hooksPath .githooks
-# Or automatically during project setup: fml init sets this up for you.
 set -euo pipefail
+
+cargo build -q --bin fml
 
 if [ -x "./target/debug/fml" ]; then
   FML="./target/debug/fml"
@@ -14,4 +15,3 @@ fi
 
 "$FML" fmt --staged
 "$FML" lint --staged
-

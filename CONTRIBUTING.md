@@ -15,6 +15,7 @@ maintainable, consistent, and reliable.
 - [Local Setup](#local-setup)
 - [Repository Structure](#repository-structure)
 - [Testing & Presubmit Checks](#testing--presubmit-checks)
+- [Git Pre-Commit Hook](#git-pre-commit-hook)
 - [Pull Request Process](#pull-request-process)
 - [Commit Message Guidelines](#commit-message-guidelines)
 - [Rules & Guidelines](#rules--guidelines)
@@ -128,6 +129,30 @@ cargo run -q -- sync --check
    repository.
 4. `cargo run -q -- sync --check`: Verifies that native tool configurations
    match canonical `formality.toml` settings without drift.
+
+---
+
+## Git Pre-Commit Hook
+
+A pre-commit hook is provided in `.githooks/pre-commit` to automatically run
+fast formatting and linting sanity checks on staged files before committing.
+
+### Enabling the Hook
+
+To activate the hook for your local clone, configure Git's hooks path:
+
+```bash
+git config core.hooksPath .githooks
+```
+
+### What It Runs
+
+When triggered on `git commit`, the hook:
+
+1. Builds the local binary fresh with `cargo build -q --bin fml` (exiting with
+   failure if the build fails).
+2. Runs mechanical formatting on staged files: `$FML fmt --staged`.
+3. Runs semantic linting on staged files: `$FML lint --staged`.
 
 ---
 
