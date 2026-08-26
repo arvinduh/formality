@@ -372,6 +372,19 @@ pub enum ToolStatus {
   NotFound,
   /// Tool version string could not be parsed into semver.
   UnknownVersion(String),
+  /// Installed tool version is present, executable, and at/above the MSTV
+  /// floor, but does not match the exact version `fml install` pins for
+  /// this tool (`src/surfaces/tooling.rs`'s install chains) — e.g. a stale
+  /// system-wide install that predates the pin. Distinct from `Outdated`:
+  /// an `Outdated` tool may not even work; a `Stale` one works, it's just
+  /// not the bit-for-bit version CI will run, so its formatting/linting
+  /// output can silently disagree with CI's.
+  Stale {
+    /// Currently installed version.
+    current: Version,
+    /// Exact version `fml install` pins this tool to.
+    pinned: Version,
+  },
 }
 
 impl ToolStatus {
@@ -398,6 +411,12 @@ impl ToolStatus {
   pub fn is_unknown_version(&self) -> bool {
     matches!(self, ToolStatus::UnknownVersion(_))
   }
+
+  /// Returns `true` if tool status is [`ToolStatus::Stale`].
+  #[must_use]
+  pub fn is_stale(&self) -> bool {
+    matches!(self, ToolStatus::Stale { .. })
+  }
 }
 
 impl fmt::Display for ToolStatus {
@@ -412,6 +431,9 @@ impl fmt::Display for ToolStatus {
       ToolStatus::NotFound => write!(f, "Not Found"),
       ToolStatus::UnknownVersion(raw) => {
         write!(f, "Unknown Version ({})", raw.trim())
+      }
+      ToolStatus::Stale { current, pinned } => {
+        write!(f, "Stale ({current} != pinned {pinned})")
       }
     }
   }
@@ -483,6 +505,83 @@ impl CompatibilityPolicy {
       _ => ToolStatus::NotFound,
     }
   }
+}
+
+/// Combines the MSTV-floor check and the exact-pin check into a single
+/// status, given an already-probed current version and raw version banner
+/// (callers that already have these from a prior probe pass them straight
+/// through instead of re-spawning the tool's `--version` subprocess).
+///
+/// `minimum` and `pinned` are both optional and independent — a tool may
+/// have an MSTV entry but no pin (or vice versa; see
+/// `src/surfaces/tooling.rs`'s pinned-versions note for why some install
+/// chains carry no inline version at all). Precedence when a tool trips both
+/// checks: [`ToolStatus::Outdated`] (below the floor — may not even work)
+/// wins over [`ToolStatus::Stale`] (present, above the floor, just not the
+/// exact pin) — both are worse than [`ToolStatus::Compatible`].
+#[must_use]
+pub fn evaluate_tool_status(
+  current: Option<Version>,
+  raw_output: Option<String>,
+  minimum: Option<&Version>,
+  pinned: Option<&Version>,
+) -> ToolStatus {
+  match current {
+    Some(curr) => {
+      if let Some(min) = minimum
+        && curr < *min
+      {
+        return ToolStatus::Outdated {
+          current: curr,
+          minimum: min.clone(),
+        };
+      }
+      if let Some(pin) = pinned
+        && curr != *pin
+      {
+        return ToolStatus::Stale {
+          current: curr,
+          pinned: pin.clone(),
+        };
+      }
+      ToolStatus::Compatible {
+        current: curr.clone(),
+        minimum: minimum.cloned().unwrap_or(curr),
+      }
+    }
+    None => match raw_output {
+      Some(raw) if !raw.trim().is_empty() => ToolStatus::UnknownVersion(raw),
+      _ => ToolStatus::NotFound,
+    },
+  }
+}
+
+/// Probes `binary` fresh (spawning its `--version` subprocess) and combines
+/// the MSTV-floor and exact-pin checks via [`evaluate_tool_status`]. Prefer
+/// this over calling [`check_tool_compatibility`] and a separate pin check
+/// back to back — this probes the binary exactly once.
+#[must_use]
+pub fn check_tool_status(
+  binary: &str,
+  minimum: Option<&Version>,
+  pinned: Option<&Version>,
+) -> ToolStatus {
+  if which::which(binary).is_err() {
+    if binary == "clippy" {
+      if which::which("clippy-driver").is_err()
+        && which::which("cargo").is_err()
+      {
+        return ToolStatus::NotFound;
+      }
+    } else {
+      return ToolStatus::NotFound;
+    }
+  }
+
+  let raw = get_raw_tool_version(binary);
+  let probed = probe_tool_version(binary);
+
+  evaluate_tool_status(probed, raw, minimum, pinned)
 }
 
 /// Check the compatibility status of an installed tool against a minimum required version.

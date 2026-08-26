@@ -3,6 +3,7 @@
 //! Windows-aware `Command` construction.
 
 use super::{SurfaceResult, SurfaceStatus};
+use crate::engine::version::Version;
 use std::collections::HashMap;
 use std::sync::{Mutex, OnceLock};
 use std::time::Instant;
@@ -169,6 +170,45 @@ impl InstallMethod {
         "go".to_string(),
         vec!["install".to_string(), pkg.to_string()],
       ),
+    }
+  }
+
+  /// The exact version this specific install method pins to, parsed from
+  /// its package spec, when that spec embeds one. Covers every
+  /// pinning-syntax family declared on the variants above: npm-family
+  /// `name@version` (scoped `@scope/name@version` too — the split is on the
+  /// *last* `@`, so the scope's leading `@` is untouched), pip-family
+  /// `name==version`, and cargo/cargo-binstall/`go install`'s `name@version`.
+  /// System package managers (apt/brew/scoop/winget) and
+  /// `rustup component add` never carry an inline version — see the
+  /// "Pinned tool versions" note below — so those return `None`, same as a
+  /// spec whose trailing segment doesn't parse as a version at all.
+  #[must_use]
+  pub(super) fn pinned_version(&self) -> Option<Version> {
+    match self {
+      InstallMethod::CargoBinstall(pkg)
+      | InstallMethod::Npm(pkg)
+      | InstallMethod::Pnpm(pkg)
+      | InstallMethod::Yarn(pkg)
+      | InstallMethod::Bun(pkg)
+      | InstallMethod::GoInstall(pkg) => {
+        pkg.rsplit_once('@').and_then(|(_, v)| Version::parse(v))
+      }
+      InstallMethod::Uv(pkg)
+      | InstallMethod::Pipx(pkg)
+      | InstallMethod::Pip(pkg)
+      | InstallMethod::Pip3(pkg) => {
+        pkg.rsplit_once("==").and_then(|(_, v)| Version::parse(v))
+      }
+      InstallMethod::Cargo { package, .. } => package
+        .rsplit_once('@')
+        .and_then(|(_, v)| Version::parse(v)),
+      InstallMethod::Apt(_)
+      | InstallMethod::Brew(_)
+      | InstallMethod::Scoop(_)
+      | InstallMethod::WingetName(_)
+      | InstallMethod::WingetId(_)
+      | InstallMethod::Rustup(_) => None,
     }
   }
 }
@@ -444,6 +484,25 @@ pub(super) fn install_chain_for(
     .map(|(_, chain)| *chain)
 }
 
+/// The version `fml install` would pin `binary` to right now: the pin
+/// carried by the first install method in its chain (per
+/// [`install_chain_for`]) whose backing package manager is actually
+/// available, mirroring exactly the selection
+/// [`super::ToolInfo::get_auto_install_cmd`] makes. Returns `None` — a "no
+/// known pin" result, not an error — when the tool has no registered chain,
+/// no installer in its chain is currently available, or the available
+/// installer is one of the unpinned system-package-manager entries (see the
+/// "Pinned tool versions" note above [`ALL_CHAINS`]). Callers (`fml
+/// doctor`'s `[STALE]` check) must treat `None` as "skip the pin
+/// comparison", never crash on it.
+#[must_use]
+pub fn pinned_version_for(binary: &str) -> Option<Version> {
+  install_chain_for(binary)?
+    .iter()
+    .find(|method| method.is_available())
+    .and_then(InstallMethod::pinned_version)
+}
+
 static BINARY_CACHE: OnceLock<Mutex<HashMap<String, bool>>> = OnceLock::new();
 
 /// Returns whether `binary` is resolvable on `PATH`, memoized per-process so
@@ -604,6 +663,93 @@ mod tests {
         ]
       )
     );
+  }
+
+  #[test]
+  fn test_pinned_version_parses_registry_pin_syntaxes() {
+    // npm-family `name@version`.
+    assert_eq!(
+      InstallMethod::Npm("prettier@3.9.6").pinned_version(),
+      Some(Version::new(3, 9, 6))
+    );
+    // Scoped npm `@scope/name@version` -- must split on the *last* `@`, not
+    // the scope's leading one.
+    assert_eq!(
+      InstallMethod::Npm("@taplo/cli@0.7.0").pinned_version(),
+      Some(Version::new(0, 7, 0))
+    );
+    // pip-family `name==version`.
+    assert_eq!(
+      InstallMethod::Uv("ruff==0.16.4").pinned_version(),
+      Some(Version::new(0, 16, 4))
+    );
+    // cargo/cargo-binstall `name@version`.
+    assert_eq!(
+      InstallMethod::CargoBinstall("taplo-cli@0.10.0").pinned_version(),
+      Some(Version::new(0, 10, 0))
+    );
+    assert_eq!(
+      InstallMethod::Cargo {
+        package: "taplo-cli@0.10.0",
+        locked: true,
+      }
+      .pinned_version(),
+      Some(Version::new(0, 10, 0))
+    );
+    // `go install` `name@vVERSION` -- leading `v` must be stripped.
+    assert_eq!(
+      InstallMethod::GoInstall("golang.org/x/tools/cmd/goimports@v0.49.0")
+        .pinned_version(),
+      Some(Version::new(0, 49, 0))
+    );
+  }
+
+  #[test]
+  fn test_pinned_version_none_for_unpinned_system_managers() {
+    // apt/brew/scoop/winget/rustup never carry an inline version -- see the
+    // "Pinned tool versions" note above ALL_CHAINS.
+    assert_eq!(InstallMethod::Apt("prettier").pinned_version(), None);
+    assert_eq!(InstallMethod::Brew("prettier").pinned_version(), None);
+    assert_eq!(InstallMethod::Scoop("prettier").pinned_version(), None);
+    assert_eq!(
+      InstallMethod::WingetName("Prettier.Prettier").pinned_version(),
+      None
+    );
+    assert_eq!(
+      InstallMethod::WingetId("tamasfe.taplo").pinned_version(),
+      None
+    );
+    assert_eq!(InstallMethod::Rustup("rustfmt").pinned_version(), None);
+  }
+
+  #[test]
+  fn test_pinned_version_none_for_unversioned_package_spec() {
+    // A package spec with no `@`/`==` at all (e.g. the unpinned npm entries
+    // #195 documents as deliberately left bare) must not be misparsed --
+    // None, not a crash or a bogus version.
+    assert_eq!(
+      InstallMethod::Npm("@myriaddreamin/tinymist").pinned_version(),
+      None
+    );
+  }
+
+  #[test]
+  fn test_pinned_version_for_unregistered_tool_is_none() {
+    // No install chain at all for this binary: fail soft to None, never
+    // panic -- this is the "no pinned version configured" edge case #5
+    // calls out explicitly.
+    assert_eq!(pinned_version_for("totally-unregistered-tool-xyz"), None);
+  }
+
+  #[test]
+  fn test_pinned_version_for_registered_chain_never_panics() {
+    // Smoke test across the whole registry: whether or not any installer in
+    // a chain is actually available on this test machine, resolving the pin
+    // must never panic -- it's allowed to return None (no installer
+    // available / available one is unpinned), just not crash `fml doctor`.
+    for &(binary, _) in ALL_CHAINS {
+      let _ = pinned_version_for(binary);
+    }
   }
 
   #[test]

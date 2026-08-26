@@ -60,7 +60,7 @@ pub use registry::{
 pub use sync::{diff_check_via_tempcopy, is_auto_generated, sync_file_helper};
 pub use tooling::{
   check_binary_exists, create_tool_command, has_cargo_binstall,
-  tool_missing_result,
+  pinned_version_for, tool_missing_result,
 };
 
 /// Execution context shared with every [`LanguageSurface`] invocation for a
@@ -119,6 +119,14 @@ impl ToolInfo {
       .iter()
       .find(|method| method.is_available())
       .map(tooling::InstallMethod::command)
+  }
+
+  /// The exact version `fml install` would pin this tool to right now, per
+  /// [`tooling::pinned_version_for`] — `None` when no pin is known (see that
+  /// function's doc for why that's a normal, non-error outcome).
+  #[must_use]
+  pub fn pinned_version(&self) -> Option<crate::engine::version::Version> {
+    tooling::pinned_version_for(self.binary)
   }
 }
 

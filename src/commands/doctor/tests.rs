@@ -256,6 +256,52 @@ fn test_lookup_tool_info_clippy_live_probe() {
   assert_eq!(result.is_installed, clippy_functional);
 }
 
+/// Regression coverage for #5: `fml install`'s "already satisfied, skip"
+/// decision (`preflight_install`, and `fml doctor`'s auto-install path) must
+/// treat a `[STALE]` tool the same as a genuinely `[MISS]`ing one, and must
+/// leave a matching `[READY]` tool alone. `needs_install` is the pure
+/// decision function both paths route through -- tested directly here so
+/// the reinstall trigger doesn't depend on a real stale/pinned binary
+/// existing on the test machine's `PATH`.
+#[test]
+fn test_needs_install_true_for_missing_tool() {
+  assert!(needs_install(false, None));
+  assert!(needs_install(false, Some(&ToolStatus::NotFound)));
+}
+
+#[test]
+fn test_needs_install_true_for_stale_tool() {
+  let stale = ToolStatus::Stale {
+    current: Version::new(3, 8, 1),
+    pinned: Version::new(3, 9, 6),
+  };
+  assert!(needs_install(true, Some(&stale)));
+}
+
+#[test]
+fn test_needs_install_false_for_version_matched_ready_tool() {
+  let compatible = ToolStatus::Compatible {
+    current: Version::new(3, 9, 6),
+    minimum: Version::new(2, 0, 0),
+  };
+  assert!(!needs_install(true, Some(&compatible)));
+  // Present with no MSTV/pin registered at all (status: None) -- still
+  // just READY, never reinstalled.
+  assert!(!needs_install(true, None));
+}
+
+#[test]
+fn test_needs_install_false_for_outdated_tool() {
+  // Below the MSTV floor is a real problem `fml doctor` already surfaces as
+  // `[WARN]`, but it is not what `fml install`'s missing/stale reinstall
+  // path is for -- unaffected by this change, same as before.
+  let outdated = ToolStatus::Outdated {
+    current: Version::new(1, 0, 0),
+    minimum: Version::new(1, 4, 0),
+  };
+  assert!(!needs_install(true, Some(&outdated)));
+}
+
 #[test]
 fn test_doctor_schema_version_check_uptodate() {
   let temp = tempdir().unwrap();
