@@ -16,6 +16,39 @@ jobs:
       - name: Checkout repository
         uses: actions/checkout@v7
 
+      - name: Validate tag matches SCHEMA_VERSION
+        # The pushed tag (s{major}.{minor}) must match the SCHEMA_VERSION
+        # this build's schema is generated from - otherwise the release
+        # artifact and the tag consumers pin (`#:schema .../s{major}.{minor}/
+        # formality.schema.json`) disagree (see #185).
+        #
+        # Whitespace is squashed before matching (rather than matching the
+        # const declaration as one literal line) because rustfmt
+        # (max_width = 80 in this repo's .rustfmt.toml) reformats
+        # `SchemaVersion { major: 1, minor: 0 }` onto multiple lines once
+        # either number needs 2 digits - verified locally. A single-line
+        # regex would then match nothing, silently, under this step's
+        # `set -e`. Do not "simplify" this back to a one-line match.
+        run: |
+          tag="${{ github.ref_name }}"
+          tag_version="${tag#s}"
+
+          squashed=$(tr -d ' \n' < src/config/schema.rs)
+          src_major=$(echo "$squashed" | grep -oP 'SCHEMA_VERSION:SchemaVersion=SchemaVersion\{major:\K\d+' || true)
+          src_minor=$(echo "$squashed" | grep -oP 'SCHEMA_VERSION:SchemaVersion=SchemaVersion\{major:\d+,minor:\K\d+' || true)
+
+          if [ -z "$src_major" ] || [ -z "$src_minor" ]; then
+            echo "::error file=src/config/schema.rs::could not parse SCHEMA_VERSION from src/config/schema.rs (major='$src_major' minor='$src_minor'). Has the SCHEMA_VERSION declaration been reformatted in a way the extraction pattern doesn't handle? Update the pattern in .github/workflows/schema-release.yml."
+            exit 1
+          fi
+
+          src_full="${src_major}.${src_minor}"
+          if [ "$tag_version" != "$src_full" ]; then
+            echo "::error::Tag '${tag}' does not match SCHEMA_VERSION ${src_full} in src/config/schema.rs. Expected tag 's${src_full}'."
+            exit 1
+          fi
+          echo "Tag '${tag}' matches SCHEMA_VERSION ${src_full} - OK."
+
       - name: Set up Rust toolchain
         # Pinned to match rust-toolchain.toml; bump both together.
         uses: dtolnay/rust-toolchain@1.97.1

@@ -27,7 +27,10 @@ name: PR Check
 #      formality.toml; it never inspects source file contents, so it can't
 #      catch a Prettier-reformatted Markdown code fence. That's why the
 #      full fmt --check / lint pass stays here rather than narrowing to
-#      sync --check alone (see #184 discussion / design note).
+#      sync --check alone (see #184 discussion / design note). This job also
+#      asserts the checked-in schema/formality.schema.json has no drift from
+#      what the freshly built binary generates, and that any change to it is
+#      paired with a SCHEMA_VERSION bump in src/config/schema.rs (see #185).
 #   3. Security Audit - cargo audit against the advisory database.
 #
 # "Library Tests" is the required branch-protection status check name -
@@ -122,6 +125,81 @@ jobs:
 
       - name: Lint surfaces
         run: ./target/debug/fml lint
+
+      - name: Check schema drift
+        # Regenerate schema/formality.schema.json from the freshly built
+        # binary and assert it matches what's checked in. tests/schema_drift.rs
+        # (Job 1) already asserts this in-process via generate_schema(); this
+        # step is a CI-visible surface for the same invariant against this
+        # repo's own committed artifact, exercising the real `fml schema` CLI
+        # path rather than the library function directly (see #185). The raw
+        # CLI output isn't prettier-formatted, so `fml fmt` runs on it first
+        # to match how the committed file is actually produced/formatted.
+        run: |
+          ./target/debug/fml schema --output schema/formality.schema.json
+          ./target/debug/fml fmt schema/formality.schema.json
+          git diff --exit-code schema/formality.schema.json
+
+      - name: Enforce schema version progression
+        # If schema/formality.schema.json actually changed relative to main,
+        # SCHEMA_VERSION in src/config/schema.rs must have INCREASED (not just
+        # differed) - a schema edit without a forward version bump means
+        # consumers pinning `#:schema .../s{major}.{minor}/...` can silently
+        # drift onto a schema that no longer matches what they pinned, and a
+        # version *decrease* would break that pinning just as badly (see
+        # #185).
+        #
+        # The extraction below deliberately does NOT match the const
+        # declaration as one literal line. rustfmt (max_width = 80 in this
+        # repo's .rustfmt.toml) reformats
+        # `SchemaVersion { major: 1, minor: 0 }` onto multiple lines as soon
+        # as either number needs 2 digits (verified locally: `minor: 10` or
+        # `major: 10` already overflow 80 cols), which would make a
+        # single-line regex match nothing - silently, since this step runs
+        # under `set -e` with no pipefail. Squashing whitespace first keeps
+        # the same anchor text working regardless of how rustfmt wraps the
+        # literal. Do not "simplify" this back to a one-line match - the
+        # very next minor bump (s1.10) is enough to break it.
+        #
+        # `| head -n1` on each extraction is deliberate, not redundant with
+        # `grep -o`: if the anchor pattern ever matches twice (e.g. a second
+        # occurrence of the literal `SCHEMA_VERSION: SchemaVersion =
+        # SchemaVersion { major:` text elsewhere in the squashed file), `grep
+        # -o` prints every match, collapsing `$pr_major` etc. into a
+        # multi-line value like `$'9\n1'`. `-m1` on grep does NOT fix this -
+        # it caps matching *lines*, and the squashed source is one line - so
+        # the numeric `[ ... ]` comparisons below would then throw "integer
+        # expression expected" from *inside* an `if` condition, which `set
+        # -e` does not abort on; the condition just evaluates false and the
+        # gate silently waves the change through with a garbled message
+        # instead of failing. `head -n1` collapses to the first match so the
+        # numeric comparison (or the empty-match guard) behaves correctly
+        # instead of failing open.
+        run: |
+          git fetch --depth=1 origin main
+
+          extract_major() { tr -d ' \n' | grep -oP 'SCHEMA_VERSION:SchemaVersion=SchemaVersion\{major:\K\d+' | head -n1 || true; }
+          extract_minor() { tr -d ' \n' | grep -oP 'SCHEMA_VERSION:SchemaVersion=SchemaVersion\{major:\d+,minor:\K\d+' | head -n1 || true; }
+
+          if ! git diff --quiet origin/main -- schema/formality.schema.json; then
+            main_major=$(git show origin/main:src/config/schema.rs | extract_major)
+            main_minor=$(git show origin/main:src/config/schema.rs | extract_minor)
+            pr_major=$(extract_major < src/config/schema.rs)
+            pr_minor=$(extract_minor < src/config/schema.rs)
+
+            if [ -z "$main_major" ] || [ -z "$main_minor" ] || [ -z "$pr_major" ] || [ -z "$pr_minor" ]; then
+              echo "::error file=src/config/schema.rs::could not parse SCHEMA_VERSION from src/config/schema.rs (main: major='$main_major' minor='$main_minor', PR: major='$pr_major' minor='$pr_minor'). Has the SCHEMA_VERSION declaration been reformatted in a way the extraction pattern doesn't handle? Update the pattern in .github/workflows/pr-check.yml."
+              exit 1
+            fi
+
+            if [ "$pr_major" -lt "$main_major" ] || { [ "$pr_major" -eq "$main_major" ] && [ "$pr_minor" -le "$main_minor" ]; }; then
+              echo "::error file=src/config/schema.rs::schema/formality.schema.json changed relative to main, but SCHEMA_VERSION was not incremented forward (main: ${main_major}.${main_minor}, PR: ${pr_major}.${pr_minor}). Bump SCHEMA_VERSION (major or minor, strictly forward) in src/config/schema.rs alongside any schema change."
+              exit 1
+            fi
+            echo "schema/formality.schema.json changed and SCHEMA_VERSION was incremented forward (${main_major}.${main_minor} -> ${pr_major}.${pr_minor}) - OK."
+          else
+            echo "schema/formality.schema.json unchanged relative to main - no version bump required."
+          fi
 
   security-audit:
     name: Security Audit
