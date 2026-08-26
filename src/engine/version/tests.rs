@@ -505,6 +505,133 @@ fn test_check_tool_compatibility_missing_tool() {
 }
 
 #[test]
+fn test_evaluate_tool_status_pin_match_is_compatible() {
+  // Present, above MSTV, and matches the pin exactly: READY, not STALE.
+  let current = Version::new(3, 9, 6);
+  let minimum = Version::new(2, 0, 0);
+  let pinned = Version::new(3, 9, 6);
+  let status = evaluate_tool_status(
+    Some(current.clone()),
+    Some("prettier 3.9.6".to_string()),
+    Some(&minimum),
+    Some(&pinned),
+  );
+  assert!(status.is_compatible());
+  assert!(!status.is_stale());
+  assert_eq!(
+    status,
+    ToolStatus::Compatible {
+      current,
+      minimum: minimum.clone(),
+    }
+  );
+}
+
+#[test]
+fn test_evaluate_tool_status_pin_mismatch_is_stale() {
+  // The #5 repro: a stale system-wide prettier 3.8.1 with pin 3.9.6 -- above
+  // MSTV (so it "works"), but not the exact bits `fml install` would pin.
+  let current = Version::new(3, 8, 1);
+  let minimum = Version::new(2, 0, 0);
+  let pinned = Version::new(3, 9, 6);
+  let status = evaluate_tool_status(
+    Some(current.clone()),
+    Some("prettier 3.8.1".to_string()),
+    Some(&minimum),
+    Some(&pinned),
+  );
+  assert!(status.is_stale());
+  assert!(!status.is_compatible());
+  assert!(!status.is_outdated());
+  assert_eq!(
+    status,
+    ToolStatus::Stale {
+      current: current.clone(),
+      pinned: pinned.clone(),
+    }
+  );
+  assert_eq!(
+    status.to_string(),
+    format!("Stale ({current} != pinned {pinned})")
+  );
+}
+
+#[test]
+fn test_evaluate_tool_status_below_mstv_outdated_beats_pin_mismatch() {
+  // A tool that is BOTH below the MSTV floor AND mismatched against the pin
+  // must report Outdated, not Stale: "might not even work" outranks "works,
+  // just isn't the exact pin".
+  let current = Version::new(1, 0, 0);
+  let minimum = Version::new(2, 0, 0);
+  let pinned = Version::new(3, 9, 6);
+  let status = evaluate_tool_status(
+    Some(current.clone()),
+    Some("tool 1.0.0".to_string()),
+    Some(&minimum),
+    Some(&pinned),
+  );
+  assert!(status.is_outdated());
+  assert!(!status.is_stale());
+}
+
+#[test]
+fn test_evaluate_tool_status_absent_tool_is_not_found_regardless_of_pin() {
+  // Tool absent entirely: NotFound, unaffected by whether a pin/minimum is
+  // configured -- MISS stays MISS, it never becomes STALE.
+  let minimum = Version::new(2, 0, 0);
+  let pinned = Version::new(3, 9, 6);
+  let status = evaluate_tool_status(None, None, Some(&minimum), Some(&pinned));
+  assert!(status.is_not_found());
+}
+
+#[test]
+fn test_evaluate_tool_status_no_pinned_version_configured_never_stale() {
+  // A tool with an MSTV floor but no known pin (e.g. no install chain, or no
+  // installer currently available to resolve one from) must never report
+  // Stale -- there is nothing to compare against, so it falls back to the
+  // existing MSTV-only Compatible/Outdated behavior.
+  let current = Version::new(5, 0, 0);
+  let minimum = Version::new(1, 4, 0);
+  let status = evaluate_tool_status(
+    Some(current.clone()),
+    Some("tool 5.0.0".to_string()),
+    Some(&minimum),
+    None,
+  );
+  assert!(status.is_compatible());
+  assert!(!status.is_stale());
+}
+
+#[test]
+fn test_evaluate_tool_status_unparsed_version_fails_soft_to_unknown() {
+  // A tool whose `--version` banner doesn't parse into a semver: doctor must
+  // not crash, and must not silently claim Stale/Compatible about a version
+  // it never actually understood -- UnknownVersion, carrying the raw banner.
+  let pinned = Version::new(3, 9, 6);
+  let status = evaluate_tool_status(
+    None,
+    Some("custom build, no version number".to_string()),
+    None,
+    Some(&pinned),
+  );
+  assert!(status.is_unknown_version());
+}
+
+#[test]
+fn test_tool_status_stale_display_and_predicate() {
+  let status = ToolStatus::Stale {
+    current: Version::new(3, 8, 1),
+    pinned: Version::new(3, 9, 6),
+  };
+  assert!(status.is_stale());
+  assert!(!status.is_compatible());
+  assert!(!status.is_outdated());
+  assert!(!status.is_not_found());
+  assert!(!status.is_unknown_version());
+  assert_eq!(status.to_string(), "Stale (3.8.1 != pinned 3.9.6)");
+}
+
+#[test]
 fn test_live_probe_rustfmt() {
   if which::which("rustfmt").is_ok() {
     let ver = probe_tool_version("rustfmt");

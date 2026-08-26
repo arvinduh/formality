@@ -3,6 +3,7 @@
 //! Windows-aware `Command` construction.
 
 use super::{SurfaceResult, SurfaceStatus};
+use crate::engine::version::Version;
 use std::collections::HashMap;
 use std::sync::{Mutex, OnceLock};
 use std::time::Instant;
@@ -169,6 +170,54 @@ impl InstallMethod {
         "go".to_string(),
         vec!["install".to_string(), pkg.to_string()],
       ),
+    }
+  }
+
+  /// The exact version this specific install method pins to, parsed from
+  /// its package spec, when that spec embeds one. Covers every
+  /// pinning-syntax family declared on the variants above: npm-family
+  /// `name@version` (scoped `@scope/name@version` too — the split is on the
+  /// *last* `@`, so the scope's leading `@` is untouched), pip-family
+  /// `name==version`, and cargo/cargo-binstall/`go install`'s `name@version`.
+  /// System package managers (apt/brew/scoop/winget) and
+  /// `rustup component add` never carry an inline version — see the
+  /// "Pinned tool versions" note below — so those return `None`, same as a
+  /// spec whose trailing segment doesn't parse as a version at all.
+  ///
+  /// Test-only: production code no longer derives `[STALE]` comparisons
+  /// from this (see `ToolChain::expected_binary_version`'s doc comment for
+  /// why a package-spec pin and a binary's self-reported version are two
+  /// different things) — this now only backs
+  /// `test_expected_binary_version_agrees_with_chain_pins`, a regression
+  /// guard that a chain's literal pins still agree with each other wherever
+  /// `expected_binary_version` claims they do.
+  #[cfg(test)]
+  #[must_use]
+  fn pinned_version(&self) -> Option<Version> {
+    match self {
+      InstallMethod::CargoBinstall(pkg)
+      | InstallMethod::Npm(pkg)
+      | InstallMethod::Pnpm(pkg)
+      | InstallMethod::Yarn(pkg)
+      | InstallMethod::Bun(pkg)
+      | InstallMethod::GoInstall(pkg) => {
+        pkg.rsplit_once('@').and_then(|(_, v)| Version::parse(v))
+      }
+      InstallMethod::Uv(pkg)
+      | InstallMethod::Pipx(pkg)
+      | InstallMethod::Pip(pkg)
+      | InstallMethod::Pip3(pkg) => {
+        pkg.rsplit_once("==").and_then(|(_, v)| Version::parse(v))
+      }
+      InstallMethod::Cargo { package, .. } => package
+        .rsplit_once('@')
+        .and_then(|(_, v)| Version::parse(v)),
+      InstallMethod::Apt(_)
+      | InstallMethod::Brew(_)
+      | InstallMethod::Scoop(_)
+      | InstallMethod::WingetName(_)
+      | InstallMethod::WingetId(_)
+      | InstallMethod::Rustup(_) => None,
     }
   }
 }
@@ -394,54 +443,219 @@ const KTLINT_CHAIN: &[InstallMethod] = &[
   InstallMethod::Apt("ktlint"),
 ];
 
-/// The (canonical binary name, install chain) side-table every tool in the
-/// fleet is registered in exactly once. This is what `install_chain_for`
-/// below looks up, and what both `test_tool_info_auto_install_cmd_coverage`
-/// and `test_registry_resolved_install_methods_are_version_pinned` iterate —
+/// One row of the tool-chain registry: the canonical binary name, its
+/// ordered installer preference chain, and (if known) the exact version
+/// `<binary> --version` is expected to report once installed via that
+/// chain's pin.
+///
+/// `expected_binary_version` is intentionally *not* derived automatically
+/// from the chain's package-spec pins — a package-manager's own version
+/// number and the underlying binary's self-reported version are two
+/// different things that happen to agree for most tools but are **not
+/// guaranteed to**, and conflating them was a real, empirically-confirmed
+/// bug: `@taplo/cli@0.7.0` is exactly what gets installed, but the `taplo`
+/// binary it produces reports `0.9.0`, and cargo-binstall's own
+/// `taplo-cli@0.10.0` pin disagrees with the npm pin too — three different
+/// numbers for "one" tool. Set this field only when independently confirmed
+/// that the binary's `--version` output tracks the pin 1:1; leave it `None`
+/// for anything not confirmed, which exactly preserves this file's
+/// pre-`[STALE]` behavior (presence/executability + the MSTV floor, no
+/// pin-mismatch comparison) rather than risking a false `[STALE]` verdict
+/// that would make `fml install` reinstall an already-correct tool forever.
+struct ToolChain {
+  /// Canonical binary name (see [`install_chain_for`]'s alias resolution).
+  binary: &'static str,
+  /// Ordered installer preference chain.
+  chain: &'static [InstallMethod],
+  /// The version `<binary> --version` should report once installed via
+  /// this chain's pin, when confirmed to track it 1:1. See the struct doc
+  /// above for why this is a hand-confirmed fact, not a derived value.
+  expected_binary_version: Option<Version>,
+}
+
+/// The tool-chain side-table every tool in the fleet is registered in
+/// exactly once. This is what [`install_chain_for`] and
+/// [`pinned_version_for`] below look up, and what both
+/// `test_tool_info_auto_install_cmd_coverage` and
+/// `test_registry_resolved_install_methods_are_version_pinned` iterate —
 /// per `docs/style-guide.md`'s tier-2 convention ("walk ... an in-crate
 /// side-table", not a hand-copied literal array), a new chain constant only
-/// needs adding here to automatically get both install-time lookup and test
+/// needs adding here to automatically get install-time lookup and test
 /// coverage; forgetting a row here is what let the `clang-format` pinning
 /// gap through unnoticed in an earlier pass of this same table (previously a
 /// hand-maintained `match` plus a hand-copied test array that had already
 /// drifted apart from each other).
-const ALL_CHAINS: &[(&str, &[InstallMethod])] = &[
-  ("taplo", TAPLO_CHAIN),
-  ("typstyle", TYPSTYLE_CHAIN),
-  ("tinymist", TINYMIST_CHAIN),
-  ("ruff", RUFF_CHAIN),
-  ("prettier", PRETTIER_CHAIN),
-  ("biome", BIOME_CHAIN),
-  ("markdownlint-cli2", MARKDOWNLINT_CHAIN),
-  ("yamllint", YAMLLINT_CHAIN),
-  ("clang-format", CLANG_FORMAT_CHAIN),
-  ("clang-tidy", CLANG_TIDY_CHAIN),
-  ("google-java-format", GOOGLE_JAVA_FORMAT_CHAIN),
-  ("checkstyle", CHECKSTYLE_CHAIN),
-  ("rustfmt", RUSTFMT_CHAIN),
-  ("clippy-driver", CLIPPY_CHAIN),
-  ("goimports", GOIMPORTS_CHAIN),
-  ("golangci-lint", GOLANGCI_LINT_CHAIN),
-  ("ktlint", KTLINT_CHAIN),
+///
+/// `expected_binary_version` status per row, and why:
+/// - `Some(...)`: `typstyle`, `tinymist`, `ruff`, `prettier`, `biome`,
+///   `markdownlint-cli2`, `yamllint` — each ships its own CLI directly
+///   (not a repackaging of some other project's binary) and every
+///   registry-resolved pin in its chain agrees on the same version, so the
+///   package-manager pin and the binary's self-reported version are the
+///   same fact stated twice. `test_expected_binary_version_agrees_with_chain_pins`
+///   below is a standing regression guard on that agreement.
+/// - `None`, confirmed mismatched: `taplo` (see the struct doc above —
+///   directly tested: pinned npm spec `0.7.0`, installed binary reports
+///   `0.9.0`, neither matches the cargo-binstall chain's own `0.10.0` pin
+///   either), `ktlint` (this file's own long-standing comment above
+///   `KTLINT_CHAIN` already documents its `@naturalcycles/ktlint@1.16.1`
+///   npm wrapper reporting the real jar's `1.8.0`, an entirely different
+///   numbering track).
+/// - `None`, suspected mismatched but not independently confirmed:
+///   `google-java-format` (npm wrapper around a separately-versioned Java
+///   tool, same shape as ktlint's wrapper) and `goimports` (its pin is a Go
+///   *module* version tag, not a tool release version — `goimports` has no
+///   meaningful `--version` output to compare against at all). Treat these
+///   the same as a confirmed mismatch until someone verifies otherwise.
+/// - `None`, deliberately-divergent chain: `golangci-lint` — its two
+///   `GoInstall` entries intentionally pin *different* real versions
+///   (`v2.13.1` on the v2 module path, `v1.64.8` as the legacy v1
+///   fallback) so a v1-only environment still gets something recent; that
+///   is by design, not chain drift, but it does mean "the one true pinned
+///   version" isn't well-defined for this tool under this scheme. The MSTV
+///   floor (`engine::version::mstv`) still catches a golangci-lint too old
+///   to function at all.
+/// - `None`, no registry-resolved pin to compare at all: `clang-tidy`,
+///   `checkstyle`, `rustfmt`, `clippy-driver` — every entry in these chains
+///   is an unpinned system-package-manager/rustup install.
+/// - `None`, unverified even though internally consistent: `clang-format`
+///   — its `Pipx`/`Pip`/`Pip3` entries agree on `22.1.8`, and the PyPI
+///   `clang-format` wheel plausibly bundles a matching prebuilt binary, but
+///   that hasn't been independently confirmed the way taplo/ktlint's
+///   mismatches were, and the apt/brew/winget/scoop fallbacks in the same
+///   chain resolve against uncontrolled system versions regardless. Flip to
+///   `Some(Version::new(22, 1, 8))` once confirmed against a real pip
+///   install.
+const ALL_CHAINS: &[ToolChain] = &[
+  ToolChain {
+    binary: "taplo",
+    chain: TAPLO_CHAIN,
+    expected_binary_version: None,
+  },
+  ToolChain {
+    binary: "typstyle",
+    chain: TYPSTYLE_CHAIN,
+    expected_binary_version: Some(Version::new(0, 15, 1)),
+  },
+  ToolChain {
+    binary: "tinymist",
+    chain: TINYMIST_CHAIN,
+    expected_binary_version: Some(Version::new(0, 15, 2)),
+  },
+  ToolChain {
+    binary: "ruff",
+    chain: RUFF_CHAIN,
+    expected_binary_version: Some(Version::new(0, 16, 4)),
+  },
+  ToolChain {
+    binary: "prettier",
+    chain: PRETTIER_CHAIN,
+    expected_binary_version: Some(Version::new(3, 9, 6)),
+  },
+  ToolChain {
+    binary: "biome",
+    chain: BIOME_CHAIN,
+    expected_binary_version: Some(Version::new(2, 5, 10)),
+  },
+  ToolChain {
+    binary: "markdownlint-cli2",
+    chain: MARKDOWNLINT_CHAIN,
+    expected_binary_version: Some(Version::new(0, 23, 2)),
+  },
+  ToolChain {
+    binary: "yamllint",
+    chain: YAMLLINT_CHAIN,
+    expected_binary_version: Some(Version::new(1, 38, 0)),
+  },
+  ToolChain {
+    binary: "clang-format",
+    chain: CLANG_FORMAT_CHAIN,
+    expected_binary_version: None,
+  },
+  ToolChain {
+    binary: "clang-tidy",
+    chain: CLANG_TIDY_CHAIN,
+    expected_binary_version: None,
+  },
+  ToolChain {
+    binary: "google-java-format",
+    chain: GOOGLE_JAVA_FORMAT_CHAIN,
+    expected_binary_version: None,
+  },
+  ToolChain {
+    binary: "checkstyle",
+    chain: CHECKSTYLE_CHAIN,
+    expected_binary_version: None,
+  },
+  ToolChain {
+    binary: "rustfmt",
+    chain: RUSTFMT_CHAIN,
+    expected_binary_version: None,
+  },
+  ToolChain {
+    binary: "clippy-driver",
+    chain: CLIPPY_CHAIN,
+    expected_binary_version: None,
+  },
+  ToolChain {
+    binary: "goimports",
+    chain: GOIMPORTS_CHAIN,
+    expected_binary_version: None,
+  },
+  ToolChain {
+    binary: "golangci-lint",
+    chain: GOLANGCI_LINT_CHAIN,
+    expected_binary_version: None,
+  },
+  ToolChain {
+    binary: "ktlint",
+    chain: KTLINT_CHAIN,
+    expected_binary_version: None,
+  },
 ];
 
-/// Looks up the ordered installer preference chain for a tool binary name,
-/// via [`ALL_CHAINS`] above. `markdownlint`/`clippy` are legacy aliases for
-/// their canonical `ALL_CHAINS` row (`markdownlint-cli2`/`clippy-driver`) —
-/// resolved here rather than duplicated as their own rows, so the side-table
-/// stays one row per actual chain.
-pub(super) fn install_chain_for(
-  binary: &str,
-) -> Option<&'static [InstallMethod]> {
-  let canonical = match binary {
+/// Resolves `markdownlint`/`clippy` legacy binary-name aliases to their
+/// canonical [`ALL_CHAINS`] row name (`markdownlint-cli2`/`clippy-driver`).
+/// Shared by [`install_chain_for`] and [`pinned_version_for`] so alias
+/// resolution lives in exactly one place.
+fn canonical_chain_binary(binary: &str) -> &str {
+  match binary {
     "markdownlint" => "markdownlint-cli2",
     "clippy" => "clippy-driver",
     other => other,
-  };
+  }
+}
+
+/// Looks up the ordered installer preference chain for a tool binary name,
+/// via [`ALL_CHAINS`] above.
+pub(super) fn install_chain_for(
+  binary: &str,
+) -> Option<&'static [InstallMethod]> {
+  let canonical = canonical_chain_binary(binary);
   ALL_CHAINS
     .iter()
-    .find(|(name, _)| *name == canonical)
-    .map(|(_, chain)| *chain)
+    .find(|entry| entry.binary == canonical)
+    .map(|entry| entry.chain)
+}
+
+/// The version `<binary> --version` is expected to report when it's
+/// installed to the pin `fml install` currently uses, per [`ALL_CHAINS`]'s
+/// `expected_binary_version` field. Returns `None` — a "no known pin to
+/// compare against" result, not an error — when the tool has no registered
+/// chain row, or (deliberately, for most rows — see the doc comment above
+/// [`ALL_CHAINS`]) when the binary's own version output isn't confirmed to
+/// track the package-manager pin 1:1. Callers (`fml doctor`'s `[STALE]`
+/// check) must treat `None` as "skip the pin comparison", never crash on
+/// it, and never treat it as "definitely up to date" either — it means
+/// "unknown", not "yes".
+#[must_use]
+pub fn pinned_version_for(binary: &str) -> Option<Version> {
+  let canonical = canonical_chain_binary(binary);
+  ALL_CHAINS
+    .iter()
+    .find(|entry| entry.binary == canonical)?
+    .expected_binary_version
+    .clone()
 }
 
 static BINARY_CACHE: OnceLock<Mutex<HashMap<String, bool>>> = OnceLock::new();
@@ -607,6 +821,93 @@ mod tests {
   }
 
   #[test]
+  fn test_pinned_version_parses_registry_pin_syntaxes() {
+    // npm-family `name@version`.
+    assert_eq!(
+      InstallMethod::Npm("prettier@3.9.6").pinned_version(),
+      Some(Version::new(3, 9, 6))
+    );
+    // Scoped npm `@scope/name@version` -- must split on the *last* `@`, not
+    // the scope's leading one.
+    assert_eq!(
+      InstallMethod::Npm("@taplo/cli@0.7.0").pinned_version(),
+      Some(Version::new(0, 7, 0))
+    );
+    // pip-family `name==version`.
+    assert_eq!(
+      InstallMethod::Uv("ruff==0.16.4").pinned_version(),
+      Some(Version::new(0, 16, 4))
+    );
+    // cargo/cargo-binstall `name@version`.
+    assert_eq!(
+      InstallMethod::CargoBinstall("taplo-cli@0.10.0").pinned_version(),
+      Some(Version::new(0, 10, 0))
+    );
+    assert_eq!(
+      InstallMethod::Cargo {
+        package: "taplo-cli@0.10.0",
+        locked: true,
+      }
+      .pinned_version(),
+      Some(Version::new(0, 10, 0))
+    );
+    // `go install` `name@vVERSION` -- leading `v` must be stripped.
+    assert_eq!(
+      InstallMethod::GoInstall("golang.org/x/tools/cmd/goimports@v0.49.0")
+        .pinned_version(),
+      Some(Version::new(0, 49, 0))
+    );
+  }
+
+  #[test]
+  fn test_pinned_version_none_for_unpinned_system_managers() {
+    // apt/brew/scoop/winget/rustup never carry an inline version -- see the
+    // "Pinned tool versions" note above ALL_CHAINS.
+    assert_eq!(InstallMethod::Apt("prettier").pinned_version(), None);
+    assert_eq!(InstallMethod::Brew("prettier").pinned_version(), None);
+    assert_eq!(InstallMethod::Scoop("prettier").pinned_version(), None);
+    assert_eq!(
+      InstallMethod::WingetName("Prettier.Prettier").pinned_version(),
+      None
+    );
+    assert_eq!(
+      InstallMethod::WingetId("tamasfe.taplo").pinned_version(),
+      None
+    );
+    assert_eq!(InstallMethod::Rustup("rustfmt").pinned_version(), None);
+  }
+
+  #[test]
+  fn test_pinned_version_none_for_unversioned_package_spec() {
+    // A package spec with no `@`/`==` at all (e.g. the unpinned npm entries
+    // #195 documents as deliberately left bare) must not be misparsed --
+    // None, not a crash or a bogus version.
+    assert_eq!(
+      InstallMethod::Npm("@myriaddreamin/tinymist").pinned_version(),
+      None
+    );
+  }
+
+  #[test]
+  fn test_pinned_version_for_unregistered_tool_is_none() {
+    // No install chain at all for this binary: fail soft to None, never
+    // panic -- this is the "no pinned version configured" edge case #5
+    // calls out explicitly.
+    assert_eq!(pinned_version_for("totally-unregistered-tool-xyz"), None);
+  }
+
+  #[test]
+  fn test_pinned_version_for_registered_chain_never_panics() {
+    // Smoke test across the whole registry: whether or not any installer in
+    // a chain is actually available on this test machine, resolving the pin
+    // must never panic -- it's allowed to return None (no installer
+    // available / available one is unpinned), just not crash `fml doctor`.
+    for entry in ALL_CHAINS {
+      let _ = pinned_version_for(entry.binary);
+    }
+  }
+
+  #[test]
   fn test_go_install_never_appends_implicit_latest() {
     // GoInstall used to always append "@latest" itself, which is exactly
     // the floating-version behavior #191 is about; command() must now pass
@@ -644,8 +945,9 @@ mod tests {
     // and the coverage test below use) rather than a separately maintained
     // binary list, so a new chain constant automatically gets checked here
     // too the moment it's added to ALL_CHAINS.
-    for &(binary, chain) in ALL_CHAINS {
-      for method in chain {
+    for entry in ALL_CHAINS {
+      let binary = entry.binary;
+      for method in entry.chain {
         let is_registry_resolved = matches!(
           method,
           InstallMethod::Npm(_)
@@ -683,10 +985,41 @@ mod tests {
   }
 
   #[test]
+  fn test_expected_binary_version_agrees_with_chain_pins() {
+    // Regression guard for the taplo bug this field exists to prevent: a
+    // tool that declares `expected_binary_version: Some(v)` is claiming
+    // "every registry-resolved pin in my chain agrees with v" -- if a
+    // future edit adds a disagreeing pin to that chain (exactly what
+    // TAPLO_CHAIN's npm-vs-cargo-binstall pins used to do, silently), this
+    // must fail loudly instead of quietly producing false `[STALE]`
+    // verdicts again. A row with `expected_binary_version: None` is making
+    // no such claim, so internal disagreement there (e.g.
+    // GOLANGCI_LINT_CHAIN's deliberate v1/v2 fallback pins) is expected and
+    // not checked.
+    for entry in ALL_CHAINS {
+      let Some(expected) = &entry.expected_binary_version else {
+        continue;
+      };
+      for method in entry.chain {
+        let Some(pin) = method.pinned_version() else {
+          continue;
+        };
+        assert_eq!(
+          &pin, expected,
+          "{}: {method:?} pins {pin} but expected_binary_version is {expected} -- \
+           either this chain entry drifted, or expected_binary_version needs \
+           re-confirming against a real install",
+          entry.binary
+        );
+      }
+    }
+  }
+
+  #[test]
   fn test_tool_info_auto_install_cmd_coverage() {
-    for &(binary, _) in ALL_CHAINS {
+    for entry in ALL_CHAINS {
       let info = ToolInfo {
-        binary,
+        binary: entry.binary,
         description: "test tool",
         install_hint: "test hint",
         is_required_for_fmt: true,

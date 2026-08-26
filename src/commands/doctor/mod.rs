@@ -17,12 +17,12 @@ pub use venv::{
 
 use crate::config::FormalityConfig;
 use crate::engine::version::{
-  ToolStatus, Version, check_tool_compatibility, get_raw_tool_version,
+  ToolStatus, Version, evaluate_tool_status, get_raw_tool_version,
   minimum_supported_tool_version, probe_tool_version,
 };
 use crate::surfaces::{
   LanguageSurface, ToolInfo, all_surfaces, create_tool_command,
-  detect_surfaces_smart,
+  detect_surfaces_smart, pinned_version_for,
 };
 use crate::ui::table::{
   Cell, Column, Layout, Palette, Row, Span, Style, Table, WidthPolicy, render,
@@ -44,7 +44,7 @@ pub fn install_missing_tools(missing: &[ToolInfo]) -> bool {
 
   let separator = crate::ui::table::separator_line(0);
   println!("\n{}", separator.dimmed());
-  println!("{}", "Auto-installing Missing Toolchains:".bold().cyan());
+  println!("{}", "Installing Missing / Stale Toolchains:".bold().cyan());
 
   let mut all_ok = true;
 
@@ -63,11 +63,48 @@ pub fn install_missing_tools(missing: &[ToolInfo]) -> bool {
 
       match cmd.status() {
         Ok(status) if status.success() => {
-          println!(
-            "    {} Successfully installed {}",
-            "[OK]  ".green().bold(),
-            tool.binary.bold()
-          );
+          // Convergence guard: a successful install exit code only proves
+          // the package manager *ran* to completion, not that the binary it
+          // produced actually reports the pinned version — re-probe and
+          // warn (once, this invocation) rather than silently claiming
+          // success on a tool that would still show `[STALE]` on the very
+          // next `fml doctor`. This can only fire for a legitimately
+          // misconfigured pin now (an `expected_binary_version` that
+          // doesn't actually match what gets installed) -- see
+          // `surfaces::tooling::ToolChain`'s doc comment for why most tools
+          // deliberately opt out of the pin comparison entirely rather than
+          // risk exactly this.
+          if let Some(expected) =
+            crate::surfaces::pinned_version_for(tool.binary)
+          {
+            let actual = probe_tool_version(tool.binary);
+            if actual.as_ref() == Some(&expected) {
+              println!(
+                "    {} Successfully installed {} ({expected})",
+                "[OK]  ".green().bold(),
+                tool.binary.bold()
+              );
+            } else {
+              let actual_str = actual
+                .map(|v| v.to_string())
+                .unwrap_or_else(|| "an unparseable version".to_string());
+              println!(
+                "    {} Installed {}, but it still reports {actual_str} \
+                 (expected {expected}) -- the pin for this tool may not \
+                 match what the binary itself reports; not retrying \
+                 automatically.",
+                "[WARN]".yellow().bold(),
+                tool.binary.bold()
+              );
+              all_ok = false;
+            }
+          } else {
+            println!(
+              "    {} Successfully installed {}",
+              "[OK]  ".green().bold(),
+              tool.binary.bold()
+            );
+          }
         }
         Ok(status) => {
           println!(
@@ -102,8 +139,10 @@ pub fn install_missing_tools(missing: &[ToolInfo]) -> bool {
   all_ok
 }
 
-/// Collect the missing tools required by `surfaces` for the given action
-/// (format or lint), then install them. Returns `false` if any tool
+/// Collect the tools required by `surfaces` for the given action (format or
+/// lint) that need installing — genuinely missing, or present but
+/// [`ToolStatus::Stale`] (installed version doesn't match the pin `fml
+/// install` would install) — then install them. Returns `false` if any tool
 /// could not be installed.
 #[must_use]
 pub fn preflight_install(
@@ -111,9 +150,8 @@ pub fn preflight_install(
   config: &FormalityConfig,
   for_fmt: bool,
 ) -> bool {
-  use which::which;
   let mut seen: HashSet<&'static str> = HashSet::new();
-  let mut missing: Vec<ToolInfo> = Vec::new();
+  let mut to_install: Vec<ToolInfo> = Vec::new();
 
   for surface in surfaces {
     let resolved = config.resolve_for_lang(surface.name());
@@ -126,14 +164,30 @@ pub fn preflight_install(
       } else {
         tool.is_required_for_lint
       };
-      if needed && which(tool.binary).is_err() {
-        seen.insert(tool.binary);
-        missing.push(tool);
+      if !needed {
+        continue;
+      }
+      seen.insert(tool.binary);
+
+      let lookup = lookup_tool_info(tool.binary);
+      if needs_install(lookup.is_installed, lookup.status.as_ref()) {
+        to_install.push(tool);
       }
     }
   }
 
-  install_missing_tools(&missing)
+  install_missing_tools(&to_install)
+}
+
+/// Whether a tool needs (re)installing: genuinely absent, or present but
+/// [`ToolStatus::Stale`] (installed version doesn't match the pin `fml
+/// install` would install — see the `[STALE]` status this issue adds).
+/// Split out as a pure function, independent of any subprocess probing, so
+/// the reinstall decision itself is unit-testable (see `tests.rs`) without
+/// needing a real stale/pinned binary on `PATH`.
+#[must_use]
+fn needs_install(is_installed: bool, status: Option<&ToolStatus>) -> bool {
+  !is_installed || status.is_some_and(ToolStatus::is_stale)
 }
 
 /// Result of probing system installation and compatibility for a tool binary.
@@ -146,7 +200,8 @@ pub struct ToolLookupResult {
   pub raw_version: Option<String>,
   /// Parsed semver version structure.
   pub parsed_version: Option<Version>,
-  /// Compatibility status relative to MSTV.
+  /// Combined status relative to the MSTV floor and the exact version pin
+  /// (`None` when neither is registered for this tool).
   pub status: Option<ToolStatus>,
 }
 use crate::errors::ExitStatus;
@@ -175,6 +230,7 @@ pub fn run_doctor(
     missing_unique_tools,
     installed_unique_tools,
     outdated_unique_tools,
+    stale_unique_tools,
   ) = scan_tools_and_build_table(&surfaces, config);
 
   let palette = Palette::detect();
@@ -210,12 +266,15 @@ pub fn run_doctor(
   // `fml sync` optionality notice
   print_sync_notice(&separator);
 
-  // Auto-install mode
+  // Auto-install mode. A `[STALE]` tool (present, but not the pinned
+  // version) is reinstalled exactly like a genuinely `[MISS]`ing one — the
+  // whole point of the pin is that the version on PATH matches it, so
+  // "present but wrong version" isn't "already satisfied".
+  let mut to_install: Vec<ToolInfo> = missing_unique_tools.clone();
+  to_install.extend(stale_unique_tools.iter().cloned());
+
   let mut install_failed = false;
-  if install
-    && !missing_unique_tools.is_empty()
-    && !install_missing_tools(&missing_unique_tools)
-  {
+  if install && !to_install.is_empty() && !install_missing_tools(&to_install) {
     install_failed = true;
   }
 
@@ -227,10 +286,18 @@ pub fn run_doctor(
       .yellow()
       .to_string()
   };
+  let stale_str = if stale_unique_tools.is_empty() {
+    String::new()
+  } else {
+    format!(" ({} stale)", stale_unique_tools.len())
+      .yellow()
+      .to_string()
+  };
   println!(
-    "  {} installed{}, {} missing{}\n",
+    "  {} installed{}{}, {} missing{}\n",
     installed_unique_tools.len().to_string().green().bold(),
     outdated_str,
+    stale_str,
     if missing_unique_tools.is_empty() {
       "0".green().bold().to_string()
     } else {
@@ -241,8 +308,8 @@ pub fn run_doctor(
         .bold()
         .to_string()
     },
-    if !missing_unique_tools.is_empty() && !install {
-      " (run 'fml install' to install missing tools)"
+    if !to_install.is_empty() && !install {
+      " (run 'fml install' to install missing/stale tools)"
         .dimmed()
         .to_string()
     } else {
@@ -309,8 +376,22 @@ fn lookup_tool_info(binary: &'static str) -> ToolLookupResult {
       .map(|p| p.display().to_string());
     let raw_version = get_raw_tool_version(binary);
     let parsed_version = probe_tool_version(binary);
-    let status = minimum_supported_tool_version(binary)
-      .map(|mstv| check_tool_compatibility(binary, &mstv));
+    let mstv = minimum_supported_tool_version(binary);
+    let pinned = pinned_version_for(binary);
+    // Only fabricate a status when there's an actual floor or pin to check
+    // against — a tool with neither (no MSTV entry, no known pin) keeps the
+    // prior behavior of `status: None`, rendered as a plain `[READY]` by
+    // `scan_tools_and_build_table`'s catch-all arm.
+    let status = if mstv.is_some() || pinned.is_some() {
+      Some(evaluate_tool_status(
+        parsed_version.clone(),
+        raw_version.clone(),
+        mstv.as_ref(),
+        pinned.as_ref(),
+      ))
+    } else {
+      None
+    };
 
     ToolLookupResult {
       is_installed: true,
@@ -338,11 +419,18 @@ fn scan_tools_and_build_table(
   Vec<ToolInfo>,
   HashSet<&'static str>,
   HashSet<&'static str>,
+  Vec<ToolInfo>,
 ) {
   let mut cache: HashMap<&'static str, ToolLookupResult> = HashMap::new();
   let mut missing_unique_tools: Vec<ToolInfo> = Vec::new();
   let mut installed_unique_tools = HashSet::new();
   let mut outdated_unique_tools = HashSet::new();
+  // Tools that are present and executable, but whose installed version
+  // doesn't match the exact pin `fml install` would install — [`ToolStatus::
+  // Stale`]. Kept as a `Vec<ToolInfo>` (not just a name set, like
+  // `installed_unique_tools`/`outdated_unique_tools`) because `fml install`
+  // needs the full `ToolInfo` to reinstall it, same as `missing_unique_tools`.
+  let mut stale_unique_tools: Vec<ToolInfo> = Vec::new();
 
   let mut doctor_table = Table::new(vec![
     Column::new(Cell::text("")).width(WidthPolicy::Fixed(8)),
@@ -370,6 +458,22 @@ fn scan_tools_and_build_table(
               let v_info = format!(" (v{current} < MSTV v{minimum})");
               let row = Row::new(vec![
                 Cell::styled("[WARN] ", Style::Warn),
+                Cell::styled(tool.binary, Style::Warn),
+                Cell::styled(surface.name(), Style::Dim),
+                Cell::new(vec![
+                  Span::styled(path_str, Style::Dim),
+                  Span::styled(v_info, Style::Warn),
+                ]),
+              ]);
+              doctor_table.add_row(row);
+            }
+            Some(ToolStatus::Stale { current, pinned }) => {
+              if !stale_unique_tools.iter().any(|t| t.binary == tool.binary) {
+                stale_unique_tools.push(tool.clone());
+              }
+              let v_info = format!(" (v{current} != pinned v{pinned})");
+              let row = Row::new(vec![
+                Cell::styled("[STALE]", Style::Warn),
                 Cell::styled(tool.binary, Style::Warn),
                 Cell::styled(surface.name(), Style::Dim),
                 Cell::new(vec![
@@ -432,6 +536,7 @@ fn scan_tools_and_build_table(
     missing_unique_tools,
     installed_unique_tools,
     outdated_unique_tools,
+    stale_unique_tools,
   )
 }
 

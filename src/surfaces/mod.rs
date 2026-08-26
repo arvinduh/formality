@@ -60,7 +60,7 @@ pub use registry::{
 pub use sync::{diff_check_via_tempcopy, is_auto_generated, sync_file_helper};
 pub use tooling::{
   check_binary_exists, create_tool_command, has_cargo_binstall,
-  tool_missing_result,
+  pinned_version_for, tool_missing_result,
 };
 
 /// Execution context shared with every [`LanguageSurface`] invocation for a
