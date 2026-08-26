@@ -41,11 +41,15 @@ pub fn run_fmt(
     };
 
   let mut install_failed = false;
-  if install
-    && !crate::commands::doctor::preflight_install(&surfaces, config, true)
-  {
-    warn_tool_install_failed("formatting");
-    install_failed = true;
+  if install {
+    if !crate::commands::doctor::preflight_install(&surfaces, config, true) {
+      warn_tool_install_failed("formatting");
+      install_failed = true;
+    }
+  } else {
+    crate::commands::doctor::preflight_warn_stale_tools(
+      &surfaces, config, true, false,
+    );
   }
 
   let status = Runner::run(

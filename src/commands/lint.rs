@@ -41,11 +41,15 @@ pub fn run_lint(
     };
 
   let mut install_failed = false;
-  if install
-    && !crate::commands::doctor::preflight_install(&surfaces, config, false)
-  {
-    warn_tool_install_failed("linting");
-    install_failed = true;
+  if install {
+    if !crate::commands::doctor::preflight_install(&surfaces, config, false) {
+      warn_tool_install_failed("linting");
+      install_failed = true;
+    }
+  } else {
+    crate::commands::doctor::preflight_warn_stale_tools(
+      &surfaces, config, false, true,
+    );
   }
 
   let status = Runner::run(
