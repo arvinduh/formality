@@ -141,9 +141,11 @@ pub fn install_missing_tools(missing: &[ToolInfo]) -> bool {
 
 /// Collect the tools required by `surfaces` for the given action (format or
 /// lint) that need installing — genuinely missing, or present but
-/// [`ToolStatus::Stale`] (installed version doesn't match the pin `fml
-/// install` would install) — then install them. Returns `false` if any tool
-/// could not be installed.
+/// [`ToolStatus::Stale`] *and* the selected installer carries a matching
+/// inline pin — then install them. If a stale tool's selected installer
+/// cannot pin to `expected_binary_version`, reinstall is skipped with an
+/// explanatory warning. Returns `false` if any scheduled tool could not be
+/// installed.
 #[must_use]
 pub fn preflight_install(
   surfaces: &[Box<dyn LanguageSurface>],
@@ -170,8 +172,20 @@ pub fn preflight_install(
       seen.insert(tool.binary);
 
       let lookup = lookup_tool_info(tool.binary);
-      if needs_install(lookup.is_installed, lookup.status.as_ref()) {
+      let selected_pin =
+        crate::surfaces::selected_pinned_version_for(tool.binary);
+      if needs_install(
+        lookup.is_installed,
+        lookup.status.as_ref(),
+        selected_pin.as_ref(),
+      ) {
         to_install.push(tool);
+      } else if lookup.is_installed
+        && let Some(ToolStatus::Stale { current, pinned }) =
+          lookup.status.as_ref()
+      {
+        let expl = stale_unpinnable_explanation(tool.binary, current, pinned);
+        println!("  {} {}", "[WARN] ".yellow().bold(), expl);
       }
     }
   }
@@ -180,14 +194,27 @@ pub fn preflight_install(
 }
 
 /// Whether a tool needs (re)installing: genuinely absent, or present but
-/// [`ToolStatus::Stale`] (installed version doesn't match the pin `fml
-/// install` would install — see the `[STALE]` status this issue adds).
+/// [`ToolStatus::Stale`] *and* the selected installer carries an inline pin
+/// matching `expected_binary_version`. If the tool is stale but the selected
+/// installer cannot pin to `expected_binary_version` (e.g. an unpinned system
+/// package manager like `brew`), reinstall is skipped to prevent an unresolvable
+/// reinstall loop (#11).
 /// Split out as a pure function, independent of any subprocess probing, so
 /// the reinstall decision itself is unit-testable (see `tests.rs`) without
 /// needing a real stale/pinned binary on `PATH`.
 #[must_use]
-fn needs_install(is_installed: bool, status: Option<&ToolStatus>) -> bool {
-  !is_installed || status.is_some_and(ToolStatus::is_stale)
+pub fn needs_install(
+  is_installed: bool,
+  status: Option<&ToolStatus>,
+  selected_pin: Option<&Version>,
+) -> bool {
+  if !is_installed {
+    return true;
+  }
+  match status {
+    Some(ToolStatus::Stale { pinned, .. }) => selected_pin == Some(pinned),
+    _ => false,
+  }
 }
 
 /// Result of probing system installation and compatibility for a tool binary.
@@ -263,15 +290,34 @@ pub fn run_doctor(
   // Configuration Schema Version Check
   print_schema_version_check(root, &separator);
 
+  // Auto-install mode. Genuinely `[MISS]`ing tools and `[STALE]` tools whose
+  // selected installer carries a matching pin are reinstalled. If a stale tool's
+  // selected installer cannot pin to `expected_binary_version`, reinstall is
+  // skipped and explained (#11).
+  let mut to_install: Vec<ToolInfo> = missing_unique_tools.clone();
+  let mut unpinnable_stale_tools: Vec<(ToolInfo, Version, Version)> =
+    Vec::new();
+
+  for tool in &stale_unique_tools {
+    let expected = crate::surfaces::pinned_version_for(tool.binary);
+    let selected_pin =
+      crate::surfaces::selected_pinned_version_for(tool.binary);
+    if let Some(ref exp) = expected {
+      if selected_pin.as_ref() == Some(exp) {
+        to_install.push(tool.clone());
+      } else {
+        let current = crate::engine::version::probe_tool_version(tool.binary)
+          .unwrap_or_else(|| Version::new(0, 0, 0));
+        unpinnable_stale_tools.push((tool.clone(), current, exp.clone()));
+      }
+    }
+  }
+
+  // Stale tools with unpinnable installers notice
+  print_stale_unpinnable_warnings(&unpinnable_stale_tools, &separator);
+
   // `fml sync` optionality notice
   print_sync_notice(&separator);
-
-  // Auto-install mode. A `[STALE]` tool (present, but not the pinned
-  // version) is reinstalled exactly like a genuinely `[MISS]`ing one — the
-  // whole point of the pin is that the version on PATH matches it, so
-  // "present but wrong version" isn't "already satisfied".
-  let mut to_install: Vec<ToolInfo> = missing_unique_tools.clone();
-  to_install.extend(stale_unique_tools.iter().cloned());
 
   let mut install_failed = false;
   if install && !to_install.is_empty() && !install_missing_tools(&to_install) {
@@ -702,6 +748,47 @@ fn print_schema_version_check(root: &Path, separator: &str) {
         expected.to_string().bold()
       );
     }
+  }
+}
+
+/// Builds the user-facing explanation for why a stale tool was not scheduled
+/// for auto-reinstall (#11).
+#[must_use]
+pub fn stale_unpinnable_explanation(
+  binary: &str,
+  current: &Version,
+  expected: &Version,
+) -> String {
+  let selected = crate::surfaces::selected_install_method_for(binary);
+  let available_desc = match selected {
+    Some(m) => format!("the available installer ({})", m.installer_name()),
+    None => "no available installer".to_string(),
+  };
+  let suggestion = match crate::surfaces::pinned_installer_for(binary) {
+    Some(installer) => format!(
+      "install {installer} to get the exact pinned version, or accept this drift"
+    ),
+    None => {
+      "accept this drift or install the pinned version manually".to_string()
+    }
+  };
+  format!(
+    "{binary} is stale (v{current} != pinned v{expected}), but {available_desc} can't pin to v{expected} — {suggestion}."
+  )
+}
+
+fn print_stale_unpinnable_warnings(
+  unpinnable_stale: &[(ToolInfo, Version, Version)],
+  separator: &str,
+) {
+  if unpinnable_stale.is_empty() {
+    return;
+  }
+  println!("\n{}", separator.dimmed());
+  println!("{}", "Stale Toolchain Version Drift:".yellow().bold());
+  for (tool, current, expected) in unpinnable_stale {
+    let expl = stale_unpinnable_explanation(tool.binary, current, expected);
+    println!("  • {} {}", "[WARN] ".yellow().bold(), expl);
   }
 }
 
