@@ -75,11 +75,30 @@ or merge.
 
 - Conventional Commits: `<type>(<scope>): <description> (Fixes #<issue>)`.
 - One logical change per commit — never bundle unrelated cleanups.
-- Before every commit: `cargo test --lib -q && cargo clippy -q`, dogfooded with
-  the freshly built binary (`cargo run -q -- fmt`), never a stale global `fml`.
-  This repo's own commit gate runs `fml sync --check` / `fml fmt` / `fml lint`
-  on staged files — expect it to block a commit that fails its own dogfooding,
-  and treat that as working as intended, not a bug to route around.
+- Progressive 2-tier quality gate:
+  - **Tier 1 (Local pre-commit hook)**: `.githooks/pre-commit` (activated via
+    `git config core.hooksPath .githooks`). Builds the fresh binary
+    (`cargo build -q --bin fml`) and runs `fml fmt --staged` and
+    `fml lint --staged` before every commit. This repo's root carries only
+    `formality.toml` without generated native config files (`.rustfmt.toml`,
+    `.prettierrc`, etc.), so `fml sync --check` is not run against this repo's
+    root.
+  - **Tier 2 (Parallel PR checks)**: `.github/workflows/pr-check.yml` runs 3
+    parallel jobs on every PR:
+    1. `Library Tests` (**required status check**):
+       `cargo clippy --all-targets -- -D warnings` and full unit/integration
+       test suite (`cargo test --verbose`).
+    2. `Formality Dogfooding`: `fml fmt --check` and `fml lint` against this
+       repo, plus schema-drift verification
+       (`fml schema --output schema/formality.schema.json && fml fmt schema/formality.schema.json && git diff --exit-code`)
+       and `SCHEMA_VERSION` progression enforcement in `src/config/schema.rs`.
+    3. `Security Audit`: `cargo audit`.
+- Before every commit: standard presubmit command suite:
+  `cargo test --lib -q && cargo clippy --all-targets -- -D warnings`, dogfooded
+  with the freshly built binary (`cargo run -q -- fmt`), never a stale global
+  `fml`. The staged pre-commit gate enforces dogfooding on staged files — expect
+  it to block a commit that fails its own dogfooding, and treat that as working
+  as intended, not a bug to route around.
 
 ## 3. CI / branch-protection changes need the orchestrator, not a worker
 
@@ -172,8 +191,9 @@ more than it saves.
      disagreed about something real; treat the resolution itself as new
      implementation subject to the full §4 gate again, and say so explicitly
      rather than quietly merging a guess.
-3. Re-run the full presubmit (`cargo test --lib -q && cargo clippy -q`,
-   dogfooded fmt/lint/sync) on the resolved state before pushing — a conflict
+3. Re-run the full presubmit
+   (`cargo test --lib -q && cargo clippy --all-targets -- -D warnings`,
+   dogfooded fmt/lint) on the resolved state before pushing — a conflict
    resolution that compiles is not the same as one that's correct.
 4. Push, wait for CI to go green again, then merge per the steps above.
 

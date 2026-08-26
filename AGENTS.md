@@ -6,9 +6,14 @@ fml: polyglot format/lint/config orchestrator, 12 language surfaces.
 
 ```bash
 cargo test --lib -q
-cargo clippy -q
+cargo clippy --all-targets -- -D warnings
 cargo run -q -- fmt
-cargo run -q -- sync --check
+```
+
+Activate the staged pre-commit hook:
+
+```bash
+git config core.hooksPath .githooks
 ```
 
 ## Layout
@@ -20,6 +25,24 @@ cargo run -q -- sync --check
 - `src/ui` — table rendering
 - `src/commands` — CLI subcommand handlers
 
+Root layout: `formality.toml` alone carries canonical config without generated
+native config files (`.rustfmt.toml`, `.prettierrc`, etc.). `fml sync --check`
+is not run against this repository's root.
+
+## Progressive 2-Tier Quality Gate
+
+1. **Tier 1 (Local pre-commit)**: `.githooks/pre-commit` (activated via
+   `git config core.hooksPath .githooks`) builds the fresh binary and runs
+   `fml fmt --staged` and `fml lint --staged` before commits.
+2. **Tier 2 (Parallel PR checks)**: `.github/workflows/pr-check.yml` runs 3
+   independent parallel jobs:
+   - `Library Tests` (**required status check**):
+     `cargo clippy --all-targets -- -D warnings` and full unit/integration test
+     suite (`cargo test --verbose`).
+   - `Formality Dogfooding`: `fml fmt --check` and `fml lint` against this repo,
+     plus `fml schema` drift check and schema version progression enforcement.
+   - `Security Audit`: `cargo audit` against Rust advisory database.
+
 ## Conventions
 
 - Commits: `type(scope): description (Fixes #issue)`, Conventional Commits
@@ -30,7 +53,8 @@ cargo run -q -- sync --check
 
 ## Always
 
-- Run `cargo test --lib -q && cargo clippy -q` before any commit.
+- Run `cargo test --lib -q && cargo clippy --all-targets -- -D warnings` before
+  any commit.
 - Check `docs/INDEX.md` before reading source to understand structure or
   conventions already documented there.
 

@@ -113,29 +113,33 @@ mind:
 ## Testing & Presubmit Checks
 
 Before committing or submitting a pull request, you **must** run and pass the
-full presubmit suite:
+presubmit suite:
 
 ```bash
-cargo test --lib -q && cargo clippy -q
+cargo test --lib -q && cargo clippy --all-targets -- -D warnings
 cargo run -q -- fmt
-cargo run -q -- sync --check
 ```
 
 ### Explanation of Presubmit Commands
 
 1. `cargo test --lib -q`: Runs library unit tests silently.
-2. `cargo clippy -q`: Ensures zero Clippy linter warnings.
+2. `cargo clippy --all-targets -- -D warnings`: Ensures zero Clippy warnings
+   across all targets (lib, bins, tests, examples).
 3. `cargo run -q -- fmt`: Dogfoods the freshly built `fml` binary to format the
    repository.
-4. `cargo run -q -- sync --check`: Verifies that native tool configurations
-   match canonical `formality.toml` settings without drift.
+
+> [!NOTE] This repository carries no generated native config files
+> (`.rustfmt.toml`, `.prettierrc`, etc.) — formatting and linting resolve
+> `formality.toml` inline, so `cargo run -q -- sync --check` is not run against
+> this repository's root.
 
 ---
 
 ## Git Pre-Commit Hook
 
-A pre-commit hook is provided in `.githooks/pre-commit` to automatically run
-fast formatting and linting sanity checks on staged files before committing.
+A pre-commit hook is provided in `.githooks/pre-commit` as **Tier 1** of our
+progressive quality gate to automatically run fast formatting and linting sanity
+checks on staged files before committing.
 
 ### Enabling the Hook
 
@@ -170,7 +174,7 @@ When triggered on `git commit`, the hook:
    to your changes are preserved. Maintain documentation integrity.
 
 3. **Run presubmit checks**: Run the presubmit suite commands above to verify
-   code quality and dogfood formatting/sync.
+   code quality and dogfood formatting.
 
 4. **Commit your changes**: Use Conventional Commits format (see below).
 
@@ -185,6 +189,18 @@ When triggered on `git commit`, the hook:
    ```bash
    gh pr create --title "type(scope): summary (#issue)" --body "Description of changes... Closes #issue"
    ```
+
+7. **CI PR Checks (Tier 2 Quality Gate)**: GitHub Actions executes 3 parallel
+   jobs on every PR:
+   - **`Library Tests`** (_required branch protection status check_): Runs
+     `cargo clippy --all-targets -- -D warnings` and the full unit/integration
+     test suite (`cargo test --verbose`).
+   - **`Formality Dogfooding`**: Runs `fml fmt --check` and `fml lint` against
+     this repository's live tree, verifies schema drift (`fml schema` vs.
+     `schema/formality.schema.json`), and enforces forward `SCHEMA_VERSION`
+     progression in `src/config/schema.rs`.
+   - **`Security Audit`**: Runs `cargo audit` against the Rust advisory
+     database.
 
 ---
 
