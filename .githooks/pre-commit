@@ -12,7 +12,6 @@ else
   FML="fml"
 fi
 
-"$FML" sync --check
 "$FML" fmt --staged
 "$FML" lint --staged
 

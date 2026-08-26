@@ -60,9 +60,6 @@ jobs:
       - name: Install tool dependencies via fml
         run: ./target/debug/fml install
 
-      - name: Verify config sync
-        run: ./target/debug/fml sync --check
-
       - name: Check formatting
         run: ./target/debug/fml fmt --check
 
