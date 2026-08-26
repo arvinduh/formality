@@ -10,6 +10,7 @@ use super::{
   find_files_with_ext, render_native_config, sync_native_config,
   tool_missing_result,
 };
+use crate::config::ResolvedLangConfig;
 use serde::{Deserialize, Serialize};
 use std::path::{Path, PathBuf};
 use std::time::Instant;
@@ -113,21 +114,33 @@ impl NativeConfig for MarkdownlintConfig {
   const FILE_NAME: &'static str = ".markdownlint.json";
 
   fn from_context(ctx: &ExecutionContext) -> Self {
-    Self {
-      comment: MarkdownlintComment {
-        description: AUTO_GENERATED_JSON_COMMENT.to_string(),
-      },
-      default: true,
-      md013: MarkdownlintMd013 {
-        line_length: ctx.lang_config.line_length,
-        code_blocks: false,
-        tables: false,
-      },
-    }
+    markdownlint_config_for_lang(&ctx.lang_config)
   }
 
   fn render(&self) -> Result<String, crate::errors::FormalityError> {
     render_native_config(self)
+  }
+}
+
+/// Builds the resolved [`MarkdownlintConfig`] from a [`ResolvedLangConfig`]
+/// alone — the shared logic behind both [`NativeConfig::from_context`]
+/// (used by `fml sync`/`fml fmt`/`fml lint`, which all have a full
+/// [`ExecutionContext`] on hand) and [`write_markdownlint_temp_config`]
+/// (also called from `fml lsp`'s `markdownlint_diagnostics`, which only
+/// ever resolves a per-language config, not a full `ExecutionContext`).
+fn markdownlint_config_for_lang(
+  lang_config: &ResolvedLangConfig,
+) -> MarkdownlintConfig {
+  MarkdownlintConfig {
+    comment: MarkdownlintComment {
+      description: AUTO_GENERATED_JSON_COMMENT.to_string(),
+    },
+    default: true,
+    md013: MarkdownlintMd013 {
+      line_length: lang_config.line_length,
+      code_blocks: false,
+      tables: false,
+    },
   }
 }
 
@@ -160,22 +173,32 @@ pub fn build_markdownlint_args(
 }
 
 /// Renders the resolved [`MarkdownlintConfig`] to a throwaway temp file and
-/// returns the guard holding it, so `fml fmt`/`fml lint` can pass
+/// returns the guard holding it, so `fml fmt`/`fml lint`/`fml lsp` can pass
 /// `--config <temp-path>` to markdownlint-cli2 without ever writing
 /// `.markdownlint.json` into the project tree. markdownlint-cli2 only
 /// accepts a config *path* (no per-flag inline settings like prettier or
 /// rustfmt get), so a temp file is the only way to hand it formality.toml's
-/// resolved settings inline. The returned [`tempfile::NamedTempFile`] must
-/// be kept alive for the duration of the command it's passed to — it is
-/// deleted from disk when dropped, which also guarantees cleanup on an
-/// early-return/error path. Only `fml sync` writes the persistent
-/// `.markdownlint.json` now (see [`MarkdownSurface::sync_config`]).
-fn write_markdownlint_temp_config(
-  ctx: &ExecutionContext,
+/// resolved settings inline. **A discovered `.markdownlint.json` in the
+/// linted file's own directory still takes precedence over this
+/// `--config`** — markdownlint-cli2 treats `--config` as a default, not an
+/// override, so formality.toml only wins here when no such file exists on
+/// disk (true for this repo post-#1, and the common case for any repo that
+/// dropped its native config files). The returned
+/// [`tempfile::NamedTempFile`] is named with a `.markdownlint-` prefix
+/// (never the bare `.markdownlint.json` name) deliberately — that keeps it
+/// from being auto-discovered by markdownlint-cli2 itself for the scratch
+/// copies `diff_check_via_tempcopy` places in the same tmpdir; don't
+/// "simplify" the prefix away. It must be kept alive for the duration of
+/// the command it's passed to — it is deleted from disk when dropped,
+/// which also guarantees cleanup on an early-return/error path. Only `fml
+/// sync` writes the persistent `.markdownlint.json` now (see
+/// [`MarkdownSurface::sync_config`]).
+pub(crate) fn write_markdownlint_temp_config(
+  lang_config: &ResolvedLangConfig,
 ) -> std::io::Result<tempfile::NamedTempFile> {
   use std::io::Write;
 
-  let cfg = MarkdownlintConfig::from_context(ctx);
+  let cfg = markdownlint_config_for_lang(lang_config);
   let content = cfg
     .render()
     .map_err(|e| std::io::Error::other(e.to_string()))?;
@@ -325,7 +348,7 @@ impl LanguageSurface for MarkdownSurface {
     // write branches below so the file exists for the duration of every
     // invocation that references its path.
     let md_temp_cfg = if md_binary.is_some() {
-      match write_markdownlint_temp_config(ctx) {
+      match write_markdownlint_temp_config(&ctx.lang_config) {
         Ok(f) => Some(f),
         Err(e) => {
           return SurfaceResult {
@@ -469,7 +492,7 @@ impl LanguageSurface for MarkdownSurface {
     // are rendered to a throwaway temp file rather than depending on
     // `.markdownlint.json` being present on disk. `md_temp_cfg` must stay
     // alive until `cmd.output()` below returns.
-    let md_temp_cfg = match write_markdownlint_temp_config(ctx) {
+    let md_temp_cfg = match write_markdownlint_temp_config(&ctx.lang_config) {
       Ok(f) => f,
       Err(e) => {
         return SurfaceResult {
@@ -653,6 +676,32 @@ mod tests {
   }
 
   #[test]
+  fn test_build_markdownlint_args_extra_args_config_wins_last() {
+    // markdownlint-cli2 honours the *last* `--config` flag it sees, so a
+    // project-supplied `extra_args = ["--config", "mine.json"]` must land
+    // after the injected temp-config path to actually override it (see
+    // `write_markdownlint_temp_config`'s doc comment).
+    let files = vec![PathBuf::from("a.md")];
+    let injected = PathBuf::from("/tmp/.markdownlint-abc123.json");
+    let extra = vec!["--config".to_string(), "mine.json".to_string()];
+    let args =
+      build_markdownlint_args(&files, false, Some(injected.as_path()), &extra);
+    assert_eq!(
+      args,
+      vec![
+        "--config".to_string(),
+        injected.to_string_lossy().to_string(),
+        "a.md".to_string(),
+        "--config".to_string(),
+        "mine.json".to_string(),
+      ]
+    );
+    // The user-supplied override is the last "--config" in the arg list.
+    let last_config_idx = args.iter().rposition(|a| a == "--config").unwrap();
+    assert_eq!(args[last_config_idx + 1], "mine.json");
+  }
+
+  #[test]
   fn test_write_markdownlint_temp_config_reflects_formality_toml() {
     // Regression test for the gap CI caught on issue #1: markdownlint-cli2
     // has no per-flag inline config, so `fml lint`/`fml fmt` used to run it
@@ -663,15 +712,7 @@ mod tests {
     let mut lang_cfg = ResolvedLangConfig::new("markdown");
     lang_cfg.line_length = 100;
 
-    let ctx = ExecutionContext {
-      root: Arc::new(PathBuf::from(".")),
-      paths: Arc::new(Vec::new()),
-      global_config: Arc::new(ResolvedGlobalConfig::default()),
-      lang_config: lang_cfg,
-      check_only: false,
-    };
-
-    let temp_cfg = write_markdownlint_temp_config(&ctx).unwrap();
+    let temp_cfg = write_markdownlint_temp_config(&lang_cfg).unwrap();
     let content = std::fs::read_to_string(temp_cfg.path()).unwrap();
     let parsed: serde_json::Value = serde_json::from_str(&content).unwrap();
 
@@ -694,11 +735,16 @@ mod tests {
     }
 
     let temp = TempDir::new().unwrap();
-    // A code fence line over 80 chars: markdownlint-cli2's built-in MD013
-    // default (`code_blocks: true`) flags this; formality.toml's default
-    // (`code_blocks: false`, set in `MarkdownlintConfig::from_context`)
-    // must not.
-    let long_line = "x".repeat(90);
+    // A code fence line over 80 chars, made of real words with spaces
+    // (NOT a single unbroken token like "x".repeat(90) — MD013's default
+    // `strict: false` exempts any line with no spaces past the limit, so an
+    // unbroken-token line is never flagged by *any* config, config-present
+    // or config-absent, fixed or broken; that made an earlier version of
+    // this test pass even with the fix reverted). With real spaces,
+    // markdownlint-cli2's built-in MD013 default (`code_blocks: true`)
+    // flags this; formality.toml's default (`code_blocks: false`, set in
+    // `MarkdownlintConfig::from_context`) must not.
+    let long_line = "lorem ipsum dolor sit amet ".repeat(5);
     std::fs::write(
       temp.path().join("a.md"),
       format!("# Title\n\n```text\n{long_line}\n```\n"),

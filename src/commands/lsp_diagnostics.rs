@@ -23,9 +23,17 @@
 //!
 //! None of these invocations currently thread through `formality.toml`'s
 //! `extra_args`/per-language overrides the way `fml lint` proper does — the
-//! LSP path calls these with an empty extra-args slice. That's a known
-//! simplification, not a correctness bug: the diagnostics still reflect the
-//! same rule set, just not any project-specific extra CLI flags.
+//! LSP path calls these with an empty extra-args slice. For most surfaces
+//! that's a known simplification, not a correctness bug: the diagnostics
+//! still reflect the same rule set, just not any project-specific extra CLI
+//! flags. `markdown` is the one exception with a real core-setting
+//! dependency: `markdownlint_diagnostics` resolves formality.toml's MD013
+//! settings (`line_length`/`code_blocks`/`tables`) via
+//! [`crate::surfaces::markdown::write_markdownlint_temp_config`] and passes
+//! them inline, precisely because markdownlint-cli2 (unlike the other
+//! tools here) has no meaningful built-in default rule set of its own to
+//! fall back on that would match formality.toml's — see that function's
+//! doc comment for why `--config` was the only inline mechanism available.
 //!
 //! `None` vs. `Some(vec![])` (Fixes #177)
 //! =======================================
@@ -614,17 +622,21 @@ pub fn parse_markdownlint_text(
 /// spawn, so the caller falls back to `fml lint` instead of publishing a
 /// false "clean" (#177).
 ///
-/// KNOWN GAP (flagged, not fixed here — see issue #1's PR discussion):
-/// unlike [`crate::surfaces::markdown::MarkdownSurface::lint`], this path
-/// has no resolved `ExecutionContext`/`ResolvedLangConfig` available — the
-/// shared `DiagnosticsRunner` fn-pointer type this is registered under
-/// (`fn(&Path, &Path) -> Option<Vec<Diagnostic>>`) carries no config, for
-/// every surface, not just markdown. So it still runs markdownlint-cli2
-/// with no `--config`, i.e. whatever `.markdownlint.json` happens to be on
-/// disk, or the tool's own (stricter) built-in defaults if there is none —
-/// the same gap `MarkdownSurface::lint` used to have. Threading resolved
-/// config through `DiagnosticsRunner` for every surface is a larger,
-/// separate change than this fix; not folded in here.
+/// Resolves formality.toml's markdown settings the same way `fml lint`
+/// does (`FormalityConfig::load_layered` + `resolve_for_lang("markdown")`)
+/// and passes them to markdownlint-cli2 via a throwaway temp file — see
+/// [`crate::surfaces::markdown::write_markdownlint_temp_config`]. Before
+/// issue #1 deleted this repo's own `.markdownlint.json`, this path ran
+/// with no `--config` at all and relied on markdownlint-cli2
+/// auto-discovering that file from `root`/`file`'s directory, which
+/// incidentally matched formality.toml's settings; once that file no
+/// longer exists anywhere, that discovery falls through to markdownlint's
+/// own (stricter) built-in defaults instead, silently diverging from `fml
+/// lint`. Config-load failure (e.g. an unreadable formality.toml) falls
+/// back to embedded defaults rather than returning `None` — a bad project
+/// config should mean "default markdown settings" here, the same as it
+/// does for `fml lint` itself, not "disable markdown diagnostics
+/// entirely."
 fn markdownlint_diagnostics(
   root: &Path,
   file: &Path,
@@ -637,11 +649,21 @@ fn markdownlint_diagnostics(
     return None;
   };
 
+  let lang_config = crate::config::FormalityConfig::load_layered(Some(root))
+    .map_or_else(
+      |_| crate::config::FormalityConfig::with_defaults(),
+      |(cfg, _)| cfg,
+    )
+    .resolve_for_lang("markdown");
+  let temp_cfg =
+    crate::surfaces::markdown::write_markdownlint_temp_config(&lang_config)
+      .ok()?;
+
   let mut cmd = Command::new(binary);
   cmd.args(crate::surfaces::markdown::build_markdownlint_args(
     &[file.to_path_buf()],
     false,
-    None,
+    Some(temp_cfg.path()),
     &[],
   ));
   cmd.current_dir(root);
@@ -1841,6 +1863,49 @@ mod tests {
     let diagnostics =
       parse_markdownlint_text(sample, Path::new("/proj/bad.md"));
     assert!(diagnostics.is_empty());
+  }
+
+  #[test]
+  fn test_markdownlint_diagnostics_respects_formality_toml_md013_with_no_config_on_disk()
+   {
+    // End-to-end regression test for the QA-flagged `fml lsp` gap on issue
+    // #1: before that issue, this path ran with no `--config` at all and
+    // relied on markdownlint-cli2 auto-discovering `.markdownlint.json`
+    // from disk, which happened to carry formality.toml's settings. With
+    // that file deleted, `markdownlint_diagnostics` must now resolve
+    // formality.toml itself and pass it inline — mirroring
+    // `test_lint_respects_formality_toml_md013_with_no_config_on_disk` in
+    // `src/surfaces/markdown.rs` for the CLI path.
+    if !check_binary_exists("markdownlint-cli2")
+      && !check_binary_exists("markdownlint")
+    {
+      return;
+    }
+
+    let dir = tempfile::tempdir().unwrap();
+    // Real words with spaces — see the CLI-side regression test's comment
+    // for why a single unbroken token (e.g. "x".repeat(90)) doesn't work:
+    // MD013's default `strict: false` exempts it under any config.
+    let long_line = "lorem ipsum dolor sit amet ".repeat(5);
+    let file_path = dir.path().join("a.md");
+    std::fs::write(
+      &file_path,
+      format!("# Title\n\n```text\n{long_line}\n```\n"),
+    )
+    .unwrap();
+    // No formality.toml either — resolve_for_lang must fall back to
+    // embedded defaults (code_blocks/tables: false), which still differ
+    // from markdownlint-cli2's own built-in defaults (true/true).
+    assert!(!dir.path().join(".markdownlint.json").exists());
+    assert!(!dir.path().join("formality.toml").exists());
+
+    let diagnostics = markdownlint_diagnostics(dir.path(), Path::new("a.md"));
+    assert_eq!(
+      diagnostics,
+      Some(Vec::new()),
+      "expected a clean (Some(vec![])) result honoring formality's default \
+       MD013 code_blocks/tables: false, got: {diagnostics:?}"
+    );
   }
 
   #[test]
