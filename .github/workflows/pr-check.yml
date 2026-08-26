@@ -17,18 +17,16 @@ name: PR Check
 #      none of those tools installed, and it's a separate parallel runner
 #      from Job 2, so Job 2 installing its own copies doesn't help it.
 #   2. Formality Dogfooding - runs fml against THIS repo's own live tree.
-#      Job 1 already proves fmt/lint/sync *work correctly*; this job proves
-#      this repo's checked-in state actually *complies* with them right
-#      now - both native config drift from formality.toml and real
-#      formatting/lint violations in tracked files (e.g. an unformatted
-#      Markdown code fence - the concrete failure mode #184 was filed
-#      over). `fml sync --check` alone only compares generated native
-#      config files (.rustfmt.toml, .prettierrc, ...) against
-#      formality.toml; it never inspects source file contents, so it can't
-#      catch a Prettier-reformatted Markdown code fence. That's why the
-#      full fmt --check / lint pass stays here rather than narrowing to
-#      sync --check alone (see #184 discussion / design note). This job also
-#      asserts the checked-in schema/formality.schema.json has no drift from
+#      Job 1 already proves fmt/lint *work correctly*; this job proves this
+#      repo's checked-in state actually *complies* with them right now -
+#      real formatting/lint violations in tracked files (e.g. an
+#      unformatted Markdown code fence - the concrete failure mode #184 was
+#      filed over). This repo carries no generated native config files
+#      (.rustfmt.toml, .prettierrc, ...) of its own - fmt/lint resolve
+#      formality.toml inline - so there's no `fml sync --check` step here;
+#      config drift isn't a thing this repo's own tree can have (see #184
+#      discussion / design note). This job also asserts the checked-in
+#      schema/formality.schema.json has no drift from
 #      what the freshly built binary generates, and that any change to it is
 #      paired with a SCHEMA_VERSION bump in src/config/schema.rs (see #185).
 #   3. Security Audit - cargo audit against the advisory database.
@@ -117,9 +115,6 @@ jobs:
       - name: Install tool dependencies via fml
         run: ./target/debug/fml install
 
-      - name: Verify config sync
-        run: ./target/debug/fml sync --check
-
       - name: Check formatting
         run: ./target/debug/fml fmt --check
 
@@ -150,8 +145,9 @@ jobs:
         # #185).
         #
         # The extraction below deliberately does NOT match the const
-        # declaration as one literal line. rustfmt (max_width = 80 in this
-        # repo's .rustfmt.toml) reformats
+        # declaration as one literal line. rustfmt (max_width = 80, resolved
+        # inline by fml from this repo's formality.toml `line_length`)
+        # reformats
         # `SchemaVersion { major: 1, minor: 0 }` onto multiple lines as soon
         # as either number needs 2 digits (verified locally: `minor: 10` or
         # `major: 10` already overflow 80 cols), which would make a

@@ -24,7 +24,8 @@ jobs:
         #
         # Whitespace is squashed before matching (rather than matching the
         # const declaration as one literal line) because rustfmt
-        # (max_width = 80 in this repo's .rustfmt.toml) reformats
+        # (max_width = 80, resolved inline by fml from this repo's
+        # formality.toml `line_length`) reformats
         # `SchemaVersion { major: 1, minor: 0 }` onto multiple lines once
         # either number needs 2 digits - verified locally. A single-line
         # regex would then match nothing, silently, under this step's
