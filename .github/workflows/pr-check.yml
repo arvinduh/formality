@@ -64,7 +64,7 @@ jobs:
         # required (not just clippy) because the integration tests below
         # spawn the real fml binary, which shells out to rustfmt for the
         # rust surface.
-        uses: dtolnay/rust-toolchain@1.97.1
+        uses: dtolnay/rust-toolchain@1.100.0
         with:
           components: clippy, rustfmt
 
@@ -104,7 +104,7 @@ jobs:
         # clippy-driver via `which`, and rustup's shim at
         # ~/.cargo/bin/clippy-driver exists even when the component isn't
         # installed, so it false-positives as [READY].
-        uses: dtolnay/rust-toolchain@1.97.1
+        uses: dtolnay/rust-toolchain@1.100.0
         with:
           components: rustfmt, clippy
 

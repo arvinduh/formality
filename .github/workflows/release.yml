@@ -72,7 +72,7 @@ jobs:
 
       - name: Set up Rust toolchain
         # Pinned to match rust-toolchain.toml; bump both together.
-        uses: dtolnay/rust-toolchain@1.97.1
+        uses: dtolnay/rust-toolchain@1.100.0
         with:
           targets: ${{ matrix.target }}
 
@@ -117,7 +117,7 @@ jobs:
 
       - name: Set up Rust toolchain
         # Pinned to match rust-toolchain.toml; bump both together.
-        uses: dtolnay/rust-toolchain@1.97.1
+        uses: dtolnay/rust-toolchain@1.100.0
 
       - name: Set up Rust cache
         uses: Swatinem/rust-cache@v2
