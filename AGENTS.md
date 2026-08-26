@@ -46,5 +46,4 @@ cargo run -q -- sync --check
 Default to dispatching worker subagents in isolated worktrees, not editing
 source directly — see `.agents/orchestrate.md` §8 for the narrow, enumerated
 exceptions. That file also covers worktrees, the QA gate, dispatch order, and
-design-phase/applied-feature rules; GitHub issue #77 is the tool-agnostic
-mirror.
+design-phase/applied-feature rules.

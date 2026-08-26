@@ -1,5 +1,9 @@
 # 0004 — Per-issue `status:*` labels instead of a shared hand-edited tracking document
 
+> `#N` citations below predate the 2026-08-26 repo recreation and no longer
+> resolve — see
+> [`docs/INDEX.md`](../INDEX.md#note-on-pre-recreation-issuepr-numbers).
+
 **Status:** Accepted **Decided in:** repo-original design (per-issue `status:*`
 labels, `.agents/orchestrate.md` §11), reaffirmed and the last remnant of the
 alternative removed via PR `#167` (closing tracking issue `#134`).

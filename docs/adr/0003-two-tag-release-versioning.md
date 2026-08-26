@@ -1,5 +1,9 @@
 # 0003 — Independent `v*`/`s*` release tags instead of a single unified tag
 
+> `#N` citations below predate the 2026-08-26 repo recreation and no longer
+> resolve — see
+> [`docs/INDEX.md`](../INDEX.md#note-on-pre-recreation-issuepr-numbers).
+
 **Status:** Accepted **Decided in:** `#126`, landed via PR `#139`.
 
 ## Context
