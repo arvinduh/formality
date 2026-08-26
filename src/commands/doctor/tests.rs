@@ -383,3 +383,105 @@ fn test_pinned_version_for_golangci_lint() {
     Some(Version::new(2, 13, 1))
   );
 }
+
+#[test]
+fn test_needs_install_false_for_unknown_version_tool() {
+  let unknown_with_raw =
+    ToolStatus::UnknownVersion("nightly-build".to_string());
+  let unknown_empty = ToolStatus::UnknownVersion(String::new());
+  let pin = Version::new(1, 0, 0);
+
+  assert!(!needs_install(true, Some(&unknown_with_raw), Some(&pin)));
+  assert!(!needs_install(true, Some(&unknown_with_raw), None));
+  assert!(!needs_install(true, Some(&unknown_empty), Some(&pin)));
+  assert!(!needs_install(true, Some(&unknown_empty), None));
+}
+
+#[test]
+fn test_scan_tools_and_build_table_surfaces_unprobeable_status_not_ready() {
+  // Use a system binary that exists on PATH but does not produce semver on `--version`
+  let binary_name: &'static str = if cfg!(windows) { "where" } else { "false" };
+  if which::which(binary_name).is_err() {
+    return;
+  }
+
+  #[derive(Clone)]
+  struct UnprobeableSurface {
+    bin: &'static str,
+  }
+
+  impl crate::config::facets::DeclaresFacets for UnprobeableSurface {
+    fn facet_support(
+      &self,
+      _facet: crate::config::facets::Facet,
+    ) -> crate::config::facets::FacetSupport {
+      crate::config::facets::FacetSupport::Unsupported
+    }
+  }
+
+  impl LanguageSurface for UnprobeableSurface {
+    fn name(&self) -> &'static str {
+      "mock_unprobeable"
+    }
+    fn detect(&self, _root: &Path) -> bool {
+      true
+    }
+    fn tool_info(
+      &self,
+      _resolved: &crate::config::ResolvedLangConfig,
+    ) -> Vec<ToolInfo> {
+      vec![ToolInfo {
+        binary: self.bin,
+        description: "Mock Unprobeable Binary",
+        install_hint: "Cannot install",
+        is_required_for_fmt: true,
+        is_required_for_lint: true,
+      }]
+    }
+    fn format(
+      &self,
+      _ctx: &crate::surfaces::ExecutionContext,
+    ) -> crate::surfaces::SurfaceResult {
+      unimplemented!()
+    }
+    fn lint(
+      &self,
+      _ctx: &crate::surfaces::ExecutionContext,
+      _fix: bool,
+    ) -> crate::surfaces::SurfaceResult {
+      unimplemented!()
+    }
+    fn sync_config(
+      &self,
+      _ctx: &crate::surfaces::ExecutionContext,
+      _check: bool,
+    ) -> crate::surfaces::SurfaceResult {
+      unimplemented!()
+    }
+    fn clone_box(&self) -> Box<dyn LanguageSurface> {
+      Box::new(self.clone())
+    }
+  }
+
+  let surfaces: Vec<Box<dyn LanguageSurface>> =
+    vec![Box::new(UnprobeableSurface { bin: binary_name })];
+  let config = FormalityConfig::default();
+
+  let scan = scan_tools_and_build_table(&surfaces, &config);
+
+  assert!(scan.missing.is_empty());
+  assert!(scan.installed.contains(binary_name));
+  assert!(!scan.outdated.contains(binary_name));
+  assert!(scan.stale.is_empty());
+  assert!(scan.unknown.contains(binary_name));
+
+  let rendered = render(&scan.table, &Palette::none());
+  assert!(
+    rendered.contains("[UNKNOWN]"),
+    "Expected [UNKNOWN] badge in table for unprobeable binary, got:\n{rendered}"
+  );
+  assert!(
+    !rendered.contains("[READY]"),
+    "Unprobeable binary must NOT render [READY] in table, got:\n{rendered}"
+  );
+}

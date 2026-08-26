@@ -430,7 +430,12 @@ impl fmt::Display for ToolStatus {
       }
       ToolStatus::NotFound => write!(f, "Not Found"),
       ToolStatus::UnknownVersion(raw) => {
-        write!(f, "Unknown Version ({})", raw.trim())
+        let trimmed = raw.trim();
+        if trimmed.is_empty() {
+          write!(f, "Unknown Version (probe failed)")
+        } else {
+          write!(f, "Unknown Version ({trimmed})")
+        }
       }
       ToolStatus::Stale { current, pinned } => {
         write!(f, "Stale ({current} != pinned {pinned})")
@@ -574,7 +579,25 @@ pub fn check_tool_compatibility(binary: &str, minimum: &Version) -> ToolStatus {
   let raw = get_raw_tool_version(binary);
   let probed = probe_tool_version(binary);
 
-  CompatibilityPolicy::evaluate_with_raw(probed, raw, minimum)
+  match (probed, raw) {
+    (Some(curr), _) => {
+      if curr >= *minimum {
+        ToolStatus::Compatible {
+          current: curr,
+          minimum: minimum.clone(),
+        }
+      } else {
+        ToolStatus::Outdated {
+          current: curr,
+          minimum: minimum.clone(),
+        }
+      }
+    }
+    (None, Some(raw_text)) if !raw_text.trim().is_empty() => {
+      ToolStatus::UnknownVersion(raw_text)
+    }
+    (None, _) => ToolStatus::UnknownVersion(String::new()),
+  }
 }
 
 #[cfg(test)]
