@@ -383,3 +383,76 @@ fn test_pinned_version_for_golangci_lint() {
     Some(Version::new(2, 13, 1))
   );
 }
+
+#[test]
+fn test_format_stale_tool_warning() {
+  let warning = format_stale_tool_warning(
+    "prettier",
+    &Version::new(3, 8, 1),
+    &Version::new(3, 9, 6),
+  );
+  assert_eq!(
+    warning,
+    "tool 'prettier' is stale (v3.8.1 != pinned v3.9.6); run 'fml doctor --install' or pass '--install' to update"
+  );
+}
+
+#[test]
+fn test_collect_stale_tool_warnings_filters_and_deduplicates() {
+  let stale_prettier = ToolStatus::Stale {
+    current: Version::new(3, 8, 1),
+    pinned: Version::new(3, 9, 6),
+  };
+  let stale_ruff = ToolStatus::Stale {
+    current: Version::new(0, 8, 0),
+    pinned: Version::new(0, 9, 0),
+  };
+  let compatible_rustfmt = ToolStatus::Compatible {
+    current: Version::new(1, 8, 0),
+    minimum: Version::new(1, 4, 0),
+  };
+  let outdated_taplo = ToolStatus::Outdated {
+    current: Version::new(0, 7, 0),
+    minimum: Version::new(0, 8, 0),
+  };
+
+  let tools = vec![
+    ("prettier", Some(&stale_prettier)),
+    ("rustfmt", Some(&compatible_rustfmt)),
+    ("taplo", Some(&outdated_taplo)),
+    ("missing_tool", Some(&ToolStatus::NotFound)),
+    ("unregistered_tool", None),
+    ("prettier", Some(&stale_prettier)), // duplicate
+    ("ruff", Some(&stale_ruff)),
+  ];
+
+  let warnings = collect_stale_tool_warnings(tools);
+  assert_eq!(warnings.len(), 2);
+  assert_eq!(
+    warnings[0],
+    "tool 'prettier' is stale (v3.8.1 != pinned v3.9.6); run 'fml doctor --install' or pass '--install' to update"
+  );
+  assert_eq!(
+    warnings[1],
+    "tool 'ruff' is stale (v0.8.0 != pinned v0.9.0); run 'fml doctor --install' or pass '--install' to update"
+  );
+}
+
+#[test]
+fn test_preflight_warn_stale_tools_empty_surfaces() {
+  let config = FormalityConfig::default();
+  // Must execute cleanly without panicking
+  preflight_warn_stale_tools(&[], &config, true, true);
+  preflight_warn_stale_tools(&[], &config, true, false);
+  preflight_warn_stale_tools(&[], &config, false, true);
+}
+
+#[test]
+fn test_preflight_warn_stale_tools_with_surfaces() {
+  let config = FormalityConfig::default();
+  let surfaces = all_surfaces();
+  // Runs against real/registered surfaces cleanly without panicking
+  preflight_warn_stale_tools(&surfaces, &config, true, false);
+  preflight_warn_stale_tools(&surfaces, &config, false, true);
+  preflight_warn_stale_tools(&surfaces, &config, true, true);
+}
