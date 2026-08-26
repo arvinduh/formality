@@ -9,6 +9,10 @@ version is tracked separately; this document only covers the mechanics that
 already exist — changelog generation, tagging, and publishing — so they are
 ready to use once version bumps begin.
 
+> The `#126` citation below predates the 2026-08-26 repo recreation and no
+> longer resolves — see
+> [`docs/INDEX.md`](INDEX.md#note-on-pre-recreation-issuepr-numbers).
+
 ## Overview
 
 Releases are cut from `main` and are driven by

@@ -280,8 +280,9 @@ not just a technical judgment call — gets `status:design-phase` + a
 such an issue stops and tells the user to open a fresh chat to architect it
 first. It does not implement, and does not silently reinterpret the issue to
 make it implementable without that conversation. (`#76` — eliminating `fml sync`
-via editor-native config parsing — is the concrete case that produced this
-rule.)
+via editor-native config parsing — is the concrete case that produced this rule.
+That citation predates the 2026-08-26 repo recreation and no longer resolves —
+see [`docs/INDEX.md`](../docs/INDEX.md#note-on-pre-recreation-issuepr-numbers).)
 
 ## 10. Applied-feature checkpoint
 

@@ -1,5 +1,9 @@
 # 0001 — Arc-shared `ExecutionContext` fields
 
+> `#N` citations below predate the 2026-08-26 repo recreation and no longer
+> resolve — see
+> [`docs/INDEX.md`](../INDEX.md#note-on-pre-recreation-issuepr-numbers).
+
 **Status:** Accepted **Decided in:** `#50` ("perf(engine): memory & runtime
 efficiency optimizer"), landed via PR `#105`.
 

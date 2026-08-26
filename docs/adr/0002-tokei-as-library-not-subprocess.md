@@ -1,5 +1,9 @@
 # 0002 — `tokei` as a library dependency, not a subprocess, for a future `fml stat`
 
+> `#N` citations below predate the 2026-08-26 repo recreation and no longer
+> resolve — see
+> [`docs/INDEX.md`](../INDEX.md#note-on-pre-recreation-issuepr-numbers).
+
 **Status:** Proposed — `fml stat` does not exist in the codebase yet; this ADR
 backfills a decision made in design conversation ahead of implementation, per
 issue `#131`.

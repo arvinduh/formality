@@ -7,6 +7,10 @@ next. It exists so a standard survives past the audit that found it — see
 reviewer who finds an uncovered violation promotes the rule here, or files a
 follow-up to encode it, rather than fixing one PR and moving on).
 
+> The `#N` citations throughout this document predate the 2026-08-26 repo
+> recreation and no longer resolve — see
+> [`docs/INDEX.md`](INDEX.md#note-on-pre-recreation-issuepr-numbers).
+
 ## Base and scope
 
 The base is the actual
