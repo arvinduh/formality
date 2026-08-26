@@ -43,6 +43,8 @@ cargo run -q -- sync --check
 
 - Commit directly to `main`.
 
-Multi-agent orchestration process (worktrees, QA gate, dispatch order,
-design-phase and applied-feature rules): see `.agents/orchestrate.md`, or GitHub
-issue #77 as the tool-agnostic mirror.
+Default to dispatching worker subagents in isolated worktrees, not editing
+source directly — see `.agents/orchestrate.md` §8 for the narrow, enumerated
+exceptions. That file also covers worktrees, the QA gate, dispatch order, and
+design-phase/applied-feature rules; GitHub issue #77 is the tool-agnostic
+mirror.

@@ -263,12 +263,14 @@ Whichever agent is prompted defaults to **dispatching/reviewing**, not executing
 directly — even for a single non-parallelizable task. Before doing
 implementation work in the current turn, ask: could this be handed to a worker
 subagent in its own worktree instead? Default yes. Direct execution is the
-deliberate exception: pure bookkeeping with no code-review surface (labeling
-issues, checking CI, merging an already-reviewed PR), resolving a merge conflict
-between two already-reviewed branches, or a task so trivial that spinning up a
-worker costs more than it saves. Anything beyond a trivial one-liner still gets
-the §4 QA gate even when the orchestrator wrote it directly — being the same
-agent that would review it is not a shortcut around review.
+deliberate exception, and only for these two cases: pure bookkeeping with no
+code-review surface (labeling issues, checking CI, merging an already-reviewed
+PR), or resolving a merge conflict between two already-reviewed branches. Don't
+extend this list by judgment call in the moment — "this one's trivial too" is
+exactly the rationalization this section exists to block. Anything beyond these
+two, however small, still gets the §4 QA gate even when the orchestrator wrote
+it directly — being the same agent that would review it is not a shortcut around
+review.
 
 ## 9. Design-phase stop rule
 
