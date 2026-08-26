@@ -49,5 +49,4 @@ where several common questions actually get answered:
   ask-first list) that points at this index.
 - `.agents/orchestrate.md` — the multi-agent orchestration process: worktree
   isolation, the maker-checker QA gate, dispatch order, issue/label conventions.
-- `CONTRIBUTING.md`, `SECURITY.md` — contribution workflow and vulnerability
-  reporting.
+- `CONTRIBUTING.md` — contribution workflow.

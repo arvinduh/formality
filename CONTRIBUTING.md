@@ -186,7 +186,7 @@ Commits **must** strictly follow the
 
 - `feat(engine): add multi-threaded execution for typst surface (Fixes #42)`
 - `fix(config): resolve drift check false positive in editorconfig (Fixes #88)`
-- `docs(community): add CONTRIBUTING.md, templates, and SECURITY.md (Fixes #129)`
+- `docs(community): add CONTRIBUTING.md and issue templates (Fixes #129)`
 
 ---
 
