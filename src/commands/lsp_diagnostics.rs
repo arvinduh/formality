@@ -659,7 +659,7 @@ fn markdownlint_diagnostics(
     crate::surfaces::markdown::write_markdownlint_temp_config(&lang_config)
       .ok()?;
 
-  let mut cmd = Command::new(binary);
+  let mut cmd = crate::surfaces::create_tool_command(binary);
   cmd.args(crate::surfaces::markdown::build_markdownlint_args(
     &[file.to_path_buf()],
     false,
