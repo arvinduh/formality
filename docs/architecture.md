@@ -13,15 +13,17 @@ crate (`src/lib.rs`), which declares the seven top-level modules (`cli`,
 `commands`, `config`, `engine`, `errors`, `surfaces`, `ui`), owns the actual
 subcommand dispatch (`run_command_inner` — the single `match args.command` that
 routes every `Commands` variant to its handler, after loading and merging
-config), and carries a block of `DEPRECATED / STALE ALIAS` re-exports preserving
-pre-reorganization `crate::foo::*` paths for external consumers (see
-[style-guide.md](style-guide.md) §1 — new code always uses the canonical
-structural path, never an alias). `src/cli.rs` defines the `clap`-based argument
-parser only (`Cli`, `Commands`, `MigrateCommands`) — it parses, it does not
-dispatch. `src/errors.rs` is the crate-wide error hierarchy — `FormalityError`
-and its per-subsystem inner enums (`ConfigError`, `GitError`,
-`ToolMissingError`, `SurfaceError`, `IoError`) — with no `anyhow`/`thiserror`
-dependency; see [style-guide.md](style-guide.md) §5 for the full convention.
+config), and re-exports two crate-root items reached that way by this crate's
+own integration tests (`SCHEMA_VERSION`, `generate_schema`) — see
+[style-guide.md](style-guide.md) §1 for why those two survived the `#133`
+alias-minimization sweep while the rest of the old `DEPRECATED / STALE ALIAS`
+block did not: new code always uses the canonical structural path, never a
+crate-root shortcut. `src/cli.rs` defines the `clap`-based argument parser only
+(`Cli`, `Commands`, `MigrateCommands`) — it parses, it does not dispatch.
+`src/errors.rs` is the crate-wide error hierarchy — `FormalityError` and its
+per-subsystem inner enums (`ConfigError`, `GitError`, `ToolMissingError`,
+`SurfaceError`, `IoError`) — with no `anyhow`/`thiserror` dependency; see
+[style-guide.md](style-guide.md) §5 for the full convention.
 
 ## `src/config`
 

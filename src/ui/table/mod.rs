@@ -1,3 +1,7 @@
+//! Table data model ([`Table`], [`Row`], [`Cell`], [`Column`]) and the
+//! semantic style/layout types ([`Style`], [`Palette`], [`Layout`],
+//! [`WidthPolicy`]) that [`render`] turns into terminal or JSON output.
+
 pub mod render;
 
 pub use render::{

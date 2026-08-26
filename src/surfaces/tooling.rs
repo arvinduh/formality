@@ -77,6 +77,7 @@ pub enum InstallMethod {
 }
 
 impl InstallMethod {
+  #[must_use]
   pub(super) fn is_available(&self) -> bool {
     match self {
       InstallMethod::CargoBinstall(_) => has_cargo_binstall(),
@@ -520,6 +521,7 @@ pub fn create_tool_command(binary: &str) -> std::process::Command {
 }
 
 #[cfg(test)]
+#[allow(missing_docs, clippy::missing_errors_doc, clippy::missing_panics_doc)]
 mod tests {
   use super::*;
   use crate::surfaces::ToolInfo;

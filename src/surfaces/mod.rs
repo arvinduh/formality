@@ -66,16 +66,24 @@ pub use tooling::{
 /// Execution context shared with every [`LanguageSurface`] invocation for a
 /// single `fml` command.
 ///
-/// `paths` and `global_config` are wrapped in [`Arc`] because the runner
-/// builds one `ExecutionContext` per surface and dispatches them in
-/// parallel (`rayon::par_iter`): with plain owned fields, every surface
-/// would deep-clone the *entire* candidate path list and global config on
-/// every invocation, even though all surfaces see the same values. `Arc`
-/// makes that a cheap refcount bump instead of an O(paths.len()) copy.
+/// `root`, `paths`, and `global_config` are wrapped in [`Arc`] because the
+/// runner builds one `ExecutionContext` per surface and dispatches them in
+/// parallel (`rayon::par_iter`), and all surfaces see the same values for
+/// these three fields. For `paths` and `global_config` this avoids a real
+/// per-surface cost: without `Arc`, every one of the (currently) 12 surfaces
+/// would deep-clone the *entire* candidate path list and the global config
+/// on every invocation, in place of a cheap refcount bump. `root` is wrapped
+/// for consistency with those two shared fields, not for a comparable
+/// saving — it's one short `PathBuf`, so the copy avoided there is small.
+/// `Arc<PathBuf>` (not `Arc<Path>`) matches the `Arc<Vec<PathBuf>>` /
+/// `Arc<ResolvedGlobalConfig>` shape already used above: every field here is
+/// `Arc` wrapping the type's natural owned form, not the `Arc<[T]>`/
+/// `Arc<str>`-style unsized-coercion pattern, so `root` follows the same
+/// convention rather than special-casing to `Arc<Path>`.
 #[derive(Debug, Clone)]
 pub struct ExecutionContext {
   /// Target workspace root directory path.
-  pub root: PathBuf,
+  pub root: Arc<PathBuf>,
   /// Target path arguments.
   pub paths: Arc<Vec<PathBuf>>,
   /// Resolved global configuration settings.
@@ -364,7 +372,7 @@ mod tests {
   #[test]
   fn test_unsupported_lint_fix_returns_skipped() {
     let dummy_ctx = ExecutionContext {
-      root: PathBuf::from("."),
+      root: Arc::new(PathBuf::from(".")),
       paths: Arc::new(Vec::new()),
       global_config: Arc::new(ResolvedGlobalConfig::default()),
       lang_config: ResolvedLangConfig::new("dummy"),

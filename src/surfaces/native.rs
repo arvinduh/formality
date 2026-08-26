@@ -1,3 +1,7 @@
+//! Shared machinery for rendering, diffing, and syncing a surface's
+//! `NativeConfig`-backed managed configuration file (`.rustfmt.toml`,
+//! `.golangci.yml`, and similar) from the resolved `formality.toml` state.
+
 use crate::errors::{FormalityError, SurfaceError};
 pub use crate::surfaces::editorconfig::{
   EDITORCONFIG_FILE_NAME, generate_editorconfig,
@@ -311,7 +315,7 @@ mod tests {
     lang_config.use_tabs = false;
 
     let ctx = ExecutionContext {
-      root: temp.path().to_path_buf(),
+      root: Arc::new(temp.path().to_path_buf()),
       paths: Arc::new(Vec::new()),
       global_config: Arc::new(ResolvedGlobalConfig::default()),
       lang_config,

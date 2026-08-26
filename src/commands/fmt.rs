@@ -1,3 +1,6 @@
+//! `fml fmt` command: formats, or with `--check` only verifies, the resolved
+//! target surfaces via [`Runner`].
+
 use std::path::{Path, PathBuf};
 
 use crate::commands::{

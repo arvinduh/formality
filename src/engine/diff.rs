@@ -1,3 +1,6 @@
+//! Colored unified-diff rendering shared by every surface's `--check` /
+//! sync-preview output.
+
 use colored::Colorize;
 use similar::{ChangeTag, TextDiff};
 use std::fmt::Write as _;

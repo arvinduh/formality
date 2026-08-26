@@ -108,14 +108,25 @@ Per `AGENTS.md`:
 - `src/ui` — table rendering.
 - `src/commands` — CLI subcommand handlers.
 
-`src/lib.rs` also carries a block of `DEPRECATED / STALE ALIAS` re-exports
-(`pub use commands::doctor;` and similar) preserving pre-reorganization
-`crate::foo::*` paths for external consumers and old integration tests. **Tier 3
-(promote to tier 2 if a mechanical check is found):** new internal code always
-spells out the canonical, structural path (e.g. `crate::ui::table`,
-`crate::engine::version`) — never the shortened alias, even where it would
-resolve to the same item. Only the alias list itself, and code that predates the
-reorganization, uses the short form.
+`src/lib.rs` no longer carries the `DEPRECATED / STALE ALIAS` block of top-level
+module re-exports (`pub use commands::doctor;` and similar) that used to
+preserve pre-reorganization `crate::foo::*` paths. It was removed in `#133`'s
+sweep once an audit confirmed nothing used it: no internal call site referenced
+the short form, and this crate's own integration tests (`tests/*.rs`) already
+addressed everything through the canonical structural path
+(`fml::surfaces::editorconfig::generate_editorconfig`, not
+`fml::generate_editorconfig`) except the two items kept below. **Tier 3 (promote
+to tier 2 if a mechanical check is found):** new internal code always spells out
+the canonical, structural path (e.g. `crate::ui::table`,
+`crate::engine::version`) — never a crate-root shortcut, even where one would
+resolve to the same item.
+
+Two crate-root re-exports remain, and both are genuinely load-bearing rather
+than compatibility shims: `pub use config::SCHEMA_VERSION;` and
+`pub use config::schema::generate_schema;` are reached as `fml::SCHEMA_VERSION`
+/ `fml::generate_schema` by this crate's own `tests/integration_tests.rs` and
+`tests/schema_drift.rs`. A re-export earns a place at the crate root by being
+actually reached that way by real code — not by habit, and not "just in case."
 
 ---
 
@@ -142,15 +153,36 @@ Extracted from what all 12 language surfaces already do consistently — see
   `detect_surfaces_smart`) rather than static methods on `SurfaceRegistry` when
   the operation doesn't need an existing registry instance
   (`SurfaceRegistry::default()` still supplies the actual fleet).
-- **Predicate methods**: `is_*` returning `bool`, `#[must_use]`
-  (`SurfaceResult::is_success`, `is_violation`, `is_error`;
-  `ExitStatus::is_clean`, `is_violations`, `is_error`;
-  `FacetSupport::is_configurable`, `is_fixed`, `is_unsupported`).
-- **Tier 3 (promote to tier 2 if a mechanical check is found):** a pure getter
-  or predicate (no I/O, no mutation) carries `#[must_use]`. This is common
-  enough in the codebase to be a real convention, but no repo-local test
-  currently walks the AST to check it — `clippy::must_use_candidate` is
-  allow-by-default in this crate's lint set, so it isn't already tier 1 here.
+- **Predicate methods (tier 2, enforced by
+  `test_is_predicate_methods_carry_must_use` in `src/lib.rs`):** `is_*`
+  returning `bool` carries `#[must_use]` (`SurfaceResult::is_success`,
+  `is_violation`, `is_error`; `ExitStatus::is_clean`, `is_violations`,
+  `is_error`; `FacetSupport::is_configurable`, `is_fixed`, `is_unsupported`).
+  Promoted from tier 3 during `#133`'s sweep: a text-scan `#[test]`, the same
+  filesystem-walk mechanism as
+  `test_no_stray_test_files_outside_sanctioned_pattern`, is enough to check
+  every `is_*` predicate with a `-> bool` signature in the tree — the sweep's
+  own audit turned up two real misses (`DeclaresFacets::is_facet_configurable`,
+  `surfaces::java::is_aosp_style`), both fixed in the same PR. A `#201` QA
+  review then proved the first version of this scan didn't actually check the
+  rule it claimed to: it matched only a single-line `pub fn is_*(...) -> bool`
+  signature, so it stayed green with `#[must_use]` deleted from
+  `ExitStatus::is_clean` (a `pub const fn`, and this rule's own named exemplar)
+  and was blind to `pub(crate)`/`pub(super)` visibility and multi-line
+  signatures — missing three more real violations
+  (`surfaces::tooling::is_available`,
+  `config::facets::is_value_compatible_with_fixed`,
+  `surfaces::glob::is_excluded_normalized`) in the process. The scan now
+  normalizes visibility/`const`/`async`/`unsafe` modifiers and joins a signature
+  across lines before checking for `-> bool`; the fix was verified by re-running
+  the delete-`#[must_use]`-from-`is_clean` check and confirming the test now
+  fails.
+- **Tier 3 (promote to tier 2 if a mechanical check is found):** the broader
+  "pure getter or predicate (no I/O, no mutation) carries `#[must_use]`" case
+  beyond the `is_*` family above stays tier 3 — a text scan can reliably spot
+  the `is_*` naming pattern, but can't tell a pure getter from an impure one by
+  name alone. `clippy::must_use_candidate` is allow-by-default in this crate's
+  lint set, so this isn't already tier 1 either.
 
 ---
 
@@ -166,30 +198,46 @@ crate-wide (landed via `#121`, this issue's blocker). That means:
   `# Errors` section, or a doc sentence covering it for a short function).
 - Every function that can panic documents when (`# Panics`), or doesn't panic.
 
-On top of that tier-1 floor, this codebase's own convention (tier 3 — promote to
-tier 2 if a mechanical check is found):
+On top of that tier-1 floor, this codebase's own convention:
 
 - Every `pub mod` declaration in `src/lib.rs` and `src/surfaces/mod.rs` etc.
   carries an outer `///` doc comment one line above the `mod` keyword describing
   what the module is for, even though `missing_docs` doesn't require this for
   module declarations specifically (see the `pub mod cli;` block at the top of
   `src/lib.rs`, and the per-surface `pub mod <lang>;` block in
-  `src/surfaces/mod.rs`).
-- An inline `#[cfg(test)] mod tests` block carries
+  `src/surfaces/mod.rs`). **Tier 3 (promote to tier 2 if a mechanical check is
+  found).**
+- An inline `#[cfg(test)] mod tests` block, or a directory module's sibling
+  `mod tests;` declaration (§1's exception), carries
   `#[allow(missing_docs, clippy::missing_errors_doc, clippy::missing_panics_doc)]`
   directly under the `#[cfg(test)]` attribute, opting test code out of the
   crate-wide tier-1 doc lints above — test functions document themselves by name
-  (§2). Every inline test module in the tree already does this; a new one that
-  omits it will fail CI's `-D warnings` the moment it adds a `pub` item or a
-  `Result`-returning helper.
+  (§2). A test module that omits it will fail CI's `-D warnings` the moment it
+  adds a `pub` item or a `Result`-returning helper. **Tier 3 (promote to tier 2
+  if a mechanical check is found)** — no repo-local test currently walks every
+  `mod tests` site to confirm this; a `#201` QA review found two real misses
+  (`src/surfaces/tooling.rs`, `src/commands/migrate.rs`) by hand, so a claim
+  that "every test module already does this" is only a review-time snapshot, not
+  a standing guarantee, until this is mechanically checked.
 - Every file with meaningful crate-level content (not just re-exports) opens
   with a `//!` module-level doc comment summarizing what lives in it (see the
-  top of `src/surfaces/mod.rs`, `src/surfaces/registry.rs`).
+  top of `src/surfaces/mod.rs`, `src/surfaces/registry.rs`). The one exemption
+  is a `tests.rs` sibling file under §1's directory-module split — test-only
+  content already opted out of the doc lints by the bullet above, the same way
+  an inline `mod tests` block carries no `//!` of its own. **Tier 2, enforced by
+  `test_files_carry_module_doc_comment` in `src/lib.rs`.** Promoted from tier 3
+  during `#201`'s QA follow-up to `#133`'s sweep: that PR's own audit omitted §3
+  entirely, and a QA review found the rule ~80% unmet across the tree (41 of 50
+  files at the time) — the exact silent-drift failure mode tier 2 exists to
+  prevent, so this was pushed up rather than re-documented as still tier 3.
 - A non-obvious architectural choice gets a comment explaining _why_, not just
   _what_ — e.g. the `Arc`-sharing rationale on `ExecutionContext` (§4 below), or
-  the `DEPRECATED / STALE ALIAS` markers in `src/lib.rs` explaining why each
-  alias still exists. A comment restating what the next line of code already
-  says is not this.
+  the comment above `src/lib.rs`'s two remaining crate-root re-exports
+  explaining why each is genuinely reached that way rather than a leftover
+  alias. A comment restating what the next line of code already says is not
+  this. **Tier 3 (promote to tier 2 if a mechanical check is found)** —
+  "non-obvious" isn't mechanically detectable without deeper analysis than a
+  text scan gives.
 
 ---
 
@@ -199,15 +247,28 @@ tier 2 if a mechanical check is found):
 
 `ExecutionContext` (`src/surfaces/mod.rs`) is built once per surface, per
 invocation, and the `Runner` (`src/engine/runner/mod.rs`) dispatches all matched
-surfaces in parallel via `rayon::par_iter`. Two of its fields —
-`paths: Arc<Vec<PathBuf>>` and `global_config: Arc<ResolvedGlobalConfig>` — are
-wrapped in `Arc` specifically because every surface in that parallel dispatch
-sees the _same_ values: without the `Arc`, each of the (currently) 12 surfaces
-would deep-clone the full candidate path list and global config on every
-invocation, instead of a cheap refcount bump. `lang_config`, by contrast, is a
+surfaces in parallel via `rayon::par_iter`. Three of its fields —
+`root: Arc<PathBuf>`, `paths: Arc<Vec<PathBuf>>`, and
+`global_config: Arc<ResolvedGlobalConfig>` — are wrapped in `Arc` because every
+surface in that parallel dispatch sees the _same_ values. For `paths` and
+`global_config` this avoids a real cost: without the `Arc`, each of the
+(currently) 12 surfaces would deep-clone the full candidate path list and the
+global config on every invocation, instead of a cheap refcount bump. `root` is
+wrapped for consistency with those two fields, not for a comparable saving —
+it's one short `PathBuf`, so the copy it avoids is small; don't cite `root` as
+precedent for `Arc`-wrapping the next small `Copy`-ish field on this struct,
+only for a field with a real per-surface cost like `paths`/`global_config`.
+`Arc<PathBuf>`, not `Arc<Path>`, is the deliberate choice for all three
+`Arc`-wrapped fields: each wraps the type's natural owned form
+(`Arc<Vec<PathBuf>>`, `Arc<ResolvedGlobalConfig>`), not the
+`Arc<[T]>`/`Arc<str>`-style unsized-coercion pattern, so `root` follows suit
+rather than special-casing to `Arc<Path>`. `lang_config`, by contrast, is a
 plain owned `ResolvedLangConfig` — it's genuinely per-surface
 (`config.resolve_for_lang(surface.name())`), so there's nothing shared to `Arc`
-there.
+there. (`root` was converted from a plain `PathBuf` to `Arc<PathBuf>` during
+`#133`'s sweep, once an audit confirmed it fit this exact pattern — every
+production read is `Path`-like usage reached through `Deref`/`AsRef`, so call
+sites needed only `ctx.root.as_path()` in place of `&ctx.root`.)
 
 **Tier 3 (promote to tier 2 if a mechanical check is found):** a new field on
 `ExecutionContext` (or a similarly fanned-out per-invocation struct) that holds

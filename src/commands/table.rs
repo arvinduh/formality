@@ -1,3 +1,6 @@
+//! `fml table` command: renders a JSON table spec to formatted terminal
+//! output, useful for scripting or debugging [`crate::ui::table`] layouts.
+
 use colored::Colorize;
 
 use crate::errors::{ExitStatus, FormalityError, IoError};

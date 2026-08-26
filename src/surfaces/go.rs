@@ -1,3 +1,7 @@
+//! Go language surface: formats via `gofmt`/`goimports` and lints via
+//! `golangci-lint`, syncing the managed `.golangci.yml` from
+//! `formality.toml`.
+
 use super::{
   DeclaresFacets, ExecutionContext, Facet, FacetSupport, LanguageSurface,
   NativeConfig, SurfaceResult, SurfaceStatus, ToolInfo, check_binary_exists,
@@ -258,7 +262,7 @@ impl LanguageSurface for GoSurface {
     }
 
     let files = find_files_with_ext(
-      &ctx.root,
+      ctx.root.as_path(),
       GO_EXTENSIONS,
       &ctx.paths,
       &ctx.lang_config.files,
@@ -287,7 +291,7 @@ impl LanguageSurface for GoSurface {
         |scratch| {
           let mut gofmt_cmd = create_tool_command("gofmt");
           gofmt_cmd.arg("-s").arg("-w").arg(scratch);
-          gofmt_cmd.current_dir(&ctx.root);
+          gofmt_cmd.current_dir(ctx.root.as_path());
           let gofmt_out = gofmt_cmd.output()?;
           if !gofmt_out.status.success() {
             return Ok(gofmt_out);
@@ -300,7 +304,7 @@ impl LanguageSurface for GoSurface {
           }
           goimports_cmd.arg(scratch);
           goimports_cmd.args(&ctx.lang_config.extra_args);
-          goimports_cmd.current_dir(&ctx.root);
+          goimports_cmd.current_dir(ctx.root.as_path());
           goimports_cmd.output()
         },
         self.name(),
@@ -313,7 +317,7 @@ impl LanguageSurface for GoSurface {
     for f in &files {
       gofmt_cmd.arg(f);
     }
-    gofmt_cmd.current_dir(&ctx.root);
+    gofmt_cmd.current_dir(ctx.root.as_path());
 
     match gofmt_cmd.output() {
       Ok(output) => {
@@ -358,7 +362,7 @@ impl LanguageSurface for GoSurface {
       goimports_cmd.arg(f);
     }
     goimports_cmd.args(&ctx.lang_config.extra_args);
-    goimports_cmd.current_dir(&ctx.root);
+    goimports_cmd.current_dir(ctx.root.as_path());
 
     match goimports_cmd.output() {
       Ok(output) => {
@@ -412,7 +416,7 @@ impl LanguageSurface for GoSurface {
     }
 
     let files = find_files_with_ext(
-      &ctx.root,
+      ctx.root.as_path(),
       GO_EXTENSIONS,
       &ctx.paths,
       &ctx.lang_config.files,
@@ -458,7 +462,7 @@ impl LanguageSurface for GoSurface {
       fix,
       &ctx.lang_config.extra_args,
     ));
-    cmd.current_dir(&ctx.root);
+    cmd.current_dir(ctx.root.as_path());
 
     match cmd.output() {
       Ok(output) => {
@@ -667,7 +671,7 @@ mod tests {
     let temp = TempDir::new().unwrap();
     let surface = GoSurface;
     let ctx = ExecutionContext {
-      root: temp.path().to_path_buf(),
+      root: Arc::new(temp.path().to_path_buf()),
       paths: Arc::new(Vec::new()),
       global_config: Arc::new(ResolvedGlobalConfig::default()),
       lang_config: ResolvedLangConfig::new("go"),
@@ -701,7 +705,7 @@ mod tests {
     });
 
     let ctx = ExecutionContext {
-      root: temp.path().to_path_buf(),
+      root: Arc::new(temp.path().to_path_buf()),
       paths: Arc::new(Vec::new()),
       global_config: Arc::new(ResolvedGlobalConfig::default()),
       lang_config: lang_cfg,
@@ -730,7 +734,7 @@ mod tests {
 
     let surface = GoSurface;
     let ctx_check = ExecutionContext {
-      root: temp.path().to_path_buf(),
+      root: Arc::new(temp.path().to_path_buf()),
       paths: Arc::new(Vec::new()),
       global_config: Arc::new(ResolvedGlobalConfig::default()),
       lang_config: ResolvedLangConfig::new("go"),
@@ -744,7 +748,7 @@ mod tests {
     ));
 
     let ctx_fix = ExecutionContext {
-      root: temp.path().to_path_buf(),
+      root: Arc::new(temp.path().to_path_buf()),
       paths: Arc::new(Vec::new()),
       global_config: Arc::new(ResolvedGlobalConfig::default()),
       lang_config: ResolvedLangConfig::new("go"),
@@ -814,7 +818,7 @@ mod tests {
 
     let surface = GoSurface;
     let ctx = ExecutionContext {
-      root: temp.path().to_path_buf(),
+      root: Arc::new(temp.path().to_path_buf()),
       paths: Arc::new(Vec::new()),
       global_config: Arc::new(ResolvedGlobalConfig::default()),
       lang_config: ResolvedLangConfig::new("go"),
@@ -858,7 +862,7 @@ mod tests {
       linters: Some(vec!["errcheck".to_string()]),
     });
     let ctx_errcheck = ExecutionContext {
-      root: temp.path().to_path_buf(),
+      root: Arc::new(temp.path().to_path_buf()),
       paths: Arc::new(Vec::new()),
       global_config: Arc::new(ResolvedGlobalConfig::default()),
       lang_config: errcheck_cfg,
@@ -876,7 +880,7 @@ mod tests {
       linters: Some(vec!["govet".to_string()]),
     });
     let ctx_govet = ExecutionContext {
-      root: temp.path().to_path_buf(),
+      root: Arc::new(temp.path().to_path_buf()),
       paths: Arc::new(Vec::new()),
       global_config: Arc::new(ResolvedGlobalConfig::default()),
       lang_config: govet_cfg,

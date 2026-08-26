@@ -17,51 +17,21 @@ pub mod surfaces;
 /// Terminal UI components and layout rendering.
 pub mod ui;
 
-// Backward-compatible top-level module aliases so existing `crate::foo::*`
-// and `fml::foo::*` paths (integration tests, external consumers) keep
-// working after the domain-driven `src/` reorganization.
-//
-// These aliases are a compatibility shim only: internal code in this crate
-// always spells out the canonical, structural path (e.g.
-// `crate::ui::table`, `crate::engine::version`) rather than the shortened
-// alias, even where the alias would resolve to the same item. Keeping that
-// distinction consistent means the alias list can eventually be trimmed or
-// deprecated without touching any internal call site.
-//
-// DEPRECATED / STALE ALIAS: doctor
-pub use commands::doctor;
-// DEPRECATED / STALE ALIAS: lsp
-pub use commands::lsp;
-pub use commands::{get_git_changed_files, get_git_staged_files};
-// DEPRECATED / STALE ALIAS: facets
-pub use config::facets;
-// DEPRECATED / STALE ALIAS: schema
-pub use config::schema;
+// `generate_schema` and `SCHEMA_VERSION` are re-exported at the crate root
+// because this crate's own integration tests (`tests/schema_drift.rs`,
+// `tests/integration_tests.rs`) reach them as `fml::generate_schema` /
+// `fml::SCHEMA_VERSION` — a real external use, not a compatibility shim.
+// Every other item in this crate is reached through its canonical,
+// structural module path (e.g. `crate::engine::update`,
+// `crate::ui::table`); see docs/style-guide.md §1.
+pub use config::SCHEMA_VERSION;
 pub use config::schema::generate_schema;
-pub use surfaces::editorconfig::generate_editorconfig;
-// DEPRECATED / STALE ALIAS: diff
-pub use engine::diff;
-// DEPRECATED / STALE ALIAS: runner
-pub use engine::runner;
-// DEPRECATED / STALE ALIAS: update
-pub use engine::update;
-// DEPRECATED / STALE ALIAS: version
-pub use engine::version;
-// DEPRECATED / STALE ALIAS: editorconfig
-pub use surfaces::editorconfig;
-// DEPRECATED / STALE ALIAS: errors
-pub use errors::{
-  ConfigError, ExitStatus, FormalityError, GitError, IoError, Result,
-  SurfaceError, ToolMissingError,
-};
-// DEPRECATED / STALE ALIAS: table
-pub use ui::table;
 
 use clap::Parser;
 use cli::{Cli, Commands, MigrateCommands};
 use colored::Colorize;
 use config::FormalityConfig;
-pub use config::SCHEMA_VERSION;
+use errors::{ExitStatus, FormalityError};
 use std::path::PathBuf;
 
 /// Parses CLI arguments from `std::env::args()` and executes the command.
@@ -85,11 +55,11 @@ pub fn run_with_args(args: Cli) -> ExitStatus {
     std::env::current_dir().unwrap_or_else(|_| PathBuf::from("."))
   });
 
-  let update_notifier = update::spawn_update_check();
-  let schema_notifier = schema::spawn_schema_check(&root);
+  let update_notifier = engine::update::spawn_update_check();
+  let schema_notifier = config::schema::spawn_schema_check(&root);
   let status = run_command_inner(args);
-  schema::print_schema_notice(schema_notifier);
-  update::print_update_notice(update_notifier);
+  config::schema::print_schema_notice(schema_notifier);
+  engine::update::print_update_notice(update_notifier);
   status
 }
 
@@ -270,6 +240,187 @@ mod tests {
     assert!(
       violations.is_empty(),
       "module/file hierarchy violation(s) — see docs/style-guide.md §1:\n{}",
+      violations.join("\n")
+    );
+  }
+
+  // Tier-2 enforcement for the naming-conventions predicate-method rule
+  // documented in docs/style-guide.md §2 ("a pure getter or predicate ...
+  // carries #[must_use]"), promoted from tier 3 during #133's sweep.
+  //
+  // Normalizes the signature before matching: strips a leading `pub` /
+  // `pub(crate)` / `pub(super)` / `pub(in ...)` visibility modifier and any
+  // `const`/`async`/`unsafe` qualifiers (in any order), then requires the
+  // remainder to start with `fn is_`. Signatures are joined across lines up
+  // to the opening `{` (or a trailing `;` for a trait-method declaration)
+  // before checking for `-> bool`, so a return type on its own line is not
+  // invisible to the scan. This was proven against a real gap in an earlier
+  // version of this test: it matched only single-line `pub fn is_...(...)
+  // -> bool` signatures, which passed green even with `#[must_use]` deleted
+  // from `ExitStatus::is_clean` (a `pub const fn`) — i.e. it didn't catch
+  // the rule's own named exemplar. See docs/style-guide.md §2.
+  #[test]
+  fn test_is_predicate_methods_carry_must_use() {
+    let manifest_dir = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+    let src_dir = manifest_dir.join("src");
+
+    // Strips a leading `pub`/`pub(...)` visibility modifier and any
+    // `const`/`async`/`unsafe` qualifiers, then reports whether what's left
+    // starts a `fn is_*` predicate signature.
+    fn starts_is_predicate_fn(trimmed: &str) -> bool {
+      let mut rest = trimmed;
+
+      if let Some(after_pub) = rest.strip_prefix("pub") {
+        let after_pub = after_pub.trim_start();
+        rest = if let Some(after_paren_open) = after_pub.strip_prefix('(') {
+          match after_paren_open.find(')') {
+            Some(close) => after_paren_open[close + 1..].trim_start(),
+            None => after_pub,
+          }
+        } else {
+          after_pub
+        };
+      }
+
+      loop {
+        let mut advanced = false;
+        for kw in ["const", "async", "unsafe"] {
+          if let Some(after_kw) = rest.strip_prefix(kw)
+            && after_kw.starts_with(char::is_whitespace)
+          {
+            rest = after_kw.trim_start();
+            advanced = true;
+          }
+        }
+        if !advanced {
+          break;
+        }
+      }
+
+      rest.starts_with("fn is_")
+    }
+
+    let mut violations = Vec::new();
+    for entry in walkdir::WalkDir::new(&src_dir)
+      .into_iter()
+      .filter_map(Result::ok)
+      .filter(|e| e.file_type().is_file())
+      .filter(|e| e.path().extension().is_some_and(|ext| ext == "rs"))
+    {
+      let path = entry.path();
+      let Ok(content) = std::fs::read_to_string(path) else {
+        continue;
+      };
+      let lines: Vec<&str> = content.lines().collect();
+
+      for (i, line) in lines.iter().enumerate() {
+        let trimmed = line.trim_start();
+        if !starts_is_predicate_fn(trimmed) {
+          continue;
+        }
+
+        // Join the signature across lines (a wrapped multi-line
+        // `fn is_foo(\n  ...\n) -> bool {` is common in this crate) up to
+        // the opening `{`, or a trailing `;` for a trait-method
+        // declaration with no body, whichever comes first.
+        let mut header = String::new();
+        let mut is_bool_predicate = false;
+        for l in lines[i..].iter().take(20) {
+          if let Some(pos) = l.find('{') {
+            header.push_str(&l[..pos]);
+            is_bool_predicate = header.contains("-> bool");
+            break;
+          }
+          let trimmed_end = l.trim_end();
+          if let Some(without_semi) = trimmed_end.strip_suffix(';') {
+            header.push_str(without_semi);
+            is_bool_predicate = header.contains("-> bool");
+            break;
+          }
+          header.push_str(l);
+          header.push(' ');
+        }
+        if !is_bool_predicate {
+          continue;
+        }
+
+        // Walk upward past any attributes/doc comments other than
+        // `#[must_use]` to find whether one is present immediately above
+        // the signature (allowing for other attributes in between, e.g.
+        // `#[must_use]` then a doc comment is not how this crate writes
+        // it, but tolerate ordering rather than over-fitting the scan).
+        let has_must_use = lines[..i]
+          .iter()
+          .rev()
+          .take_while(|prior| {
+            let t = prior.trim_start();
+            t.starts_with('#') || t.starts_with("///") || t.starts_with("//!")
+          })
+          .any(|prior| prior.trim_start().starts_with("#[must_use]"));
+
+        if !has_must_use {
+          violations.push(format!(
+            "{}:{}: `{}` is missing `#[must_use]` — see docs/style-guide.md §2",
+            path.display(),
+            i + 1,
+            trimmed
+          ));
+        }
+      }
+    }
+
+    assert!(
+      violations.is_empty(),
+      "predicate-method `#[must_use]` violation(s) — see docs/style-guide.md §2:\n{}",
+      violations.join("\n")
+    );
+  }
+
+  // Tier-2 enforcement for the `//!` module-doc rule documented in
+  // docs/style-guide.md §3 ("Every file with meaningful crate-level content
+  // ... opens with a `//!` module-level doc comment"), promoted from tier 3
+  // during #201's QA follow-up: a QA review of #201 found the rule was
+  // ~80% unmet across the tree (41 of 50 files at the time) despite the PR
+  // claiming a clean style-guide sweep, precisely because nothing mechanical
+  // was checking it. Exempts `tests.rs` sibling files (the §1 directory-
+  // module test-split exception) the same way an inline `#[cfg(test)] mod
+  // tests` block is exempt — both are test-only content carrying the
+  // `#[allow(missing_docs, ...)]` attribute from §3's second bullet, not
+  // "meaningful crate-level content" in the production sense.
+  #[test]
+  fn test_files_carry_module_doc_comment() {
+    let manifest_dir = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+    let src_dir = manifest_dir.join("src");
+
+    let mut violations = Vec::new();
+    for entry in walkdir::WalkDir::new(&src_dir)
+      .into_iter()
+      .filter_map(Result::ok)
+      .filter(|e| e.file_type().is_file())
+      .filter(|e| e.path().extension().is_some_and(|ext| ext == "rs"))
+    {
+      let path = entry.path();
+      if path.file_name().and_then(|n| n.to_str()) == Some("tests.rs") {
+        continue;
+      }
+      let Ok(content) = std::fs::read_to_string(path) else {
+        continue;
+      };
+      let has_module_doc = content
+        .lines()
+        .take(15)
+        .any(|l| l.trim_start().starts_with("//!"));
+      if !has_module_doc {
+        violations.push(format!(
+          "{}: missing a `//!` module-level doc comment — see docs/style-guide.md §3",
+          path.display()
+        ));
+      }
+    }
+
+    assert!(
+      violations.is_empty(),
+      "module-doc violation(s) — see docs/style-guide.md §3:\n{}",
       violations.join("\n")
     );
   }

@@ -1,3 +1,7 @@
+//! `clap`-derived CLI argument definitions ([`Cli`], [`Commands`]) — the
+//! single source of truth for every `fml` subcommand's flags, parsed once in
+//! [`crate::run`] and dispatched from [`crate::run_command_inner`].
+
 use clap::{Parser, Subcommand};
 use std::path::PathBuf;
 
@@ -105,7 +109,6 @@ pub enum Commands {
   },
 
   /// Sync native tool configs (.rustfmt.toml, ruff.toml, .clang-format, etc.) from canonical globals
-  #[command(name = "sync", alias = "sync-config")]
   Sync {
     /// Check whether native tool configs are in sync without writing changes
     #[arg(long)]

@@ -1,3 +1,8 @@
+//! Config discovery (`find_project_config`/`find_user_config`), file
+//! loading, and the cascade merge that resolves layered `formality.toml`
+//! sources plus per-surface defaults into [`super::ResolvedGlobalConfig`] /
+//! [`super::ResolvedLangConfig`].
+
 use super::facets::LayoutFacet;
 use super::lang_table::{
   build_resolved_lang_config, default_tool_opt, impl_default_tools_fn,

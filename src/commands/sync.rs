@@ -1,3 +1,6 @@
+//! `fml sync` command: synchronizes, or with `--check` only verifies, the
+//! native tool configs generated from `formality.toml` via [`Runner`].
+
 use std::path::Path;
 
 use crate::commands::resolve_target_surfaces;

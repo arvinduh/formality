@@ -1,3 +1,7 @@
+//! Background self-update check: a cached, rate-limited probe (spawned once
+//! per invocation, printed after the main command finishes) for whether a
+//! newer `fml` release is available.
+
 use colored::Colorize;
 use serde::{Deserialize, Serialize};
 use std::path::{Path, PathBuf};

@@ -1,3 +1,8 @@
+//! [`Runner`]: the single dispatch point for every subcommand that acts
+//! across surfaces (`fmt`, `lint`, `sync`, `fix`) — builds one
+//! [`ExecutionContext`] per surface and fans out via `rayon::par_iter`. See
+//! `docs/style-guide.md` §4 for the `Arc`-sharing pattern its fields follow.
+
 use crate::config::FormalityConfig;
 use crate::surfaces::{
   ExecutionContext, LanguageSurface, SurfaceResult, SurfaceStatus,
@@ -52,12 +57,14 @@ impl Runner {
     }
 
     let start_time = Instant::now();
-    // Shared across every surface's ExecutionContext below. Both are wrapped
-    // in Arc so the per-surface parallel dispatch (rayon::par_iter) clones a
-    // refcount instead of deep-copying the full candidate path list / global
-    // config on every one of the (up to 12) surfaces per invocation.
+    // Shared across every surface's ExecutionContext below. All three are
+    // wrapped in Arc so the per-surface parallel dispatch (rayon::par_iter)
+    // clones a refcount instead of deep-copying the workspace root, the full
+    // candidate path list, or the global config on every one of the (up to
+    // 12) surfaces per invocation.
     let global_config = Arc::new(config.resolve_global());
     let shared_paths: Arc<Vec<PathBuf>> = Arc::new(paths.to_vec());
+    let shared_root = Arc::new(root.to_path_buf());
 
     let action_verb = match &action {
       RunnerAction::Format { check } => {
@@ -93,7 +100,7 @@ impl Runner {
           .map(|surface| {
             let lang_config = config.resolve_for_lang(surface.name());
             let ctx = ExecutionContext {
-              root: root.to_path_buf(),
+              root: Arc::clone(&shared_root),
               paths: Arc::clone(&shared_paths),
               global_config: Arc::clone(&global_config),
               lang_config,
@@ -109,7 +116,7 @@ impl Runner {
           .map(|surface| {
             let lang_config = config.resolve_for_lang(surface.name());
             let ctx = ExecutionContext {
-              root: root.to_path_buf(),
+              root: Arc::clone(&shared_root),
               paths: Arc::clone(&shared_paths),
               global_config: Arc::clone(&global_config),
               lang_config,
@@ -131,7 +138,7 @@ impl Runner {
         .map(|surface| {
           let lang_config = config.resolve_for_lang(surface.name());
           let ctx = ExecutionContext {
-            root: root.to_path_buf(),
+            root: Arc::clone(&shared_root),
             paths: Arc::clone(&shared_paths),
             global_config: Arc::clone(&global_config),
             lang_config,

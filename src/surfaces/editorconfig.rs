@@ -1,3 +1,7 @@
+//! Generates and syncs the shared `.editorconfig` file, aggregating each
+//! detected surface's canonical formatting facets into one cross-language
+//! block per the fleet order in [`CANONICAL_FLEET_ORDER`].
+
 use crate::config::facets::{Facet, FacetSupport};
 use crate::config::{FormalityConfig, ResolvedGlobalConfig};
 use crate::surfaces::{

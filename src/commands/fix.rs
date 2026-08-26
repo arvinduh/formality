@@ -1,3 +1,6 @@
+//! `fml fix` command: runs a lint-fix pass followed by a format pass across
+//! the resolved target surfaces via [`Runner`].
+
 use std::path::{Path, PathBuf};
 
 use crate::commands::{

@@ -1,3 +1,6 @@
+//! `fml list-surfaces` command: prints every supported language surface's
+//! detection status and aliases.
+
 use colored::Colorize;
 use std::path::Path;
 

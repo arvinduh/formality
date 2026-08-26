@@ -1,3 +1,7 @@
+//! Java language surface: formats via `google-java-format` and lints via
+//! `checkstyle`, syncing the managed `checkstyle.xml` from
+//! `formality.toml`.
+
 use super::{
   DeclaresFacets, ExecutionContext, Facet, FacetSupport, LanguageSurface,
   NativeConfig, SurfaceResult, SurfaceStatus, ToolInfo, check_binary_exists,
@@ -158,6 +162,7 @@ pub fn build_checkstyle_plain_args(
   args
 }
 
+#[must_use]
 fn is_aosp_style(ctx: &ExecutionContext) -> bool {
   ctx
     .lang_config
@@ -231,7 +236,7 @@ impl LanguageSurface for JavaSurface {
     }
 
     let files = find_files_with_ext(
-      &ctx.root,
+      ctx.root.as_path(),
       JAVA_EXTENSIONS,
       &ctx.paths,
       &ctx.lang_config.files,
@@ -261,7 +266,7 @@ impl LanguageSurface for JavaSurface {
           }
           cmd.arg("--replace").arg(scratch);
           cmd.args(&ctx.lang_config.extra_args);
-          cmd.current_dir(&ctx.root);
+          cmd.current_dir(ctx.root.as_path());
           cmd.output()
         },
         self.name(),
@@ -280,7 +285,7 @@ impl LanguageSurface for JavaSurface {
     }
 
     cmd.args(&ctx.lang_config.extra_args);
-    cmd.current_dir(&ctx.root);
+    cmd.current_dir(ctx.root.as_path());
 
     match cmd.output() {
       Ok(output) => {
@@ -345,7 +350,7 @@ impl LanguageSurface for JavaSurface {
     }
 
     let files = find_files_with_ext(
-      &ctx.root,
+      ctx.root.as_path(),
       JAVA_EXTENSIONS,
       &ctx.paths,
       &ctx.lang_config.files,
@@ -376,7 +381,7 @@ impl LanguageSurface for JavaSurface {
       cmd.arg(f);
     }
     cmd.args(&ctx.lang_config.extra_args);
-    cmd.current_dir(&ctx.root);
+    cmd.current_dir(ctx.root.as_path());
 
     match cmd.output() {
       Ok(output) => {
@@ -568,7 +573,7 @@ mod tests {
     assert_eq!(lang_cfg.indent_size, 4);
 
     let ctx = ExecutionContext {
-      root: temp.path().to_path_buf(),
+      root: Arc::new(temp.path().to_path_buf()),
       paths: Arc::new(Vec::new()),
       global_config: Arc::new(ResolvedGlobalConfig::default()),
       lang_config: lang_cfg,
@@ -600,7 +605,7 @@ mod tests {
 
     let temp = TempDir::new().unwrap();
     let ctx = ExecutionContext {
-      root: temp.path().to_path_buf(),
+      root: Arc::new(temp.path().to_path_buf()),
       paths: Arc::new(Vec::new()),
       global_config: Arc::new(cfg.resolve_global()),
       lang_config: lang_cfg,
@@ -638,7 +643,7 @@ mod tests {
     let root = temp.path().to_path_buf();
 
     let ctx = ExecutionContext {
-      root: root.clone(),
+      root: Arc::new(root.clone()),
       paths: Arc::new(Vec::new()),
       global_config: Arc::new(ResolvedGlobalConfig::default()),
       lang_config: ResolvedLangConfig::new("java"),
@@ -664,7 +669,7 @@ mod tests {
   fn test_is_aosp_style_default_false() {
     let temp = TempDir::new().unwrap();
     let ctx = ExecutionContext {
-      root: temp.path().to_path_buf(),
+      root: Arc::new(temp.path().to_path_buf()),
       paths: Arc::new(Vec::new()),
       global_config: Arc::new(ResolvedGlobalConfig::default()),
       lang_config: ResolvedLangConfig::new("java"),
@@ -682,7 +687,7 @@ mod tests {
     std::fs::write(temp.path().join("Main.java"), "class Main {}\n").unwrap();
 
     let ctx = ExecutionContext {
-      root: temp.path().to_path_buf(),
+      root: Arc::new(temp.path().to_path_buf()),
       paths: Arc::new(Vec::new()),
       global_config: Arc::new(ResolvedGlobalConfig::default()),
       lang_config: ResolvedLangConfig::new("java"),
@@ -703,7 +708,7 @@ mod tests {
     std::fs::write(temp.path().join("Main.java"), "class Main {}\n").unwrap();
 
     let ctx = ExecutionContext {
-      root: temp.path().to_path_buf(),
+      root: Arc::new(temp.path().to_path_buf()),
       paths: Arc::new(Vec::new()),
       global_config: Arc::new(ResolvedGlobalConfig::default()),
       lang_config: ResolvedLangConfig::new("java"),

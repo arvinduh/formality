@@ -1,3 +1,6 @@
+//! `fml lint` command: lints, optionally autofixing, the resolved target
+//! surfaces via [`Runner`].
+
 use std::path::{Path, PathBuf};
 
 use crate::commands::{

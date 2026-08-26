@@ -1,3 +1,6 @@
+//! `fml schema` command: generates and writes/prints the JSON Schema for
+//! `formality.toml`.
+
 use colored::Colorize;
 use std::path::PathBuf;
 

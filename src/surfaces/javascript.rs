@@ -1,3 +1,6 @@
+//! JavaScript/TypeScript language surface: formats and lints via `biome`,
+//! syncing the managed `biome.json` from `formality.toml`.
+
 use super::{
   DeclaresFacets, ExecutionContext, Facet, FacetSupport, LanguageSurface,
   NativeConfig, SurfaceResult, SurfaceStatus, ToolInfo, check_binary_exists,
@@ -351,7 +354,7 @@ impl LanguageSurface for JavaScriptSurface {
     }
 
     let files = find_files_with_ext(
-      &ctx.root,
+      ctx.root.as_path(),
       JS_TS_EXTENSIONS,
       &ctx.paths,
       &ctx.lang_config.files,
@@ -381,7 +384,7 @@ impl LanguageSurface for JavaScriptSurface {
             &ctx.lang_config.extra_args,
           ));
           cmd.args(&inline_config);
-          cmd.current_dir(&ctx.root);
+          cmd.current_dir(ctx.root.as_path());
           cmd.output()
         },
         self.name(),
@@ -404,7 +407,7 @@ impl LanguageSurface for JavaScriptSurface {
       &ctx.lang_config.extra_args,
     ));
     cmd.args(&inline_config);
-    cmd.current_dir(&ctx.root);
+    cmd.current_dir(ctx.root.as_path());
 
     match cmd.output() {
       Ok(output) => {
@@ -458,7 +461,7 @@ impl LanguageSurface for JavaScriptSurface {
     }
 
     let files = find_files_with_ext(
-      &ctx.root,
+      ctx.root.as_path(),
       JS_TS_EXTENSIONS,
       &ctx.paths,
       &ctx.lang_config.files,
@@ -487,7 +490,7 @@ impl LanguageSurface for JavaScriptSurface {
       fix,
       &ctx.lang_config.extra_args,
     ));
-    cmd.current_dir(&ctx.root);
+    cmd.current_dir(ctx.root.as_path());
 
     match cmd.output() {
       Ok(output) => {
@@ -694,7 +697,7 @@ mod tests {
     });
 
     let ctx = ExecutionContext {
-      root: temp.path().to_path_buf(),
+      root: Arc::new(temp.path().to_path_buf()),
       paths: Arc::new(Vec::new()),
       global_config: Arc::new(ResolvedGlobalConfig::default()),
       lang_config: lang_cfg,
@@ -763,7 +766,7 @@ mod tests {
       organize_imports: Some(true),
     });
     let ctx = ExecutionContext {
-      root: temp.path().to_path_buf(),
+      root: Arc::new(temp.path().to_path_buf()),
       paths: Arc::new(Vec::new()),
       global_config: Arc::new(ResolvedGlobalConfig::default()),
       lang_config: lang_cfg,
@@ -792,7 +795,7 @@ mod tests {
 
     let surface = JavaScriptSurface;
     let ctx = ExecutionContext {
-      root: temp.path().to_path_buf(),
+      root: Arc::new(temp.path().to_path_buf()),
       paths: Arc::new(Vec::new()),
       global_config: Arc::new(ResolvedGlobalConfig::default()),
       lang_config: ResolvedLangConfig::new("javascript"),

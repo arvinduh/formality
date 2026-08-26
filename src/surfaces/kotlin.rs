@@ -1,3 +1,7 @@
+//! Kotlin language surface: formats and lints via `ktlint`. Kotlin has no
+//! managed native config file — `ktlint` reads its own `.editorconfig`
+//! conventions directly, so there is no `NativeConfig` to sync here.
+
 use super::{
   DeclaresFacets, ExecutionContext, Facet, FacetSupport, LanguageSurface,
   SurfaceResult, SurfaceStatus, ToolInfo, check_binary_exists,
@@ -163,7 +167,7 @@ impl LanguageSurface for KotlinSurface {
     }
 
     let files = find_files_with_ext(
-      &ctx.root,
+      ctx.root.as_path(),
       KOTLIN_EXTENSIONS,
       &ctx.paths,
       &ctx.lang_config.files,
@@ -184,7 +188,7 @@ impl LanguageSurface for KotlinSurface {
           let mut cmd = create_tool_command("ktlint");
           cmd.arg("-F").arg(scratch);
           cmd.args(&ctx.lang_config.extra_args);
-          cmd.current_dir(&ctx.root);
+          cmd.current_dir(ctx.root.as_path());
           cmd.output()
         },
         self.name(),
@@ -206,7 +210,7 @@ impl LanguageSurface for KotlinSurface {
       &files_to_pass,
       &ctx.lang_config.extra_args,
     ));
-    cmd.current_dir(&ctx.root);
+    cmd.current_dir(ctx.root.as_path());
 
     match cmd.output() {
       Ok(output) => {
@@ -260,7 +264,7 @@ impl LanguageSurface for KotlinSurface {
     }
 
     let files = find_files_with_ext(
-      &ctx.root,
+      ctx.root.as_path(),
       KOTLIN_EXTENSIONS,
       &ctx.paths,
       &ctx.lang_config.files,
@@ -289,7 +293,7 @@ impl LanguageSurface for KotlinSurface {
       fix,
       &ctx.lang_config.extra_args,
     ));
-    cmd.current_dir(&ctx.root);
+    cmd.current_dir(ctx.root.as_path());
 
     match cmd.output() {
       Ok(output) => {
@@ -493,7 +497,7 @@ mod tests {
     let temp = TempDir::new().unwrap();
     let surface = KotlinSurface;
     let ctx = ExecutionContext {
-      root: temp.path().to_path_buf(),
+      root: Arc::new(temp.path().to_path_buf()),
       paths: Arc::new(Vec::new()),
       global_config: Arc::new(ResolvedGlobalConfig::default()),
       lang_config: ResolvedLangConfig::new("kotlin"),
@@ -516,7 +520,7 @@ mod tests {
     let temp = TempDir::new().unwrap();
     let surface = KotlinSurface;
     let ctx = ExecutionContext {
-      root: temp.path().to_path_buf(),
+      root: Arc::new(temp.path().to_path_buf()),
       paths: Arc::new(Vec::new()),
       global_config: Arc::new(ResolvedGlobalConfig::default()),
       lang_config: ResolvedLangConfig::new("kotlin"),
@@ -539,7 +543,7 @@ mod tests {
 
     let surface = KotlinSurface;
     let ctx_check = ExecutionContext {
-      root: temp.path().to_path_buf(),
+      root: Arc::new(temp.path().to_path_buf()),
       paths: Arc::new(Vec::new()),
       global_config: Arc::new(ResolvedGlobalConfig::default()),
       lang_config: ResolvedLangConfig::new("kotlin"),
@@ -552,7 +556,7 @@ mod tests {
     ));
 
     let ctx_fix = ExecutionContext {
-      root: temp.path().to_path_buf(),
+      root: Arc::new(temp.path().to_path_buf()),
       paths: Arc::new(Vec::new()),
       global_config: Arc::new(ResolvedGlobalConfig::default()),
       lang_config: ResolvedLangConfig::new("kotlin"),

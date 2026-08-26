@@ -1,3 +1,8 @@
+//! Per-language strongly typed formatting/linting option structs (one per
+//! surface, e.g. [`RustOptions`], [`PythonOptions`]) — the `[lang.*]` shape
+//! `formality.toml` deserializes into before [`super::resolve`] merges it
+//! with global config and surface defaults.
+
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 

@@ -1,3 +1,6 @@
+//! JSON language surface: formats and lints via `prettier`, reusing the same
+//! `.prettierrc.json` config machinery as the Markdown surface.
+
 use super::{
   DeclaresFacets, ExecutionContext, Facet, FacetSupport, LanguageSurface,
   NativeConfig, SurfaceResult, SurfaceStatus, ToolInfo, check_binary_exists,
@@ -78,7 +81,7 @@ impl LanguageSurface for JsonSurface {
     }
 
     let files: Vec<std::path::PathBuf> = find_files_with_ext(
-      &ctx.root,
+      ctx.root.as_path(),
       JSON_EXTENSIONS,
       &ctx.paths,
       &ctx.lang_config.files,
@@ -121,7 +124,7 @@ impl LanguageSurface for JsonSurface {
             .args(&inline_config)
             .arg(scratch);
           cmd.args(&ctx.lang_config.extra_args);
-          cmd.current_dir(&ctx.root);
+          cmd.current_dir(ctx.root.as_path());
           cmd.output()
         },
         self.name(),
@@ -138,7 +141,7 @@ impl LanguageSurface for JsonSurface {
     }
 
     cmd.args(&ctx.lang_config.extra_args);
-    cmd.current_dir(&ctx.root);
+    cmd.current_dir(ctx.root.as_path());
 
     match cmd.output() {
       Ok(output) => {
@@ -226,7 +229,7 @@ mod tests {
     lang_config: ResolvedLangConfig,
   ) -> ExecutionContext {
     ExecutionContext {
-      root: temp.path().to_path_buf(),
+      root: Arc::new(temp.path().to_path_buf()),
       paths: Arc::new(Vec::new()),
       global_config: Arc::new(ResolvedGlobalConfig::default()),
       lang_config,

@@ -1,3 +1,8 @@
+//! `formality.toml` parsing, cascade resolution (user config → project
+//! config → per-language overrides), and the typed config surface every
+//! other module reads through ([`FormalityConfig`], [`ResolvedGlobalConfig`],
+//! [`ResolvedLangConfig`]).
+
 /// Formatting and linting layout facet definitions.
 pub mod facets;
 /// X-macro table generating the repetitive per-language options wiring

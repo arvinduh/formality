@@ -1,3 +1,8 @@
+//! `fml doctor` / `fml install` command: probes every surface's required
+//! tools against the resolved config, reports version compatibility, and
+//! (with `install`) installs whatever's missing, plus workspace hygiene
+//! checks ([`gitignore`], [`venv`]).
+
 pub mod gitignore;
 pub mod venv;
 

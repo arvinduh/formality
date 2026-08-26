@@ -1,3 +1,8 @@
+//! Markdown language surface: formats via `prettier` and lints via
+//! `markdownlint` (falling back to `prettier --check` if `markdownlint` is
+//! unavailable), syncing the managed `.prettierrc.json` /
+//! `.markdownlint.json` from `formality.toml`.
+
 use super::{
   AUTO_GENERATED_JSON_COMMENT, DeclaresFacets, ExecutionContext, Facet,
   FacetSupport, LanguageSurface, NativeConfig, SurfaceResult, SurfaceStatus,
@@ -244,7 +249,7 @@ impl LanguageSurface for MarkdownSurface {
     }
 
     let files = find_files_with_ext(
-      &ctx.root,
+      ctx.root.as_path(),
       MD_EXTENSIONS,
       &ctx.paths,
       &ctx.lang_config.files,
@@ -285,7 +290,7 @@ impl LanguageSurface for MarkdownSurface {
           if let Some(bin) = md_binary {
             let mut md_cmd = create_tool_command(bin);
             md_cmd.arg("--fix").arg(scratch);
-            md_cmd.current_dir(&ctx.root);
+            md_cmd.current_dir(ctx.root.as_path());
             let _ = md_cmd.output();
           }
 
@@ -297,7 +302,7 @@ impl LanguageSurface for MarkdownSurface {
             .args(&inline_config)
             .arg(scratch);
           cmd.args(&ctx.lang_config.extra_args);
-          cmd.current_dir(&ctx.root);
+          cmd.current_dir(ctx.root.as_path());
           cmd.output()
         },
         self.name(),
@@ -311,14 +316,14 @@ impl LanguageSurface for MarkdownSurface {
       for f in &files {
         md_cmd.arg(f);
       }
-      md_cmd.current_dir(&ctx.root);
+      md_cmd.current_dir(ctx.root.as_path());
       let _ = md_cmd.output();
     }
 
     let mut cmd = create_tool_command("prettier");
     cmd.args(build_prettier_fmt_args(&files, &ctx.lang_config.extra_args));
     cmd.args(&inline_config);
-    cmd.current_dir(&ctx.root);
+    cmd.current_dir(ctx.root.as_path());
 
     match cmd.output() {
       Ok(output) => {
@@ -376,7 +381,7 @@ impl LanguageSurface for MarkdownSurface {
     };
 
     let files = find_files_with_ext(
-      &ctx.root,
+      ctx.root.as_path(),
       MD_EXTENSIONS,
       &ctx.paths,
       &ctx.lang_config.files,
@@ -396,7 +401,7 @@ impl LanguageSurface for MarkdownSurface {
       fix,
       &ctx.lang_config.extra_args,
     ));
-    cmd.current_dir(&ctx.root);
+    cmd.current_dir(ctx.root.as_path());
 
     match cmd.output() {
       Ok(output) => {
@@ -565,7 +570,7 @@ mod tests {
     lang_cfg.indent_size = 2;
 
     let ctx = ExecutionContext {
-      root: temp.path().to_path_buf(),
+      root: Arc::new(temp.path().to_path_buf()),
       paths: Arc::new(Vec::new()),
       global_config: Arc::new(ResolvedGlobalConfig::default()),
       lang_config: lang_cfg,
@@ -621,7 +626,7 @@ mod tests {
 
     let surface = MarkdownSurface;
     let ctx = ExecutionContext {
-      root: temp.path().to_path_buf(),
+      root: Arc::new(temp.path().to_path_buf()),
       paths: Arc::new(Vec::new()),
       global_config: Arc::new(ResolvedGlobalConfig::default()),
       lang_config: ResolvedLangConfig::new("markdown"),

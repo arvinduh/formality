@@ -1,3 +1,6 @@
+//! YAML language surface: formats via `prettier` and lints via `yamllint`,
+//! syncing the managed `.yamllint.yaml` from `formality.toml`.
+
 use super::{
   DeclaresFacets, ExecutionContext, Facet, FacetSupport, LanguageSurface,
   NativeConfig, SurfaceResult, SurfaceStatus, ToolInfo, check_binary_exists,
@@ -211,7 +214,7 @@ impl LanguageSurface for YamlSurface {
     }
 
     let files = find_files_with_ext(
-      &ctx.root,
+      ctx.root.as_path(),
       YAML_EXTENSIONS,
       &ctx.paths,
       &ctx.lang_config.files,
@@ -243,7 +246,7 @@ impl LanguageSurface for YamlSurface {
             .args(&inline_config)
             .arg(scratch);
           cmd.args(&ctx.lang_config.extra_args);
-          cmd.current_dir(&ctx.root);
+          cmd.current_dir(ctx.root.as_path());
           cmd.output()
         },
         self.name(),
@@ -260,7 +263,7 @@ impl LanguageSurface for YamlSurface {
     }
 
     cmd.args(&ctx.lang_config.extra_args);
-    cmd.current_dir(&ctx.root);
+    cmd.current_dir(ctx.root.as_path());
 
     match cmd.output() {
       Ok(output) => {
@@ -325,7 +328,7 @@ impl LanguageSurface for YamlSurface {
     }
 
     let files = find_files_with_ext(
-      &ctx.root,
+      ctx.root.as_path(),
       YAML_EXTENSIONS,
       &ctx.paths,
       &ctx.lang_config.files,
@@ -359,7 +362,7 @@ impl LanguageSurface for YamlSurface {
     }
 
     cmd.args(&ctx.lang_config.extra_args);
-    cmd.current_dir(&ctx.root);
+    cmd.current_dir(ctx.root.as_path());
 
     match cmd.output() {
       Ok(output) => {
@@ -469,7 +472,7 @@ mod tests {
   fn test_yamllint_config_from_context_rules_disabled_by_default() {
     let temp = TempDir::new().unwrap();
     let ctx = ExecutionContext {
-      root: temp.path().to_path_buf(),
+      root: Arc::new(temp.path().to_path_buf()),
       paths: Arc::new(Vec::new()),
       global_config: Arc::new(ResolvedGlobalConfig::default()),
       lang_config: ResolvedLangConfig::new("yaml"),
@@ -497,7 +500,7 @@ mod tests {
     });
 
     let ctx = ExecutionContext {
-      root: temp.path().to_path_buf(),
+      root: Arc::new(temp.path().to_path_buf()),
       paths: Arc::new(Vec::new()),
       global_config: Arc::new(ResolvedGlobalConfig::default()),
       lang_config: lang_cfg,
@@ -528,7 +531,7 @@ mod tests {
     });
 
     let ctx = ExecutionContext {
-      root: temp.path().to_path_buf(),
+      root: Arc::new(temp.path().to_path_buf()),
       paths: Arc::new(Vec::new()),
       global_config: Arc::new(ResolvedGlobalConfig::default()),
       lang_config: lang_cfg,
@@ -585,7 +588,7 @@ mod tests {
 
     let surface = YamlSurface;
     let ctx = ExecutionContext {
-      root: temp.path().to_path_buf(),
+      root: Arc::new(temp.path().to_path_buf()),
       paths: Arc::new(Vec::new()),
       global_config: Arc::new(ResolvedGlobalConfig::default()),
       lang_config: ResolvedLangConfig::new("yaml"),

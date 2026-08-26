@@ -1,3 +1,7 @@
+//! C/C++ language surface: formats via `clang-format` and lints via
+//! `clang-tidy`, syncing the managed `.clang-format` / `.clang-tidy` from
+//! `formality.toml`.
+
 use super::{
   DeclaresFacets, ExecutionContext, Facet, FacetSupport, LanguageSurface,
   NativeConfig, SurfaceResult, SurfaceStatus, ToolInfo, check_binary_exists,
@@ -340,7 +344,7 @@ impl LanguageSurface for CppSurface {
     }
 
     let files = find_files_with_ext(
-      &ctx.root,
+      ctx.root.as_path(),
       CPP_EXTENSIONS,
       &ctx.paths,
       &ctx.lang_config.files,
@@ -368,7 +372,7 @@ impl LanguageSurface for CppSurface {
           cmd.arg(format!("-style={inline_style}"));
           cmd.arg("-i").arg(scratch);
           cmd.args(&ctx.lang_config.extra_args);
-          cmd.current_dir(&ctx.root);
+          cmd.current_dir(ctx.root.as_path());
           cmd.output()
         },
         self.name(),
@@ -385,7 +389,7 @@ impl LanguageSurface for CppSurface {
     }
 
     cmd.args(&ctx.lang_config.extra_args);
-    cmd.current_dir(&ctx.root);
+    cmd.current_dir(ctx.root.as_path());
 
     match cmd.output() {
       Ok(output) => {
@@ -439,7 +443,7 @@ impl LanguageSurface for CppSurface {
     }
 
     let files = find_files_with_ext(
-      &ctx.root,
+      ctx.root.as_path(),
       CPP_EXTENSIONS,
       &ctx.paths,
       &ctx.lang_config.files,
@@ -489,7 +493,7 @@ impl LanguageSurface for CppSurface {
         &ctx.lang_config.extra_args,
       );
       cmd.args(&args);
-      cmd.current_dir(&ctx.root);
+      cmd.current_dir(ctx.root.as_path());
 
       match cmd.output() {
         Ok(output) => {
@@ -738,7 +742,7 @@ mod tests {
 
     let cfg = FormalityConfig::default();
     let ctx = ExecutionContext {
-      root: root.clone(),
+      root: Arc::new(root.clone()),
       paths: Arc::new(Vec::new()),
       global_config: Arc::new(cfg.resolve_global()),
       lang_config: cfg.resolve_for_lang("cpp"),
@@ -837,7 +841,7 @@ mod tests {
     let cfg = FormalityConfig::parse_str(toml_str, Path::new("formality.toml"))
       .unwrap();
     let ctx = ExecutionContext {
-      root: root.clone(),
+      root: Arc::new(root.clone()),
       paths: Arc::new(Vec::new()),
       global_config: Arc::new(cfg.resolve_global()),
       lang_config: cfg.resolve_for_lang("cpp"),
@@ -906,7 +910,7 @@ mod tests {
 
     let cfg = FormalityConfig::default();
     let ctx = ExecutionContext {
-      root: temp.path().to_path_buf(),
+      root: Arc::new(temp.path().to_path_buf()),
       paths: Arc::new(Vec::new()),
       global_config: Arc::new(cfg.resolve_global()),
       lang_config: cfg.resolve_for_lang("cpp"),
@@ -935,7 +939,7 @@ mod tests {
 
     let cfg = FormalityConfig::default();
     let ctx = ExecutionContext {
-      root: temp.path().to_path_buf(),
+      root: Arc::new(temp.path().to_path_buf()),
       paths: Arc::new(Vec::new()),
       global_config: Arc::new(cfg.resolve_global()),
       lang_config: cfg.resolve_for_lang("cpp"),

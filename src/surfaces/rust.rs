@@ -1,3 +1,6 @@
+//! Rust language surface: formats via `rustfmt`/`cargo fmt` and lints via
+//! `cargo clippy`, syncing the managed `.rustfmt.toml` from `formality.toml`.
+
 use super::{
   DeclaresFacets, ExecutionContext, Facet, FacetSupport, LanguageSurface,
   NativeConfig, SurfaceResult, SurfaceStatus, ToolInfo, check_binary_exists,
@@ -223,7 +226,7 @@ impl LanguageSurface for RustSurface {
     }
 
     let files = find_files_with_ext(
-      &ctx.root,
+      ctx.root.as_path(),
       &["rs"],
       &ctx.paths,
       &ctx.lang_config.files,
@@ -283,7 +286,7 @@ impl LanguageSurface for RustSurface {
           };
           c.arg(scratch);
           c.args(&ctx.lang_config.extra_args);
-          c.current_dir(&ctx.root);
+          c.current_dir(ctx.root.as_path());
           c.output()
         },
         self.name(),
@@ -317,7 +320,7 @@ impl LanguageSurface for RustSurface {
       };
 
     cmd.args(&ctx.lang_config.extra_args);
-    cmd.current_dir(&ctx.root);
+    cmd.current_dir(ctx.root.as_path());
 
     match cmd.output() {
       Ok(output) => {
@@ -391,7 +394,7 @@ impl LanguageSurface for RustSurface {
 
     let mut cmd = create_tool_command("cargo");
     cmd.args(build_clippy_args(fix, &ctx.lang_config.extra_args));
-    cmd.current_dir(&ctx.root);
+    cmd.current_dir(ctx.root.as_path());
 
     match cmd.output() {
       Ok(output) => {
@@ -455,7 +458,7 @@ mod tests {
     check_only: bool,
   ) -> ExecutionContext {
     ExecutionContext {
-      root: root.to_path_buf(),
+      root: Arc::new(root.to_path_buf()),
       paths: Arc::new(vec![]),
       global_config: Arc::new(ResolvedGlobalConfig::default()),
       lang_config: ResolvedLangConfig::new("rust"),

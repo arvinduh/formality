@@ -1,3 +1,6 @@
+//! Python language surface: formats and lints via `ruff` (format, import
+//! sort, and lint), syncing the managed `ruff.toml` from `formality.toml`.
+
 use super::{
   DeclaresFacets, ExecutionContext, Facet, FacetSupport, LanguageSurface,
   NativeConfig, SurfaceResult, SurfaceStatus, ToolInfo, check_binary_exists,
@@ -310,7 +313,7 @@ impl LanguageSurface for PythonSurface {
     }
 
     let files = find_files_with_ext(
-      &ctx.root,
+      ctx.root.as_path(),
       PYTHON_EXTENSIONS,
       &ctx.paths,
       &ctx.lang_config.files,
@@ -343,7 +346,7 @@ impl LanguageSurface for PythonSurface {
             .args(&inline_config)
             .arg(scratch);
           isort_cmd.args(&ctx.lang_config.extra_args);
-          isort_cmd.current_dir(&ctx.root);
+          isort_cmd.current_dir(ctx.root.as_path());
           let isort_out = isort_cmd.output()?;
           if !isort_out.status.success() {
             return Ok(isort_out);
@@ -352,7 +355,7 @@ impl LanguageSurface for PythonSurface {
           let mut fmt_cmd = create_tool_command("ruff");
           fmt_cmd.arg("format").args(&inline_config).arg(scratch);
           fmt_cmd.args(&ctx.lang_config.extra_args);
-          fmt_cmd.current_dir(&ctx.root);
+          fmt_cmd.current_dir(ctx.root.as_path());
           fmt_cmd.output()
         },
         self.name(),
@@ -375,7 +378,7 @@ impl LanguageSurface for PythonSurface {
       &ctx.lang_config.extra_args,
     ));
     isort_cmd.args(&inline_config);
-    isort_cmd.current_dir(&ctx.root);
+    isort_cmd.current_dir(ctx.root.as_path());
 
     match isort_cmd.output() {
       Ok(output) => {
@@ -424,7 +427,7 @@ impl LanguageSurface for PythonSurface {
     }
 
     cmd.args(&ctx.lang_config.extra_args);
-    cmd.current_dir(&ctx.root);
+    cmd.current_dir(ctx.root.as_path());
 
     match cmd.output() {
       Ok(output) => {
@@ -478,7 +481,7 @@ impl LanguageSurface for PythonSurface {
     }
 
     let files = find_files_with_ext(
-      &ctx.root,
+      ctx.root.as_path(),
       PYTHON_EXTENSIONS,
       &ctx.paths,
       &ctx.lang_config.files,
@@ -511,7 +514,7 @@ impl LanguageSurface for PythonSurface {
       &ctx.lang_config.extra_args,
     ));
     cmd.args(&lint_config);
-    cmd.current_dir(&ctx.root);
+    cmd.current_dir(ctx.root.as_path());
 
     match cmd.output() {
       Ok(output) => {
@@ -605,7 +608,7 @@ mod tests {
     });
 
     let ctx = ExecutionContext {
-      root: temp.path().to_path_buf(),
+      root: Arc::new(temp.path().to_path_buf()),
       paths: Arc::new(Vec::new()),
       global_config: Arc::new(ResolvedGlobalConfig::default()),
       lang_config: lang_cfg,
@@ -712,7 +715,7 @@ mod tests {
 
     let surface = PythonSurface;
     let ctx_check = ExecutionContext {
-      root: temp.path().to_path_buf(),
+      root: Arc::new(temp.path().to_path_buf()),
       paths: Arc::new(Vec::new()),
       global_config: Arc::new(ResolvedGlobalConfig::default()),
       lang_config: ResolvedLangConfig::new("python"),
@@ -726,7 +729,7 @@ mod tests {
     ));
 
     let ctx_fix = ExecutionContext {
-      root: temp.path().to_path_buf(),
+      root: Arc::new(temp.path().to_path_buf()),
       paths: Arc::new(Vec::new()),
       global_config: Arc::new(ResolvedGlobalConfig::default()),
       lang_config: ResolvedLangConfig::new("python"),
@@ -783,7 +786,7 @@ mod tests {
 
     let surface = PythonSurface;
     let ctx = ExecutionContext {
-      root: temp.path().to_path_buf(),
+      root: Arc::new(temp.path().to_path_buf()),
       paths: Arc::new(Vec::new()),
       global_config: Arc::new(ResolvedGlobalConfig::default()),
       lang_config: ResolvedLangConfig::new("python"),

@@ -1,3 +1,10 @@
+//! Cross-language layout facet definitions ([`LayoutFacet`] and friends) —
+//! the shared vocabulary `formality.toml` uses to describe formatting layout
+//! (indent size, line length, quote style, and similar) independent of any
+//! one surface's native config format, plus the support-level reporting
+//! ([`FacetSupport`]) each surface uses to say whether it can honor a given
+//! facet value.
+
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 
@@ -211,6 +218,7 @@ pub trait DeclaresFacets {
   fn facet_support(&self, facet: Facet) -> FacetSupport;
 
   /// Returns whether this surface allows configuring the given facet.
+  #[must_use]
   fn is_facet_configurable(&self, facet: Facet) -> bool {
     self.facet_support(facet) == FacetSupport::Configurable
   }
@@ -295,6 +303,7 @@ impl std::fmt::Display for FacetDiagnostic {
 }
 
 /// Checks if a user-supplied configured value is semantically equivalent to a fixed value.
+#[must_use]
 fn is_value_compatible_with_fixed(
   facet: Facet,
   fixed_expected: &str,

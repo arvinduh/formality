@@ -90,6 +90,7 @@ impl<'a> NormalizedExclude<'a> {
   }
 }
 
+#[must_use]
 fn is_excluded_normalized(
   path: &Path,
   root: &Path,

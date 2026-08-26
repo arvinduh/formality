@@ -1,3 +1,6 @@
+//! TOML language surface: formats and lints via `taplo`, syncing the managed
+//! `taplo.toml` from `formality.toml`.
+
 use super::{
   DeclaresFacets, ExecutionContext, Facet, FacetSupport, LanguageSurface,
   NativeConfig, SurfaceResult, SurfaceStatus, ToolInfo, check_binary_exists,
@@ -183,7 +186,7 @@ impl LanguageSurface for TomlSurface {
     }
 
     let files = find_files_with_ext(
-      &ctx.root,
+      ctx.root.as_path(),
       TOML_EXTENSIONS,
       &ctx.paths,
       &ctx.lang_config.files,
@@ -211,7 +214,7 @@ impl LanguageSurface for TomlSurface {
           let mut cmd = create_tool_command("taplo");
           cmd.arg("format").args(&inline_config).arg("-");
           cmd.args(&ctx.lang_config.extra_args);
-          cmd.current_dir(&ctx.root);
+          cmd.current_dir(ctx.root.as_path());
           cmd.stdin(std::process::Stdio::piped());
           cmd.stdout(std::process::Stdio::piped());
           cmd.stderr(std::process::Stdio::piped());
@@ -240,7 +243,7 @@ impl LanguageSurface for TomlSurface {
     }
 
     cmd.args(&ctx.lang_config.extra_args);
-    cmd.current_dir(&ctx.root);
+    cmd.current_dir(ctx.root.as_path());
 
     match cmd.output() {
       Ok(output) => {
@@ -305,7 +308,7 @@ impl LanguageSurface for TomlSurface {
     }
 
     let files = find_files_with_ext(
-      &ctx.root,
+      ctx.root.as_path(),
       TOML_EXTENSIONS,
       &ctx.paths,
       &ctx.lang_config.files,
@@ -327,7 +330,7 @@ impl LanguageSurface for TomlSurface {
     }
 
     cmd.args(&ctx.lang_config.extra_args);
-    cmd.current_dir(&ctx.root);
+    cmd.current_dir(ctx.root.as_path());
 
     match cmd.output() {
       Ok(output) => {
@@ -446,7 +449,7 @@ mod tests {
     lang_cfg.indent_size = 2;
 
     let ctx = ExecutionContext {
-      root: temp.path().to_path_buf(),
+      root: Arc::new(temp.path().to_path_buf()),
       paths: Arc::new(Vec::new()),
       global_config: Arc::new(ResolvedGlobalConfig::default()),
       lang_config: lang_cfg,
@@ -525,7 +528,7 @@ mod tests {
 
     let surface = TomlSurface;
     let ctx = ExecutionContext {
-      root: temp.path().to_path_buf(),
+      root: Arc::new(temp.path().to_path_buf()),
       paths: Arc::new(Vec::new()),
       global_config: Arc::new(ResolvedGlobalConfig::default()),
       lang_config: crate::config::ResolvedLangConfig::new("toml"),

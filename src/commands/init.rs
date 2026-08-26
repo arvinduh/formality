@@ -1,3 +1,6 @@
+//! `fml init` command: writes a starter `formality.toml` pre-populated with
+//! auto-detected surfaces.
+
 use colored::Colorize;
 use std::path::Path;
 

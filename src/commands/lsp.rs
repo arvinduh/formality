@@ -1,44 +1,44 @@
-/// `fml lsp` — Language Server Protocol passthrough server.
-///
-/// Architecture
-/// ============
-/// The formality LSP server runs as a single process that:
-///
-/// 1. **Accepts** LSP requests from the editor (via stdio).
-/// 2. **Detects** which language surfaces are active in the workspace.
-/// 3. **Spawns** the appropriate child LSP processes (rust-analyzer, pyright,
-///    clangd, …) lazily, on demand.
-/// 4. **Routes** each incoming request to the correct child server and
-///    multiplexes responses back to the editor.
-/// 5. **Intercepts** formatting requests to route them through `fml fmt`
-///    instead of the child LSP's formatter, ensuring formality's unified config
-///    is always respected.
-/// 6. **Injects** `fml lint` diagnostics alongside any diagnostics published
-///    by child servers.
-/// 7. **Watches** `formality.toml` / `.formality.toml` and runs `fml sync`
-///    when the canonical config changes, then notifies the editor to reload
-///    affected file diagnostics.
-///
-/// Child LSP discovery
-/// ===================
-/// | Surface  | Child LSP binary          | Install source          |
-/// |----------|---------------------------|-------------------------|
-/// | rust     | `rust-analyzer`           | rustup component add    |
-/// | python   | `pyright-langserver`      | npm / pip               |
-/// | cpp      | `clangd`                  | apt / brew / llvm.org   |
-/// | go       | `gopls`                   | go install               |
-/// | typst    | `tinymist` / `typst-lsp`  | cargo / npm             |
-/// | markdown | none (diagnostics only)   | —                       |
-/// | yaml     | `yaml-language-server`    | npm                     |
-/// | json     | `vscode-json-languageserver` | npm                  |
-/// | toml     | `taplo lsp`               | cargo / npm             |
-/// | javascript | `typescript-language-server` | npm                 |
-///
-/// The routing layer is the core of this module. Each child server runs as a
-/// subprocess with its own stdin/stdout JSON-RPC channel. The multiplexer
-/// assigns monotonically increasing request IDs per-child (to avoid ID
-/// collisions across servers) and maps response IDs back to the originating
-/// editor request ID.
+//! `fml lsp` — Language Server Protocol passthrough server.
+//!
+//! Architecture
+//! ============
+//! The formality LSP server runs as a single process that:
+//!
+//! 1. **Accepts** LSP requests from the editor (via stdio).
+//! 2. **Detects** which language surfaces are active in the workspace.
+//! 3. **Spawns** the appropriate child LSP processes (rust-analyzer, pyright,
+//!    clangd, …) lazily, on demand.
+//! 4. **Routes** each incoming request to the correct child server and
+//!    multiplexes responses back to the editor.
+//! 5. **Intercepts** formatting requests to route them through `fml fmt`
+//!    instead of the child LSP's formatter, ensuring formality's unified config
+//!    is always respected.
+//! 6. **Injects** `fml lint` diagnostics alongside any diagnostics published
+//!    by child servers.
+//! 7. **Watches** `formality.toml` / `.formality.toml` and runs `fml sync`
+//!    when the canonical config changes, then notifies the editor to reload
+//!    affected file diagnostics.
+//!
+//! Child LSP discovery
+//! ===================
+//! | Surface  | Child LSP binary          | Install source          |
+//! |----------|---------------------------|-------------------------|
+//! | rust     | `rust-analyzer`           | rustup component add    |
+//! | python   | `pyright-langserver`      | npm / pip               |
+//! | cpp      | `clangd`                  | apt / brew / llvm.org   |
+//! | go       | `gopls`                   | go install               |
+//! | typst    | `tinymist` / `typst-lsp`  | cargo / npm             |
+//! | markdown | none (diagnostics only)   | —                       |
+//! | yaml     | `yaml-language-server`    | npm                     |
+//! | json     | `vscode-json-languageserver` | npm                  |
+//! | toml     | `taplo lsp`               | cargo / npm             |
+//! | javascript | `typescript-language-server` | npm                 |
+//!
+//! The routing layer is the core of this module. Each child server runs as a
+//! subprocess with its own stdin/stdout JSON-RPC channel. The multiplexer
+//! assigns monotonically increasing request IDs per-child (to avoid ID
+//! collisions across servers) and maps response IDs back to the originating
+//! editor request ID.
 use colored::Colorize;
 use std::path::PathBuf;
 use tower_lsp::jsonrpc::Result as LspResult;

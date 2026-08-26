@@ -1,3 +1,8 @@
+//! JSON Schema generation for `formality.toml`, plus schema-version drift
+//! detection: a background check (mirroring [`crate::engine::update`]'s
+//! pattern) that warns when a workspace's config predates the schema
+//! version this binary generates.
+
 use crate::config::FormalityConfig;
 use crate::config::resolve::find_project_config;
 use crate::engine::cache_path;

@@ -1,3 +1,8 @@
+//! Crate-wide error type hierarchy and exit-status/diagnostic rendering.
+//! [`FormalityError`] is the single top-level enum every subsystem's error
+//! converts into; see `docs/style-guide.md` §5 for the conventions this file
+//! establishes (no `anyhow`/`thiserror`, one variant per subsystem).
+
 pub use crate::config::ConfigError;
 use colored::Colorize;
 use std::fmt;
