@@ -308,41 +308,35 @@ impl LanguageServer for FormalityLsp {
       }
     };
 
-    // Run `fml fmt <file>` in-place.
-    let fml_exe =
-      std::env::current_exe().unwrap_or_else(|_| PathBuf::from("fml"));
-    let result = std::process::Command::new(fml_exe)
-      .arg("fmt")
-      .arg(&path)
-      .current_dir(&root)
-      .output();
+    let config = crate::config::FormalityConfig::load_layered(Some(&root))
+      .map_or_else(
+        |_| crate::config::FormalityConfig::with_defaults(),
+        |(c, _)| c,
+      );
 
-    match result {
-      Ok(out) if out.status.success() => {
-        let after = std::fs::read_to_string(&path).unwrap_or_default();
-        Ok(Some(compute_formatting_edits(&before, &after)))
-      }
-      Ok(out) => {
-        let stderr = String::from_utf8_lossy(&out.stderr);
-        self
-          .client
-          .log_message(
-            MessageType::ERROR,
-            format!("[formality] fml fmt failed:\n{stderr}"),
-          )
-          .await;
-        Ok(None)
-      }
-      Err(e) => {
-        self
-          .client
-          .log_message(
-            MessageType::ERROR,
-            format!("[formality] could not run fml: {e}"),
-          )
-          .await;
-        Ok(None)
-      }
+    let status = crate::commands::fmt::run_fmt(
+      &root,
+      &config,
+      false,
+      false,
+      false,
+      vec![],
+      false,
+      vec![path.clone()],
+    );
+
+    if status.is_clean() {
+      let after = std::fs::read_to_string(&path).unwrap_or_default();
+      Ok(Some(compute_formatting_edits(&before, &after)))
+    } else {
+      self
+        .client
+        .log_message(
+          MessageType::ERROR,
+          format!("[formality] fml fmt failed for {}", path.display()),
+        )
+        .await;
+      Ok(None)
     }
   }
 
@@ -367,7 +361,7 @@ impl LanguageServer for FormalityLsp {
     // returns `None` both for surfaces with no structured parser at all and
     // for ones whose parser couldn't run this time (binary missing, no
     // project marker file, spawn failure, required config missing) — either
-    // way this falls back to shelling out to `fml lint` and, on non-zero
+    // way this falls back to running in-process `fml lint` and, on non-zero
     // exit, a single generic warning pointing at the output channel — the
     // same behavior this module had before #159. This is what keeps a file
     // from being published "clean" when the structured tool never actually
@@ -377,37 +371,33 @@ impl LanguageServer for FormalityLsp {
     {
       diags
     } else {
-      let fml_exe =
-        std::env::current_exe().unwrap_or_else(|_| PathBuf::from("fml"));
-      let result = std::process::Command::new(fml_exe)
-        .arg("lint")
-        .arg(&path)
-        .current_dir(&root)
-        .output();
+      let config = crate::config::FormalityConfig::load_layered(Some(&root))
+        .map_or_else(
+          |_| crate::config::FormalityConfig::with_defaults(),
+          |(c, _)| c,
+        );
+      let status = crate::commands::lint::run_lint(
+        &root,
+        &config,
+        false,
+        false,
+        false,
+        vec![],
+        false,
+        vec![path.clone()],
+      );
 
-      match result {
-        Ok(out) if out.status.success() => vec![],
-        Ok(_out) => {
-          vec![Diagnostic {
-            range: Range::default(),
-            severity: Some(DiagnosticSeverity::WARNING),
-            source: Some("formality".to_string()),
-            message:
-              "fml lint found issues — see the Formality output channel."
-                .to_string(),
-            ..Default::default()
-          }]
-        }
-        Err(e) => {
-          self
-            .client
-            .log_message(
-              MessageType::ERROR,
-              format!("[formality] fml lint error: {e}"),
-            )
-            .await;
-          vec![]
-        }
+      if status.is_clean() {
+        vec![]
+      } else {
+        vec![Diagnostic {
+          range: Range::default(),
+          severity: Some(DiagnosticSeverity::WARNING),
+          source: Some("formality".to_string()),
+          message: "fml lint found issues — see the Formality output channel."
+            .to_string(),
+          ..Default::default()
+        }]
       }
     };
 
@@ -741,5 +731,118 @@ mod tests {
       }
     );
     assert_eq!(edits[0].new_text, after);
+  }
+
+  #[tokio::test]
+  async fn test_lsp_formatting_nonexistent_file_returns_none() {
+    let (service, _) = LspService::new(FormalityLsp::new);
+    let server = service.inner();
+    let temp = tempfile::tempdir().unwrap();
+    let root = temp.path();
+
+    server
+      .initialize(InitializeParams {
+        root_uri: tower_lsp::lsp_types::Url::from_file_path(root).ok(),
+        ..Default::default()
+      })
+      .await
+      .unwrap();
+
+    let missing_path = root.join("nonexistent.rs");
+    let missing_uri =
+      tower_lsp::lsp_types::Url::from_file_path(&missing_path).unwrap();
+
+    let result = server
+      .formatting(DocumentFormattingParams {
+        text_document: TextDocumentIdentifier { uri: missing_uri },
+        options: tower_lsp::lsp_types::FormattingOptions::default(),
+        work_done_progress_params:
+          tower_lsp::lsp_types::WorkDoneProgressParams::default(),
+      })
+      .await
+      .unwrap();
+
+    assert!(result.is_none());
+  }
+
+  #[tokio::test]
+  async fn test_lsp_formatting_inprocess_unmatched_file_returns_empty_edits() {
+    let (service, _) = LspService::new(FormalityLsp::new);
+    let server = service.inner();
+    let temp = tempfile::tempdir().unwrap();
+    let root = temp.path();
+
+    server
+      .initialize(InitializeParams {
+        root_uri: tower_lsp::lsp_types::Url::from_file_path(root).ok(),
+        ..Default::default()
+      })
+      .await
+      .unwrap();
+
+    let file_path = root.join("notes.txt");
+    std::fs::write(&file_path, "plain text without code formatting\n").unwrap();
+    let file_uri =
+      tower_lsp::lsp_types::Url::from_file_path(&file_path).unwrap();
+
+    let result = server
+      .formatting(DocumentFormattingParams {
+        text_document: TextDocumentIdentifier { uri: file_uri },
+        options: tower_lsp::lsp_types::FormattingOptions::default(),
+        work_done_progress_params:
+          tower_lsp::lsp_types::WorkDoneProgressParams::default(),
+      })
+      .await
+      .unwrap();
+
+    assert_eq!(result, Some(vec![]));
+  }
+
+  #[tokio::test]
+  async fn test_lsp_did_save_inprocess_execution() {
+    let (service, _) = LspService::new(FormalityLsp::new);
+    let server = service.inner();
+    let temp = tempfile::tempdir().unwrap();
+    let root = temp.path();
+
+    server
+      .initialize(InitializeParams {
+        root_uri: tower_lsp::lsp_types::Url::from_file_path(root).ok(),
+        ..Default::default()
+      })
+      .await
+      .unwrap();
+
+    let file_path = root.join("notes.txt");
+    std::fs::write(&file_path, "clean notes\n").unwrap();
+    let file_uri =
+      tower_lsp::lsp_types::Url::from_file_path(&file_path).unwrap();
+
+    // did_save dispatches in-process lint fallback without spawning an fml child process
+    server
+      .did_save(DidSaveTextDocumentParams {
+        text_document: TextDocumentIdentifier { uri: file_uri },
+        text: None,
+      })
+      .await;
+  }
+
+  #[test]
+  fn test_lsp_module_does_not_spawn_fml_child_process() {
+    let manifest_dir = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+    let lsp_rs_path = manifest_dir.join("src/commands/lsp.rs");
+    let content = std::fs::read_to_string(lsp_rs_path).unwrap();
+
+    let (prod_code, _) = content.split_once("#[cfg(test)]").unwrap();
+
+    // Verify there are no std::env::current_exe() calls or subprocess re-spawning of fml in production code
+    assert!(
+      !prod_code.contains("current_exe"),
+      "src/commands/lsp.rs production code must not call current_exe() — dispatch in-process instead"
+    );
+    assert!(
+      !prod_code.contains("Command::new"),
+      "src/commands/lsp.rs production code must not spawn child processes"
+    );
   }
 }
