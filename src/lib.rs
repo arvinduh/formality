@@ -424,4 +424,198 @@ mod tests {
       violations.join("\n")
     );
   }
+
+  // Tier-2 enforcement for the `pub mod` doc comment rule documented in
+  // docs/style-guide.md §3 ("Every `pub mod` declaration ... carries an outer
+  // `///` doc comment one line above the `mod` keyword describing what the
+  // module is for").
+  #[test]
+  fn test_pub_mod_declarations_carry_doc_comments() {
+    let manifest_dir = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+    let src_dir = manifest_dir.join("src");
+
+    let mut violations = Vec::new();
+    for entry in walkdir::WalkDir::new(&src_dir)
+      .into_iter()
+      .filter_map(Result::ok)
+      .filter(|e| e.file_type().is_file())
+      .filter(|e| e.path().extension().is_some_and(|ext| ext == "rs"))
+    {
+      let path = entry.path();
+      let Ok(content) = std::fs::read_to_string(path) else {
+        continue;
+      };
+      let lines: Vec<&str> = content.lines().collect();
+
+      for (i, line) in lines.iter().enumerate() {
+        let trimmed = line.trim_start();
+        // Check for `pub mod <name>;` or `pub(...) mod <name>;`
+        let is_pub_mod = if let Some(after_pub) = trimmed.strip_prefix("pub") {
+          let rest = after_pub.trim_start();
+          let rest = if let Some(after_paren) = rest.strip_prefix('(') {
+            match after_paren.find(')') {
+              Some(close) => after_paren[close + 1..].trim_start(),
+              None => rest,
+            }
+          } else {
+            rest
+          };
+          rest.starts_with("mod ") && rest.ends_with(';')
+        } else {
+          false
+        };
+
+        if !is_pub_mod {
+          continue;
+        }
+
+        // Check if there is an outer doc comment `///` above it
+        let has_doc_comment = lines[..i]
+          .iter()
+          .rev()
+          .take_while(|prior| {
+            let t = prior.trim_start();
+            t.starts_with('#') || t.starts_with("///") || t.starts_with("//!")
+          })
+          .any(|prior| prior.trim_start().starts_with("///"));
+
+        if !has_doc_comment {
+          violations.push(format!(
+            "{}:{}: `{}` is missing an outer `///` doc comment — see docs/style-guide.md §3",
+            path.display(),
+            i + 1,
+            trimmed
+          ));
+        }
+      }
+    }
+
+    assert!(
+      violations.is_empty(),
+      "`pub mod` doc comment violation(s) — see docs/style-guide.md §3:\n{}",
+      violations.join("\n")
+    );
+  }
+
+  // Tier-2 enforcement for the test-module allow-doc-lints rule documented in
+  // docs/style-guide.md §3 ("An inline `#[cfg(test)] mod tests` block, or a
+  // directory module's sibling `mod tests;` declaration ... carries
+  // `#[allow(missing_docs, clippy::missing_errors_doc, clippy::missing_panics_doc)]`
+  // directly under the `#[cfg(test)]` attribute").
+  #[test]
+  fn test_test_modules_carry_allow_doc_lints() {
+    let manifest_dir = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+    let src_dir = manifest_dir.join("src");
+
+    let mut violations = Vec::new();
+    for entry in walkdir::WalkDir::new(&src_dir)
+      .into_iter()
+      .filter_map(Result::ok)
+      .filter(|e| e.file_type().is_file())
+      .filter(|e| e.path().extension().is_some_and(|ext| ext == "rs"))
+    {
+      let path = entry.path();
+      let Ok(content) = std::fs::read_to_string(path) else {
+        continue;
+      };
+      let lines: Vec<&str> = content.lines().collect();
+
+      for (i, line) in lines.iter().enumerate() {
+        let trimmed = line.trim_start();
+        let is_mod_tests = trimmed.starts_with("mod tests {")
+          || trimmed.starts_with("mod tests;")
+          || (trimmed.starts_with("pub mod tests") && trimmed.ends_with(';'));
+
+        if !is_mod_tests {
+          continue;
+        }
+
+        // Check attributes immediately above `mod tests`
+        let attrs: Vec<&str> = lines[..i]
+          .iter()
+          .rev()
+          .take_while(|prior| {
+            let t = prior.trim_start();
+            t.starts_with('#') || t.starts_with("///") || t.starts_with("//")
+          })
+          .map(|l| l.trim_start())
+          .collect();
+
+        let has_cfg_test = attrs.iter().any(|a| a.starts_with("#[cfg(test)]"));
+        if !has_cfg_test {
+          // If it's not a #[cfg(test)] module, skip
+          continue;
+        }
+
+        let has_allow_missing_docs = attrs.iter().any(|a| {
+          a.contains("missing_docs")
+            && a.contains("missing_errors_doc")
+            && a.contains("missing_panics_doc")
+        });
+
+        if !has_allow_missing_docs {
+          violations.push(format!(
+            "{}:{}: `mod tests` is missing `#[allow(missing_docs, clippy::missing_errors_doc, clippy::missing_panics_doc)]` — see docs/style-guide.md §3",
+            path.display(),
+            i + 1,
+          ));
+        }
+      }
+    }
+
+    assert!(
+      violations.is_empty(),
+      "test module `#[allow(...)]` doc lints violation(s) — see docs/style-guide.md §3:\n{}",
+      violations.join("\n")
+    );
+  }
+
+  // Tier-2 enforcement for canonical module paths rule documented in
+  // docs/style-guide.md §1 ("new internal code always spells out the canonical,
+  // structural path (e.g. `crate::ui::table`, `crate::engine::version`) —
+  // never a crate-root shortcut").
+  #[test]
+  fn test_internal_code_uses_canonical_module_paths() {
+    let manifest_dir = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+    let src_dir = manifest_dir.join("src");
+
+    let mut violations = Vec::new();
+    for entry in walkdir::WalkDir::new(&src_dir)
+      .into_iter()
+      .filter_map(Result::ok)
+      .filter(|e| e.file_type().is_file())
+      .filter(|e| e.path().extension().is_some_and(|ext| ext == "rs"))
+    {
+      let path = entry.path();
+      // src/lib.rs declares the root re-exports, so it's exempt from checking its own declarations
+      if path == src_dir.join("lib.rs") {
+        continue;
+      }
+      let Ok(content) = std::fs::read_to_string(path) else {
+        continue;
+      };
+      for (i, line) in content.lines().enumerate() {
+        let trimmed = line.trim_start();
+        if trimmed.starts_with("//") {
+          continue;
+        }
+        // Disallow shortcuts like `crate::generate_schema` or `crate::SCHEMA_VERSION`
+        if trimmed.contains("crate::generate_schema")
+          || trimmed.contains("crate::SCHEMA_VERSION")
+        {
+          violations.push(format!(
+            "{}:{}: uses crate-root re-export shortcut instead of canonical path (use `crate::config::schema::generate_schema` / `crate::config::SCHEMA_VERSION`) — see docs/style-guide.md §1",
+            path.display(),
+            i + 1
+          ));
+        }
+      }
+    }
+
+    assert!(
+      violations.is_empty(),
+      "canonical module path violation(s) — see docs/style-guide.md §1:\n{}",
+      violations.join("\n")
+    );
+  }
 }

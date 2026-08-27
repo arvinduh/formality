@@ -3,7 +3,9 @@
 //! (with `install`) installs whatever's missing, plus workspace hygiene
 //! checks ([`gitignore`], [`venv`]).
 
+/// Gitignore workspace hygiene validation.
 pub mod gitignore;
+/// Python virtual environment detection and hygiene checks.
 pub mod venv;
 
 pub use gitignore::{

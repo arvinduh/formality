@@ -2,6 +2,7 @@
 //! semantic style/layout types ([`Style`], [`Palette`], [`Layout`],
 //! [`WidthPolicy`]) that [`render`] turns into terminal or JSON output.
 
+/// Comfy-table based terminal rendering and ANSI styling engine.
 pub mod render;
 
 pub use render::{

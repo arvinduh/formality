@@ -1,6 +1,7 @@
 //! Tool version detection: `SemVer` parsing, MSRV/MSTV compatibility tables,
 //! and CLI version probing.
 
+/// Minimum Supported Tool Version (MSTV) definitions and registry.
 pub mod mstv;
 
 pub use mstv::{
