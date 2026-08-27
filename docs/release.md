@@ -100,6 +100,8 @@ semver bump (`feat` -> minor, `fix` -> patch, `!`/`BREAKING CHANGE` -> major).
      it as `CHANGELOG.md` on the release, and uses it as the GitHub Release
      body.
    - Uploads the `.vsix` and the JSON schema as release assets.
+   - Sets `make_latest: true` so GitHub's latest release pointer and
+     `/releases/latest/download/` URLs point to this binary release.
 
 6. **Verify the published release.**
 
@@ -136,6 +138,21 @@ versions via `#:schema` directives:
 ```toml
 #:schema https://github.com/arvinduh/formality/releases/download/s1.0/formality.schema.json
 ```
+
+### Latest Release Invariant (`make_latest`)
+
+Because binary releases (`v*`) and schema releases (`s*`) share the same GitHub
+Releases space, workflow configuration enforces a strict invariant:
+
+- **Binary releases (`v*`)**: Explicitly set `make_latest: true` in
+  `.github/workflows/release.yml`. This ensures GitHub's `/releases/latest`
+  endpoint, prebuilt binary download URLs (`/releases/latest/download/...`), and
+  install scripts (`install.sh`, `install.ps1`) always resolve to the most
+  recent binary release.
+- **Schema releases (`s*`)**: Explicitly set `make_latest: false` in
+  `.github/workflows/schema-release.yml`. This ensures publishing an independent
+  schema tag (e.g. `s1.0`, `s1.1`) never overtakes the latest binary release or
+  breaks binary downloads.
 
 ### Schema Release Procedure
 

@@ -34,6 +34,7 @@ jobs:
         with:
           files: CHANGELOG.md
           body_path: CHANGELOG.md
+          make_latest: true
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
@@ -105,6 +106,7 @@ jobs:
         uses: softprops/action-gh-release@v3
         with:
           files: ${{ matrix.asset_name }}
+          make_latest: true
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
@@ -151,5 +153,6 @@ jobs:
           files: |
             editors/vscode/*.vsix
             schema/formality.schema.json
+          make_latest: true
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
