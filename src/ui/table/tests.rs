@@ -206,21 +206,64 @@ fn test_doctor_table_rendering_consistency() {
 }
 
 #[test]
-fn test_strip_ansi_escapes_removes_sgr_codes_only() {
+fn test_strip_ansi_escapes_csi_osc_and_preserves_plain_text() {
   let styled = "\x1b[1;32mPASS\x1b[0m plain \x1b[38;2;80;150;240mtext\x1b[0m";
   assert_eq!(strip_ansi_escapes(styled), "PASS plain text");
 
   // Text with no escapes at all is returned unchanged.
   assert_eq!(strip_ansi_escapes("no escapes here"), "no escapes here");
 
-  // The stripper is a simple state machine, not a full ANSI parser: once it
-  // sees ESC it swallows everything up to and including the *next* literal
-  // 'm' character, wherever that occurs — including inside plain text after
-  // an unterminated escape (here, the 'm' in "unterminated" itself closes
-  // the escape state). It must not panic or loop forever either way.
+  // Words containing the letter 'm' must not be stripped or truncated.
+  assert_eq!(
+    strip_ansi_escapes("maximum memory limit and more measurements"),
+    "maximum memory limit and more measurements"
+  );
+}
+
+#[test]
+fn test_strip_ansi_escapes_non_sgr_csi_and_osc_sequences() {
+  // Non-SGR CSI sequences (cursor positioning, clear line, cursor show/hide)
+  assert_eq!(
+    strip_ansi_escapes("\x1b[2Kmessage after clear line"),
+    "message after clear line"
+  );
+  assert_eq!(
+    strip_ansi_escapes("\x1b[?25hvisible cursor \x1b[?25lhidden cursor"),
+    "visible cursor hidden cursor"
+  );
+  assert_eq!(
+    strip_ansi_escapes("\x1b[1A\x1b[2B\x1b[3C\x1b[4Dcursor movements"),
+    "cursor movements"
+  );
+  assert_eq!(
+    strip_ansi_escapes("start \x1b[0J cleared screen"),
+    "start  cleared screen"
+  );
+
+  // OSC sequences with BEL (\x07) terminator (e.g. hyperlinks and window titles)
+  let osc_bel = "\x1b]8;;https://example.com\x07Link Text\x1b]8;;\x07";
+  assert_eq!(strip_ansi_escapes(osc_bel), "Link Text");
+
+  let osc_title_bel = "\x1b]0;Formality Terminal\x07Running command...";
+  assert_eq!(strip_ansi_escapes(osc_title_bel), "Running command...");
+
+  // OSC sequences with ST (\x1b\\) terminator
+  let osc_st = "\x1b]8;;https://rust-lang.org\x1b\\Rust Lang\x1b]8;;\x1b\\";
+  assert_eq!(strip_ansi_escapes(osc_st), "Rust Lang");
+
+  let osc_title_st = "\x1b]2;Window Title\x1b\\Application Output";
+  assert_eq!(strip_ansi_escapes(osc_title_st), "Application Output");
+
+  // 2-byte escape sequences (e.g. ESC 7 save cursor, ESC 8 restore cursor, ESC c reset)
+  assert_eq!(
+    strip_ansi_escapes("\x1b7saved cursor\x1b8restored cursor\x1bcmore"),
+    "saved cursorrestored cursormore"
+  );
+
+  // Unterminated / malformed escapes degrade gracefully without panicking
   assert_eq!(
     strip_ansi_escapes("before\x1b[unterminated"),
-    "beforeinated"
+    "beforenterminated"
   );
 }
 
@@ -503,4 +546,127 @@ fn test_table_padding_and_indent_overflow_safety() {
 
   let rendered = render(&table, &Palette::none());
   assert!(!rendered.is_empty());
+}
+
+#[test]
+fn test_span_truncation_wide_characters_and_emojis() {
+  // Test truncation with multi-byte/wide-character suffix
+  let spans = vec![Span::plain("1234567890")];
+  // Truncating to max_width 8 with wide emoji suffix "🦀" (display width 2)
+  let truncated_emoji_suffix = render::truncate_spans(&spans, 8, "🦀");
+  let total_width: usize =
+    truncated_emoji_suffix.iter().map(Span::display_width).sum();
+  assert!(total_width <= 8);
+  assert_eq!(
+    truncated_emoji_suffix
+      .iter()
+      .map(|s| s.text.as_str())
+      .collect::<String>(),
+    "123456🦀"
+  );
+  assert_eq!(total_width, 8);
+
+  // Truncating CJK text with wide emoji suffix
+  let cjk_spans = vec![Span::plain(
+    "\u{4f60}\u{597d}\u{4e16}\u{754c}\u{6d4b}\u{8bd5}",
+  )]; // 6 chars * 2 width = 12 width
+  let truncated_cjk = render::truncate_spans(&cjk_spans, 7, "🔥"); // 🔥 = width 2, target = 5 (fits 2 CJK = 4 width)
+  let cjk_width: usize = truncated_cjk.iter().map(Span::display_width).sum();
+  assert!(cjk_width <= 7);
+  assert_eq!(
+    truncated_cjk
+      .iter()
+      .map(|s| s.text.as_str())
+      .collect::<String>(),
+    "\u{4f60}\u{597d}🔥"
+  );
+  assert_eq!(cjk_width, 6);
+
+  // Suffix wider than max_width
+  let wide_suffix = "🦀🦀🦀"; // width 6
+  let overwide = render::truncate_spans(&spans, 4, wide_suffix);
+  let overwide_width: usize = overwide.iter().map(Span::display_width).sum();
+  assert!(overwide_width <= 4);
+  assert_eq!(
+    overwide.iter().map(|s| s.text.as_str()).collect::<String>(),
+    "🦀🦀"
+  );
+  assert_eq!(overwide_width, 4);
+
+  // Suffix with single wide char when max_width = 1 (cannot fit wide char of width 2)
+  let single_col = render::truncate_spans(&spans, 1, "🦀");
+  let single_col_w: usize = single_col.iter().map(Span::display_width).sum();
+  assert!(single_col_w <= 1);
+  assert_eq!(
+    single_col
+      .iter()
+      .map(|s| s.text.as_str())
+      .collect::<String>(),
+    ""
+  );
+
+  // Render in table with wide suffix and verify column width
+  let table = Table::new(vec![
+    Column::new("Col").width(WidthPolicy::Fixed(8)).overflow(
+      Overflow::Truncate {
+        suffix: "🦀".to_string(),
+      },
+    ),
+  ])
+  .layout(Layout::compact().max_width(50).indent(0))
+  .with_row(Row::new(vec![Cell::text("VeryLongStringContent")]));
+
+  let rendered = render(&table, &Palette::none());
+  for line in rendered.lines() {
+    assert!(UnicodeWidthStr::width(strip_ansi_escapes(line).as_str()) <= 50);
+  }
+}
+
+#[test]
+fn test_render_indent_width_clamping_to_terminal() {
+  // When indent is present, lines must not exceed max_width / terminal width
+  let table = Table::new(vec![
+    Column::new("Col A").width(WidthPolicy::Auto),
+    Column::new("Col B").width(WidthPolicy::Auto),
+  ])
+  .layout(
+    Layout::compact()
+      .max_width(60)
+      .indent(10)
+      .clamp_to_terminal(false),
+  )
+  .with_row(Row::new(vec![
+    Cell::text("Left column text"),
+    Cell::text("Right column text"),
+  ]))
+  .with_row(Row::rule());
+
+  let rendered = render(&table, &Palette::none());
+  for line in rendered.lines() {
+    let width = UnicodeWidthStr::width(strip_ansi_escapes(line).as_str());
+    assert!(
+      width <= 60,
+      "Line width {width} exceeded max_width 60: '{line}'"
+    );
+    if !line.is_empty() {
+      assert!(
+        line.starts_with("          "),
+        "Line must start with 10 leading spaces"
+      );
+    }
+  }
+
+  // Extreme indent where indent >= max_width
+  let table_extreme =
+    Table::new(vec![Column::new("Col").width(WidthPolicy::Auto)])
+      .layout(
+        Layout::compact()
+          .max_width(15)
+          .indent(15)
+          .clamp_to_terminal(false),
+      )
+      .with_row(Row::new(vec![Cell::text("Test content")]));
+
+  let rendered_extreme = render(&table_extreme, &Palette::none());
+  assert!(!rendered_extreme.is_empty());
 }

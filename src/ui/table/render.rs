@@ -63,12 +63,24 @@ impl Table {
   }
 }
 
-fn truncate_spans(spans: &[Span], max_width: usize, suffix: &str) -> Vec<Span> {
+pub(super) fn truncate_spans(
+  spans: &[Span],
+  max_width: usize,
+  suffix: &str,
+) -> Vec<Span> {
   let suffix_width = suffix.width();
   if suffix_width >= max_width {
-    return vec![Span::plain(
-      suffix.chars().take(max_width).collect::<String>(),
-    )];
+    let mut truncated_suffix = String::new();
+    let mut current_width = 0;
+    for ch in suffix.chars() {
+      let ch_w = UnicodeWidthChar::width(ch).unwrap_or(0);
+      if current_width + ch_w > max_width {
+        break;
+      }
+      truncated_suffix.push(ch);
+      current_width += ch_w;
+    }
+    return vec![Span::plain(truncated_suffix)];
   }
   let target_width = max_width - suffix_width;
   let mut current_width = 0;
@@ -181,14 +193,14 @@ pub fn render(spec: &Table, palette: &Palette) -> String {
 
   // Terminal width / max_width handling
   let mut target_width = spec.layout.max_width;
-  if spec.layout.clamp_to_terminal
-    && let Ok((w, _)) = crossterm::terminal::size()
-    && w > 0
-    && w < target_width
-  {
-    target_width = w;
+  if spec.layout.clamp_to_terminal {
+    let term_width = detect_terminal_width();
+    if term_width < target_width {
+      target_width = term_width;
+    }
   }
-  table.set_width(target_width);
+  let table_width = target_width.saturating_sub(spec.layout.indent);
+  table.set_width(table_width);
 
   let num_cols = spec.columns.len();
   let has_headers = spec
@@ -365,22 +377,111 @@ pub fn render(spec: &Table, palette: &Palette) -> String {
   }
 }
 
-/// Strips ANSI SGR escape sequences from a string.
+/// Strips ANSI CSI and OSC escape sequences from a string.
 #[must_use]
 pub fn strip_ansi_escapes(s: &str) -> String {
+  #[derive(Copy, Clone, PartialEq, Eq)]
+  enum AnsiState {
+    Normal,
+    Esc,
+    Csi,
+    Osc,
+    OscEsc,
+    EscIntermediate,
+  }
+
   let mut result = String::with_capacity(s.len());
-  let mut in_escape = false;
+  let mut state = AnsiState::Normal;
+
   for c in s.chars() {
-    if c == '\x1b' {
-      in_escape = true;
-    } else if in_escape {
-      if c == 'm' {
-        in_escape = false;
+    match state {
+      AnsiState::Normal => {
+        if c == '\x1b' {
+          state = AnsiState::Esc;
+        } else {
+          result.push(c);
+        }
       }
-    } else {
-      result.push(c);
+      AnsiState::Esc => match c {
+        '[' => state = AnsiState::Csi,
+        ']' => state = AnsiState::Osc,
+        '\x1b' => {
+          state = AnsiState::Esc;
+        }
+        '\x20'..='\x2f' => {
+          state = AnsiState::EscIntermediate;
+        }
+        '\x30'..='\x7e' => {
+          state = AnsiState::Normal;
+        }
+        _ => {
+          state = AnsiState::Normal;
+          result.push(c);
+        }
+      },
+      AnsiState::Csi => {
+        match c {
+          '\x1b' => {
+            state = AnsiState::Esc;
+          }
+          '\x20'..='\x3f' => {
+            // Parameter or intermediate byte; remain in CSI
+          }
+          '\x40'..='\x7e' => {
+            // Final byte terminating CSI sequence
+            state = AnsiState::Normal;
+          }
+          _ => {
+            state = AnsiState::Normal;
+            result.push(c);
+          }
+        }
+      }
+      AnsiState::Osc => match c {
+        '\x07' => {
+          state = AnsiState::Normal;
+        }
+        '\x1b' => {
+          state = AnsiState::OscEsc;
+        }
+        '\n' | '\r' => {
+          state = AnsiState::Normal;
+          result.push(c);
+        }
+        _ => {}
+      },
+      AnsiState::OscEsc => match c {
+        '\\' => {
+          state = AnsiState::Normal;
+        }
+        '[' => {
+          state = AnsiState::Csi;
+        }
+        ']' => {
+          state = AnsiState::Osc;
+        }
+        '\x1b' => {}
+        _ => {
+          state = AnsiState::Normal;
+          result.push(c);
+        }
+      },
+      AnsiState::EscIntermediate => match c {
+        '\x1b' => {
+          state = AnsiState::Esc;
+        }
+        '\x20'..='\x2f' => {}
+        '\x30'..='\x7e' => {
+          state = AnsiState::Normal;
+        }
+        _ => {
+          state = AnsiState::Normal;
+          result.push(c);
+        }
+      },
     }
   }
+
   result
 }
 
