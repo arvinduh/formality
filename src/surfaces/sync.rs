@@ -4,6 +4,7 @@
 
 use super::{SurfaceResult, SurfaceStatus};
 use crate::engine::diff::render_diff;
+use rayon::prelude::*;
 use std::path::{Path, PathBuf};
 use std::time::Instant;
 
@@ -126,7 +127,14 @@ pub fn sync_file_helper(
   }
 }
 
-/// Executes an in-place formatter on temporary copies of the given files and generates
+enum PerFileCheckResult {
+  Clean,
+  Diff(String),
+  FormatterError(String),
+  ExecutionError(String),
+}
+
+/// Executes an in-place formatter on temporary copies of the given files in parallel and generates
 /// unified diffs between the original content and the formatted content.
 ///
 /// Uses an isolated temporary directory under [`std::env::temp_dir()`] so that scratch
@@ -135,7 +143,7 @@ pub fn sync_file_helper(
 #[allow(clippy::too_many_lines)]
 pub fn diff_check_via_tempcopy(
   files: &[PathBuf],
-  run_in_place: impl Fn(&Path) -> std::io::Result<std::process::Output>,
+  run_in_place: impl Fn(&Path) -> std::io::Result<std::process::Output> + Sync,
   surface_name: &'static str,
   start: Instant,
 ) -> SurfaceResult {
@@ -163,121 +171,121 @@ pub fn diff_check_via_tempcopy(
     }
   };
 
-  let mut combined_diff = String::new();
-
-  for (idx, original) in files.iter().enumerate() {
-    let original_content = match std::fs::read_to_string(original) {
-      Ok(c) => c,
-      Err(e) => {
-        return SurfaceResult {
-          surface_name,
-          status: SurfaceStatus::ExecutionError {
-            message: format!("Failed to read {}: {}", original.display(), e),
-          },
-          duration: start.elapsed(),
-        };
-      }
-    };
-
-    let file_name = original
-      .file_name()
-      .and_then(|n| n.to_str())
-      .unwrap_or("scratch");
-    let file_subfolder = temp_dir.path().join(idx.to_string());
-    if let Err(e) = std::fs::create_dir_all(&file_subfolder) {
-      return SurfaceResult {
-        surface_name,
-        status: SurfaceStatus::ExecutionError {
-          message: format!(
-            "Failed to create temp directory {}: {}",
-            file_subfolder.display(),
+  let temp_path = temp_dir.path();
+  let results: Vec<PerFileCheckResult> = files
+    .par_iter()
+    .enumerate()
+    .map(|(idx, original)| {
+      let original_content = match std::fs::read_to_string(original) {
+        Ok(c) => c,
+        Err(e) => {
+          return PerFileCheckResult::ExecutionError(format!(
+            "Failed to read {}: {}",
+            original.display(),
             e
-          ),
-        },
-        duration: start.elapsed(),
+          ));
+        }
       };
-    }
-    let scratch = file_subfolder.join(file_name);
 
-    if let Err(e) = std::fs::write(&scratch, &original_content) {
-      return SurfaceResult {
-        surface_name,
-        status: SurfaceStatus::ExecutionError {
-          message: format!(
-            "Failed to write temp file {}: {}",
+      let file_name = original
+        .file_name()
+        .and_then(|n| n.to_str())
+        .unwrap_or("scratch");
+      let file_subfolder = temp_path.join(idx.to_string());
+      if let Err(e) = std::fs::create_dir_all(&file_subfolder) {
+        return PerFileCheckResult::ExecutionError(format!(
+          "Failed to create temp directory {}: {}",
+          file_subfolder.display(),
+          e
+        ));
+      }
+      let scratch = file_subfolder.join(file_name);
+
+      if let Err(e) = std::fs::write(&scratch, &original_content) {
+        return PerFileCheckResult::ExecutionError(format!(
+          "Failed to write temp file {}: {}",
+          scratch.display(),
+          e
+        ));
+      }
+
+      let output = match run_in_place(&scratch) {
+        Ok(out) => out,
+        Err(e) => {
+          return PerFileCheckResult::ExecutionError(format!(
+            "Failed to run formatter for {}: {}",
+            original.display(),
+            e
+          ));
+        }
+      };
+
+      if !output.status.success() {
+        let stderr = String::from_utf8_lossy(&output.stderr).to_string();
+        let stdout = String::from_utf8_lossy(&output.stdout).to_string();
+        let msg = if !stderr.trim().is_empty() {
+          stderr
+        } else if !stdout.trim().is_empty() {
+          stdout
+        } else {
+          format!("Formatter failed for {}", original.display())
+        };
+        return PerFileCheckResult::FormatterError(msg);
+      }
+
+      let formatted = match std::fs::read_to_string(&scratch) {
+        Ok(f) => f,
+        Err(e) => {
+          return PerFileCheckResult::ExecutionError(format!(
+            "Failed to read formatted temp file {}: {}",
             scratch.display(),
             e
-          ),
-        },
-        duration: start.elapsed(),
+          ));
+        }
       };
-    }
 
-    let output = match run_in_place(&scratch) {
-      Ok(out) => out,
-      Err(e) => {
-        return SurfaceResult {
-          surface_name,
-          status: SurfaceStatus::ExecutionError {
-            message: format!(
-              "Failed to run formatter for {}: {}",
-              original.display(),
-              e
-            ),
-          },
-          duration: start.elapsed(),
-        };
-      }
-    };
-
-    if !output.status.success() {
-      let stderr = String::from_utf8_lossy(&output.stderr).to_string();
-      let stdout = String::from_utf8_lossy(&output.stdout).to_string();
-      let msg = if !stderr.trim().is_empty() {
-        stderr
-      } else if !stdout.trim().is_empty() {
-        stdout
+      if formatted != original_content {
+        let diff = render_diff(
+          &original_content,
+          &formatted,
+          &original.display().to_string(),
+          &format!("{} (formatted)", original.display()),
+        );
+        PerFileCheckResult::Diff(diff)
       } else {
-        format!("Formatter failed for {}", original.display())
-      };
-      return SurfaceResult {
-        surface_name,
-        status: SurfaceStatus::ViolationsFound {
-          message: msg,
-          diff: None,
-        },
-        duration: start.elapsed(),
-      };
-    }
+        PerFileCheckResult::Clean
+      }
+    })
+    .collect();
 
-    let formatted = match std::fs::read_to_string(&scratch) {
-      Ok(f) => f,
-      Err(e) => {
+  let mut combined_diff = String::new();
+
+  for result in results {
+    match result {
+      PerFileCheckResult::ExecutionError(message) => {
         return SurfaceResult {
           surface_name,
-          status: SurfaceStatus::ExecutionError {
-            message: format!(
-              "Failed to read formatted temp file {}: {}",
-              scratch.display(),
-              e
-            ),
+          status: SurfaceStatus::ExecutionError { message },
+          duration: start.elapsed(),
+        };
+      }
+      PerFileCheckResult::FormatterError(message) => {
+        return SurfaceResult {
+          surface_name,
+          status: SurfaceStatus::ViolationsFound {
+            message,
+            diff: None,
           },
           duration: start.elapsed(),
         };
       }
-    };
-
-    if formatted != original_content {
-      let diff = render_diff(
-        &original_content,
-        &formatted,
-        &original.display().to_string(),
-        &format!("{} (formatted)", original.display()),
-      );
-      if !combined_diff.is_empty() {
-        combined_diff.push('\n');
+      PerFileCheckResult::Diff(diff) => {
+        if !combined_diff.is_empty() {
+          combined_diff.push('\n');
+        }
+        combined_diff.push_str(&diff);
       }
-      combined_diff.push_str(&diff);
+      PerFileCheckResult::Clean => {}
     }
   }
 
@@ -832,5 +840,126 @@ mod tests {
       res_crlf.status,
       SurfaceStatus::ViolationsFound { .. }
     ));
+  }
+
+  #[test]
+  fn test_diff_check_via_tempcopy_parallel_multi_file_diff_ordering() {
+    let temp = TempDir::new().unwrap();
+    let files: Vec<_> = (0..8)
+      .map(|i| {
+        let p = temp.path().join(format!("order_test_{i}.rs"));
+        std::fs::write(&p, format!("fn file_{i}() {{}}\n")).unwrap();
+        p
+      })
+      .collect();
+
+    let start = Instant::now();
+    let res = diff_check_via_tempcopy(
+      &files,
+      |scratch| {
+        let name = scratch.file_name().unwrap().to_str().unwrap();
+        // Modify even indexed files only
+        if let Some(num_str) = name
+          .strip_prefix("order_test_")
+          .and_then(|s| s.strip_suffix(".rs"))
+        {
+          let num: usize = num_str.parse().unwrap();
+          if num.is_multiple_of(2) {
+            std::fs::write(
+              scratch,
+              format!("fn file_{num}() {{ /* formatted */ }}\n"),
+            )?;
+          }
+        }
+        Ok(create_dummy_success_output())
+      },
+      "rust",
+      start,
+    );
+
+    match res.status {
+      SurfaceStatus::ViolationsFound { message, diff } => {
+        assert!(message.is_empty());
+        let diff_str = diff.expect("diff should be present");
+        let pos0 = diff_str
+          .find("order_test_0.rs")
+          .expect("order_test_0 present");
+        let pos2 = diff_str
+          .find("order_test_2.rs")
+          .expect("order_test_2 present");
+        let pos4 = diff_str
+          .find("order_test_4.rs")
+          .expect("order_test_4 present");
+        let pos6 = diff_str
+          .find("order_test_6.rs")
+          .expect("order_test_6 present");
+        assert!(pos0 < pos2, "diff for file 0 must precede file 2");
+        assert!(pos2 < pos4, "diff for file 2 must precede file 4");
+        assert!(pos4 < pos6, "diff for file 4 must precede file 6");
+        assert!(!diff_str.contains("order_test_1.rs"));
+        assert!(!diff_str.contains("order_test_3.rs"));
+      }
+      other => panic!("Expected ViolationsFound, got {other:?}"),
+    }
+  }
+
+  #[test]
+  fn test_diff_check_via_tempcopy_parallel_deterministic_error_priority() {
+    let temp = TempDir::new().unwrap();
+    let files: Vec<_> = (0..6)
+      .map(|i| {
+        let p = temp.path().join(format!("err_prio_{i}.rs"));
+        std::fs::write(&p, format!("fn err_{i}() {{}}\n")).unwrap();
+        p
+      })
+      .collect();
+
+    let start = Instant::now();
+    let res = diff_check_via_tempcopy(
+      &files,
+      |scratch| {
+        let name = scratch.file_name().unwrap().to_str().unwrap();
+        if name.contains("err_prio_2") {
+          return Err(std::io::Error::other("Failure at index 2"));
+        }
+        if name.contains("err_prio_4") {
+          return Err(std::io::Error::other("Failure at index 4"));
+        }
+        Ok(create_dummy_success_output())
+      },
+      "rust",
+      start,
+    );
+
+    match res.status {
+      SurfaceStatus::ExecutionError { message } => {
+        assert!(
+          message.contains("err_prio_2"),
+          "Expected earliest failing file (index 2) to be reported, got: {message}"
+        );
+      }
+      other => panic!("Expected ExecutionError, got {other:?}"),
+    }
+  }
+
+  #[test]
+  fn test_diff_check_via_tempcopy_parallel_all_clean_multiple_files() {
+    let temp = TempDir::new().unwrap();
+    let files: Vec<_> = (0..10)
+      .map(|i| {
+        let p = temp.path().join(format!("clean_{i}.rs"));
+        std::fs::write(&p, format!("fn clean_{i}() {{}}\n")).unwrap();
+        p
+      })
+      .collect();
+
+    let res = diff_check_via_tempcopy(
+      &files,
+      |_scratch| Ok(create_dummy_success_output()),
+      "rust",
+      Instant::now(),
+    );
+
+    assert!(matches!(res.status, SurfaceStatus::Passed));
   }
 }
