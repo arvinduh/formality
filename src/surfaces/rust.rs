@@ -4,8 +4,8 @@
 use super::{
   DeclaresFacets, ExecutionContext, Facet, FacetSupport, LanguageSurface,
   NativeConfig, SurfaceResult, SurfaceStatus, ToolInfo, check_binary_exists,
-  create_tool_command, diff_check_via_tempcopy, find_files_with_ext,
-  render_native_config, sync_native_config, tool_missing_result,
+  create_tool_command, find_files_with_ext, render_native_config,
+  sync_native_config, tool_missing_result,
 };
 use serde::{Deserialize, Serialize};
 use std::path::{Path, PathBuf};
@@ -266,41 +266,18 @@ impl LanguageSurface for RustSurface {
     let inline_config =
       build_rustfmt_inline_config(&RustfmtConfig::from_context(ctx));
 
-    if ctx.check_only {
-      return diff_check_via_tempcopy(
-        &files,
-        |scratch| {
-          let mut c = if check_binary_exists("rustfmt") {
-            let mut cmd = create_tool_command("rustfmt");
-            cmd.arg("--edition").arg(edition);
-            cmd.arg("--config").arg(&inline_config);
-            cmd
-          } else {
-            // Unlike the direct-rustfmt branch above, `cargo fmt` infers
-            // `--edition` itself from Cargo.toml and errors ("Option
-            // 'edition' given more than once") if it's also passed
-            // explicitly here — pass only `--config`.
-            let mut c = create_tool_command("cargo");
-            c.arg("fmt").arg("--").arg("--config").arg(&inline_config);
-            c
-          };
-          c.arg(scratch);
-          c.args(&ctx.lang_config.extra_args);
-          c.current_dir(ctx.root.as_path());
-          c.output()
-        },
-        self.name(),
-        start,
-      );
-    }
-
     let mut cmd =
       if check_binary_exists("cargo") && ctx.root.join("Cargo.toml").exists() {
         let mut c = create_tool_command("cargo");
-        // `cargo fmt` infers `--edition` itself from Cargo.toml (and errors
-        // if it's also passed explicitly, see the check-mode branch above
-        // for why) — pass only `--config` here.
-        c.arg("fmt").arg("--").arg("--config").arg(&inline_config);
+        c.arg("fmt");
+        if ctx.check_only {
+          c.arg("--")
+            .arg("--check")
+            .arg("--config")
+            .arg(&inline_config);
+        } else {
+          c.arg("--").arg("--config").arg(&inline_config);
+        }
         if !ctx.paths.is_empty()
           || !ctx.lang_config.files.is_empty()
           || !ctx.lang_config.exclude.is_empty()
