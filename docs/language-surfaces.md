@@ -145,7 +145,9 @@ machine-generated shape.
 - **Format**: `taplo fmt`, with key ordering/alignment normalization.
 - **Lint**: `taplo lint`.
 - **Managed config**: `taplo.toml`.
-- **`[lang.toml]` options**: none currently (reserved for future knobs).
+- **`[lang.toml]` options**: `align_entries` (whether to align entries across
+  lines), `indent_entries` (whether to indent table entry keys), `indent_tables`
+  (whether to indent table contents).
 - **Facets**: `indent_tabs`/`indent_width`/`line_length` configurable;
   everything else unsupported (TOML has no imports, quote-style choice, or
   prose-wrap concept).
