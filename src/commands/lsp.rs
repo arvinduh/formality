@@ -905,6 +905,10 @@ mod tests {
       "/path/to/project/formality.toml"
     )));
     assert!(is_formality_config_file(Path::new(
+      "/path/to/project/.formality.toml"
+    )));
+    #[cfg(windows)]
+    assert!(is_formality_config_file(Path::new(
       "C:\\path\\to\\project\\.formality.toml"
     )));
 
