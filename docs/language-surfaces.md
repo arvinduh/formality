@@ -39,7 +39,8 @@ machine-generated shape.
 - **Lint**: `ruff check`.
 - **Managed config**: `ruff.toml`.
 - **`[lang.python]` options**: `quote_style` (`"single"` / `"double"`),
-  `target_version` (e.g. `"py311"`).
+  `target_version` (e.g. `"py311"`), `ignore_rules` (list of Ruff rule codes to
+  ignore during linting, e.g. `["E501", "F401"]`).
 - **Facets**: `indent_tabs`/`indent_width`/`line_length`/`quote_style`/
   `import_sort` configurable; `trailing_comma`, `prose_wrap`, `edition`,
   `standard` unsupported.

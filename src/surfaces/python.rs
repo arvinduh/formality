@@ -78,6 +78,13 @@ impl NativeConfig for RuffConfig {
       .as_ref()
       .and_then(|p| p.target_version.clone());
 
+    let ignore = ctx
+      .lang_config
+      .python
+      .as_ref()
+      .and_then(|p| p.ignore_rules.clone())
+      .unwrap_or_default();
+
     Self {
       line_length: ctx.lang_config.line_length,
       indent_width: ctx.lang_config.indent_size,
@@ -96,7 +103,7 @@ impl NativeConfig for RuffConfig {
           "B".to_string(),
           "SIM".to_string(),
         ],
-        ignore: vec![],
+        ignore,
       },
     }
   }
@@ -523,6 +530,7 @@ mod tests {
     lang_cfg.python = Some(PythonOptions {
       quote_style: Some("single".to_string()),
       target_version: Some("py312".to_string()),
+      ignore_rules: Some(vec!["E501".to_string(), "F401".to_string()]),
     });
 
     let ctx = ExecutionContext {
@@ -547,11 +555,48 @@ mod tests {
     assert!(content.contains("select = ["));
     assert!(content.contains("\"E\""));
     assert!(content.contains("\"SIM\""));
+    assert!(content.contains("ignore = ["));
+    assert!(content.contains("\"E501\""));
+    assert!(content.contains("\"F401\""));
     assert!(content.contains("quote-style = \"single\""));
     assert!(content.contains("target-version = \"py312\""));
     assert!(content.contains("line-length = 100"));
     assert!(content.contains("indent-width = 4"));
   }
+
+  #[test]
+  fn test_python_sync_config_default_omitted_ignore_rules() {
+    let temp = TempDir::new().unwrap();
+    let surface = PythonSurface;
+    let mut lang_cfg = ResolvedLangConfig::new("python");
+    lang_cfg.python = Some(PythonOptions {
+      quote_style: Some("double".to_string()),
+      target_version: None,
+      ignore_rules: None,
+    });
+
+    let ctx = ExecutionContext {
+      root: Arc::new(temp.path().to_path_buf()),
+      paths: Arc::new(Vec::new()),
+      global_config: Arc::new(ResolvedGlobalConfig::default()),
+      lang_config: lang_cfg,
+      check_only: false,
+    };
+
+    let res = surface.sync_config(&ctx, false);
+    assert!(matches!(
+      res.status,
+      SurfaceStatus::ConfigSynced { created: true, .. }
+    ));
+
+    let config_path = temp.path().join("ruff.toml");
+    assert!(config_path.is_file());
+
+    let content = std::fs::read_to_string(&config_path).unwrap();
+    assert!(content.contains("[lint]"));
+    assert!(content.contains("ignore = []"));
+  }
+
   #[test]
   fn test_ruff_config_typed_serialization() {
     let cfg = RuffConfig {
@@ -565,7 +610,7 @@ mod tests {
       },
       lint: RuffLintConfig {
         select: vec!["E".to_string(), "F".to_string()],
-        ignore: vec![],
+        ignore: vec!["E501".to_string()],
       },
     };
     let rendered = cfg.render().unwrap();
@@ -576,6 +621,7 @@ mod tests {
     assert!(rendered.contains("[format]"));
     assert!(rendered.contains("quote-style = \"single\""));
     assert!(rendered.contains("[lint]"));
+    assert!(rendered.contains("ignore = [\"E501\"]"));
   }
   #[test]
   fn test_python_surface_file_extensions_and_pyi_detection() {
@@ -690,6 +736,50 @@ mod tests {
 
     let lint_args = build_ruff_inline_lint_config_args(&cfg);
     assert!(lint_args.contains(&"lint.select=['E','F']".to_string()));
+    assert!(!lint_args.iter().any(|a| a.starts_with("lint.ignore=")));
+
+    let cfg_with_ignore = RuffConfig {
+      lint: RuffLintConfig {
+        select: vec!["E".to_string()],
+        ignore: vec!["E501".to_string(), "F401".to_string()],
+      },
+      ..cfg
+    };
+    let lint_args_with_ignore =
+      build_ruff_inline_lint_config_args(&cfg_with_ignore);
+    assert!(
+      lint_args_with_ignore
+        .contains(&"lint.ignore=['E501','F401']".to_string())
+    );
+  }
+
+  #[test]
+  fn test_ruff_config_from_context_ignore_rules() {
+    let mut lang_cfg = ResolvedLangConfig::new("python");
+    lang_cfg.python = Some(PythonOptions {
+      quote_style: Some("double".to_string()),
+      target_version: Some("py311".to_string()),
+      ignore_rules: Some(vec!["E501".to_string(), "SIM101".to_string()]),
+    });
+    let ctx = ExecutionContext {
+      root: Arc::new(PathBuf::from(".")),
+      paths: Arc::new(Vec::new()),
+      global_config: Arc::new(ResolvedGlobalConfig::default()),
+      lang_config: lang_cfg,
+      check_only: false,
+    };
+    let cfg = RuffConfig::from_context(&ctx);
+    assert_eq!(cfg.lint.ignore, vec!["E501", "SIM101"]);
+
+    let ctx_default = ExecutionContext {
+      root: Arc::new(PathBuf::from(".")),
+      paths: Arc::new(Vec::new()),
+      global_config: Arc::new(ResolvedGlobalConfig::default()),
+      lang_config: ResolvedLangConfig::new("python"),
+      check_only: false,
+    };
+    let cfg_default = RuffConfig::from_context(&ctx_default);
+    assert!(cfg_default.lint.ignore.is_empty());
   }
 
   #[test]

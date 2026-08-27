@@ -295,6 +295,7 @@ fn test_typed_options_deserialization_from_toml() {
       [lang.python]
       quote_style = "single"
       target_version = "py311"
+      ignore_rules = ["E501", "F401"]
 
       [lang.cpp]
       standard = "c++20"
@@ -336,6 +337,7 @@ fn test_typed_options_deserialization_from_toml() {
     Some(PythonOptions {
       quote_style: Some("single".to_string()),
       target_version: Some("py311".to_string()),
+      ignore_rules: Some(vec!["E501".to_string(), "F401".to_string()]),
     })
   );
 
@@ -396,6 +398,7 @@ fn test_typed_options_subtable_deserialization() {
       [lang.python.python]
       quote_style = "double"
       target_version = "py312"
+      ignore_rules = ["E501"]
 
       [lang.cpp.cpp]
       standard = "c++23"
@@ -429,6 +432,7 @@ fn test_typed_options_subtable_deserialization() {
     Some(PythonOptions {
       quote_style: Some("double".to_string()),
       target_version: Some("py312".to_string()),
+      ignore_rules: Some(vec!["E501".to_string()]),
     })
   );
 
@@ -480,6 +484,7 @@ fn test_typed_options_merging_semantics() {
 
       [lang.python]
       quote_style = "single"
+      ignore_rules = ["E501"]
 
       [lang.toml]
       align_entries = false
@@ -496,6 +501,7 @@ fn test_typed_options_merging_semantics() {
 
       [lang.python]
       target_version = "py312"
+      ignore_rules = ["F401", "SIM101"]
 
       [lang.toml]
       align_entries = true
@@ -522,6 +528,7 @@ fn test_typed_options_merging_semantics() {
     Some(PythonOptions {
       quote_style: Some("single".to_string()),
       target_version: Some("py312".to_string()),
+      ignore_rules: Some(vec!["F401".to_string(), "SIM101".to_string()]),
     })
   );
 
@@ -571,6 +578,7 @@ fn test_serialization_deserialization_roundtrip() {
     python: Some(PythonOptions {
       quote_style: Some("double".to_string()),
       target_version: Some("py311".to_string()),
+      ignore_rules: Some(vec!["E501".to_string()]),
     }),
     ..Default::default()
   };
@@ -597,14 +605,17 @@ fn test_language_options_merge_units() {
   let mut py1 = PythonOptions {
     quote_style: Some("single".to_string()),
     target_version: None,
+    ignore_rules: Some(vec!["E501".to_string()]),
   };
   let py2 = PythonOptions {
     quote_style: None,
     target_version: Some("py312".to_string()),
+    ignore_rules: Some(vec!["F401".to_string()]),
   };
   py1.merge(py2);
   assert_eq!(py1.quote_style.as_deref(), Some("single"));
   assert_eq!(py1.target_version.as_deref(), Some("py312"));
+  assert_eq!(py1.ignore_rules.as_deref(), Some(&["F401".to_string()][..]));
 
   let mut cpp1 = CppOptions {
     standard: Some("c++17".to_string()),
