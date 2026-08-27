@@ -188,16 +188,25 @@ impl SurfaceRegistry {
   }
 }
 
+static DEFAULT_REGISTRY: std::sync::LazyLock<SurfaceRegistry> =
+  std::sync::LazyLock::new(SurfaceRegistry::default);
+
+/// Returns a reference to the global default [`SurfaceRegistry`].
+#[must_use]
+pub fn default_registry() -> &'static SurfaceRegistry {
+  &DEFAULT_REGISTRY
+}
+
 /// Returns a vector containing boxed instances of all supported language surfaces.
 #[must_use]
 pub fn all_surfaces() -> Vec<Box<dyn LanguageSurface>> {
-  SurfaceRegistry::default().all_surfaces()
+  DEFAULT_REGISTRY.all_surfaces()
 }
 
 /// Detects and returns all language surfaces active in `root`.
 #[must_use]
 pub fn detect_surfaces(root: &Path) -> Vec<Box<dyn LanguageSurface>> {
-  SurfaceRegistry::default().detect_surfaces(root)
+  DEFAULT_REGISTRY.detect_surfaces(root)
 }
 
 /// Detects and returns active language surfaces in `root` respecting `config` settings.
@@ -206,19 +215,19 @@ pub fn detect_surfaces_smart(
   root: &Path,
   config: &FormalityConfig,
 ) -> Vec<Box<dyn LanguageSurface>> {
-  SurfaceRegistry::default().detect_surfaces_smart(root, config)
+  DEFAULT_REGISTRY.detect_surfaces_smart(root, config)
 }
 
 /// Finds and returns a boxed [`LanguageSurface`] matching `name` or an alias if found.
 #[must_use]
 pub fn get_surface_by_name(name: &str) -> Option<Box<dyn LanguageSurface>> {
-  SurfaceRegistry::default().get_surface_by_name(name)
+  DEFAULT_REGISTRY.get_surface_by_name(name)
 }
 
 /// Resolves a surface name or alias to its canonical surface name.
 #[must_use]
 pub fn resolve_canonical_name(name_or_alias: &str) -> Option<&'static str> {
-  SurfaceRegistry::default().resolve_canonical_name(name_or_alias)
+  DEFAULT_REGISTRY.resolve_canonical_name(name_or_alias)
 }
 
 #[cfg(test)]

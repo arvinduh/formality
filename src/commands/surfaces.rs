@@ -6,14 +6,16 @@ use std::path::Path;
 
 use crate::config::FormalityConfig;
 use crate::errors::ExitStatus;
-use crate::surfaces::{all_surfaces, detect_surfaces_smart};
+use crate::surfaces::default_registry;
 use crate::ui::table;
 
 /// Runs the `fml surfaces` command: prints every supported language surface
 /// with its active/inactive status and any aliases.
 pub fn run_surfaces(root: &Path, config: &FormalityConfig) -> ExitStatus {
-  let detected = detect_surfaces_smart(root, config);
+  let registry = default_registry();
+  let detected = registry.detect_surfaces_smart(root, config);
   let detected_names: Vec<&str> = detected.iter().map(|s| s.name()).collect();
+  let total_count = registry.len();
 
   let mut surfaces_table = table::Table::new(vec![
     table::Column::new(table::Cell::text(""))
@@ -25,7 +27,7 @@ pub fn run_surfaces(root: &Path, config: &FormalityConfig) -> ExitStatus {
   .layout(table::Layout::compact().indent(2).padding(0, 1));
 
   let mut active_count = 0;
-  for surface in all_surfaces() {
+  for surface in registry.surfaces() {
     let is_detected = detected_names.contains(&surface.name());
     let (status_style, name_style, marker) = if is_detected {
       active_count += 1;
@@ -54,7 +56,7 @@ pub fn run_surfaces(root: &Path, config: &FormalityConfig) -> ExitStatus {
   println!(
     "{} {}",
     "fml surfaces".bold().cyan(),
-    format!("({} supported)", all_surfaces().len()).dimmed()
+    format!("({total_count} supported)").dimmed()
   );
   println!("{}", separator.dimmed());
   if !rendered_table.is_empty() {
@@ -64,7 +66,7 @@ pub fn run_surfaces(root: &Path, config: &FormalityConfig) -> ExitStatus {
   println!(
     "  {} active, {} inactive\n",
     active_count.to_string().green().bold(),
-    (all_surfaces().len() - active_count).to_string().dimmed()
+    (total_count - active_count).to_string().dimmed()
   );
   ExitStatus::Clean
 }

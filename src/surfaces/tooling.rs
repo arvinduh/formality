@@ -5,6 +5,7 @@
 use super::{SurfaceResult, SurfaceStatus};
 use crate::engine::version::Version;
 use std::collections::HashMap;
+use std::path::PathBuf;
 use std::sync::{Mutex, OnceLock};
 use std::time::Instant;
 
@@ -695,20 +696,28 @@ pub fn pinned_installer_for(binary: &str) -> Option<&'static str> {
     .map(InstallMethod::installer_name)
 }
 
-static BINARY_CACHE: OnceLock<Mutex<HashMap<String, bool>>> = OnceLock::new();
+static BINARY_CACHE: OnceLock<Mutex<HashMap<String, Option<PathBuf>>>> =
+  OnceLock::new();
+
+/// Resolves `binary` to its concrete path on `PATH`, memoized per-process so
+/// repeated lookups for the same binary don't re-hit the filesystem.
+#[must_use]
+pub fn resolve_binary_path(binary: &str) -> Option<PathBuf> {
+  let cache = BINARY_CACHE.get_or_init(|| Mutex::new(HashMap::new()));
+  let mut guard = cache.lock().unwrap_or_else(|e| e.into_inner());
+  if let Some(resolved) = guard.get(binary) {
+    return resolved.clone();
+  }
+  let resolved = which::which(binary).ok();
+  guard.insert(binary.to_string(), resolved.clone());
+  resolved
+}
 
 /// Returns whether `binary` is resolvable on `PATH`, memoized per-process so
 /// repeated checks for the same binary don't re-hit the filesystem.
 #[must_use]
 pub fn check_binary_exists(binary: &str) -> bool {
-  let cache = BINARY_CACHE.get_or_init(|| Mutex::new(HashMap::new()));
-  let mut guard = cache.lock().unwrap_or_else(|e| e.into_inner());
-  if let Some(&exists) = guard.get(binary) {
-    return exists;
-  }
-  let exists = which::which(binary).is_ok();
-  guard.insert(binary.to_string(), exists);
-  exists
+  resolve_binary_path(binary).is_some()
 }
 
 /// Builds the `SurfaceResult` every surface returns from `format`/`lint` when
@@ -757,7 +766,7 @@ pub fn create_tool_command(binary: &str) -> std::process::Command {
       cmd.arg("/C").arg(binary);
       return cmd;
     }
-    if let Ok(path) = which::which(binary) {
+    if let Some(path) = resolve_binary_path(binary) {
       if let Some(ext) = path.extension().and_then(|e| e.to_str())
         && (ext.eq_ignore_ascii_case("cmd") || ext.eq_ignore_ascii_case("bat"))
       {
@@ -1404,19 +1413,20 @@ mod tests {
     let cache = BINARY_CACHE.get().expect("cache should be initialized");
     let guard = cache.lock().unwrap_or_else(|e| e.into_inner());
 
-    let cargo_on_path = guard.get("cargo").copied().expect(
+    let cargo_on_path = guard.get("cargo").expect(
       "has_cargo_binstall must resolve `cargo` through check_binary_exists",
     );
 
-    if cargo_on_path {
+    if cargo_on_path.is_some() {
       // Short-circuiting means the second lookup only happens when the first
       // succeeded; when it does happen it must go through the PATH cache too,
       // and it must be what the return value is derived from.
-      let binstall_on_path = guard.get("cargo-binstall").copied().expect(
+      let binstall_on_path = guard.get("cargo-binstall").expect(
         "has_cargo_binstall must resolve `cargo-binstall` through check_binary_exists",
       );
       assert_eq!(
-        result, binstall_on_path,
+        result,
+        binstall_on_path.is_some(),
         "return value must be the `cargo-binstall` PATH lookup, not a subprocess probe"
       );
     } else {
@@ -1439,8 +1449,11 @@ mod tests {
     // Inspect BINARY_CACHE directly to verify process-lifetime memoization
     let cache = BINARY_CACHE.get().expect("cache should be initialized");
     let guard = cache.lock().unwrap_or_else(|e| e.into_inner());
-    assert_eq!(guard.get(non_existent), Some(&false));
-    assert_eq!(guard.get(existing), Some(&existing_result));
+    assert_eq!(guard.get(non_existent), Some(&None));
+    assert_eq!(
+      guard.get(existing).map(Option::is_some),
+      Some(existing_result)
+    );
   }
 
   #[test]

@@ -58,7 +58,7 @@ use tower_lsp::lsp_types::{
   Diagnostic, DiagnosticSeverity, NumberOrString, Position, Range,
 };
 
-use crate::surfaces::{all_surfaces, check_binary_exists};
+use crate::surfaces::{check_binary_exists, default_registry};
 
 // ---------------------------------------------------------------------------
 // Surface detection
@@ -69,8 +69,9 @@ use crate::surfaces::{all_surfaces, check_binary_exists};
 #[must_use]
 pub fn surface_name_for_file(file: &Path) -> Option<&'static str> {
   let ext = file.extension()?.to_str()?;
-  all_surfaces()
-    .into_iter()
+  default_registry()
+    .surfaces()
+    .iter()
     .find(|s| {
       s.file_extensions()
         .iter()
@@ -1600,7 +1601,7 @@ mod tests {
     // a surface added later without a parser wired into
     // `diagnostics_runner_for_surface` fails here instead of silently
     // falling back to `fml lsp`'s generic single-warning diagnostic.
-    for surface in all_surfaces() {
+    for surface in default_registry().surfaces() {
       let name = surface.name();
       if name == "json" {
         assert!(
@@ -1621,7 +1622,7 @@ mod tests {
     // Guards the other half of the routing: no two surfaces may claim the
     // same file extension, or one of them would silently never receive
     // structured diagnostics.
-    for surface in all_surfaces() {
+    for surface in default_registry().surfaces() {
       for ext in surface.file_extensions() {
         let path = std::path::PathBuf::from(format!("sample.{ext}"));
         assert_eq!(

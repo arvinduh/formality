@@ -54,15 +54,15 @@ use std::time::Duration;
 
 pub use glob::{find_files_with_ext, is_excluded, simple_glob_match};
 pub use registry::{
-  SurfaceRegistry, all_surfaces, detect_surfaces, detect_surfaces_smart,
-  get_surface_by_name, resolve_canonical_name,
+  SurfaceRegistry, all_surfaces, default_registry, detect_surfaces,
+  detect_surfaces_smart, get_surface_by_name, resolve_canonical_name,
 };
 pub use sync::{diff_check_via_tempcopy, is_auto_generated, sync_file_helper};
 pub use tooling::{
   InstallMethod, check_binary_exists, create_tool_command, has_cargo_binstall,
   install_chain_for, pinned_installer_for, pinned_version_for,
-  run_tool_command, selected_install_method_for, selected_pinned_version_for,
-  tool_missing_result,
+  resolve_binary_path, run_tool_command, selected_install_method_for,
+  selected_pinned_version_for, tool_missing_result,
 };
 
 /// Execution context shared with every [`LanguageSurface`] invocation for a

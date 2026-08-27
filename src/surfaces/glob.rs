@@ -113,7 +113,10 @@ fn is_excluded_normalized(
     }
 
     // 2. Relative prefix, exact relative string match, or directory match
-    if rel_str == ex.trimmed || rel_str.starts_with(&format!("{}/", ex.trimmed))
+    if rel_str == ex.trimmed
+      || rel_str
+        .strip_prefix(ex.trimmed.as_str())
+        .is_some_and(|rest| rest.starts_with('/'))
     {
       return true;
     }
