@@ -106,7 +106,7 @@ fn test_wrapping_and_multiline_spans() {
 
 #[test]
 fn test_table_serialization_deserialization_json() {
-  let table = Table::new(vec![
+  let mut table = Table::new(vec![
     Column::new("Surface")
       .align(Align::Left)
       .width(WidthPolicy::Fixed(12)),
@@ -117,15 +117,16 @@ fn test_table_serialization_deserialization_json() {
       .align(Align::Right)
       .width(WidthPolicy::Fixed(8)),
   ])
-  .layout(Layout::compact().indent(2))
-  .with_row(Row::new(vec![
+  .layout(Layout::compact().indent(2));
+
+  table.add_row(Row::new(vec![
     Cell::styled("rust", Style::Tool),
     Cell::styled("PASS", Style::Ok),
     Cell::text("42"),
-  ]))
-  .with_row(Row::rule())
-  .with_row(Row::group("Totals"))
-  .with_row(Row::new(vec![
+  ]));
+  table.add_row(Row::rule());
+  table.add_row(Row::group("Totals"));
+  table.add_row(Row::new(vec![
     Cell::text("Total"),
     Cell::text(""),
     Cell::styled("42", Style::Strong),
@@ -411,9 +412,9 @@ fn test_row_with_fewer_cells_than_columns_renders_blank_gaps() {
   // A Row shorter than the table's column count must render an empty cell
   // for the missing columns rather than panicking on an out-of-bounds
   // index (row.cells.get(i) returning None).
-  let table =
-    Table::new(vec![Column::new("A"), Column::new("B"), Column::new("C")])
-      .with_row(Row::new(vec![Cell::text("only-a")]));
+  let mut table =
+    Table::new(vec![Column::new("A"), Column::new("B"), Column::new("C")]);
+  table.add_row(Row::new(vec![Cell::text("only-a")]));
 
   let rendered = render(&table, &Palette::none());
   assert!(rendered.contains("only-a"));
@@ -606,15 +607,15 @@ fn test_span_truncation_wide_characters_and_emojis() {
   );
 
   // Render in table with wide suffix and verify column width
-  let table = Table::new(vec![
+  let mut table = Table::new(vec![
     Column::new("Col").width(WidthPolicy::Fixed(8)).overflow(
       Overflow::Truncate {
         suffix: "🦀".to_string(),
       },
     ),
   ])
-  .layout(Layout::compact().max_width(50).indent(0))
-  .with_row(Row::new(vec![Cell::text("VeryLongStringContent")]));
+  .layout(Layout::compact().max_width(50).indent(0));
+  table.add_row(Row::new(vec![Cell::text("VeryLongStringContent")]));
 
   let rendered = render(&table, &Palette::none());
   for line in rendered.lines() {
@@ -625,7 +626,7 @@ fn test_span_truncation_wide_characters_and_emojis() {
 #[test]
 fn test_render_indent_width_clamping_to_terminal() {
   // When indent is present, lines must not exceed max_width / terminal width
-  let table = Table::new(vec![
+  let mut table = Table::new(vec![
     Column::new("Col A").width(WidthPolicy::Auto),
     Column::new("Col B").width(WidthPolicy::Auto),
   ])
@@ -634,12 +635,12 @@ fn test_render_indent_width_clamping_to_terminal() {
       .max_width(60)
       .indent(10)
       .clamp_to_terminal(false),
-  )
-  .with_row(Row::new(vec![
+  );
+  table.add_row(Row::new(vec![
     Cell::text("Left column text"),
     Cell::text("Right column text"),
-  ]))
-  .with_row(Row::rule());
+  ]));
+  table.add_row(Row::rule());
 
   let rendered = render(&table, &Palette::none());
   for line in rendered.lines() {
@@ -657,15 +658,14 @@ fn test_render_indent_width_clamping_to_terminal() {
   }
 
   // Extreme indent where indent >= max_width
-  let table_extreme =
-    Table::new(vec![Column::new("Col").width(WidthPolicy::Auto)])
-      .layout(
-        Layout::compact()
-          .max_width(15)
-          .indent(15)
-          .clamp_to_terminal(false),
-      )
-      .with_row(Row::new(vec![Cell::text("Test content")]));
+  let mut table_extreme =
+    Table::new(vec![Column::new("Col").width(WidthPolicy::Auto)]).layout(
+      Layout::compact()
+        .max_width(15)
+        .indent(15)
+        .clamp_to_terminal(false),
+    );
+  table_extreme.add_row(Row::new(vec![Cell::text("Test content")]));
 
   let rendered_extreme = render(&table_extreme, &Palette::none());
   assert!(!rendered_extreme.is_empty());
@@ -673,15 +673,18 @@ fn test_render_indent_width_clamping_to_terminal() {
 
 #[test]
 fn test_density_comfortable_vs_compact() {
-  let table_compact = Table::new(vec![Column::new("A"), Column::new("B")])
-    .layout(Layout::compact().clamp_to_terminal(false))
-    .with_row(Row::new(vec![Cell::text("r1c1"), Cell::text("r1c2")]))
-    .with_row(Row::new(vec![Cell::text("r2c1"), Cell::text("r2c2")]));
+  let mut table_compact = Table::new(vec![Column::new("A"), Column::new("B")])
+    .layout(Layout::compact().clamp_to_terminal(false));
+  table_compact.add_row(Row::new(vec![Cell::text("r1c1"), Cell::text("r1c2")]));
+  table_compact.add_row(Row::new(vec![Cell::text("r2c1"), Cell::text("r2c2")]));
 
-  let table_comfortable = Table::new(vec![Column::new("A"), Column::new("B")])
-    .layout(Layout::comfortable().clamp_to_terminal(false))
-    .with_row(Row::new(vec![Cell::text("r1c1"), Cell::text("r1c2")]))
-    .with_row(Row::new(vec![Cell::text("r2c1"), Cell::text("r2c2")]));
+  let mut table_comfortable =
+    Table::new(vec![Column::new("A"), Column::new("B")])
+      .layout(Layout::comfortable().clamp_to_terminal(false));
+  table_comfortable
+    .add_row(Row::new(vec![Cell::text("r1c1"), Cell::text("r1c2")]));
+  table_comfortable
+    .add_row(Row::new(vec![Cell::text("r2c1"), Cell::text("r2c2")]));
 
   let rendered_compact = render(&table_compact, &Palette::none());
   let rendered_comfortable = render(&table_comfortable, &Palette::none());
@@ -694,13 +697,13 @@ fn test_density_comfortable_vs_compact() {
 
 #[test]
 fn test_group_row_banner_rendering() {
-  let table = Table::new(vec![
+  let mut table = Table::new(vec![
     Column::new("Col1").width(WidthPolicy::Fixed(6)),
     Column::new("Col2").width(WidthPolicy::Fixed(20)),
   ])
-  .layout(Layout::compact().clamp_to_terminal(false))
-  .with_row(Row::group("Section Header Title That Is Quite Long"))
-  .with_row(Row::new(vec![Cell::text("1"), Cell::text("data")]));
+  .layout(Layout::compact().clamp_to_terminal(false));
+  table.add_row(Row::group("Section Header Title That Is Quite Long"));
+  table.add_row(Row::new(vec![Cell::text("1"), Cell::text("data")]));
 
   let rendered = render(&table, &Palette::none());
   assert!(rendered.contains("Section Header Title That Is Quite Long"));
@@ -708,7 +711,7 @@ fn test_group_row_banner_rendering() {
 
 #[test]
 fn test_overflow_truncate_on_pct_and_min_columns() {
-  let table = Table::new(vec![
+  let mut table = Table::new(vec![
     Column::new("ColA").width(WidthPolicy::Pct(50)).overflow(
       Overflow::Truncate {
         suffix: "...".to_string(),
@@ -718,8 +721,8 @@ fn test_overflow_truncate_on_pct_and_min_columns() {
       .width(WidthPolicy::Min(10))
       .overflow(Overflow::Clip),
   ])
-  .layout(Layout::compact().max_width(40).clamp_to_terminal(false))
-  .with_row(Row::new(vec![
+  .layout(Layout::compact().max_width(40).clamp_to_terminal(false));
+  table.add_row(Row::new(vec![
     Cell::text("Very long text that should be truncated on percentage column"),
     Cell::text("Clipped text in minimum column"),
   ]));
