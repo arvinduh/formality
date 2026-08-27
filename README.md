@@ -134,7 +134,7 @@ curl -fsSL https://github.com/arvinduh/formality/releases/latest/download/fml-aa
 mkdir -p ~/.local/bin && mv fml ~/.local/bin/fml
 ```
 
-#### Windows (PowerShell)
+#### Windows (x86_64 / PowerShell)
 
 ```powershell
 Invoke-WebRequest -Uri https://github.com/arvinduh/formality/releases/latest/download/fml-x86_64-pc-windows-msvc.zip -OutFile fml.zip
