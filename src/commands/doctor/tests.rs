@@ -558,3 +558,21 @@ fn test_preflight_warn_stale_tools_with_surfaces() {
   preflight_warn_stale_tools(&surfaces, &config, false, true);
   preflight_warn_stale_tools(&surfaces, &config, true, true);
 }
+
+#[test]
+fn test_preflight_install_empty_surfaces() {
+  let config = FormalityConfig::default();
+  assert!(preflight_install(&[], &config, true, true));
+  assert!(preflight_install(&[], &config, true, false));
+  assert!(preflight_install(&[], &config, false, true));
+  assert!(preflight_install(&[], &config, false, false));
+}
+
+#[test]
+fn test_find_system_python() {
+  let found = find_system_python();
+  let expected = which::which("python3")
+    .or_else(|_| which::which("python"))
+    .ok();
+  assert_eq!(found, expected);
+}

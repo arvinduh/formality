@@ -46,6 +46,14 @@ pub fn find_venv_interpreter(venv_path: &Path) -> Option<PathBuf> {
   None
 }
 
+/// Finds the system Python interpreter binary on PATH (`python3` or `python`).
+#[must_use]
+pub fn find_system_python() -> Option<PathBuf> {
+  which::which("python3")
+    .or_else(|_| which::which("python"))
+    .ok()
+}
+
 /// Detects active virtual environment (via `VIRTUAL_ENV`) or workspace virtualenv directory (`.venv`, `venv`, `env`, `.env`).
 pub fn detect_virtualenv(root: &Path) -> VirtualEnvInfo {
   detect_virtualenv_with_env(
@@ -61,11 +69,8 @@ pub fn detect_virtualenv_with_env(
   env_var: Option<PathBuf>,
 ) -> VirtualEnvInfo {
   if let Some(venv_dir) = env_var.filter(|p| !p.as_os_str().is_empty()) {
-    let interpreter = find_venv_interpreter(&venv_dir).or_else(|| {
-      which::which("python3")
-        .or_else(|_| which::which("python"))
-        .ok()
-    });
+    let interpreter =
+      find_venv_interpreter(&venv_dir).or_else(find_system_python);
     return VirtualEnvInfo {
       is_active: true,
       venv_path: Some(venv_dir),
@@ -78,11 +83,7 @@ pub fn detect_virtualenv_with_env(
   for dir_name in candidates {
     let dir = root.join(dir_name);
     if dir.is_dir() {
-      let interpreter = find_venv_interpreter(&dir).or_else(|| {
-        which::which("python3")
-          .or_else(|_| which::which("python"))
-          .ok()
-      });
+      let interpreter = find_venv_interpreter(&dir).or_else(find_system_python);
       return VirtualEnvInfo {
         is_active: false,
         venv_path: Some(dir),
@@ -92,9 +93,7 @@ pub fn detect_virtualenv_with_env(
     }
   }
 
-  let sys_interpreter = which::which("python3")
-    .or_else(|_| which::which("python"))
-    .ok();
+  let sys_interpreter = find_system_python();
   VirtualEnvInfo {
     is_active: false,
     venv_path: None,
