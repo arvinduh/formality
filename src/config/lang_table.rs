@@ -33,8 +33,8 @@
 //! - `$accessor` — the generated `LangConfig::<accessor>()` method name.
 //! - `$is_empty` — the emptiness check `extract_options` uses to decide
 //!   whether a freshly-deserialized-but-all-`None` value should still be
-//!   recorded. Most languages pass their real `Type::is_empty`; `json`,
-//!   `toml`, `typst`, and `kotlin` have no meaningful fields today, so
+//!   recorded. Most languages pass their real `Type::is_empty`; `json`
+//!   and `typst` have no meaningful fields today, so
 //!   (preserved unchanged from the pre-macro code) they pass the
 //!   `|_| false` sentinel instead of a real `is_empty` check.
 //! - `$fmt` / `$lint` — default tool names as string literals, or the
@@ -83,7 +83,7 @@ macro_rules! lang_options_table {
       go         { crate::config::options::GoOptions,         go_options,         crate::config::options::GoOptions::is_empty,         "goimports",          "golangci-lint" }
       yaml       { crate::config::options::YamlOptions,       yaml_options,       crate::config::options::YamlOptions::is_empty,       "prettier",           "yamllint" }
       json       { crate::config::options::JsonOptions,       json_options,       |_: &crate::config::options::JsonOptions| false,     "prettier",           NONE }
-      toml       { crate::config::options::TomlOptions,       toml_options,       |_: &crate::config::options::TomlOptions| false,     "taplo",              "taplo" }
+      toml       { crate::config::options::TomlOptions,       toml_options,       crate::config::options::TomlOptions::is_empty,       "taplo",              "taplo" }
       typst      { crate::config::options::TypstOptions,      typst_options,      |_: &crate::config::options::TypstOptions| false,    "typstyle",           "typstyle" }
       javascript { crate::config::options::JavaScriptOptions, javascript_options, crate::config::options::JavaScriptOptions::is_empty, "biome",              "biome" }
       kotlin     { crate::config::options::KotlinOptions,     kotlin_options,     crate::config::options::KotlinOptions::is_empty,     "ktlint",             "ktlint" }

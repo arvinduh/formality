@@ -50,13 +50,21 @@ impl NativeConfig for TaploConfig {
 
     let crlf = ctx.global_config.end_of_line.eq_ignore_ascii_case("crlf");
 
+    let toml_opts = ctx.lang_config.toml.as_ref();
+    let align_entries =
+      toml_opts.and_then(|t| t.align_entries).unwrap_or(false);
+    let indent_entries =
+      toml_opts.and_then(|t| t.indent_entries).unwrap_or(false);
+    let indent_tables =
+      toml_opts.and_then(|t| t.indent_tables).unwrap_or(false);
+
     Self {
       formatting: TaploFormattingConfig {
-        align_entries: false,
+        align_entries,
         column_width: ctx.lang_config.line_length,
-        indent_entries: false,
+        indent_entries,
         indent_string: indent_spaces,
-        indent_tables: false,
+        indent_tables,
         crlf,
       },
     }
@@ -509,5 +517,89 @@ mod tests {
       "expected Passed for formatted TOML, got {:?}",
       res_formatted.status
     );
+  }
+
+  #[test]
+  fn test_taplo_config_from_context_options() {
+    let temp = TempDir::new().unwrap();
+    let root = Arc::new(temp.path().to_path_buf());
+    let global_config = Arc::new(ResolvedGlobalConfig::default());
+
+    // 1. Default/omitted case -> all false
+    let lang_config_default = crate::config::ResolvedLangConfig::new("toml");
+    let ctx_default = ExecutionContext {
+      root: root.clone(),
+      paths: Arc::new(Vec::new()),
+      global_config: global_config.clone(),
+      lang_config: lang_config_default,
+      check_only: false,
+    };
+    let taplo_cfg_default = TaploConfig::from_context(&ctx_default);
+    assert!(!taplo_cfg_default.formatting.align_entries);
+    assert!(!taplo_cfg_default.formatting.indent_entries);
+    assert!(!taplo_cfg_default.formatting.indent_tables);
+
+    // 2. Configured case -> true
+    let mut lang_config_configured =
+      crate::config::ResolvedLangConfig::new("toml");
+    lang_config_configured.toml = Some(crate::config::TomlOptions {
+      align_entries: Some(true),
+      indent_entries: Some(true),
+      indent_tables: Some(true),
+    });
+    let ctx_configured = ExecutionContext {
+      root,
+      paths: Arc::new(Vec::new()),
+      global_config,
+      lang_config: lang_config_configured,
+      check_only: false,
+    };
+    let taplo_cfg_configured = TaploConfig::from_context(&ctx_configured);
+    assert!(taplo_cfg_configured.formatting.align_entries);
+    assert!(taplo_cfg_configured.formatting.indent_entries);
+    assert!(taplo_cfg_configured.formatting.indent_tables);
+
+    let inline_args = build_taplo_inline_config_args(&taplo_cfg_configured);
+    assert!(inline_args.contains(&"align_entries=true".to_string()));
+    assert!(inline_args.contains(&"indent_entries=true".to_string()));
+    assert!(inline_args.contains(&"indent_tables=true".to_string()));
+  }
+
+  #[test]
+  fn test_toml_sync_config_with_alignment_options() {
+    let temp = TempDir::new().unwrap();
+    let surface = TomlSurface;
+    let mut lang_cfg = crate::config::ResolvedLangConfig::new("toml");
+    lang_cfg.line_length = 100;
+    lang_cfg.indent_size = 4;
+    lang_cfg.toml = Some(crate::config::TomlOptions {
+      align_entries: Some(true),
+      indent_entries: Some(true),
+      indent_tables: Some(true),
+    });
+
+    let ctx = ExecutionContext {
+      root: Arc::new(temp.path().to_path_buf()),
+      paths: Arc::new(Vec::new()),
+      global_config: Arc::new(ResolvedGlobalConfig::default()),
+      lang_config: lang_cfg,
+      check_only: false,
+    };
+
+    let res = surface.sync_config(&ctx, false);
+    assert!(matches!(
+      res.status,
+      SurfaceStatus::ConfigSynced { created: true, .. }
+    ));
+
+    let config_path = temp.path().join("taplo.toml");
+    assert!(config_path.is_file());
+
+    let content = std::fs::read_to_string(&config_path).unwrap();
+    assert!(content.contains("align_entries = true"));
+    assert!(content.contains("indent_entries = true"));
+    assert!(content.contains("indent_tables = true"));
+    assert!(content.contains("column_width = 100"));
+    assert!(content.contains("indent_string = \"    \""));
   }
 }

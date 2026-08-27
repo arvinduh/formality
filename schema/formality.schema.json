@@ -447,7 +447,21 @@
     },
     "TomlOptions": {
       "description": "Typed formatting and linting options for TOML.",
-      "type": "object"
+      "type": "object",
+      "properties": {
+        "align_entries": {
+          "description": "Whether to align entries across lines.",
+          "type": ["boolean", "null"]
+        },
+        "indent_entries": {
+          "description": "Whether to indent table entry keys.",
+          "type": ["boolean", "null"]
+        },
+        "indent_tables": {
+          "description": "Whether to indent table contents.",
+          "type": ["boolean", "null"]
+        }
+      }
     },
     "TypstOptions": {
       "description": "Typed formatting and linting options for Typst.",
