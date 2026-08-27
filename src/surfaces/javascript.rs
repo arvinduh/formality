@@ -621,6 +621,7 @@ mod tests {
       global_config: Arc::new(ResolvedGlobalConfig::default()),
       lang_config: lang_cfg,
       check_only: false,
+      candidate_files: None,
     };
 
     let res = surface.sync_config(&ctx, false);
@@ -690,6 +691,7 @@ mod tests {
       global_config: Arc::new(ResolvedGlobalConfig::default()),
       lang_config: lang_cfg,
       check_only: false,
+      candidate_files: None,
     };
     let cfg = BiomeConfig::from_context(&ctx);
     let args = build_biome_inline_format_args(&cfg);
@@ -719,6 +721,7 @@ mod tests {
       global_config: Arc::new(ResolvedGlobalConfig::default()),
       lang_config: ResolvedLangConfig::new("javascript"),
       check_only: false,
+      candidate_files: None,
     };
 
     let _ = surface.format(&ctx);

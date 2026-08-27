@@ -420,6 +420,7 @@ mod tests {
       global_config: Arc::new(ResolvedGlobalConfig::default()),
       lang_config: ResolvedLangConfig::new("kotlin"),
       check_only: false,
+      candidate_files: None,
     };
 
     let fmt_res = surface.format(&ctx);
@@ -443,6 +444,7 @@ mod tests {
       global_config: Arc::new(ResolvedGlobalConfig::default()),
       lang_config: ResolvedLangConfig::new("kotlin"),
       check_only: false,
+      candidate_files: None,
     };
 
     let res = surface.sync_config(&ctx, false);
@@ -472,6 +474,7 @@ mod tests {
       global_config: Arc::new(ResolvedGlobalConfig::default()),
       lang_config: ResolvedLangConfig::new("kotlin"),
       check_only: true,
+      candidate_files: None,
     };
     let check_res = surface.format(&ctx_check);
     assert!(matches!(
@@ -485,6 +488,7 @@ mod tests {
       global_config: Arc::new(ResolvedGlobalConfig::default()),
       lang_config: ResolvedLangConfig::new("kotlin"),
       check_only: false,
+      candidate_files: None,
     };
     let fix_res = surface.format(&ctx_fix);
     assert!(matches!(fix_res.status, SurfaceStatus::Passed));

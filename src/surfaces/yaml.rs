@@ -396,6 +396,7 @@ mod tests {
       global_config: Arc::new(ResolvedGlobalConfig::default()),
       lang_config: ResolvedLangConfig::new("yaml"),
       check_only: false,
+      candidate_files: None,
     };
     let cfg = YamllintConfig::from_context(&ctx);
     assert_eq!(cfg.rules.document_start, YamllintRuleToggle::Disable);
@@ -424,6 +425,7 @@ mod tests {
       global_config: Arc::new(ResolvedGlobalConfig::default()),
       lang_config: lang_cfg,
       check_only: false,
+      candidate_files: None,
     };
     let cfg = YamllintConfig::from_context(&ctx);
     assert_eq!(cfg.rules.document_start, YamllintRuleToggle::Enable);
@@ -455,6 +457,7 @@ mod tests {
       global_config: Arc::new(ResolvedGlobalConfig::default()),
       lang_config: lang_cfg,
       check_only: false,
+      candidate_files: None,
     };
 
     let res = surface.sync_config(&ctx, false);
@@ -512,6 +515,7 @@ mod tests {
       global_config: Arc::new(ResolvedGlobalConfig::default()),
       lang_config: ResolvedLangConfig::new("yaml"),
       check_only: false,
+      candidate_files: None,
     };
 
     if check_binary_exists("prettier") {

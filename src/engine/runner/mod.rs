@@ -57,14 +57,22 @@ impl Runner {
     }
 
     let start_time = Instant::now();
-    // Shared across every surface's ExecutionContext below. All three are
+    // Shared across every surface's ExecutionContext below. All four are
     // wrapped in Arc so the per-surface parallel dispatch (rayon::par_iter)
     // clones a refcount instead of deep-copying the workspace root, the full
-    // candidate path list, or the global config on every one of the (up to
-    // 12) surfaces per invocation.
+    // candidate path list, the candidate files, or the global config on every
+    // one of the (up to 12) surfaces per invocation.
     let global_config = Arc::new(config.resolve_global());
     let shared_paths: Arc<Vec<PathBuf>> = Arc::new(paths.to_vec());
     let shared_root = Arc::new(root.to_path_buf());
+    let shared_candidates: Option<Arc<Vec<PathBuf>>> = if paths.is_empty() {
+      Some(Arc::new(crate::surfaces::walk_candidate_files(
+        root,
+        &global_config.exclude,
+      )))
+    } else {
+      None
+    };
 
     let action_verb = match &action {
       RunnerAction::Format { check } => {
@@ -105,6 +113,7 @@ impl Runner {
               global_config: Arc::clone(&global_config),
               lang_config,
               check_only: false,
+              candidate_files: shared_candidates.clone(),
             };
             surface.lint(&ctx, true)
           })
@@ -121,6 +130,7 @@ impl Runner {
               global_config: Arc::clone(&global_config),
               lang_config,
               check_only: false,
+              candidate_files: shared_candidates.clone(),
             };
             surface.format(&ctx)
           })
@@ -148,6 +158,7 @@ impl Runner {
               }
               RunnerAction::Lint { .. } | RunnerAction::Fix => false,
             },
+            candidate_files: shared_candidates.clone(),
           };
 
           match action {

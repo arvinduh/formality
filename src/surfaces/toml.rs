@@ -368,6 +368,7 @@ mod tests {
       global_config: Arc::new(ResolvedGlobalConfig::default()),
       lang_config: lang_cfg,
       check_only: false,
+      candidate_files: None,
     };
 
     let res = surface.sync_config(&ctx, false);
@@ -447,6 +448,7 @@ mod tests {
       global_config: Arc::new(ResolvedGlobalConfig::default()),
       lang_config: crate::config::ResolvedLangConfig::new("toml"),
       check_only: false,
+      candidate_files: None,
     };
 
     let _ = surface.format(&ctx);
@@ -479,6 +481,7 @@ mod tests {
       global_config: Arc::new(ResolvedGlobalConfig::default()),
       lang_config: crate::config::ResolvedLangConfig::new("toml"),
       check_only: true,
+      candidate_files: None,
     };
 
     let res = surface.format(&ctx);
@@ -509,6 +512,7 @@ mod tests {
       global_config: Arc::new(ResolvedGlobalConfig::default()),
       lang_config: crate::config::ResolvedLangConfig::new("toml"),
       check_only: true,
+      candidate_files: None,
     };
 
     let res_formatted = surface.format(&ctx_formatted);
@@ -533,6 +537,7 @@ mod tests {
       global_config: global_config.clone(),
       lang_config: lang_config_default,
       check_only: false,
+      candidate_files: None,
     };
     let taplo_cfg_default = TaploConfig::from_context(&ctx_default);
     assert!(!taplo_cfg_default.formatting.align_entries);
@@ -553,6 +558,7 @@ mod tests {
       global_config,
       lang_config: lang_config_configured,
       check_only: false,
+      candidate_files: None,
     };
     let taplo_cfg_configured = TaploConfig::from_context(&ctx_configured);
     assert!(taplo_cfg_configured.formatting.align_entries);
@@ -584,6 +590,7 @@ mod tests {
       global_config: Arc::new(ResolvedGlobalConfig::default()),
       lang_config: lang_cfg,
       check_only: false,
+      candidate_files: None,
     };
 
     let res = surface.sync_config(&ctx, false);

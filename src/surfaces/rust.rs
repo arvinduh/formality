@@ -364,6 +364,7 @@ mod tests {
       global_config: Arc::new(ResolvedGlobalConfig::default()),
       lang_config: ResolvedLangConfig::new("rust"),
       check_only,
+      candidate_files: None,
     }
   }
 
