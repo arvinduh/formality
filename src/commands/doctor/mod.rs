@@ -20,7 +20,7 @@ pub use venv::{
 use crate::config::FormalityConfig;
 use crate::engine::version::{
   ToolStatus, Version, evaluate_tool_status, get_raw_tool_version,
-  minimum_supported_tool_version, probe_tool_version,
+  minimum_supported_tool_version, normalize_probed_version, probe_tool_version,
 };
 use crate::surfaces::{
   LanguageSurface, ToolInfo, all_surfaces, create_tool_command,
@@ -489,7 +489,9 @@ fn lookup_tool_info(binary: &'static str) -> ToolLookupResult {
       .ok()
       .map(|p| p.display().to_string());
     let raw_version = get_raw_tool_version(binary);
-    let parsed_version = probe_tool_version(binary);
+    let parsed_version = raw_version
+      .as_deref()
+      .and_then(|raw| normalize_probed_version(binary, raw));
     let mstv = minimum_supported_tool_version(binary);
     let pinned = pinned_version_for(binary);
     // Only fabricate a status when there's an actual floor or pin to check

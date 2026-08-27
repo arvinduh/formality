@@ -234,11 +234,11 @@ pub fn tool_version_args(binary: &str) -> Option<&'static [&'static str]> {
   get_tool_mstv_entry(binary).map(|e| e.version_args)
 }
 
-/// Probe a tool's version by invoking its CLI (`--version` / `-v`) and parsing the output.
+/// Normalize a raw version output string probed from a tool into a semver [`Version`],
+/// applying tool-specific version remappings (such as Clippy `0.1.x -> 1.x.0`).
 #[must_use]
-pub fn probe_tool_version(binary: &str) -> Option<Version> {
-  let raw_output = get_raw_tool_version(binary)?;
-  let mut ver = Version::extract(&raw_output)?;
+pub fn normalize_probed_version(binary: &str, raw: &str) -> Option<Version> {
+  let mut ver = Version::extract(raw)?;
 
   // Clippy 0.1.X corresponds to Rust toolchain 1.X.0
   if (binary == "clippy"
@@ -256,6 +256,13 @@ pub fn probe_tool_version(binary: &str) -> Option<Version> {
   }
 
   Some(ver)
+}
+
+/// Probe a tool's version by invoking its CLI (`--version` / `-v`) and parsing the output.
+#[must_use]
+pub fn probe_tool_version(binary: &str) -> Option<Version> {
+  let raw_output = get_raw_tool_version(binary)?;
+  normalize_probed_version(binary, &raw_output)
 }
 
 /// Retrieve the raw output line from executing the tool with `--version` or `-v`.
