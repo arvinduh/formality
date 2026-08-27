@@ -135,9 +135,7 @@ export async function activate(context: vscode.ExtensionContext) {
       .get<boolean>("autoSyncOnConfigSave", true);
 
     if (autoSync) {
-      const workspaceFolder =
-        getWorkspaceRoot(uri) ||
-        path.dirname(uri.fsPath);
+      const workspaceFolder = getWorkspaceRoot(uri) || path.dirname(uri.fsPath);
       runFmlCommand(
         ["sync"],
         workspaceFolder,
