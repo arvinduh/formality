@@ -1,7 +1,173 @@
 //! File-discovery helpers: extension-based directory walking, exclude-list
 //! matching, and a small dependency-free glob matcher for `exclude` patterns.
 
+use super::LanguageSurface;
 use std::path::{Path, PathBuf};
+
+/// Walks the workspace filesystem once, discovering all regular candidate files
+/// respecting gitignore rules, standard ignored directories (`target`, `node_modules`, etc.),
+/// and global exclude patterns.
+#[must_use]
+pub fn walk_candidate_files(
+  root: &Path,
+  global_excludes: &[PathBuf],
+) -> Vec<PathBuf> {
+  let mut results = Vec::new();
+  let walker = ignore::WalkBuilder::new(root)
+    .hidden(false)
+    .git_ignore(true)
+    .git_global(true)
+    .git_exclude(true)
+    .filter_entry(|entry| {
+      let name = entry.file_name().to_string_lossy();
+      if name == "target"
+        || name == "node_modules"
+        || name == ".git"
+        || name == ".venv"
+        || name == "vendor"
+        || name == "fixtures"
+      {
+        return false;
+      }
+      if name.ends_with(".tmp") || name.contains(".fml-check-tmp.") {
+        return false;
+      }
+      true
+    })
+    .build();
+
+  for entry in walker.filter_map(Result::ok) {
+    let path = entry.path();
+    if path.is_file() {
+      results.push(path.to_path_buf());
+    }
+  }
+
+  if global_excludes.is_empty() {
+    results
+  } else {
+    let normalized_exclude: Vec<NormalizedExclude<'_>> = global_excludes
+      .iter()
+      .map(|ex| NormalizedExclude::new(ex, root))
+      .collect();
+    results
+      .into_iter()
+      .filter(|file| !is_excluded_normalized(file, root, &normalized_exclude))
+      .collect()
+  }
+}
+
+/// Matches candidate files against surface extensions and include/exclude globs in-memory without disk I/O.
+#[must_use]
+pub fn filter_files_for_surface(
+  candidates: &[PathBuf],
+  surface: &dyn LanguageSurface,
+  includes: &[String],
+  excludes: &[PathBuf],
+) -> Vec<PathBuf> {
+  filter_candidates_with_ext(
+    candidates,
+    surface.file_extensions(),
+    includes,
+    excludes,
+  )
+}
+
+/// Filters in-memory candidate files matching surface extensions, explicit include patterns, and exclude patterns.
+#[must_use]
+pub fn filter_candidates_with_ext(
+  candidates: &[PathBuf],
+  extensions: &[&str],
+  includes: &[String],
+  excludes: &[PathBuf],
+) -> Vec<PathBuf> {
+  if extensions.is_empty() {
+    return Vec::new();
+  }
+
+  candidates
+    .iter()
+    .filter(|path| {
+      let Some(ext) = path.extension().and_then(|e| e.to_str()) else {
+        return false;
+      };
+      if !extensions
+        .iter()
+        .any(|&target| target.eq_ignore_ascii_case(ext))
+      {
+        return false;
+      }
+
+      if !includes.is_empty()
+        && !includes.iter().any(|inc| matches_pattern(path, inc))
+      {
+        return false;
+      }
+
+      if !excludes.is_empty()
+        && excludes
+          .iter()
+          .any(|ex| matches_pattern(path, &ex.to_string_lossy()))
+      {
+        return false;
+      }
+
+      true
+    })
+    .cloned()
+    .collect()
+}
+
+/// Matches a file path against a pattern (glob, exact filename, directory, or path suffix).
+#[must_use]
+pub fn matches_pattern(path: &Path, pattern: &str) -> bool {
+  let norm_pattern = pattern.replace('\\', "/");
+  let trimmed = norm_pattern.trim_matches('/');
+  let slash_path = path.to_string_lossy().replace('\\', "/");
+  let file_name = path.file_name().and_then(|f| f.to_str()).unwrap_or("");
+
+  // 1. Direct path, filename, or trimmed match
+  if file_name == trimmed || file_name == norm_pattern || slash_path == trimmed
+  {
+    return true;
+  }
+
+  // 2. Relative prefix, suffix, or directory match
+  if slash_path.ends_with(&format!("/{trimmed}"))
+    || slash_path.starts_with(&format!("{trimmed}/"))
+    || slash_path.contains(&format!("/{trimmed}/"))
+  {
+    return true;
+  }
+
+  // 3. Path component match
+  if path
+    .components()
+    .any(|c| c.as_os_str().to_string_lossy() == trimmed)
+  {
+    return true;
+  }
+
+  // 4. Glob pattern match
+  if trimmed.contains('*') || trimmed.contains('?') {
+    if simple_glob_match(trimmed, file_name)
+      || simple_glob_match(trimmed, &slash_path)
+    {
+      return true;
+    }
+    let glob_with_star = format!("**/{trimmed}");
+    if simple_glob_match(&glob_with_star, &slash_path) {
+      return true;
+    }
+  }
+
+  // 5. Standard Path starts_with
+  if path.starts_with(pattern) {
+    return true;
+  }
+
+  false
+}
 
 /// Helper function to find matching files within a directory ignoring .git, target, `node_modules`, etc.
 #[must_use]
@@ -222,43 +388,19 @@ pub fn is_excluded(path: &Path, root: &Path, exclude: &[PathBuf]) -> bool {
 }
 
 fn walk_dir_ext(dir: &Path, extensions: &[&str]) -> Vec<PathBuf> {
-  let mut results = Vec::new();
-  let walker = ignore::WalkBuilder::new(dir)
-    .hidden(false)
-    .git_ignore(true)
-    .git_global(true)
-    .git_exclude(true)
-    .filter_entry(|entry| {
-      let name = entry.file_name().to_string_lossy();
-      if name == "target"
-        || name == "node_modules"
-        || name == ".git"
-        || name == ".venv"
-        || name == "vendor"
-        || name == "fixtures"
-      {
-        return false;
-      }
-      if name.ends_with(".tmp") || name.contains(".fml-check-tmp.") {
-        return false;
-      }
-      true
+  walk_candidate_files(dir, &[])
+    .into_iter()
+    .filter(|path| {
+      path
+        .extension()
+        .and_then(|e| e.to_str())
+        .is_some_and(|ext| {
+          extensions
+            .iter()
+            .any(|&target| target.eq_ignore_ascii_case(ext))
+        })
     })
-    .build();
-
-  for entry in walker.filter_map(Result::ok) {
-    let path = entry.path();
-    if path.is_file()
-      && let Some(ext) = path.extension().and_then(|e| e.to_str())
-      && extensions
-        .iter()
-        .any(|&target| target.eq_ignore_ascii_case(ext))
-    {
-      results.push(path.to_path_buf());
-    }
-  }
-
-  results
+    .collect()
 }
 
 #[cfg(test)]
@@ -448,5 +590,105 @@ mod tests {
     assert!(!simple_glob_match("*.py", "main.rs"));
     assert!(!simple_glob_match("test?.rs", "test12.rs"));
     assert!(!simple_glob_match("test?.rs", "test/a.rs"));
+  }
+
+  #[test]
+  fn test_walk_candidate_files_discovers_files_and_respects_global_exclude() {
+    let temp = tempfile::TempDir::new().unwrap();
+    let root = temp.path();
+
+    let src = root.join("src");
+    let build = root.join("build");
+    let target = root.join("target");
+    std::fs::create_dir_all(&src).unwrap();
+    std::fs::create_dir_all(&build).unwrap();
+    std::fs::create_dir_all(&target).unwrap();
+
+    let main_rs = src.join("main.rs");
+    let build_rs = build.join("generated.rs");
+    let target_rs = target.join("lib.rs");
+    let readme = root.join("README.md");
+
+    std::fs::write(&main_rs, "fn main() {}").unwrap();
+    std::fs::write(&build_rs, "fn gen() {}").unwrap();
+    std::fs::write(&target_rs, "fn ignored() {}").unwrap();
+    std::fs::write(&readme, "# Readme").unwrap();
+
+    // 1. Without global excludes (target directory is automatically skipped)
+    let candidates = walk_candidate_files(root, &[]);
+    assert_eq!(candidates.len(), 3);
+    assert!(candidates.contains(&main_rs));
+    assert!(candidates.contains(&build_rs));
+    assert!(candidates.contains(&readme));
+    assert!(!candidates.contains(&target_rs));
+
+    // 2. With global exclude for build directory
+    let candidates_excluded =
+      walk_candidate_files(root, &[PathBuf::from("build")]);
+    assert_eq!(candidates_excluded.len(), 2);
+    assert!(candidates_excluded.contains(&main_rs));
+    assert!(candidates_excluded.contains(&readme));
+    assert!(!candidates_excluded.contains(&build_rs));
+  }
+
+  #[test]
+  fn test_filter_files_for_surface_in_memory() {
+    let candidates = vec![
+      PathBuf::from("/repo/src/main.rs"),
+      PathBuf::from("/repo/src/lib.rs"),
+      PathBuf::from("/repo/src/generated/api.rs"),
+      PathBuf::from("/repo/scripts/run.py"),
+      PathBuf::from("/repo/README.md"),
+    ];
+
+    let rust_surface = crate::surfaces::rust::RustSurface;
+    let python_surface = crate::surfaces::python::PythonSurface;
+
+    // 1. Rust surface default matching
+    let rust_files =
+      filter_files_for_surface(&candidates, &rust_surface, &[], &[]);
+    assert_eq!(rust_files.len(), 3);
+    assert!(rust_files.contains(&PathBuf::from("/repo/src/main.rs")));
+    assert!(rust_files.contains(&PathBuf::from("/repo/src/lib.rs")));
+    assert!(rust_files.contains(&PathBuf::from("/repo/src/generated/api.rs")));
+
+    // 2. Rust surface with exclude
+    let rust_filtered = filter_files_for_surface(
+      &candidates,
+      &rust_surface,
+      &[],
+      &[PathBuf::from("src/generated")],
+    );
+    assert_eq!(rust_filtered.len(), 2);
+    assert!(rust_filtered.contains(&PathBuf::from("/repo/src/main.rs")));
+    assert!(rust_filtered.contains(&PathBuf::from("/repo/src/lib.rs")));
+
+    // 3. Rust surface with explicit includes
+    let rust_included = filter_files_for_surface(
+      &candidates,
+      &rust_surface,
+      &["src/main.rs".to_string()],
+      &[],
+    );
+    assert_eq!(rust_included.len(), 1);
+    assert_eq!(rust_included[0], PathBuf::from("/repo/src/main.rs"));
+
+    // 4. Python surface
+    let py_files =
+      filter_files_for_surface(&candidates, &python_surface, &[], &[]);
+    assert_eq!(py_files.len(), 1);
+    assert_eq!(py_files[0], PathBuf::from("/repo/scripts/run.py"));
+  }
+
+  #[test]
+  fn test_matches_pattern_variants() {
+    let p = Path::new("/workspace/src/generated/api.rs");
+    assert!(matches_pattern(p, "src/generated"));
+    assert!(matches_pattern(p, "generated"));
+    assert!(matches_pattern(p, "api.rs"));
+    assert!(matches_pattern(p, "src/**/*.rs"));
+    assert!(matches_pattern(p, "*.rs"));
+    assert!(!matches_pattern(p, "main.rs"));
+    assert!(!matches_pattern(p, "src/other"));
   }
 }
