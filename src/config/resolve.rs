@@ -228,6 +228,27 @@ impl FormalityConfig {
   pub fn load_layered(
     repo_root: Option<&Path>,
   ) -> Result<(Self, Option<PathBuf>), ConfigError> {
+    let project_config_path = if let Some(root) = repo_root {
+      find_project_config(root)
+    } else if let Ok(cwd) = std::env::current_dir() {
+      find_project_config(&cwd)
+    } else {
+      None
+    };
+
+    Self::load_layered_with_path(project_config_path.as_deref())
+  }
+
+  /// Loads configuration with layered resolution using an already-discovered
+  /// project configuration path (if any), avoiding redundant directory walks:
+  /// Embedded defaults -> User config (`~/.config/formality/config.toml`) -> Project config (`formality.toml` / `.formality.toml`)
+  ///
+  /// # Errors
+  ///
+  /// Returns a [`ConfigError`] if reading or parsing any discovered configuration file fails.
+  pub fn load_layered_with_path(
+    project_config_path: Option<&Path>,
+  ) -> Result<(Self, Option<PathBuf>), ConfigError> {
     let mut config = Self::with_defaults();
 
     // 1. User config (cross-platform: Linux, macOS, Windows)
@@ -239,22 +260,17 @@ impl FormalityConfig {
     }
 
     // 2. Project config
-    let project_config_path = if let Some(root) = repo_root {
-      find_project_config(root)
-    } else if let Ok(cwd) = std::env::current_dir() {
-      find_project_config(&cwd)
-    } else {
-      None
-    };
-
-    if let Some(ref proj_path) = project_config_path
+    let project_path_buf = if let Some(proj_path) = project_config_path
       && proj_path.is_file()
     {
       let proj_cfg = Self::load_file(proj_path)?;
       config.merge(proj_cfg);
-    }
+      Some(proj_path.to_path_buf())
+    } else {
+      None
+    };
 
-    Ok((config, project_config_path))
+    Ok((config, project_path_buf))
   }
 
   /// Generates sample configuration template versioned to current package release.

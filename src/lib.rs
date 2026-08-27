@@ -32,7 +32,7 @@ use cli::{Cli, Commands, MigrateCommands};
 use colored::Colorize;
 use config::FormalityConfig;
 use errors::{ExitStatus, FormalityError};
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 
 /// Parses CLI arguments from `std::env::args()` and executes the command.
 #[must_use]
@@ -55,22 +55,25 @@ pub fn run_with_args(args: Cli) -> ExitStatus {
     std::env::current_dir().unwrap_or_else(|_| PathBuf::from("."))
   });
 
+  let project_config_path = config::find_project_config(&root);
+
   let update_notifier = engine::update::spawn_update_check();
-  let schema_notifier = config::schema::spawn_schema_check(&root);
-  let status = run_command_inner(args);
+  let schema_notifier =
+    config::schema::spawn_schema_check(project_config_path.as_deref());
+  let status = run_command_inner(args, &root, project_config_path.as_deref());
   config::schema::print_schema_notice(schema_notifier);
   engine::update::print_update_notice(update_notifier);
   status
 }
 
 // Dispatches all top-level CLI commands (fmt, lint, sync, fix, doctor, init, lsp, schema, etc.).
-fn run_command_inner(args: Cli) -> ExitStatus {
-  let root = args.root.unwrap_or_else(|| {
-    std::env::current_dir().unwrap_or_else(|_| PathBuf::from("."))
-  });
-
+fn run_command_inner(
+  args: Cli,
+  root: &Path,
+  project_config_path: Option<&Path>,
+) -> ExitStatus {
   let (mut config, _config_path) =
-    match FormalityConfig::load_layered(Some(&root)) {
+    match FormalityConfig::load_layered_with_path(project_config_path) {
       Ok(res) => res,
       Err(e) => {
         FormalityError::from(e).print_diagnostic();
@@ -94,18 +97,18 @@ fn run_command_inner(args: Cli) -> ExitStatus {
     Commands::Schema { output } => commands::schema::run_schema(output),
 
     Commands::Doctor { all, install } => {
-      commands::doctor::run_doctor(&root, all, install, &config)
+      commands::doctor::run_doctor(root, all, install, &config)
     }
 
     Commands::Install { all } => {
-      commands::doctor::run_doctor(&root, all, true, &config)
+      commands::doctor::run_doctor(root, all, true, &config)
     }
 
     Commands::Init { force, hidden } => {
-      commands::init::run_init(&root, &config, force, hidden)
+      commands::init::run_init(root, &config, force, hidden)
     }
 
-    Commands::ListSurfaces => commands::surfaces::run_surfaces(&root, &config),
+    Commands::ListSurfaces => commands::surfaces::run_surfaces(root, &config),
 
     Commands::Fmt {
       check,
@@ -115,7 +118,7 @@ fn run_command_inner(args: Cli) -> ExitStatus {
       install,
       paths,
     } => commands::fmt::run_fmt(
-      &root, &config, check, staged, changed, lang, install, paths,
+      root, &config, check, staged, changed, lang, install, paths,
     ),
 
     Commands::Fix {
@@ -125,7 +128,7 @@ fn run_command_inner(args: Cli) -> ExitStatus {
       install,
       paths,
     } => commands::fix::run_fix(
-      &root, &config, staged, changed, lang, install, paths,
+      root, &config, staged, changed, lang, install, paths,
     ),
 
     Commands::Lint {
@@ -136,22 +139,22 @@ fn run_command_inner(args: Cli) -> ExitStatus {
       install,
       paths,
     } => commands::lint::run_lint(
-      &root, &config, fix, staged, changed, lang, install, paths,
+      root, &config, fix, staged, changed, lang, install, paths,
     ),
 
     Commands::Sync { check, lang } => {
-      commands::sync::run_sync(&root, &config, check, lang)
+      commands::sync::run_sync(root, &config, check, lang)
     }
 
     Commands::Lsp => {
-      commands::lsp::run_lsp_server(Some(root));
+      commands::lsp::run_lsp_server(Some(root.to_path_buf()));
       ExitStatus::Clean
     }
 
     Commands::Table { json } => commands::table::run_table(json),
 
     Commands::Migrate { command } => match command {
-      MigrateCommands::Schema => commands::migrate::run_migrate_schema(&root),
+      MigrateCommands::Schema => commands::migrate::run_migrate_schema(root),
     },
   }
 }
