@@ -9,33 +9,33 @@ import {
   ServerOptions,
   TransportKind,
 } from "vscode-languageclient/node";
+import {
+  COMMAND_DESCRIPTORS,
+  COMMANDS,
+  SUPPORTED_LANGUAGES,
+} from "./constants";
+import {
+  formatCommandErrorMessage,
+  formatFormatErrorMessage,
+  getExecOptions,
+  getTempFilePath,
+  resolveFmlExecutable,
+  resolveWorkspaceFolder,
+  shouldAutoSync,
+} from "./helpers";
 
-const SUPPORTED_LANGUAGES = [
-  "rust",
-  "python",
-  "cpp",
-  "c",
-  "markdown",
-  "yaml",
-  "json",
-  "jsonc",
-  "toml",
-  "typst",
-  "java",
-  "go",
-  "kotlin",
-  "javascript",
-  "typescript",
-];
+export { COMMAND_DESCRIPTORS, COMMANDS, SUPPORTED_LANGUAGES };
 
 let outputChannel: vscode.LogOutputChannel;
 let client: LanguageClient | undefined;
 // Fallback formatting provider, only registered per-language if the LSP
 // client fails to start (e.g. an old or missing `fml` binary that doesn't
 // support `fml lsp`). Keeps "Format Document" working either way.
-let fallbackFormattingProviders: vscode.Disposable[] = [];
+const fallbackFormattingProviders: vscode.Disposable[] = [];
 
-export async function activate(context: vscode.ExtensionContext) {
+export async function activate(
+  context: vscode.ExtensionContext,
+): Promise<void> {
   outputChannel = vscode.window.createOutputChannel("Formality", {
     log: true,
   });
@@ -48,7 +48,7 @@ export async function activate(context: vscode.ExtensionContext) {
   );
   statusBarItem.text = "$(sparkle) Formality";
   statusBarItem.tooltip = "Formality Multi-Language Orchestrator";
-  statusBarItem.command = "formality.formatWorkspace";
+  statusBarItem.command = COMMANDS.FORMAT_WORKSPACE;
   statusBarItem.show();
   context.subscriptions.push(statusBarItem);
 
@@ -56,70 +56,90 @@ export async function activate(context: vscode.ExtensionContext) {
 
   // Command: Format Entire Workspace
   context.subscriptions.push(
-    vscode.commands.registerCommand("formality.formatWorkspace", () => {
+    vscode.commands.registerCommand(COMMANDS.FORMAT_WORKSPACE, () => {
       const workspaceFolder = getWorkspaceRoot();
       if (!workspaceFolder) {
         vscode.window.showWarningMessage("No workspace folder open.");
         return;
       }
-      runFmlCommand(["fmt"], workspaceFolder, "Formatting workspace...");
+      const desc = COMMAND_DESCRIPTORS[COMMANDS.FORMAT_WORKSPACE];
+      return runFmlCommand(
+        desc.args,
+        workspaceFolder,
+        desc.title,
+        desc.showOutput,
+      );
     }),
   );
 
   // Command: Lint Entire Workspace
   context.subscriptions.push(
-    vscode.commands.registerCommand("formality.lintWorkspace", () => {
+    vscode.commands.registerCommand(COMMANDS.LINT_WORKSPACE, () => {
       const workspaceFolder = getWorkspaceRoot();
       if (!workspaceFolder) {
         vscode.window.showWarningMessage("No workspace folder open.");
         return;
       }
-      runFmlCommand(["lint"], workspaceFolder, "Linting workspace...", true);
+      const desc = COMMAND_DESCRIPTORS[COMMANDS.LINT_WORKSPACE];
+      return runFmlCommand(
+        desc.args,
+        workspaceFolder,
+        desc.title,
+        desc.showOutput,
+      );
     }),
   );
 
   // Command: Lint Entire Workspace with Auto-Fix
   context.subscriptions.push(
-    vscode.commands.registerCommand("formality.lintFix", () => {
+    vscode.commands.registerCommand(COMMANDS.LINT_FIX, () => {
       const workspaceFolder = getWorkspaceRoot();
       if (!workspaceFolder) {
         vscode.window.showWarningMessage("No workspace folder open.");
         return;
       }
-      runFmlCommand(
-        ["lint", "--fix"],
+      const desc = COMMAND_DESCRIPTORS[COMMANDS.LINT_FIX];
+      return runFmlCommand(
+        desc.args,
         workspaceFolder,
-        "Linting workspace (auto-fix)...",
-        true,
+        desc.title,
+        desc.showOutput,
       );
     }),
   );
 
   // Command: Sync Native Configs
   context.subscriptions.push(
-    vscode.commands.registerCommand("formality.sync", () => {
+    vscode.commands.registerCommand(COMMANDS.SYNC, () => {
       const workspaceFolder = getWorkspaceRoot();
       if (!workspaceFolder) {
         vscode.window.showWarningMessage("No workspace folder open.");
         return;
       }
-      runFmlCommand(["sync"], workspaceFolder, "Syncing native configs...");
+      const desc = COMMAND_DESCRIPTORS[COMMANDS.SYNC];
+      return runFmlCommand(
+        desc.args,
+        workspaceFolder,
+        desc.title,
+        desc.showOutput,
+      );
     }),
   );
 
   // Command: Run Doctor
   context.subscriptions.push(
-    vscode.commands.registerCommand("formality.doctor", () => {
+    vscode.commands.registerCommand(COMMANDS.DOCTOR, () => {
       const workspaceFolder = getWorkspaceRoot();
       if (!workspaceFolder) {
         vscode.window.showWarningMessage("No workspace folder open.");
         return;
       }
-      runFmlCommand(
-        ["doctor", "--all"],
+      const desc = COMMAND_DESCRIPTORS[COMMANDS.DOCTOR];
+      return runFmlCommand(
+        desc.args,
         workspaceFolder,
-        "Running Formality toolchain doctor...",
-        true,
+        desc.title,
+        desc.showOutput,
       );
     }),
   );
@@ -134,9 +154,9 @@ export async function activate(context: vscode.ExtensionContext) {
       .getConfiguration("formality")
       .get<boolean>("autoSyncOnConfigSave", true);
 
-    if (autoSync) {
+    if (shouldAutoSync(autoSync)) {
       const workspaceFolder = getWorkspaceRoot(uri) || path.dirname(uri.fsPath);
-      runFmlCommand(
+      return runFmlCommand(
         ["sync"],
         workspaceFolder,
         "Auto-syncing native configs...",
@@ -166,7 +186,7 @@ export async function deactivate(): Promise<void> {
 /// If the client fails to start (e.g. `fml` isn't installed, or is an old
 /// version without an `lsp` subcommand), we fall back to the previous
 /// execFile-based `DocumentFormattingEditProvider` so formatting still works.
-async function startLanguageClient(
+export async function startLanguageClient(
   context: vscode.ExtensionContext,
 ): Promise<void> {
   const exe = getFmlExecutable();
@@ -222,7 +242,7 @@ async function startLanguageClient(
 
 /// Registers the legacy execFile-based formatting provider. Only used when
 /// the LSP client could not be started, so "Format Document" keeps working.
-function registerFallbackFormattingProviders(
+export function registerFallbackFormattingProviders(
   context: vscode.ExtensionContext,
 ): void {
   for (const lang of SUPPORTED_LANGUAGES) {
@@ -241,42 +261,30 @@ function registerFallbackFormattingProviders(
   }
 }
 
-function getFmlExecutable(): string {
-  return vscode.workspace
+export function getFmlExecutable(): string {
+  const rawPath = vscode.workspace
     .getConfiguration("formality")
     .get<string>("executablePath", "fml");
+  return resolveFmlExecutable(rawPath);
 }
 
-function getWorkspaceRoot(uri?: vscode.Uri): string | undefined {
-  if (uri) {
-    const folder = vscode.workspace.getWorkspaceFolder(uri);
-    if (folder) {
-      return folder.uri.fsPath;
-    }
-  }
-  const activeEditorUri = vscode.window.activeTextEditor?.document.uri;
-  if (activeEditorUri) {
-    const folder = vscode.workspace.getWorkspaceFolder(activeEditorUri);
-    if (folder) {
-      return folder.uri.fsPath;
-    }
-  }
-  if (
-    vscode.workspace.workspaceFolders &&
-    vscode.workspace.workspaceFolders.length > 0
-  ) {
-    return vscode.workspace.workspaceFolders[0].uri.fsPath;
-  }
-  return undefined;
+export function getWorkspaceRoot(uri?: vscode.Uri): string | undefined {
+  return resolveWorkspaceFolder({
+    uri,
+    activeEditorUri: vscode.window.activeTextEditor?.document.uri,
+    workspaceFolders: vscode.workspace.workspaceFolders,
+    getWorkspaceFolder: (u) =>
+      vscode.workspace.getWorkspaceFolder(u as vscode.Uri),
+  });
 }
 
-function formatDocument(
+export function formatDocument(
   document: vscode.TextDocument,
 ): Promise<vscode.TextEdit[]> {
   return doFormat(document);
 }
 
-async function doFormat(
+export async function doFormat(
   document: vscode.TextDocument,
 ): Promise<vscode.TextEdit[]> {
   if (document.uri.scheme !== "file") {
@@ -292,20 +300,14 @@ async function doFormat(
   // Write the in-memory content to a temporary sibling file so fml formats
   // the exact buffer state and resolves configuration from the same directory
   // tree, without triggering formatOnSave loops or buffer clobbering races.
-  let tempFilePath = path.join(
-    path.dirname(filePath),
-    `.tmp.${Date.now()}.${Math.random().toString(36).slice(2)}.${path.basename(filePath)}`,
-  );
+  let tempFilePath = getTempFilePath(filePath);
 
   try {
     try {
       await fs.promises.writeFile(tempFilePath, originalText, "utf8");
     } catch {
       // Fallback to os.tmpdir() if the document directory is not writable.
-      tempFilePath = path.join(
-        os.tmpdir(),
-        `.tmp.${Date.now()}.${Math.random().toString(36).slice(2)}.${path.basename(filePath)}`,
-      );
+      tempFilePath = getTempFilePath(filePath, os.tmpdir());
       await fs.promises.writeFile(tempFilePath, originalText, "utf8");
     }
 
@@ -313,15 +315,16 @@ async function doFormat(
       execFile(
         exe,
         ["fmt", tempFilePath],
-        { cwd: workspaceRoot },
+        getExecOptions(exe, workspaceRoot),
         async (error, stdout, stderr) => {
           if (error) {
+            const friendlyMsg = formatFormatErrorMessage(
+              exe,
+              error as NodeJS.ErrnoException,
+              stdout,
+              stderr,
+            );
             const msg = stderr || stdout || error.message;
-            // Surface a friendly message if the fml binary was not found.
-            const friendlyMsg =
-              (error as NodeJS.ErrnoException).code === "ENOENT"
-                ? `'${exe}' binary not found. Set formality.executablePath in VS Code settings to the full path of the fml binary.`
-                : `Formality format error: ${msg.split("\n")[0]}`;
             outputChannel.appendLine(`[Format Error] ${filePath}:\n${msg}`);
             vscode.window.showErrorMessage(friendlyMsg);
             return reject(error);
@@ -358,62 +361,61 @@ async function doFormat(
   }
 }
 
-function runFmlCommand(
+export function runFmlCommand(
   args: string[],
   cwd?: string,
   progressTitle?: string,
   showOutput: boolean = false,
-) {
+): Promise<void> {
   const exe = getFmlExecutable();
 
   const task = (progress?: vscode.Progress<{ message?: string }>) => {
     void progress;
     return new Promise<void>((resolve) => {
-      execFile(
-        exe,
-        args,
-        { cwd: cwd || process.cwd() },
-        (error, stdout, stderr) => {
-          outputChannel.appendLine(`\n$ ${exe} ${args.join(" ")}`);
-          if (stdout) {
-            outputChannel.appendLine(stdout);
-          }
-          if (stderr) {
-            outputChannel.appendLine(stderr);
-          }
+      execFile(exe, args, getExecOptions(exe, cwd), (error, stdout, stderr) => {
+        outputChannel.appendLine(`\n$ ${exe} ${args.join(" ")}`);
+        if (stdout) {
+          outputChannel.appendLine(stdout);
+        }
+        if (stderr) {
+          outputChannel.appendLine(stderr);
+        }
 
-          if (error) {
-            const friendlyMsg =
-              (error as NodeJS.ErrnoException).code === "ENOENT"
-                ? `'${exe}' binary not found. Set formality.executablePath in VS Code settings.`
-                : `Formality command failed: ${stderr || stdout || error.message}`;
-            vscode.window.showErrorMessage(friendlyMsg);
-          } else {
-            vscode.window.setStatusBarMessage(
-              `✔ Formality: ${args.join(" ")} complete`,
-              3000,
-            );
-          }
+        if (error) {
+          const friendlyMsg = formatCommandErrorMessage(
+            exe,
+            error as NodeJS.ErrnoException,
+            stdout,
+            stderr,
+          );
+          vscode.window.showErrorMessage(friendlyMsg);
+        } else {
+          vscode.window.setStatusBarMessage(
+            `✔ Formality: ${args.join(" ")} complete`,
+            3000,
+          );
+        }
 
-          if (showOutput || error) {
-            outputChannel.show(true);
-          }
-          resolve();
-        },
-      );
+        if (showOutput || error) {
+          outputChannel.show(true);
+        }
+        resolve();
+      });
     });
   };
 
   if (progressTitle) {
-    vscode.window.withProgress(
-      {
-        location: vscode.ProgressLocation.Notification,
-        title: progressTitle,
-        cancellable: false,
-      },
-      task,
+    return Promise.resolve(
+      vscode.window.withProgress(
+        {
+          location: vscode.ProgressLocation.Notification,
+          title: progressTitle,
+          cancellable: false,
+        },
+        task,
+      ),
     );
   } else {
-    task();
+    return task();
   }
 }

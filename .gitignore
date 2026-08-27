@@ -1,6 +1,7 @@
 /target
 editors/vscode/out
 editors/vscode/node_modules
+editors/vscode/.vscode-test
 editors/vscode/*.vsix
 .ruff_cache
 .vscode/

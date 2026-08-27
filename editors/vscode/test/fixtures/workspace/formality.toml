@@ -1,0 +1,8 @@
+#:schema https://raw.githubusercontent.com/arvinduh/formality/main/schema/s1.0/formality.schema.json
+
+[format]
+line_length = 80
+indent_size = 4
+
+[lint]
+all = true
