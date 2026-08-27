@@ -177,3 +177,147 @@ fn test_fix_command_polyglot_detection() {
   let exit_code = fml::run_with_args(fix_args);
   assert_eq!(exit_code, 0);
 }
+
+#[test]
+fn test_fix_command_staged_with_explicit_paths_filtering() {
+  let temp = TempDir::new().unwrap();
+  let root = temp.path().to_path_buf();
+
+  let init_ok = std::process::Command::new("git")
+    .arg("init")
+    .current_dir(&root)
+    .output()
+    .map(|o| o.status.success())
+    .unwrap_or(false);
+  if !init_ok {
+    return;
+  }
+  let _ = std::process::Command::new("git")
+    .args(["config", "user.name", "test"])
+    .current_dir(&root)
+    .output();
+  let _ = std::process::Command::new("git")
+    .args(["config", "user.email", "test@example.com"])
+    .current_dir(&root)
+    .output();
+
+  let sub_dir = root.join("nested");
+  fs::create_dir_all(&sub_dir).unwrap();
+
+  let target_file = sub_dir.join("target.toml");
+  let other_file = root.join("other.toml");
+  let unformatted = "[package]\n   name =   \"test\"\n";
+
+  fs::write(&target_file, unformatted).unwrap();
+  fs::write(&other_file, unformatted).unwrap();
+
+  let _ = std::process::Command::new("git")
+    .args(["add", "."])
+    .current_dir(&root)
+    .output();
+  let _ = std::process::Command::new("git")
+    .args(["commit", "-m", "initial"])
+    .current_dir(&root)
+    .output();
+
+  // Modify both files, stage both
+  fs::write(&target_file, "[package]\n   name =   \"target_mod\"\n").unwrap();
+  fs::write(&other_file, "[package]\n   name =   \"other_mod\"\n").unwrap();
+
+  let _ = std::process::Command::new("git")
+    .args(["add", "."])
+    .current_dir(&root)
+    .output();
+
+  // Run fix with staged: true AND explicit paths: [target_file]
+  let fix_args = Cli {
+    config: None,
+    root: Some(root.clone()),
+    command: Commands::Fix {
+      staged: true,
+      changed: false,
+      lang: vec!["toml".to_string()],
+      install: false,
+      paths: vec![target_file.clone()],
+    },
+  };
+  let exit_code = fml::run_with_args(fix_args);
+  assert_eq!(exit_code, 0);
+
+  // target_file should have been formatted
+  let formatted_target = fs::read_to_string(&target_file).unwrap();
+  assert!(formatted_target.contains("name = \"target_mod\""));
+
+  // other_file was also staged, but because explicit paths were specified, it was not formatted!
+  let unformatted_other = fs::read_to_string(&other_file).unwrap();
+  assert_eq!(unformatted_other, "[package]\n   name =   \"other_mod\"\n");
+}
+
+#[test]
+fn test_fix_command_changed_with_explicit_paths_filtering() {
+  let temp = TempDir::new().unwrap();
+  let root = temp.path().to_path_buf();
+
+  let init_ok = std::process::Command::new("git")
+    .arg("init")
+    .current_dir(&root)
+    .output()
+    .map(|o| o.status.success())
+    .unwrap_or(false);
+  if !init_ok {
+    return;
+  }
+  let _ = std::process::Command::new("git")
+    .args(["config", "user.name", "test"])
+    .current_dir(&root)
+    .output();
+  let _ = std::process::Command::new("git")
+    .args(["config", "user.email", "test@example.com"])
+    .current_dir(&root)
+    .output();
+
+  let sub_dir = root.join("nested");
+  fs::create_dir_all(&sub_dir).unwrap();
+
+  let target_file = sub_dir.join("target.toml");
+  let other_file = root.join("other.toml");
+
+  fs::write(&target_file, "[package]\nname = \"target\"\n").unwrap();
+  fs::write(&other_file, "[package]\nname = \"other\"\n").unwrap();
+
+  let _ = std::process::Command::new("git")
+    .args(["add", "."])
+    .current_dir(&root)
+    .output();
+  let _ = std::process::Command::new("git")
+    .args(["commit", "-m", "initial"])
+    .current_dir(&root)
+    .output();
+
+  // Modify both files (unstaged)
+  fs::write(&target_file, "[package]\n   name =   \"target_mod\"\n").unwrap();
+  fs::write(&other_file, "[package]\n   name =   \"other_mod\"\n").unwrap();
+
+  // Run fix with changed: true AND explicit paths: [target_file]
+  let fix_args = Cli {
+    config: None,
+    root: Some(root.clone()),
+    command: Commands::Fix {
+      staged: false,
+      changed: true,
+      lang: vec!["toml".to_string()],
+      install: false,
+      paths: vec![target_file.clone()],
+    },
+  };
+  let exit_code = fml::run_with_args(fix_args);
+  assert_eq!(exit_code, 0);
+
+  // target_file should have been formatted
+  let formatted_target = fs::read_to_string(&target_file).unwrap();
+  assert!(formatted_target.contains("name = \"target_mod\""));
+
+  // other_file was also changed, but because explicit paths were specified, it was not formatted!
+  let unformatted_other = fs::read_to_string(&other_file).unwrap();
+  assert_eq!(unformatted_other, "[package]\n   name =   \"other_mod\"\n");
+}

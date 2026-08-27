@@ -3,11 +3,9 @@
 
 use std::path::{Path, PathBuf};
 
-use crate::commands::{
-  resolve_git_paths, resolve_target_surfaces, warn_tool_install_failed,
-};
+use crate::commands::dispatch_surface_action;
 use crate::config::FormalityConfig;
-use crate::engine::{Runner, RunnerAction};
+use crate::engine::RunnerAction;
 use crate::errors::ExitStatus;
 
 /// Runs the `fml fmt` command: formats (or, with `check`, only verifies) the
@@ -23,45 +21,15 @@ pub fn run_fmt(
   install: bool,
   paths: Vec<PathBuf>,
 ) -> ExitStatus {
-  let target_paths = match resolve_git_paths(root, staged, changed, paths) {
-    Ok(p) => p,
-    Err(e) => {
-      e.print_diagnostic();
-      return ExitStatus::Error;
-    }
-  };
-
-  let surfaces =
-    match resolve_target_surfaces(root, &lang, &target_paths, config) {
-      Ok(s) => s,
-      Err(e) => {
-        e.print_diagnostic();
-        return ExitStatus::Error;
-      }
-    };
-
-  let mut install_failed = false;
-  if install {
-    if !crate::commands::doctor::preflight_install(&surfaces, config, true) {
-      warn_tool_install_failed("formatting");
-      install_failed = true;
-    }
-  } else {
-    crate::commands::doctor::preflight_warn_stale_tools(
-      &surfaces, config, true, false,
-    );
-  }
-
-  let status = Runner::run(
-    surfaces,
+  dispatch_surface_action(
     root,
-    &target_paths,
-    RunnerAction::Format { check },
     config,
-  );
-  if install_failed && status.is_clean() {
-    ExitStatus::Error
-  } else {
-    status
-  }
+    staged,
+    changed,
+    lang,
+    install,
+    paths,
+    RunnerAction::Format { check },
+    "formatting",
+  )
 }
