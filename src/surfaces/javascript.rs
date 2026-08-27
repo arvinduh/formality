@@ -3,10 +3,9 @@
 
 use super::{
   DeclaresFacets, ExecutionContext, Facet, FacetSupport, LanguageSurface,
-  NativeConfig, SurfaceResult, SurfaceStatus, ToolInfo, check_binary_exists,
-  create_tool_command, diff_check_via_tempcopy, find_files_with_ext,
-  render_native_config, run_tool_command, sync_native_config,
-  tool_missing_result,
+  NativeConfig, SurfaceResult, ToolInfo, create_tool_command,
+  diff_check_via_tempcopy, find_files_with_ext, render_native_config,
+  run_tool_command, sync_native_config, tool_missing_guard,
 };
 use serde::{Deserialize, Serialize};
 use std::path::{Path, PathBuf};
@@ -345,22 +344,18 @@ impl LanguageSurface for JavaScriptSurface {
   fn format(&self, ctx: &ExecutionContext) -> SurfaceResult {
     let start = Instant::now();
 
-    if !check_binary_exists("biome") {
-      return tool_missing_result(
-        self.name(),
-        start,
-        "biome",
-        "npm install -g @biomejs/biome",
-      );
+    if let Some(res) = tool_missing_guard(
+      self.name(),
+      "biome",
+      start,
+      Some("npm install -g @biomejs/biome"),
+    ) {
+      return res;
     }
 
     let files = ctx.matched_files(JS_TS_EXTENSIONS);
-    if files.is_empty() {
-      return SurfaceResult {
-        surface_name: self.name(),
-        status: SurfaceStatus::Passed,
-        duration: start.elapsed(),
-      };
+    if let Some(res) = ctx.early_out_if_empty(&files, self.name(), start) {
+      return res;
     }
 
     // Inline `--indent-style`/`--line-width`/etc. instead of writing
@@ -387,14 +382,7 @@ impl LanguageSurface for JavaScriptSurface {
       );
     }
 
-    let files_to_pass = if !ctx.paths.is_empty()
-      || !ctx.lang_config.files.is_empty()
-      || !ctx.lang_config.exclude.is_empty()
-    {
-      files
-    } else {
-      Vec::new()
-    };
+    let files_to_pass = ctx.files_to_pass(files);
 
     let mut cmd = create_tool_command("biome");
     cmd.args(build_biome_format_args(
@@ -410,32 +398,21 @@ impl LanguageSurface for JavaScriptSurface {
   fn lint(&self, ctx: &ExecutionContext, fix: bool) -> SurfaceResult {
     let start = Instant::now();
 
-    if !check_binary_exists("biome") {
-      return tool_missing_result(
-        self.name(),
-        start,
-        "biome",
-        "npm install -g @biomejs/biome",
-      );
+    if let Some(res) = tool_missing_guard(
+      self.name(),
+      "biome",
+      start,
+      Some("npm install -g @biomejs/biome"),
+    ) {
+      return res;
     }
 
     let files = ctx.matched_files(JS_TS_EXTENSIONS);
-    if files.is_empty() {
-      return SurfaceResult {
-        surface_name: self.name(),
-        status: SurfaceStatus::Passed,
-        duration: start.elapsed(),
-      };
+    if let Some(res) = ctx.early_out_if_empty(&files, self.name(), start) {
+      return res;
     }
 
-    let files_to_pass = if !ctx.paths.is_empty()
-      || !ctx.lang_config.files.is_empty()
-      || !ctx.lang_config.exclude.is_empty()
-    {
-      files
-    } else {
-      Vec::new()
-    };
+    let files_to_pass = ctx.files_to_pass(files);
 
     let mut cmd = create_tool_command("biome");
     cmd.args(build_biome_lint_args(
@@ -466,10 +443,8 @@ impl LanguageSurface for JavaScriptSurface {
 #[allow(missing_docs, clippy::missing_errors_doc, clippy::missing_panics_doc)]
 mod tests {
   use super::*;
-  use crate::config::{
-    JavaScriptOptions, ResolvedGlobalConfig, ResolvedLangConfig,
-  };
-  use std::sync::Arc;
+  use crate::config::{JavaScriptOptions, ResolvedLangConfig};
+  use crate::surfaces::{SurfaceStatus, check_binary_exists, test_ctx};
   use tempfile::TempDir;
 
   #[test]
@@ -615,14 +590,7 @@ mod tests {
       organize_imports: Some(true),
     });
 
-    let ctx = ExecutionContext {
-      root: Arc::new(temp.path().to_path_buf()),
-      paths: Arc::new(Vec::new()),
-      global_config: Arc::new(ResolvedGlobalConfig::default()),
-      lang_config: lang_cfg,
-      check_only: false,
-      candidate_files: None,
-    };
+    let ctx = test_ctx(temp.path(), lang_cfg);
 
     let res = surface.sync_config(&ctx, false);
     assert!(matches!(
@@ -685,14 +653,7 @@ mod tests {
       semicolons: Some("as-needed".to_string()),
       organize_imports: Some(true),
     });
-    let ctx = ExecutionContext {
-      root: Arc::new(temp.path().to_path_buf()),
-      paths: Arc::new(Vec::new()),
-      global_config: Arc::new(ResolvedGlobalConfig::default()),
-      lang_config: lang_cfg,
-      check_only: false,
-      candidate_files: None,
-    };
+    let ctx = test_ctx(temp.path(), lang_cfg);
     let cfg = BiomeConfig::from_context(&ctx);
     let args = build_biome_inline_format_args(&cfg);
     assert!(args.contains(&"--indent-width=4".to_string()));
@@ -715,14 +676,7 @@ mod tests {
     std::fs::write(temp.path().join("a.js"), "const x=1;\n").unwrap();
 
     let surface = JavaScriptSurface;
-    let ctx = ExecutionContext {
-      root: Arc::new(temp.path().to_path_buf()),
-      paths: Arc::new(Vec::new()),
-      global_config: Arc::new(ResolvedGlobalConfig::default()),
-      lang_config: ResolvedLangConfig::new("javascript"),
-      check_only: false,
-      candidate_files: None,
-    };
+    let ctx = test_ctx(temp.path(), ResolvedLangConfig::new("javascript"));
 
     let _ = surface.format(&ctx);
 

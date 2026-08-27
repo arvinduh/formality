@@ -22,6 +22,8 @@ pub mod kotlin;
 pub mod markdown;
 /// Native configuration generator and serializer.
 pub mod native;
+/// Prettier configuration generator and inline argument helpers.
+pub mod prettier;
 /// Python language surface implementation.
 pub mod python;
 /// Surface registry and auto-detection engine.
@@ -45,12 +47,15 @@ pub use native::{
   render_native_config, serialize_json_pretty, serialize_toml_with_header,
   serialize_yaml_with_header, sync_editorconfig, sync_native_config,
 };
+pub use prettier::{
+  PrettierConfig, build_prettier_inline_args, sync_prettier_config,
+};
 
 pub use crate::config::facets::{DeclaresFacets, Facet, FacetSupport};
 use crate::config::{ResolvedGlobalConfig, ResolvedLangConfig};
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 pub use glob::{
   filter_candidates_with_ext, filter_files_for_surface, find_files_with_ext,
@@ -63,9 +68,10 @@ pub use registry::{
 pub use sync::{diff_check_via_tempcopy, is_auto_generated, sync_file_helper};
 pub use tooling::{
   InstallMethod, check_binary_exists, create_tool_command, has_cargo_binstall,
-  install_chain_for, pinned_installer_for, pinned_version_for,
-  resolve_binary_path, run_tool_command, selected_install_method_for,
-  selected_pinned_version_for, tool_missing_result,
+  install_chain_for, lint_fix_unsupported, pinned_installer_for,
+  pinned_version_for, resolve_binary_path, run_tool_command,
+  selected_install_method_for, selected_pinned_version_for, tool_missing_guard,
+  tool_missing_result,
 };
 
 /// Execution context shared with every [`LanguageSurface`] invocation for a
@@ -141,6 +147,56 @@ impl ExecutionContext {
         &self.lang_config.exclude,
       )
     }
+  }
+
+  /// Returns `Some(SurfaceResult)` with `SurfaceStatus::Passed` if `files` is empty, or `None` otherwise.
+  #[must_use]
+  pub fn early_out_if_empty(
+    &self,
+    files: &[PathBuf],
+    name: &'static str,
+    start: Instant,
+  ) -> Option<SurfaceResult> {
+    if files.is_empty() {
+      Some(SurfaceResult {
+        surface_name: name,
+        status: SurfaceStatus::Passed,
+        duration: start.elapsed(),
+      })
+    } else {
+      None
+    }
+  }
+
+  /// Returns the files to pass to a directory-walking CLI tool.
+  /// If paths, lang_config files, or lang_config excludes are specified, returns the filtered files;
+  /// otherwise returns an empty Vec so the tool can scan the whole directory.
+  #[must_use]
+  pub fn files_to_pass(&self, files: Vec<PathBuf>) -> Vec<PathBuf> {
+    if !self.paths.is_empty()
+      || !self.lang_config.files.is_empty()
+      || !self.lang_config.exclude.is_empty()
+    {
+      files
+    } else {
+      Vec::new()
+    }
+  }
+}
+
+/// Builds a minimal `ExecutionContext` for testing language surfaces.
+#[must_use]
+pub fn test_ctx(
+  root: impl AsRef<Path>,
+  lang_config: ResolvedLangConfig,
+) -> ExecutionContext {
+  ExecutionContext {
+    root: Arc::new(root.as_ref().to_path_buf()),
+    paths: Arc::new(Vec::new()),
+    global_config: Arc::new(ResolvedGlobalConfig::default()),
+    lang_config,
+    check_only: false,
+    candidate_files: None,
   }
 }
 
@@ -427,14 +483,7 @@ mod tests {
 
   #[test]
   fn test_unsupported_lint_fix_returns_skipped() {
-    let dummy_ctx = ExecutionContext {
-      root: Arc::new(PathBuf::from(".")),
-      paths: Arc::new(Vec::new()),
-      global_config: Arc::new(ResolvedGlobalConfig::default()),
-      lang_config: ResolvedLangConfig::new("dummy"),
-      check_only: false,
-      candidate_files: None,
-    };
+    let dummy_ctx = test_ctx(Path::new("."), ResolvedLangConfig::new("dummy"));
 
     let unsupported_surfaces: Vec<Box<dyn LanguageSurface>> = vec![
       Box::new(yaml::YamlSurface),

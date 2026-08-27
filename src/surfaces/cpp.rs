@@ -4,10 +4,9 @@
 
 use super::{
   DeclaresFacets, ExecutionContext, Facet, FacetSupport, LanguageSurface,
-  NativeConfig, SurfaceResult, SurfaceStatus, ToolInfo, check_binary_exists,
-  create_tool_command, diff_check_via_tempcopy, find_files_with_ext,
-  render_native_config, run_tool_command, sync_native_config,
-  tool_missing_result,
+  NativeConfig, SurfaceResult, SurfaceStatus, ToolInfo, create_tool_command,
+  diff_check_via_tempcopy, find_files_with_ext, render_native_config,
+  run_tool_command, sync_native_config, tool_missing_guard,
 };
 use serde::{Deserialize, Serialize};
 use std::collections::HashSet;
@@ -422,22 +421,20 @@ impl LanguageSurface for CppSurface {
   fn format(&self, ctx: &ExecutionContext) -> SurfaceResult {
     let start = Instant::now();
 
-    if !check_binary_exists("clang-format") {
-      return tool_missing_result(
-        self.name(),
-        start,
-        "clang-format",
+    if let Some(res) = tool_missing_guard(
+      self.name(),
+      "clang-format",
+      start,
+      Some(
         "sudo apt install clang-format / brew install clang-format / pip install clang-format / winget install LLVM.LLVM",
-      );
+      ),
+    ) {
+      return res;
     }
 
     let files = ctx.matched_files(CPP_EXTENSIONS);
-    if files.is_empty() {
-      return SurfaceResult {
-        surface_name: self.name(),
-        status: SurfaceStatus::Passed,
-        duration: start.elapsed(),
-      };
+    if let Some(res) = ctx.early_out_if_empty(&files, self.name(), start) {
+      return res;
     }
 
     // Inline `-style='{...}'` instead of writing `.clang-format` to disk —
@@ -479,22 +476,20 @@ impl LanguageSurface for CppSurface {
   fn lint(&self, ctx: &ExecutionContext, fix: bool) -> SurfaceResult {
     let start = Instant::now();
 
-    if !check_binary_exists("clang-tidy") {
-      return tool_missing_result(
-        self.name(),
-        start,
-        "clang-tidy",
+    if let Some(res) = tool_missing_guard(
+      self.name(),
+      "clang-tidy",
+      start,
+      Some(
         "sudo apt install clang-tidy / brew install llvm / winget install LLVM.LLVM",
-      );
+      ),
+    ) {
+      return res;
     }
 
     let files = ctx.matched_files(CPP_EXTENSIONS);
-    if files.is_empty() {
-      return SurfaceResult {
-        surface_name: self.name(),
-        status: SurfaceStatus::Passed,
-        duration: start.elapsed(),
-      };
+    if let Some(res) = ctx.early_out_if_empty(&files, self.name(), start) {
+      return res;
     }
 
     let cpp_opts = ctx.lang_config.cpp.as_ref();
@@ -666,6 +661,7 @@ pub fn sync_clang_tidy_config(
 mod tests {
   use super::*;
   use crate::config::FormalityConfig;
+  use crate::surfaces::{check_binary_exists, test_ctx};
   use std::sync::Arc;
   use tempfile::tempdir;
 
@@ -851,14 +847,8 @@ mod tests {
     let root = dir.path().to_path_buf();
 
     let cfg = FormalityConfig::default();
-    let ctx = ExecutionContext {
-      root: Arc::new(root.clone()),
-      paths: Arc::new(Vec::new()),
-      global_config: Arc::new(cfg.resolve_global()),
-      lang_config: cfg.resolve_for_lang("cpp"),
-      check_only: false,
-      candidate_files: None,
-    };
+    let mut ctx = test_ctx(&root, cfg.resolve_for_lang("cpp"));
+    ctx.global_config = Arc::new(cfg.resolve_global());
 
     let surface = CppSurface;
     let res = surface.sync_config(&ctx, false);
@@ -955,14 +945,8 @@ mod tests {
     "#;
     let cfg = FormalityConfig::parse_str(toml_str, Path::new("formality.toml"))
       .unwrap();
-    let ctx = ExecutionContext {
-      root: Arc::new(root.clone()),
-      paths: Arc::new(Vec::new()),
-      global_config: Arc::new(cfg.resolve_global()),
-      lang_config: cfg.resolve_for_lang("cpp"),
-      check_only: false,
-      candidate_files: None,
-    };
+    let mut ctx = test_ctx(&root, cfg.resolve_for_lang("cpp"));
+    ctx.global_config = Arc::new(cfg.resolve_global());
 
     let surface = CppSurface;
     let res = surface.sync_config(&ctx, false);
@@ -1023,14 +1007,11 @@ mod tests {
       end_of_line: "cr".to_string(),
       ..Default::default()
     };
-    let ctx = ExecutionContext {
-      root: Arc::new(PathBuf::from(".")),
-      paths: Arc::new(Vec::new()),
-      global_config: Arc::new(global),
-      lang_config: crate::config::ResolvedLangConfig::new("cpp"),
-      check_only: false,
-      candidate_files: None,
-    };
+    let mut ctx = test_ctx(
+      Path::new("."),
+      crate::config::ResolvedLangConfig::new("cpp"),
+    );
+    ctx.global_config = Arc::new(global);
     let cfg = ClangFormatConfig::from_context(&ctx);
     assert_eq!(cfg.line_ending, "LF");
   }
@@ -1055,14 +1036,8 @@ mod tests {
       .unwrap();
 
     let cfg = FormalityConfig::default();
-    let ctx = ExecutionContext {
-      root: Arc::new(temp.path().to_path_buf()),
-      paths: Arc::new(Vec::new()),
-      global_config: Arc::new(cfg.resolve_global()),
-      lang_config: cfg.resolve_for_lang("cpp"),
-      check_only: false,
-      candidate_files: None,
-    };
+    let mut ctx = test_ctx(temp.path(), cfg.resolve_for_lang("cpp"));
+    ctx.global_config = Arc::new(cfg.resolve_global());
 
     let surface = CppSurface;
     let _ = surface.format(&ctx);
@@ -1085,14 +1060,8 @@ mod tests {
       .unwrap();
 
     let cfg = FormalityConfig::default();
-    let ctx = ExecutionContext {
-      root: Arc::new(temp.path().to_path_buf()),
-      paths: Arc::new(Vec::new()),
-      global_config: Arc::new(cfg.resolve_global()),
-      lang_config: cfg.resolve_for_lang("cpp"),
-      check_only: false,
-      candidate_files: None,
-    };
+    let mut ctx = test_ctx(temp.path(), cfg.resolve_for_lang("cpp"));
+    ctx.global_config = Arc::new(cfg.resolve_global());
 
     let surface = CppSurface;
     let _ = surface.lint(&ctx, false);

@@ -3,10 +3,10 @@
 
 use super::{
   DeclaresFacets, ExecutionContext, Facet, FacetSupport, LanguageSurface,
-  NativeConfig, SurfaceResult, SurfaceStatus, ToolInfo, check_binary_exists,
-  create_tool_command, diff_check_via_tempcopy, find_files_with_ext,
+  NativeConfig, SurfaceResult, ToolInfo, create_tool_command,
+  diff_check_via_tempcopy, find_files_with_ext, lint_fix_unsupported,
   render_native_config, run_tool_command, sync_native_config,
-  tool_missing_result,
+  tool_missing_guard,
 };
 use serde::{Deserialize, Serialize};
 use std::path::Path;
@@ -185,22 +185,20 @@ impl LanguageSurface for TomlSurface {
   fn format(&self, ctx: &ExecutionContext) -> SurfaceResult {
     let start = Instant::now();
 
-    if !check_binary_exists("taplo") {
-      return tool_missing_result(
-        self.name(),
-        start,
-        "taplo",
+    if let Some(res) = tool_missing_guard(
+      self.name(),
+      "taplo",
+      start,
+      Some(
         "cargo binstall taplo-cli / npm install -g @taplo/cli / brew install taplo / cargo install taplo-cli --locked",
-      );
+      ),
+    ) {
+      return res;
     }
 
     let files = ctx.matched_files(TOML_EXTENSIONS);
-    if files.is_empty() {
-      return SurfaceResult {
-        surface_name: self.name(),
-        status: SurfaceStatus::Passed,
-        duration: start.elapsed(),
-      };
+    if let Some(res) = ctx.early_out_if_empty(&files, self.name(), start) {
+      return res;
     }
 
     // Inline `-o key=value` instead of writing `taplo.toml` to disk — see
@@ -242,32 +240,23 @@ impl LanguageSurface for TomlSurface {
     let start = Instant::now();
 
     if fix {
-      return SurfaceResult {
-        surface_name: self.name(),
-        status: SurfaceStatus::Skipped {
-          reason: "Tool does not support autofix; run fml fmt instead"
-            .to_string(),
-        },
-        duration: start.elapsed(),
-      };
+      return lint_fix_unsupported(self.name(), start);
     }
 
-    if !check_binary_exists("taplo") {
-      return tool_missing_result(
-        self.name(),
-        start,
-        "taplo",
+    if let Some(res) = tool_missing_guard(
+      self.name(),
+      "taplo",
+      start,
+      Some(
         "cargo binstall taplo-cli / npm install -g @taplo/cli / brew install taplo / cargo install taplo-cli --locked",
-      );
+      ),
+    ) {
+      return res;
     }
 
     let files = ctx.matched_files(TOML_EXTENSIONS);
-    if files.is_empty() {
-      return SurfaceResult {
-        surface_name: self.name(),
-        status: SurfaceStatus::Passed,
-        duration: start.elapsed(),
-      };
+    if let Some(res) = ctx.early_out_if_empty(&files, self.name(), start) {
+      return res;
     }
 
     let mut cmd = create_tool_command("taplo");
@@ -298,7 +287,7 @@ impl LanguageSurface for TomlSurface {
 #[allow(missing_docs, clippy::missing_errors_doc, clippy::missing_panics_doc)]
 mod tests {
   use super::*;
-  use crate::config::ResolvedGlobalConfig;
+  use crate::surfaces::{SurfaceStatus, check_binary_exists, test_ctx};
   use std::sync::Arc;
   use tempfile::TempDir;
 
@@ -362,14 +351,7 @@ mod tests {
     lang_cfg.line_length = 80;
     lang_cfg.indent_size = 2;
 
-    let ctx = ExecutionContext {
-      root: Arc::new(temp.path().to_path_buf()),
-      paths: Arc::new(Vec::new()),
-      global_config: Arc::new(ResolvedGlobalConfig::default()),
-      lang_config: lang_cfg,
-      check_only: false,
-      candidate_files: None,
-    };
+    let ctx = test_ctx(temp.path(), lang_cfg);
 
     let res = surface.sync_config(&ctx, false);
     assert!(matches!(
@@ -442,14 +424,8 @@ mod tests {
     std::fs::write(temp.path().join("a.toml"), "a=1\n").unwrap();
 
     let surface = TomlSurface;
-    let ctx = ExecutionContext {
-      root: Arc::new(temp.path().to_path_buf()),
-      paths: Arc::new(Vec::new()),
-      global_config: Arc::new(ResolvedGlobalConfig::default()),
-      lang_config: crate::config::ResolvedLangConfig::new("toml"),
-      check_only: false,
-      candidate_files: None,
-    };
+    let ctx =
+      test_ctx(temp.path(), crate::config::ResolvedLangConfig::new("toml"));
 
     let _ = surface.format(&ctx);
 
@@ -475,14 +451,10 @@ mod tests {
     std::fs::write(&file_path, &large_content).unwrap();
 
     let surface = TomlSurface;
-    let ctx = ExecutionContext {
-      root: Arc::new(temp.path().to_path_buf()),
-      paths: Arc::new(vec![file_path.clone()]),
-      global_config: Arc::new(ResolvedGlobalConfig::default()),
-      lang_config: crate::config::ResolvedLangConfig::new("toml"),
-      check_only: true,
-      candidate_files: None,
-    };
+    let mut ctx =
+      test_ctx(temp.path(), crate::config::ResolvedLangConfig::new("toml"));
+    ctx.paths = Arc::new(vec![file_path.clone()]);
+    ctx.check_only = true;
 
     let res = surface.format(&ctx);
     assert!(!res.is_error(), "format returned error: {:?}", res.status);
@@ -506,14 +478,10 @@ mod tests {
     assert!(formatted_content.len() > 128 * 1024);
     std::fs::write(&formatted_path, &formatted_content).unwrap();
 
-    let ctx_formatted = ExecutionContext {
-      root: Arc::new(temp.path().to_path_buf()),
-      paths: Arc::new(vec![formatted_path]),
-      global_config: Arc::new(ResolvedGlobalConfig::default()),
-      lang_config: crate::config::ResolvedLangConfig::new("toml"),
-      check_only: true,
-      candidate_files: None,
-    };
+    let mut ctx_formatted =
+      test_ctx(temp.path(), crate::config::ResolvedLangConfig::new("toml"));
+    ctx_formatted.paths = Arc::new(vec![formatted_path]);
+    ctx_formatted.check_only = true;
 
     let res_formatted = surface.format(&ctx_formatted);
     assert!(
@@ -526,19 +494,10 @@ mod tests {
   #[test]
   fn test_taplo_config_from_context_options() {
     let temp = TempDir::new().unwrap();
-    let root = Arc::new(temp.path().to_path_buf());
-    let global_config = Arc::new(ResolvedGlobalConfig::default());
 
     // 1. Default/omitted case -> all false
     let lang_config_default = crate::config::ResolvedLangConfig::new("toml");
-    let ctx_default = ExecutionContext {
-      root: root.clone(),
-      paths: Arc::new(Vec::new()),
-      global_config: global_config.clone(),
-      lang_config: lang_config_default,
-      check_only: false,
-      candidate_files: None,
-    };
+    let ctx_default = test_ctx(temp.path(), lang_config_default);
     let taplo_cfg_default = TaploConfig::from_context(&ctx_default);
     assert!(!taplo_cfg_default.formatting.align_entries);
     assert!(!taplo_cfg_default.formatting.indent_entries);
@@ -552,14 +511,7 @@ mod tests {
       indent_entries: Some(true),
       indent_tables: Some(true),
     });
-    let ctx_configured = ExecutionContext {
-      root,
-      paths: Arc::new(Vec::new()),
-      global_config,
-      lang_config: lang_config_configured,
-      check_only: false,
-      candidate_files: None,
-    };
+    let ctx_configured = test_ctx(temp.path(), lang_config_configured);
     let taplo_cfg_configured = TaploConfig::from_context(&ctx_configured);
     assert!(taplo_cfg_configured.formatting.align_entries);
     assert!(taplo_cfg_configured.formatting.indent_entries);
@@ -584,14 +536,7 @@ mod tests {
       indent_tables: Some(true),
     });
 
-    let ctx = ExecutionContext {
-      root: Arc::new(temp.path().to_path_buf()),
-      paths: Arc::new(Vec::new()),
-      global_config: Arc::new(ResolvedGlobalConfig::default()),
-      lang_config: lang_cfg,
-      check_only: false,
-      candidate_files: None,
-    };
+    let ctx = test_ctx(temp.path(), lang_cfg);
 
     let res = surface.sync_config(&ctx, false);
     assert!(matches!(

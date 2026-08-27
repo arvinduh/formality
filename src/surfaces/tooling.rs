@@ -742,6 +742,38 @@ pub fn tool_missing_result(
   }
 }
 
+/// Returns `Some(SurfaceResult)` with `SurfaceStatus::ToolMissing` if `binary`
+/// is not found on `PATH`, or `None` if it is available.
+#[must_use]
+pub fn tool_missing_guard(
+  name: &'static str,
+  binary: &str,
+  start: Instant,
+  hint: Option<&'static str>,
+) -> Option<SurfaceResult> {
+  if !check_binary_exists(binary) {
+    Some(tool_missing_result(name, start, binary, hint.unwrap_or("")))
+  } else {
+    None
+  }
+}
+
+/// Builds the `SurfaceResult` returned when autofix is requested on a surface
+/// whose underlying tool does not support automatic lint fixing.
+#[must_use]
+pub fn lint_fix_unsupported(
+  name: &'static str,
+  start: Instant,
+) -> SurfaceResult {
+  SurfaceResult {
+    surface_name: name,
+    status: SurfaceStatus::Skipped {
+      reason: "Tool does not support autofix; run fml fmt instead".to_string(),
+    },
+    duration: start.elapsed(),
+  }
+}
+
 /// Returns whether `cargo binstall` is usable: both `cargo` and
 /// `cargo-binstall` must be on `PATH`. This is a pure `PATH` lookup (via
 /// [`check_binary_exists`]/`which`) for both binaries -- it never spawns a
@@ -1480,6 +1512,60 @@ mod tests {
     for i in 0..10 {
       let binary_name = format!("thread_test_binary_{i}");
       assert!(guard.contains_key(&binary_name));
+    }
+  }
+
+  #[test]
+  fn test_tool_missing_guard() {
+    let start = Instant::now();
+    let res = tool_missing_guard(
+      "test",
+      "non_existent_tool_xyz_123",
+      start,
+      Some("install it"),
+    );
+    assert!(res.is_some());
+    let res = res.unwrap();
+    assert_eq!(res.surface_name, "test");
+    match res.status {
+      SurfaceStatus::ToolMissing {
+        binary,
+        install_hint,
+      } => {
+        assert_eq!(binary, "non_existent_tool_xyz_123");
+        assert_eq!(install_hint, "install it");
+      }
+      other => panic!("Expected ToolMissing, got {other:?}"),
+    }
+
+    let res_none =
+      tool_missing_guard("test", "non_existent_tool_xyz_123", start, None);
+    assert!(res_none.is_some());
+    match res_none.unwrap().status {
+      SurfaceStatus::ToolMissing {
+        binary,
+        install_hint,
+      } => {
+        assert_eq!(binary, "non_existent_tool_xyz_123");
+        assert_eq!(install_hint, "");
+      }
+      other => panic!("Expected ToolMissing, got {other:?}"),
+    }
+  }
+
+  #[test]
+  fn test_lint_fix_unsupported() {
+    let start = Instant::now();
+    let res = lint_fix_unsupported("test", start);
+    assert_eq!(res.surface_name, "test");
+    match res.status {
+      SurfaceStatus::Skipped { reason } => {
+        assert_eq!(
+          reason,
+          "Tool does not support autofix; run fml fmt instead"
+        );
+      }
+      other => panic!("Expected Skipped, got {other:?}"),
     }
   }
 }

@@ -3,10 +3,9 @@
 
 use super::{
   DeclaresFacets, ExecutionContext, Facet, FacetSupport, LanguageSurface,
-  NativeConfig, SurfaceResult, SurfaceStatus, ToolInfo, check_binary_exists,
-  create_tool_command, diff_check_via_tempcopy, find_files_with_ext,
-  render_native_config, run_tool_command, sync_native_config,
-  tool_missing_result,
+  NativeConfig, SurfaceResult, SurfaceStatus, ToolInfo, create_tool_command,
+  diff_check_via_tempcopy, find_files_with_ext, render_native_config,
+  run_tool_command, sync_native_config, tool_missing_guard,
 };
 use serde::{Deserialize, Serialize};
 use std::path::{Path, PathBuf};
@@ -310,22 +309,15 @@ impl LanguageSurface for PythonSurface {
   fn format(&self, ctx: &ExecutionContext) -> SurfaceResult {
     let start = Instant::now();
 
-    if !check_binary_exists("ruff") {
-      return tool_missing_result(
-        self.name(),
-        start,
-        "ruff",
-        "pip install ruff",
-      );
+    if let Some(res) =
+      tool_missing_guard(self.name(), "ruff", start, Some("pip install ruff"))
+    {
+      return res;
     }
 
     let files = ctx.matched_files(PYTHON_EXTENSIONS);
-    if files.is_empty() {
-      return SurfaceResult {
-        surface_name: self.name(),
-        status: SurfaceStatus::Passed,
-        duration: start.elapsed(),
-      };
+    if let Some(res) = ctx.early_out_if_empty(&files, self.name(), start) {
+      return res;
     }
 
     // Inline `--config key=value` instead of writing `ruff.toml` to disk —
@@ -364,14 +356,7 @@ impl LanguageSurface for PythonSurface {
       );
     }
 
-    let files_to_pass = if !ctx.paths.is_empty()
-      || !ctx.lang_config.files.is_empty()
-      || !ctx.lang_config.exclude.is_empty()
-    {
-      files.clone()
-    } else {
-      Vec::new()
-    };
+    let files_to_pass = ctx.files_to_pass(files);
 
     let mut isort_cmd = create_tool_command("ruff");
     isort_cmd.args(build_ruff_import_sort_args(
@@ -436,32 +421,18 @@ impl LanguageSurface for PythonSurface {
   fn lint(&self, ctx: &ExecutionContext, fix: bool) -> SurfaceResult {
     let start = Instant::now();
 
-    if !check_binary_exists("ruff") {
-      return tool_missing_result(
-        self.name(),
-        start,
-        "ruff",
-        "pip install ruff",
-      );
+    if let Some(res) =
+      tool_missing_guard(self.name(), "ruff", start, Some("pip install ruff"))
+    {
+      return res;
     }
 
     let files = ctx.matched_files(PYTHON_EXTENSIONS);
-    if files.is_empty() {
-      return SurfaceResult {
-        surface_name: self.name(),
-        status: SurfaceStatus::Passed,
-        duration: start.elapsed(),
-      };
+    if let Some(res) = ctx.early_out_if_empty(&files, self.name(), start) {
+      return res;
     }
 
-    let files_to_pass = if !ctx.paths.is_empty()
-      || !ctx.lang_config.files.is_empty()
-      || !ctx.lang_config.exclude.is_empty()
-    {
-      files
-    } else {
-      Vec::new()
-    };
+    let files_to_pass = ctx.files_to_pass(files);
 
     let lint_config =
       build_ruff_inline_lint_config_args(&RuffConfig::from_context(ctx));
@@ -497,6 +468,7 @@ mod tests {
   use crate::config::{
     PythonOptions, ResolvedGlobalConfig, ResolvedLangConfig,
   };
+  use crate::surfaces::{check_binary_exists, test_ctx};
   use std::sync::Arc;
   use tempfile::TempDir;
 
@@ -533,14 +505,7 @@ mod tests {
       ignore_rules: Some(vec!["E501".to_string(), "F401".to_string()]),
     });
 
-    let ctx = ExecutionContext {
-      root: Arc::new(temp.path().to_path_buf()),
-      paths: Arc::new(Vec::new()),
-      global_config: Arc::new(ResolvedGlobalConfig::default()),
-      lang_config: lang_cfg,
-      check_only: false,
-      candidate_files: None,
-    };
+    let ctx = test_ctx(temp.path(), lang_cfg);
 
     let res = surface.sync_config(&ctx, false);
     assert!(matches!(
@@ -576,14 +541,7 @@ mod tests {
       ignore_rules: None,
     });
 
-    let ctx = ExecutionContext {
-      root: Arc::new(temp.path().to_path_buf()),
-      paths: Arc::new(Vec::new()),
-      global_config: Arc::new(ResolvedGlobalConfig::default()),
-      lang_config: lang_cfg,
-      check_only: false,
-      candidate_files: None,
-    };
+    let ctx = test_ctx(temp.path(), lang_cfg);
 
     let res = surface.sync_config(&ctx, false);
     assert!(matches!(
@@ -680,14 +638,9 @@ mod tests {
     std::fs::write(&file, unformatted).unwrap();
 
     let surface = PythonSurface;
-    let ctx_check = ExecutionContext {
-      root: Arc::new(temp.path().to_path_buf()),
-      paths: Arc::new(Vec::new()),
-      global_config: Arc::new(ResolvedGlobalConfig::default()),
-      lang_config: ResolvedLangConfig::new("python"),
-      check_only: true,
-      candidate_files: None,
-    };
+    let mut ctx_check =
+      test_ctx(temp.path(), ResolvedLangConfig::new("python"));
+    ctx_check.check_only = true;
 
     let check_res = surface.format(&ctx_check);
     assert!(matches!(
@@ -695,14 +648,7 @@ mod tests {
       SurfaceStatus::ViolationsFound { .. }
     ));
 
-    let ctx_fix = ExecutionContext {
-      root: Arc::new(temp.path().to_path_buf()),
-      paths: Arc::new(Vec::new()),
-      global_config: Arc::new(ResolvedGlobalConfig::default()),
-      lang_config: ResolvedLangConfig::new("python"),
-      check_only: false,
-      candidate_files: None,
-    };
+    let ctx_fix = test_ctx(temp.path(), ResolvedLangConfig::new("python"));
 
     let fix_res = surface.format(&ctx_fix);
     assert!(matches!(fix_res.status, SurfaceStatus::Passed));
@@ -765,25 +711,12 @@ mod tests {
       target_version: Some("py311".to_string()),
       ignore_rules: Some(vec!["E501".to_string(), "SIM101".to_string()]),
     });
-    let ctx = ExecutionContext {
-      root: Arc::new(PathBuf::from(".")),
-      paths: Arc::new(Vec::new()),
-      global_config: Arc::new(ResolvedGlobalConfig::default()),
-      lang_config: lang_cfg,
-      check_only: false,
-      candidate_files: None,
-    };
+    let ctx = test_ctx(Path::new("."), lang_cfg);
     let cfg = RuffConfig::from_context(&ctx);
     assert_eq!(cfg.lint.ignore, vec!["E501", "SIM101"]);
 
-    let ctx_default = ExecutionContext {
-      root: Arc::new(PathBuf::from(".")),
-      paths: Arc::new(Vec::new()),
-      global_config: Arc::new(ResolvedGlobalConfig::default()),
-      lang_config: ResolvedLangConfig::new("python"),
-      check_only: false,
-      candidate_files: None,
-    };
+    let ctx_default =
+      test_ctx(Path::new("."), ResolvedLangConfig::new("python"));
     let cfg_default = RuffConfig::from_context(&ctx_default);
     assert!(cfg_default.lint.ignore.is_empty());
   }
@@ -799,14 +732,7 @@ mod tests {
     std::fs::write(temp.path().join("a.py"), "x=1\n").unwrap();
 
     let surface = PythonSurface;
-    let ctx = ExecutionContext {
-      root: Arc::new(temp.path().to_path_buf()),
-      paths: Arc::new(Vec::new()),
-      global_config: Arc::new(ResolvedGlobalConfig::default()),
-      lang_config: ResolvedLangConfig::new("python"),
-      check_only: false,
-      candidate_files: None,
-    };
+    let ctx = test_ctx(temp.path(), ResolvedLangConfig::new("python"));
 
     let _ = surface.format(&ctx);
     let _ = surface.lint(&ctx, false);
@@ -821,14 +747,8 @@ mod tests {
       end_of_line: "cr".to_string(),
       ..Default::default()
     };
-    let ctx = ExecutionContext {
-      root: Arc::new(PathBuf::from(".")),
-      paths: Arc::new(Vec::new()),
-      global_config: Arc::new(global),
-      lang_config: ResolvedLangConfig::new("python"),
-      check_only: false,
-      candidate_files: None,
-    };
+    let mut ctx = test_ctx(Path::new("."), ResolvedLangConfig::new("python"));
+    ctx.global_config = Arc::new(global);
     let cfg = RuffConfig::from_context(&ctx);
     assert_eq!(cfg.format.line_ending, "lf");
   }

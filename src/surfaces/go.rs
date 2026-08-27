@@ -4,10 +4,9 @@
 
 use super::{
   DeclaresFacets, ExecutionContext, Facet, FacetSupport, LanguageSurface,
-  NativeConfig, SurfaceResult, SurfaceStatus, ToolInfo, check_binary_exists,
-  create_tool_command, diff_check_via_tempcopy, find_files_with_ext,
-  render_native_config, run_tool_command, sync_native_config,
-  tool_missing_result,
+  NativeConfig, SurfaceResult, SurfaceStatus, ToolInfo, create_tool_command,
+  diff_check_via_tempcopy, find_files_with_ext, render_native_config,
+  run_tool_command, sync_native_config, tool_missing_guard,
 };
 use serde::{Deserialize, Serialize};
 use std::path::PathBuf;
@@ -246,31 +245,27 @@ impl LanguageSurface for GoSurface {
   fn format(&self, ctx: &ExecutionContext) -> SurfaceResult {
     let start = Instant::now();
 
-    if !check_binary_exists("gofmt") {
-      return tool_missing_result(
-        self.name(),
-        start,
-        "gofmt",
-        "Ships with the Go toolchain: install Go from https://go.dev/dl/",
-      );
+    if let Some(res) = tool_missing_guard(
+      self.name(),
+      "gofmt",
+      start,
+      Some("Ships with the Go toolchain: install Go from https://go.dev/dl/"),
+    ) {
+      return res;
     }
 
-    if !check_binary_exists("goimports") {
-      return tool_missing_result(
-        self.name(),
-        start,
-        "goimports",
-        "go install golang.org/x/tools/cmd/goimports@latest",
-      );
+    if let Some(res) = tool_missing_guard(
+      self.name(),
+      "goimports",
+      start,
+      Some("go install golang.org/x/tools/cmd/goimports@latest"),
+    ) {
+      return res;
     }
 
     let files = ctx.matched_files(GO_EXTENSIONS);
-    if files.is_empty() {
-      return SurfaceResult {
-        surface_name: self.name(),
-        status: SurfaceStatus::Passed,
-        duration: start.elapsed(),
-      };
+    if let Some(res) = ctx.early_out_if_empty(&files, self.name(), start) {
+      return res;
     }
 
     let local_prefix = ctx
@@ -300,7 +295,6 @@ impl LanguageSurface for GoSurface {
             goimports_cmd.arg("-local").arg(prefix);
           }
           goimports_cmd.arg(scratch);
-          goimports_cmd.args(&ctx.lang_config.extra_args);
           goimports_cmd.current_dir(ctx.root.as_path());
           goimports_cmd.output()
         },
@@ -403,32 +397,23 @@ impl LanguageSurface for GoSurface {
   fn lint(&self, ctx: &ExecutionContext, fix: bool) -> SurfaceResult {
     let start = Instant::now();
 
-    if !check_binary_exists("golangci-lint") {
-      return tool_missing_result(
-        self.name(),
-        start,
-        "golangci-lint",
+    if let Some(res) = tool_missing_guard(
+      self.name(),
+      "golangci-lint",
+      start,
+      Some(
         "brew install golangci-lint / go install github.com/golangci/golangci-lint/v2/cmd/golangci-lint@latest",
-      );
+      ),
+    ) {
+      return res;
     }
 
     let files = ctx.matched_files(GO_EXTENSIONS);
-    if files.is_empty() {
-      return SurfaceResult {
-        surface_name: self.name(),
-        status: SurfaceStatus::Passed,
-        duration: start.elapsed(),
-      };
+    if let Some(res) = ctx.early_out_if_empty(&files, self.name(), start) {
+      return res;
     }
 
-    let files_to_pass = if !ctx.paths.is_empty()
-      || !ctx.lang_config.files.is_empty()
-      || !ctx.lang_config.exclude.is_empty()
-    {
-      files
-    } else {
-      Vec::new()
-    };
+    let files_to_pass = ctx.files_to_pass(files);
 
     // Inline `--enable-only linter1,linter2,...` instead of relying on
     // `.golangci.yml` being present on disk — see
@@ -490,8 +475,8 @@ impl LanguageSurface for GoSurface {
 #[allow(missing_docs, clippy::missing_errors_doc, clippy::missing_panics_doc)]
 mod tests {
   use super::*;
-  use crate::config::{GoOptions, ResolvedGlobalConfig, ResolvedLangConfig};
-  use std::sync::Arc;
+  use crate::config::{GoOptions, ResolvedLangConfig};
+  use crate::surfaces::{check_binary_exists, test_ctx};
   use tempfile::TempDir;
 
   #[test]
@@ -625,14 +610,7 @@ mod tests {
   fn test_go_sync_config_default_linters() {
     let temp = TempDir::new().unwrap();
     let surface = GoSurface;
-    let ctx = ExecutionContext {
-      root: Arc::new(temp.path().to_path_buf()),
-      paths: Arc::new(Vec::new()),
-      global_config: Arc::new(ResolvedGlobalConfig::default()),
-      lang_config: ResolvedLangConfig::new("go"),
-      check_only: false,
-      candidate_files: None,
-    };
+    let ctx = test_ctx(temp.path(), ResolvedLangConfig::new("go"));
 
     let res = surface.sync_config(&ctx, false);
     assert!(matches!(
@@ -660,14 +638,7 @@ mod tests {
       linters: Some(vec!["revive".to_string(), "gocritic".to_string()]),
     });
 
-    let ctx = ExecutionContext {
-      root: Arc::new(temp.path().to_path_buf()),
-      paths: Arc::new(Vec::new()),
-      global_config: Arc::new(ResolvedGlobalConfig::default()),
-      lang_config: lang_cfg,
-      check_only: false,
-      candidate_files: None,
-    };
+    let ctx = test_ctx(temp.path(), lang_cfg);
 
     let res = surface.sync_config(&ctx, false);
     assert!(res.is_success());
@@ -690,14 +661,8 @@ mod tests {
     std::fs::write(&file, unformatted).unwrap();
 
     let surface = GoSurface;
-    let ctx_check = ExecutionContext {
-      root: Arc::new(temp.path().to_path_buf()),
-      paths: Arc::new(Vec::new()),
-      global_config: Arc::new(ResolvedGlobalConfig::default()),
-      lang_config: ResolvedLangConfig::new("go"),
-      check_only: true,
-      candidate_files: None,
-    };
+    let mut ctx_check = test_ctx(temp.path(), ResolvedLangConfig::new("go"));
+    ctx_check.check_only = true;
 
     let check_res = surface.format(&ctx_check);
     assert!(matches!(
@@ -705,14 +670,7 @@ mod tests {
       SurfaceStatus::ViolationsFound { .. }
     ));
 
-    let ctx_fix = ExecutionContext {
-      root: Arc::new(temp.path().to_path_buf()),
-      paths: Arc::new(Vec::new()),
-      global_config: Arc::new(ResolvedGlobalConfig::default()),
-      lang_config: ResolvedLangConfig::new("go"),
-      check_only: false,
-      candidate_files: None,
-    };
+    let ctx_fix = test_ctx(temp.path(), ResolvedLangConfig::new("go"));
 
     let fix_res = surface.format(&ctx_fix);
     assert!(matches!(fix_res.status, SurfaceStatus::Passed));
@@ -775,14 +733,7 @@ mod tests {
     .unwrap();
 
     let surface = GoSurface;
-    let ctx = ExecutionContext {
-      root: Arc::new(temp.path().to_path_buf()),
-      paths: Arc::new(Vec::new()),
-      global_config: Arc::new(ResolvedGlobalConfig::default()),
-      lang_config: ResolvedLangConfig::new("go"),
-      check_only: false,
-      candidate_files: None,
-    };
+    let ctx = test_ctx(temp.path(), ResolvedLangConfig::new("go"));
 
     let _ = surface.lint(&ctx, false);
 
@@ -820,14 +771,7 @@ mod tests {
       local_prefixes: None,
       linters: Some(vec!["errcheck".to_string()]),
     });
-    let ctx_errcheck = ExecutionContext {
-      root: Arc::new(temp.path().to_path_buf()),
-      paths: Arc::new(Vec::new()),
-      global_config: Arc::new(ResolvedGlobalConfig::default()),
-      lang_config: errcheck_cfg,
-      check_only: false,
-      candidate_files: None,
-    };
+    let ctx_errcheck = test_ctx(temp.path(), errcheck_cfg);
     let res_errcheck = surface.lint(&ctx_errcheck, false);
     assert!(matches!(
       res_errcheck.status,
@@ -839,14 +783,7 @@ mod tests {
       local_prefixes: None,
       linters: Some(vec!["govet".to_string()]),
     });
-    let ctx_govet = ExecutionContext {
-      root: Arc::new(temp.path().to_path_buf()),
-      paths: Arc::new(Vec::new()),
-      global_config: Arc::new(ResolvedGlobalConfig::default()),
-      lang_config: govet_cfg,
-      check_only: false,
-      candidate_files: None,
-    };
+    let ctx_govet = test_ctx(temp.path(), govet_cfg);
     let res_govet = surface.lint(&ctx_govet, false);
     assert!(matches!(res_govet.status, SurfaceStatus::Passed));
   }

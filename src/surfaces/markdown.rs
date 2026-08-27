@@ -5,79 +5,16 @@
 
 use super::{
   AUTO_GENERATED_JSON_COMMENT, DeclaresFacets, ExecutionContext, Facet,
-  FacetSupport, LanguageSurface, NativeConfig, SurfaceResult, SurfaceStatus,
-  ToolInfo, check_binary_exists, create_tool_command, diff_check_via_tempcopy,
-  find_files_with_ext, render_native_config, run_tool_command,
-  sync_native_config, tool_missing_result,
+  FacetSupport, LanguageSurface, NativeConfig, PrettierConfig, SurfaceResult,
+  SurfaceStatus, ToolInfo, build_prettier_inline_args, check_binary_exists,
+  create_tool_command, diff_check_via_tempcopy, find_files_with_ext,
+  render_native_config, run_tool_command, sync_native_config,
+  sync_prettier_config, tool_missing_guard,
 };
 use crate::config::ResolvedLangConfig;
 use serde::{Deserialize, Serialize};
 use std::path::{Path, PathBuf};
 use std::time::Instant;
-
-/// Native `.prettierrc.json` configuration representation for Markdown formatting.
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
-#[serde(rename_all = "camelCase")]
-pub struct PrettierConfig {
-  /// Warning comment field.
-  #[serde(rename = "$comment")]
-  pub comment: String,
-  /// Indentation tab width in spaces.
-  pub tab_width: usize,
-  /// Maximum print width limit.
-  pub print_width: usize,
-  /// Whether tab indentation is enabled.
-  pub use_tabs: bool,
-  /// End of line newline style.
-  pub end_of_line: String,
-  /// Prose wrapping strategy string.
-  pub prose_wrap: String,
-}
-
-impl NativeConfig for PrettierConfig {
-  const FILE_NAME: &'static str = ".prettierrc.json";
-
-  fn from_context(ctx: &ExecutionContext) -> Self {
-    let eol = match ctx.global_config.end_of_line.to_lowercase().as_str() {
-      "crlf" => "crlf",
-      "cr" => "cr",
-      _ => "lf",
-    };
-    let prose_wrap = ctx.lang_config.prose_wrap.as_deref().unwrap_or("always");
-
-    Self {
-      comment: AUTO_GENERATED_JSON_COMMENT.to_string(),
-      tab_width: ctx.lang_config.indent_size,
-      print_width: ctx.lang_config.line_length,
-      use_tabs: ctx.lang_config.use_tabs,
-      end_of_line: eol.to_string(),
-      prose_wrap: prose_wrap.to_string(),
-    }
-  }
-
-  fn render(&self) -> Result<String, crate::errors::FormalityError> {
-    render_native_config(self)
-  }
-}
-
-/// Renders the resolved [`PrettierConfig`] as the inline `--tab-width`/
-/// `--print-width`/etc. flags `prettier` accepts on the CLI, so `fml fmt`
-/// can apply formality.toml's settings without writing `.prettierrc.json`
-/// to disk (Fixes #151). Shared by the Markdown, YAML, and JSON surfaces,
-/// which all format via prettier. Only `fml sync` writes that file now.
-#[must_use]
-pub fn build_prettier_inline_args(cfg: &PrettierConfig) -> Vec<String> {
-  let mut args = vec![
-    format!("--tab-width={}", cfg.tab_width),
-    format!("--print-width={}", cfg.print_width),
-    format!("--end-of-line={}", cfg.end_of_line),
-    format!("--prose-wrap={}", cfg.prose_wrap),
-  ];
-  if cfg.use_tabs {
-    args.push("--use-tabs".to_string());
-  }
-  args
-}
 
 /// Comment field container for markdownlint config.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
@@ -302,22 +239,18 @@ impl LanguageSurface for MarkdownSurface {
   fn format(&self, ctx: &ExecutionContext) -> SurfaceResult {
     let start = Instant::now();
 
-    if !check_binary_exists("prettier") {
-      return tool_missing_result(
-        self.name(),
-        start,
-        "prettier",
-        "npm install -g prettier",
-      );
+    if let Some(res) = tool_missing_guard(
+      self.name(),
+      "prettier",
+      start,
+      Some("npm install -g prettier"),
+    ) {
+      return res;
     }
 
     let files = ctx.matched_files(MD_EXTENSIONS);
-    if files.is_empty() {
-      return SurfaceResult {
-        surface_name: self.name(),
-        status: SurfaceStatus::Passed,
-        duration: start.elapsed(),
-      };
+    if let Some(res) = ctx.early_out_if_empty(&files, self.name(), start) {
+      return res;
     }
 
     let md_binary = if check_binary_exists("markdownlint-cli2") {
@@ -422,21 +355,18 @@ impl LanguageSurface for MarkdownSurface {
     } else if check_binary_exists("markdownlint") {
       "markdownlint"
     } else {
-      return tool_missing_result(
+      return tool_missing_guard(
         self.name(),
-        start,
         "markdownlint-cli2",
-        "npm install -g markdownlint-cli2",
-      );
+        start,
+        Some("npm install -g markdownlint-cli2"),
+      )
+      .unwrap();
     };
 
     let files = ctx.matched_files(MD_EXTENSIONS);
-    if files.is_empty() {
-      return SurfaceResult {
-        surface_name: self.name(),
-        status: SurfaceStatus::Passed,
-        duration: start.elapsed(),
-      };
+    if let Some(res) = ctx.early_out_if_empty(&files, self.name(), start) {
+      return res;
     }
 
     // See `write_markdownlint_temp_config`: markdownlint-cli2 only accepts
@@ -492,23 +422,12 @@ impl LanguageSurface for MarkdownSurface {
   }
 }
 
-/// Synchronizes `.prettierrc.json` native configuration for Markdown and JSON surfaces.
-#[must_use]
-pub fn sync_prettier_config(
-  ctx: &ExecutionContext,
-  check: bool,
-  start: Instant,
-  surface_name: &'static str,
-) -> SurfaceResult {
-  sync_native_config::<PrettierConfig>(ctx, check, start, surface_name)
-}
-
 #[cfg(test)]
 #[allow(missing_docs, clippy::missing_errors_doc, clippy::missing_panics_doc)]
 mod tests {
   use super::*;
-  use crate::config::{ResolvedGlobalConfig, ResolvedLangConfig};
-  use std::sync::Arc;
+  use crate::config::ResolvedLangConfig;
+  use crate::surfaces::test_ctx;
   use tempfile::TempDir;
 
   #[test]
@@ -671,14 +590,7 @@ mod tests {
     assert!(!temp.path().join(".markdownlint.json").exists());
 
     let surface = MarkdownSurface;
-    let ctx = ExecutionContext {
-      root: Arc::new(temp.path().to_path_buf()),
-      paths: Arc::new(Vec::new()),
-      global_config: Arc::new(ResolvedGlobalConfig::default()),
-      lang_config: ResolvedLangConfig::new("markdown"),
-      check_only: false,
-      candidate_files: None,
-    };
+    let ctx = test_ctx(temp.path(), ResolvedLangConfig::new("markdown"));
 
     let res = surface.lint(&ctx, false);
     assert!(
@@ -714,14 +626,7 @@ mod tests {
     lang_cfg.line_length = 100;
     lang_cfg.indent_size = 2;
 
-    let ctx = ExecutionContext {
-      root: Arc::new(temp.path().to_path_buf()),
-      paths: Arc::new(Vec::new()),
-      global_config: Arc::new(ResolvedGlobalConfig::default()),
-      lang_config: lang_cfg,
-      check_only: false,
-      candidate_files: None,
-    };
+    let ctx = test_ctx(temp.path(), lang_cfg);
 
     let res = surface.sync_config(&ctx, false);
     assert!(matches!(
@@ -771,14 +676,7 @@ mod tests {
     std::fs::write(temp.path().join("a.md"), "# hi\n").unwrap();
 
     let surface = MarkdownSurface;
-    let ctx = ExecutionContext {
-      root: Arc::new(temp.path().to_path_buf()),
-      paths: Arc::new(Vec::new()),
-      global_config: Arc::new(ResolvedGlobalConfig::default()),
-      lang_config: ResolvedLangConfig::new("markdown"),
-      check_only: false,
-      candidate_files: None,
-    };
+    let ctx = test_ctx(temp.path(), ResolvedLangConfig::new("markdown"));
 
     let _ = surface.format(&ctx);
 

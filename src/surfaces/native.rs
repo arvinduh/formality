@@ -146,9 +146,9 @@ pub fn sync_native_config<C: NativeConfig>(
 #[allow(missing_docs, clippy::missing_errors_doc, clippy::missing_panics_doc)]
 mod tests {
   use super::*;
-  use crate::config::{ResolvedGlobalConfig, ResolvedLangConfig};
+  use crate::config::ResolvedLangConfig;
+  use crate::surfaces::test_ctx;
   use serde::{Deserialize, Serialize};
-  use std::sync::Arc;
   use tempfile::TempDir;
 
   #[derive(Debug, Serialize, Deserialize, PartialEq, Eq)]
@@ -314,14 +314,7 @@ mod tests {
     lang_config.indent_size = 4;
     lang_config.use_tabs = false;
 
-    let ctx = ExecutionContext {
-      root: Arc::new(temp.path().to_path_buf()),
-      paths: Arc::new(Vec::new()),
-      global_config: Arc::new(ResolvedGlobalConfig::default()),
-      lang_config,
-      check_only: false,
-      candidate_files: None,
-    };
+    let ctx = test_ctx(temp.path(), lang_config);
 
     let start = Instant::now();
     let res =
