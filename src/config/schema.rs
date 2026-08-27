@@ -37,7 +37,7 @@ impl std::fmt::Display for SchemaVersion {
 
 /// The current `s{major}.{minor}` schema version this build of `fml`
 /// expects a project's `#:schema` directive to reference.
-pub const SCHEMA_VERSION: SchemaVersion = SchemaVersion { major: 1, minor: 0 };
+pub const SCHEMA_VERSION: SchemaVersion = SchemaVersion { major: 1, minor: 1 };
 const SCHEMA_CHECK_INTERVAL_SECS: u64 = 24 * 60 * 60; // 24 hours
 
 /// A config file's schema version status relative to [`SCHEMA_VERSION`].
@@ -267,7 +267,7 @@ mod tests {
 
   #[test]
   fn test_schema_version_constant() {
-    assert_eq!(SCHEMA_VERSION, SchemaVersion { major: 1, minor: 0 });
+    assert_eq!(SCHEMA_VERSION, SchemaVersion { major: 1, minor: 1 });
   }
 
   #[test]
@@ -324,11 +324,11 @@ mod tests {
       }
     );
 
-    let current_content = "#:schema https://github.com/arvinduh/formality/releases/download/s1.0/formality.schema.json\n[global]\n";
+    let current_content = "#:schema https://github.com/arvinduh/formality/releases/download/s1.1/formality.schema.json\n[global]\n";
     assert_eq!(
       check_schema_version_content(current_content),
       SchemaStatus::UpToDate {
-        version: SchemaVersion { major: 1, minor: 0 }
+        version: SchemaVersion { major: 1, minor: 1 }
       }
     );
 

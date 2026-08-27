@@ -442,10 +442,6 @@
         "edition": {
           "description": "Rust edition (e.g. `\"2021\"`).",
           "type": ["string", "null"]
-        },
-        "version": {
-          "description": "Rustfmt version.",
-          "type": ["string", "null"]
         }
       }
     },
