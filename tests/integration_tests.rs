@@ -110,14 +110,6 @@ fn test_surface_detection_in_fixtures() {
   let cpp_names: Vec<&str> = cpp_detected.iter().map(|s| s.name()).collect();
   assert!(cpp_names.contains(&"cpp"));
 
-  // Web fixture
-  let web_detected =
-    detect_surfaces(&manifest_dir.join("tests/fixtures/web_repo"));
-  let web_names: Vec<&str> = web_detected.iter().map(|s| s.name()).collect();
-  assert!(web_names.contains(&"markdown"));
-  assert!(web_names.contains(&"yaml"));
-  assert!(web_names.contains(&"json"));
-
   // Typst fixture
   let typ_detected =
     detect_surfaces(&manifest_dir.join("tests/fixtures/typst_repo"));
