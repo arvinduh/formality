@@ -5,7 +5,8 @@ use super::{
   DeclaresFacets, ExecutionContext, Facet, FacetSupport, LanguageSurface,
   NativeConfig, SurfaceResult, SurfaceStatus, ToolInfo, check_binary_exists,
   create_tool_command, find_files_with_ext, render_native_config,
-  run_tool_command, sync_native_config, tool_missing_result,
+  run_tool_command, sync_native_config, tool_missing_guard,
+  tool_missing_result,
 };
 use serde::{Deserialize, Serialize};
 use std::path::{Path, PathBuf};
@@ -226,12 +227,8 @@ impl LanguageSurface for RustSurface {
     }
 
     let files = ctx.matched_files(&["rs"]);
-    if files.is_empty() {
-      return SurfaceResult {
-        surface_name: self.name(),
-        status: SurfaceStatus::Passed,
-        duration: start.elapsed(),
-      };
+    if let Some(res) = ctx.early_out_if_empty(&files, self.name(), start) {
+      return res;
     }
 
     let edition = if let Ok(manifest) =
@@ -299,13 +296,13 @@ impl LanguageSurface for RustSurface {
   fn lint(&self, ctx: &ExecutionContext, fix: bool) -> SurfaceResult {
     let start = Instant::now();
 
-    if !check_binary_exists("cargo") {
-      return tool_missing_result(
-        self.name(),
-        start,
-        "cargo",
-        "Install Rust via https://rustup.rs",
-      );
+    if let Some(res) = tool_missing_guard(
+      self.name(),
+      "cargo",
+      start,
+      Some("Install Rust via https://rustup.rs"),
+    ) {
+      return res;
     }
 
     // clippy requires a Cargo manifest to build against; without one, cargo
@@ -350,29 +347,16 @@ impl LanguageSurface for RustSurface {
 #[allow(missing_docs, clippy::missing_errors_doc, clippy::missing_panics_doc)]
 mod tests {
   use super::*;
-  use crate::config::{ResolvedGlobalConfig, ResolvedLangConfig};
-  use std::sync::Arc;
+  use crate::config::ResolvedLangConfig;
+  use crate::surfaces::test_ctx;
   use tempfile::TempDir;
-
-  fn dummy_execution_context(
-    root: &Path,
-    check_only: bool,
-  ) -> ExecutionContext {
-    ExecutionContext {
-      root: Arc::new(root.to_path_buf()),
-      paths: Arc::new(vec![]),
-      global_config: Arc::new(ResolvedGlobalConfig::default()),
-      lang_config: ResolvedLangConfig::new("rust"),
-      check_only,
-    }
-  }
 
   #[test]
   fn test_lint_without_cargo_toml_is_execution_error_not_violation() {
     let temp = TempDir::new().unwrap();
     // No Cargo.toml written — mirrors a bare `.rs` file with no crate manifest.
     let surface = RustSurface;
-    let ctx = dummy_execution_context(temp.path(), false);
+    let ctx = test_ctx(temp.path(), ResolvedLangConfig::new("rust"));
 
     let res = surface.lint(&ctx, false);
     match res.status {
@@ -422,7 +406,7 @@ mod tests {
   fn test_sync_config_generates_edition_2024() {
     let temp = TempDir::new().unwrap();
     let surface = RustSurface;
-    let ctx = dummy_execution_context(temp.path(), false);
+    let ctx = test_ctx(temp.path(), ResolvedLangConfig::new("rust"));
 
     let res = surface.sync_config(&ctx, false);
     assert!(matches!(
@@ -441,7 +425,8 @@ mod tests {
     assert!(content.contains("reorder_imports = true"));
 
     // Check mode should pass when file is up-to-date
-    let check_ctx = dummy_execution_context(temp.path(), true);
+    let mut check_ctx = test_ctx(temp.path(), ResolvedLangConfig::new("rust"));
+    check_ctx.check_only = true;
     let check_res = surface.sync_config(&check_ctx, true);
     assert!(matches!(check_res.status, SurfaceStatus::Passed));
   }
@@ -554,7 +539,7 @@ mod tests {
     std::fs::write(src.join("main.rs"), "fn main(){let x=1;}\n").unwrap();
 
     let surface = RustSurface;
-    let ctx = dummy_execution_context(temp.path(), false);
+    let ctx = test_ctx(temp.path(), ResolvedLangConfig::new("rust"));
     let _ = surface.format(&ctx);
 
     assert!(
@@ -566,7 +551,7 @@ mod tests {
   fn test_rust_fallback_edition_without_cargo_toml() {
     let temp = TempDir::new().unwrap();
     // Without Cargo.toml and without explicit edition in config -> defaults to 2021
-    let ctx = dummy_execution_context(temp.path(), false);
+    let ctx = test_ctx(temp.path(), ResolvedLangConfig::new("rust"));
     let edition = ctx
       .lang_config
       .rust
@@ -576,7 +561,8 @@ mod tests {
     assert_eq!(edition, "2021");
 
     // With explicit edition in config -> resolves to configured edition
-    let mut ctx_configured = dummy_execution_context(temp.path(), false);
+    let mut ctx_configured =
+      test_ctx(temp.path(), ResolvedLangConfig::new("rust"));
     ctx_configured.lang_config.rust = Some(crate::config::RustOptions {
       edition: Some("2018".to_string()),
     });
@@ -601,7 +587,7 @@ mod tests {
     std::fs::write(&file, unformatted).unwrap();
 
     let surface = RustSurface;
-    let ctx_fix = dummy_execution_context(temp.path(), false);
+    let ctx_fix = test_ctx(temp.path(), ResolvedLangConfig::new("rust"));
     let fix_res = surface.format(&ctx_fix);
     assert!(matches!(fix_res.status, SurfaceStatus::Passed));
 

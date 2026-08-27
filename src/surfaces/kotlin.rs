@@ -4,9 +4,9 @@
 
 use super::{
   DeclaresFacets, ExecutionContext, Facet, FacetSupport, LanguageSurface,
-  SurfaceResult, SurfaceStatus, ToolInfo, check_binary_exists,
-  create_tool_command, diff_check_via_tempcopy, find_files_with_ext,
-  run_tool_command, tool_missing_result,
+  SurfaceResult, SurfaceStatus, ToolInfo, create_tool_command,
+  diff_check_via_tempcopy, find_files_with_ext, run_tool_command,
+  tool_missing_guard,
 };
 use std::path::Path;
 use std::time::Instant;
@@ -131,14 +131,14 @@ impl LanguageSurface for KotlinSurface {
     Box::new(*self)
   }
 
-  fn supports_lint_fix(&self) -> bool {
-    true
-  }
-
   fn detect(&self, root: &Path) -> bool {
     root.join("build.gradle.kts").is_file()
       || root.join("settings.gradle.kts").is_file()
       || !find_files_with_ext(root, KOTLIN_EXTENSIONS, &[], &[], &[]).is_empty()
+  }
+
+  fn supports_lint_fix(&self) -> bool {
+    true
   }
 
   fn tool_info(
@@ -157,22 +157,18 @@ impl LanguageSurface for KotlinSurface {
   fn format(&self, ctx: &ExecutionContext) -> SurfaceResult {
     let start = Instant::now();
 
-    if !check_binary_exists("ktlint") {
-      return tool_missing_result(
-        self.name(),
-        start,
-        "ktlint",
-        "brew install ktlint",
-      );
+    if let Some(res) = tool_missing_guard(
+      self.name(),
+      "ktlint",
+      start,
+      Some("brew install ktlint"),
+    ) {
+      return res;
     }
 
     let files = ctx.matched_files(KOTLIN_EXTENSIONS);
-    if files.is_empty() {
-      return SurfaceResult {
-        surface_name: self.name(),
-        status: SurfaceStatus::Passed,
-        duration: start.elapsed(),
-      };
+    if let Some(res) = ctx.early_out_if_empty(&files, self.name(), start) {
+      return res;
     }
 
     if ctx.check_only {
@@ -190,14 +186,7 @@ impl LanguageSurface for KotlinSurface {
       );
     }
 
-    let files_to_pass = if !ctx.paths.is_empty()
-      || !ctx.lang_config.files.is_empty()
-      || !ctx.lang_config.exclude.is_empty()
-    {
-      files
-    } else {
-      Vec::new()
-    };
+    let files_to_pass = ctx.files_to_pass(files);
 
     let mut cmd = create_tool_command("ktlint");
     cmd.args(build_ktlint_format_args(
@@ -212,32 +201,21 @@ impl LanguageSurface for KotlinSurface {
   fn lint(&self, ctx: &ExecutionContext, fix: bool) -> SurfaceResult {
     let start = Instant::now();
 
-    if !check_binary_exists("ktlint") {
-      return tool_missing_result(
-        self.name(),
-        start,
-        "ktlint",
-        "brew install ktlint",
-      );
+    if let Some(res) = tool_missing_guard(
+      self.name(),
+      "ktlint",
+      start,
+      Some("brew install ktlint"),
+    ) {
+      return res;
     }
 
     let files = ctx.matched_files(KOTLIN_EXTENSIONS);
-    if files.is_empty() {
-      return SurfaceResult {
-        surface_name: self.name(),
-        status: SurfaceStatus::Passed,
-        duration: start.elapsed(),
-      };
+    if let Some(res) = ctx.early_out_if_empty(&files, self.name(), start) {
+      return res;
     }
 
-    let files_to_pass = if !ctx.paths.is_empty()
-      || !ctx.lang_config.files.is_empty()
-      || !ctx.lang_config.exclude.is_empty()
-    {
-      files
-    } else {
-      Vec::new()
-    };
+    let files_to_pass = ctx.files_to_pass(files);
 
     let mut cmd = create_tool_command("ktlint");
     cmd.args(build_ktlint_lint_args(
@@ -272,9 +250,9 @@ impl LanguageSurface for KotlinSurface {
 #[allow(missing_docs, clippy::missing_errors_doc, clippy::missing_panics_doc)]
 mod tests {
   use super::*;
-  use crate::config::{ResolvedGlobalConfig, ResolvedLangConfig};
+  use crate::config::ResolvedLangConfig;
+  use crate::surfaces::{check_binary_exists, test_ctx};
   use std::path::PathBuf;
-  use std::sync::Arc;
   use tempfile::TempDir;
 
   #[test]
@@ -414,13 +392,7 @@ mod tests {
     // tool is actually installed; otherwise it should report ToolMissing.
     let temp = TempDir::new().unwrap();
     let surface = KotlinSurface;
-    let ctx = ExecutionContext {
-      root: Arc::new(temp.path().to_path_buf()),
-      paths: Arc::new(Vec::new()),
-      global_config: Arc::new(ResolvedGlobalConfig::default()),
-      lang_config: ResolvedLangConfig::new("kotlin"),
-      check_only: false,
-    };
+    let ctx = test_ctx(temp.path(), ResolvedLangConfig::new("kotlin"));
 
     let fmt_res = surface.format(&ctx);
     let lint_res = surface.lint(&ctx, false);
@@ -437,13 +409,7 @@ mod tests {
   fn test_kotlin_sync_config_is_noop() {
     let temp = TempDir::new().unwrap();
     let surface = KotlinSurface;
-    let ctx = ExecutionContext {
-      root: Arc::new(temp.path().to_path_buf()),
-      paths: Arc::new(Vec::new()),
-      global_config: Arc::new(ResolvedGlobalConfig::default()),
-      lang_config: ResolvedLangConfig::new("kotlin"),
-      check_only: false,
-    };
+    let ctx = test_ctx(temp.path(), ResolvedLangConfig::new("kotlin"));
 
     let res = surface.sync_config(&ctx, false);
     assert!(matches!(res.status, SurfaceStatus::Passed));
@@ -466,26 +432,16 @@ mod tests {
     std::fs::write(&file, unformatted).unwrap();
 
     let surface = KotlinSurface;
-    let ctx_check = ExecutionContext {
-      root: Arc::new(temp.path().to_path_buf()),
-      paths: Arc::new(Vec::new()),
-      global_config: Arc::new(ResolvedGlobalConfig::default()),
-      lang_config: ResolvedLangConfig::new("kotlin"),
-      check_only: true,
-    };
+    let mut ctx_check =
+      test_ctx(temp.path(), ResolvedLangConfig::new("kotlin"));
+    ctx_check.check_only = true;
     let check_res = surface.format(&ctx_check);
     assert!(matches!(
       check_res.status,
       SurfaceStatus::ViolationsFound { .. }
     ));
 
-    let ctx_fix = ExecutionContext {
-      root: Arc::new(temp.path().to_path_buf()),
-      paths: Arc::new(Vec::new()),
-      global_config: Arc::new(ResolvedGlobalConfig::default()),
-      lang_config: ResolvedLangConfig::new("kotlin"),
-      check_only: false,
-    };
+    let ctx_fix = test_ctx(temp.path(), ResolvedLangConfig::new("kotlin"));
     let fix_res = surface.format(&ctx_fix);
     assert!(matches!(fix_res.status, SurfaceStatus::Passed));
 

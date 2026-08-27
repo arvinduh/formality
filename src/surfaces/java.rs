@@ -4,9 +4,9 @@
 
 use super::{
   DeclaresFacets, ExecutionContext, Facet, FacetSupport, LanguageSurface,
-  NativeConfig, SurfaceResult, SurfaceStatus, ToolInfo, check_binary_exists,
-  create_tool_command, diff_check_via_tempcopy, find_files_with_ext,
-  run_tool_command, sync_native_config, tool_missing_result,
+  NativeConfig, SurfaceResult, SurfaceStatus, ToolInfo, create_tool_command,
+  diff_check_via_tempcopy, find_files_with_ext, lint_fix_unsupported,
+  run_tool_command, sync_native_config, tool_missing_guard,
 };
 use std::path::Path;
 use std::time::Instant;
@@ -212,22 +212,20 @@ impl LanguageSurface for JavaSurface {
   fn format(&self, ctx: &ExecutionContext) -> SurfaceResult {
     let start = Instant::now();
 
-    if !check_binary_exists("google-java-format") {
-      return tool_missing_result(
-        self.name(),
-        start,
-        "google-java-format",
+    if let Some(res) = tool_missing_guard(
+      self.name(),
+      "google-java-format",
+      start,
+      Some(
         "brew install google-java-format / download the all-deps jar from https://github.com/google/google-java-format/releases",
-      );
+      ),
+    ) {
+      return res;
     }
 
     let files = ctx.matched_files(JAVA_EXTENSIONS);
-    if files.is_empty() {
-      return SurfaceResult {
-        surface_name: self.name(),
-        status: SurfaceStatus::Passed,
-        duration: start.elapsed(),
-      };
+    if let Some(res) = ctx.early_out_if_empty(&files, self.name(), start) {
+      return res;
     }
 
     let aosp = is_aosp_style(ctx);
@@ -274,32 +272,21 @@ impl LanguageSurface for JavaSurface {
     let start = Instant::now();
 
     if fix {
-      return SurfaceResult {
-        surface_name: self.name(),
-        status: SurfaceStatus::Skipped {
-          reason: "Tool does not support autofix; run fml fmt instead"
-            .to_string(),
-        },
-        duration: start.elapsed(),
-      };
+      return lint_fix_unsupported(self.name(), start);
     }
 
-    if !check_binary_exists("checkstyle") {
-      return tool_missing_result(
-        self.name(),
-        start,
-        "checkstyle",
-        "brew install checkstyle / download from https://checkstyle.org",
-      );
+    if let Some(res) = tool_missing_guard(
+      self.name(),
+      "checkstyle",
+      start,
+      Some("brew install checkstyle / download from https://checkstyle.org"),
+    ) {
+      return res;
     }
 
     let files = ctx.matched_files(JAVA_EXTENSIONS);
-    if files.is_empty() {
-      return SurfaceResult {
-        surface_name: self.name(),
-        status: SurfaceStatus::Passed,
-        duration: start.elapsed(),
-      };
+    if let Some(res) = ctx.early_out_if_empty(&files, self.name(), start) {
+      return res;
     }
 
     // Checkstyle requires an explicit `-c` config. If `fml sync` hasn't been
@@ -441,7 +428,8 @@ impl LanguageSurface for JavaSurface {
 #[allow(missing_docs, clippy::missing_errors_doc, clippy::missing_panics_doc)]
 mod tests {
   use super::*;
-  use crate::config::{ResolvedGlobalConfig, ResolvedLangConfig};
+  use crate::config::ResolvedLangConfig;
+  use crate::surfaces::{check_binary_exists, test_ctx};
   use std::sync::Arc;
   use tempfile::TempDir;
 
@@ -547,13 +535,7 @@ mod tests {
     let lang_cfg = cfg.resolve_for_lang("java");
     assert_eq!(lang_cfg.indent_size, 4);
 
-    let ctx = ExecutionContext {
-      root: Arc::new(temp.path().to_path_buf()),
-      paths: Arc::new(Vec::new()),
-      global_config: Arc::new(ResolvedGlobalConfig::default()),
-      lang_config: lang_cfg,
-      check_only: false,
-    };
+    let ctx = test_ctx(temp.path(), lang_cfg);
 
     let checkstyle_cfg = CheckstyleConfig::from_context(&ctx);
     assert_eq!(checkstyle_cfg.indent_size, 4);
@@ -579,13 +561,8 @@ mod tests {
     let lang_cfg = cfg.resolve_for_lang("java");
 
     let temp = TempDir::new().unwrap();
-    let ctx = ExecutionContext {
-      root: Arc::new(temp.path().to_path_buf()),
-      paths: Arc::new(Vec::new()),
-      global_config: Arc::new(cfg.resolve_global()),
-      lang_config: lang_cfg,
-      check_only: false,
-    };
+    let mut ctx = test_ctx(temp.path(), lang_cfg);
+    ctx.global_config = Arc::new(cfg.resolve_global());
 
     let checkstyle_indent = CheckstyleConfig::from_context(&ctx).indent_size;
 
@@ -617,13 +594,7 @@ mod tests {
     let temp = TempDir::new().unwrap();
     let root = temp.path().to_path_buf();
 
-    let ctx = ExecutionContext {
-      root: Arc::new(root.clone()),
-      paths: Arc::new(Vec::new()),
-      global_config: Arc::new(ResolvedGlobalConfig::default()),
-      lang_config: ResolvedLangConfig::new("java"),
-      check_only: false,
-    };
+    let ctx = test_ctx(&root, ResolvedLangConfig::new("java"));
 
     let surface = JavaSurface;
     let res = surface.sync_config(&ctx, false);
@@ -643,13 +614,7 @@ mod tests {
   #[test]
   fn test_is_aosp_style_default_false() {
     let temp = TempDir::new().unwrap();
-    let ctx = ExecutionContext {
-      root: Arc::new(temp.path().to_path_buf()),
-      paths: Arc::new(Vec::new()),
-      global_config: Arc::new(ResolvedGlobalConfig::default()),
-      lang_config: ResolvedLangConfig::new("java"),
-      check_only: false,
-    };
+    let ctx = test_ctx(temp.path(), ResolvedLangConfig::new("java"));
     assert!(!is_aosp_style(&ctx));
   }
 
@@ -661,13 +626,7 @@ mod tests {
     let temp = TempDir::new().unwrap();
     std::fs::write(temp.path().join("Main.java"), "class Main {}\n").unwrap();
 
-    let ctx = ExecutionContext {
-      root: Arc::new(temp.path().to_path_buf()),
-      paths: Arc::new(Vec::new()),
-      global_config: Arc::new(ResolvedGlobalConfig::default()),
-      lang_config: ResolvedLangConfig::new("java"),
-      check_only: false,
-    };
+    let ctx = test_ctx(temp.path(), ResolvedLangConfig::new("java"));
 
     let surface = JavaSurface;
     let res = surface.lint(&ctx, false);
@@ -682,13 +641,7 @@ mod tests {
     let temp = TempDir::new().unwrap();
     std::fs::write(temp.path().join("Main.java"), "class Main {}\n").unwrap();
 
-    let ctx = ExecutionContext {
-      root: Arc::new(temp.path().to_path_buf()),
-      paths: Arc::new(Vec::new()),
-      global_config: Arc::new(ResolvedGlobalConfig::default()),
-      lang_config: ResolvedLangConfig::new("java"),
-      check_only: false,
-    };
+    let ctx = test_ctx(temp.path(), ResolvedLangConfig::new("java"));
 
     let surface = JavaSurface;
     let res = surface.format(&ctx);
@@ -701,13 +654,7 @@ mod tests {
     let main_java = temp.path().join("Main.java");
     std::fs::write(&main_java, "class Main {}\n").unwrap();
 
-    let ctx = ExecutionContext {
-      root: Arc::new(temp.path().to_path_buf()),
-      paths: Arc::new(Vec::new()),
-      global_config: Arc::new(ResolvedGlobalConfig::default()),
-      lang_config: ResolvedLangConfig::new("java"),
-      check_only: false,
-    };
+    let ctx = test_ctx(temp.path(), ResolvedLangConfig::new("java"));
 
     let surface = JavaSurface;
     let _ = surface.lint(&ctx, false);

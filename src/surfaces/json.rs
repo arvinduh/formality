@@ -3,12 +3,10 @@
 
 use super::{
   DeclaresFacets, ExecutionContext, Facet, FacetSupport, LanguageSurface,
-  NativeConfig, SurfaceResult, SurfaceStatus, ToolInfo, check_binary_exists,
-  create_tool_command, diff_check_via_tempcopy, find_files_with_ext,
-  markdown::{
-    PrettierConfig, build_prettier_inline_args, sync_prettier_config,
-  },
-  run_tool_command, tool_missing_result,
+  NativeConfig, PrettierConfig, SurfaceResult, ToolInfo,
+  build_prettier_inline_args, create_tool_command, diff_check_via_tempcopy,
+  find_files_with_ext, lint_fix_unsupported, run_tool_command,
+  sync_prettier_config, tool_missing_guard,
 };
 use std::path::{Path, PathBuf};
 use std::time::Instant;
@@ -71,13 +69,13 @@ impl LanguageSurface for JsonSurface {
   fn format(&self, ctx: &ExecutionContext) -> SurfaceResult {
     let start = Instant::now();
 
-    if !check_binary_exists("prettier") {
-      return tool_missing_result(
-        self.name(),
-        start,
-        "prettier",
-        "npm install -g prettier",
-      );
+    if let Some(res) = tool_missing_guard(
+      self.name(),
+      "prettier",
+      start,
+      Some("npm install -g prettier"),
+    ) {
+      return res;
     }
 
     let files: Vec<PathBuf> = ctx
@@ -88,12 +86,8 @@ impl LanguageSurface for JsonSurface {
         fname != "package-lock.json" && fname != "npm-shrinkwrap.json"
       })
       .collect();
-    if files.is_empty() {
-      return SurfaceResult {
-        surface_name: self.name(),
-        status: SurfaceStatus::Passed,
-        duration: start.elapsed(),
-      };
+    if let Some(res) = ctx.early_out_if_empty(&files, self.name(), start) {
+      return res;
     }
 
     // Inline `--tab-width`/`--print-width`/etc. instead of writing
@@ -145,14 +139,7 @@ impl LanguageSurface for JsonSurface {
     let start = Instant::now();
 
     if fix {
-      return SurfaceResult {
-        surface_name: self.name(),
-        status: SurfaceStatus::Skipped {
-          reason: "Tool does not support autofix; run fml fmt instead"
-            .to_string(),
-        },
-        duration: start.elapsed(),
-      };
+      return lint_fix_unsupported(self.name(), start);
     }
 
     // Prettier format checking can serve as JSON syntax linting
@@ -179,22 +166,9 @@ impl LanguageSurface for JsonSurface {
 #[allow(missing_docs, clippy::missing_errors_doc, clippy::missing_panics_doc)]
 mod tests {
   use super::*;
-  use crate::config::{ResolvedGlobalConfig, ResolvedLangConfig};
-  use std::sync::Arc;
+  use crate::config::ResolvedLangConfig;
+  use crate::surfaces::{SurfaceStatus, check_binary_exists, test_ctx};
   use tempfile::TempDir;
-
-  fn ctx_for(
-    temp: &TempDir,
-    lang_config: ResolvedLangConfig,
-  ) -> ExecutionContext {
-    ExecutionContext {
-      root: Arc::new(temp.path().to_path_buf()),
-      paths: Arc::new(Vec::new()),
-      global_config: Arc::new(ResolvedGlobalConfig::default()),
-      lang_config,
-      check_only: false,
-    }
-  }
 
   #[test]
   fn test_json_surface_identity() {
@@ -240,7 +214,7 @@ mod tests {
     // prettier is installed.
     let temp = TempDir::new().unwrap();
     let surface = JsonSurface;
-    let ctx = ctx_for(&temp, ResolvedLangConfig::new("json"));
+    let ctx = test_ctx(temp.path(), ResolvedLangConfig::new("json"));
 
     let res = surface.format(&ctx);
     if check_binary_exists("prettier") {
@@ -264,7 +238,7 @@ mod tests {
     std::fs::write(temp.path().join("npm-shrinkwrap.json"), "{}").unwrap();
 
     let surface = JsonSurface;
-    let ctx = ctx_for(&temp, ResolvedLangConfig::new("json"));
+    let ctx = test_ctx(temp.path(), ResolvedLangConfig::new("json"));
     let res = surface.format(&ctx);
     if check_binary_exists("prettier") {
       assert!(matches!(res.status, SurfaceStatus::Passed));
@@ -279,7 +253,7 @@ mod tests {
     // a no-op Skipped rather than silently doing nothing or erroring.
     let temp = TempDir::new().unwrap();
     let surface = JsonSurface;
-    let ctx = ctx_for(&temp, ResolvedLangConfig::new("json"));
+    let ctx = test_ctx(temp.path(), ResolvedLangConfig::new("json"));
     let res = surface.lint(&ctx, true);
     assert!(matches!(res.status, SurfaceStatus::Skipped { .. }));
   }
@@ -291,7 +265,7 @@ mod tests {
     // format() in check mode rather than diverging.
     let temp = TempDir::new().unwrap();
     let surface = JsonSurface;
-    let ctx = ctx_for(&temp, ResolvedLangConfig::new("json"));
+    let ctx = test_ctx(temp.path(), ResolvedLangConfig::new("json"));
     let res = surface.lint(&ctx, false);
     if check_binary_exists("prettier") {
       assert!(matches!(res.status, SurfaceStatus::Passed));
@@ -304,7 +278,7 @@ mod tests {
   fn test_json_sync_config_delegates_to_prettier() {
     let temp = TempDir::new().unwrap();
     let surface = JsonSurface;
-    let ctx = ctx_for(&temp, ResolvedLangConfig::new("json"));
+    let ctx = test_ctx(temp.path(), ResolvedLangConfig::new("json"));
     let res = surface.sync_config(&ctx, false);
     assert!(matches!(
       res.status,
@@ -369,7 +343,7 @@ mod tests {
     std::fs::write(temp.path().join("a.json"), "{\"a\":1}").unwrap();
 
     let surface = JsonSurface;
-    let ctx = ctx_for(&temp, ResolvedLangConfig::new("json"));
+    let ctx = test_ctx(temp.path(), ResolvedLangConfig::new("json"));
     let _ = surface.format(&ctx);
 
     assert!(!temp.path().join(".prettierrc.json").exists());

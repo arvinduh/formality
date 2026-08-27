@@ -3,13 +3,11 @@
 
 use super::{
   DeclaresFacets, ExecutionContext, Facet, FacetSupport, LanguageSurface,
-  NativeConfig, SurfaceResult, SurfaceStatus, ToolInfo, check_binary_exists,
-  create_tool_command, diff_check_via_tempcopy, find_files_with_ext,
-  markdown::{
-    PrettierConfig, build_prettier_inline_args, sync_prettier_config,
-  },
-  render_native_config, run_tool_command, sync_native_config,
-  tool_missing_result,
+  NativeConfig, PrettierConfig, SurfaceResult, ToolInfo,
+  build_prettier_inline_args, create_tool_command, diff_check_via_tempcopy,
+  find_files_with_ext, lint_fix_unsupported, render_native_config,
+  run_tool_command, sync_native_config, sync_prettier_config,
+  tool_missing_guard,
 };
 use serde::{Deserialize, Serialize};
 use std::path::Path;
@@ -205,22 +203,18 @@ impl LanguageSurface for YamlSurface {
   fn format(&self, ctx: &ExecutionContext) -> SurfaceResult {
     let start = Instant::now();
 
-    if !check_binary_exists("prettier") {
-      return tool_missing_result(
-        self.name(),
-        start,
-        "prettier",
-        "npm install -g prettier",
-      );
+    if let Some(res) = tool_missing_guard(
+      self.name(),
+      "prettier",
+      start,
+      Some("npm install -g prettier"),
+    ) {
+      return res;
     }
 
     let files = ctx.matched_files(YAML_EXTENSIONS);
-    if files.is_empty() {
-      return SurfaceResult {
-        surface_name: self.name(),
-        status: SurfaceStatus::Passed,
-        duration: start.elapsed(),
-      };
+    if let Some(res) = ctx.early_out_if_empty(&files, self.name(), start) {
+      return res;
     }
 
     // Inline `--tab-width`/`--print-width`/etc. instead of writing
@@ -267,32 +261,21 @@ impl LanguageSurface for YamlSurface {
     let start = Instant::now();
 
     if fix {
-      return SurfaceResult {
-        surface_name: self.name(),
-        status: SurfaceStatus::Skipped {
-          reason: "Tool does not support autofix; run fml fmt instead"
-            .to_string(),
-        },
-        duration: start.elapsed(),
-      };
+      return lint_fix_unsupported(self.name(), start);
     }
 
-    if !check_binary_exists("yamllint") {
-      return tool_missing_result(
-        self.name(),
-        start,
-        "yamllint",
-        "pip install yamllint",
-      );
+    if let Some(res) = tool_missing_guard(
+      self.name(),
+      "yamllint",
+      start,
+      Some("pip install yamllint"),
+    ) {
+      return res;
     }
 
     let files = ctx.matched_files(YAML_EXTENSIONS);
-    if files.is_empty() {
-      return SurfaceResult {
-        surface_name: self.name(),
-        status: SurfaceStatus::Passed,
-        duration: start.elapsed(),
-      };
+    if let Some(res) = ctx.early_out_if_empty(&files, self.name(), start) {
+      return res;
     }
 
     // Inline `-d <yaml source>` instead of writing `.yamllint.yaml` to disk
@@ -345,8 +328,8 @@ impl LanguageSurface for YamlSurface {
 #[allow(missing_docs, clippy::missing_errors_doc, clippy::missing_panics_doc)]
 mod tests {
   use super::*;
-  use crate::config::{ResolvedGlobalConfig, ResolvedLangConfig};
-  use std::sync::Arc;
+  use crate::config::ResolvedLangConfig;
+  use crate::surfaces::{SurfaceStatus, check_binary_exists, test_ctx};
   use tempfile::TempDir;
 
   #[test]
@@ -390,13 +373,7 @@ mod tests {
   #[test]
   fn test_yamllint_config_from_context_rules_disabled_by_default() {
     let temp = TempDir::new().unwrap();
-    let ctx = ExecutionContext {
-      root: Arc::new(temp.path().to_path_buf()),
-      paths: Arc::new(Vec::new()),
-      global_config: Arc::new(ResolvedGlobalConfig::default()),
-      lang_config: ResolvedLangConfig::new("yaml"),
-      check_only: false,
-    };
+    let ctx = test_ctx(temp.path(), ResolvedLangConfig::new("yaml"));
     let cfg = YamllintConfig::from_context(&ctx);
     assert_eq!(cfg.rules.document_start, YamllintRuleToggle::Disable);
     assert_eq!(cfg.rules.truthy, YamllintRuleToggle::Disable);
@@ -418,13 +395,7 @@ mod tests {
       truthy: Some(true),
     });
 
-    let ctx = ExecutionContext {
-      root: Arc::new(temp.path().to_path_buf()),
-      paths: Arc::new(Vec::new()),
-      global_config: Arc::new(ResolvedGlobalConfig::default()),
-      lang_config: lang_cfg,
-      check_only: false,
-    };
+    let ctx = test_ctx(temp.path(), lang_cfg);
     let cfg = YamllintConfig::from_context(&ctx);
     assert_eq!(cfg.rules.document_start, YamllintRuleToggle::Enable);
     assert_eq!(cfg.rules.truthy, YamllintRuleToggle::Enable);
@@ -449,13 +420,7 @@ mod tests {
       truthy: Some(true),
     });
 
-    let ctx = ExecutionContext {
-      root: Arc::new(temp.path().to_path_buf()),
-      paths: Arc::new(Vec::new()),
-      global_config: Arc::new(ResolvedGlobalConfig::default()),
-      lang_config: lang_cfg,
-      check_only: false,
-    };
+    let ctx = test_ctx(temp.path(), lang_cfg);
 
     let res = surface.sync_config(&ctx, false);
     assert!(matches!(
@@ -506,13 +471,7 @@ mod tests {
     std::fs::write(temp.path().join("a.yaml"), "a: 1\n").unwrap();
 
     let surface = YamlSurface;
-    let ctx = ExecutionContext {
-      root: Arc::new(temp.path().to_path_buf()),
-      paths: Arc::new(Vec::new()),
-      global_config: Arc::new(ResolvedGlobalConfig::default()),
-      lang_config: ResolvedLangConfig::new("yaml"),
-      check_only: false,
-    };
+    let ctx = test_ctx(temp.path(), ResolvedLangConfig::new("yaml"));
 
     if check_binary_exists("prettier") {
       let _ = surface.format(&ctx);
