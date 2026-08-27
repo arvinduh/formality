@@ -4,7 +4,6 @@
 //! version this binary generates.
 
 use crate::config::FormalityConfig;
-use crate::config::resolve::find_project_config;
 use crate::engine::cache_path;
 use colored::Colorize;
 use serde::{Deserialize, Serialize};
@@ -175,9 +174,13 @@ fn write_schema_cache(stale_version: Option<SchemaVersion>) {
 }
 
 /// Spawns or performs a schema version check for `run_with_args()`.
+///
+/// Accepts an optional pre-discovered config path, skipping directory search if provided.
 /// Respects `FORMALITY_NO_SCHEMA_CHECK` and CI environments, and is throttled by a TTL cache.
 #[must_use]
-pub fn spawn_schema_check(root: &Path) -> Option<SchemaNotifier> {
+pub fn spawn_schema_check(
+  config_path: Option<&Path>,
+) -> Option<SchemaNotifier> {
   if std::env::var("CI").is_ok()
     || std::env::var("GITHUB_ACTIONS").is_ok()
     || std::env::var("FORMALITY_NO_SCHEMA_CHECK").is_ok()
@@ -185,13 +188,13 @@ pub fn spawn_schema_check(root: &Path) -> Option<SchemaNotifier> {
     return None;
   }
 
-  let config_path = find_project_config(root)?;
+  let config_path = config_path?;
 
   let now = SystemTime::now()
     .duration_since(UNIX_EPOCH)
     .map_or(0, |d| d.as_secs());
 
-  let config_mtime = std::fs::metadata(&config_path)
+  let config_mtime = std::fs::metadata(config_path)
     .and_then(|m| m.modified())
     .ok()
     .and_then(|t| t.duration_since(UNIX_EPOCH).ok())
@@ -205,18 +208,18 @@ pub fn spawn_schema_check(root: &Path) -> Option<SchemaNotifier> {
       && version < SCHEMA_VERSION
     {
       return Some(SchemaNotifier {
-        stale_info: Some((config_path, version, SCHEMA_VERSION)),
+        stale_info: Some((config_path.to_path_buf(), version, SCHEMA_VERSION)),
       });
     }
     return None;
   }
 
-  let status = check_schema_version_file(&config_path);
+  let status = check_schema_version_file(config_path);
   match status {
     SchemaStatus::Stale { version, expected } => {
       write_schema_cache(Some(version));
       Some(SchemaNotifier {
-        stale_info: Some((config_path, version, expected)),
+        stale_info: Some((config_path.to_path_buf(), version, expected)),
       })
     }
     _ => {
@@ -345,5 +348,10 @@ mod tests {
       check_schema_version_content(missing_content),
       SchemaStatus::Missing
     );
+  }
+
+  #[test]
+  fn test_spawn_schema_check_none() {
+    assert!(spawn_schema_check(None).is_none());
   }
 }

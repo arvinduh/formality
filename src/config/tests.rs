@@ -945,3 +945,39 @@ fn test_layered_config_with_corrupted_project_file() {
   assert!(err.to_string().contains("formality.toml"));
   assert!(err.to_string().contains("Failed to parse"));
 }
+
+#[test]
+fn test_load_layered_with_path_matches_load_layered() {
+  let temp = tempfile::TempDir::new().unwrap();
+  let root = temp.path();
+
+  let config_file = root.join("formality.toml");
+  fs::write(
+    &config_file,
+    "[global]\nindent_size = 4\nline_length = 120\n",
+  )
+  .unwrap();
+
+  let (cfg_from_root, path_from_root) =
+    FormalityConfig::load_layered(Some(root)).unwrap();
+  let (cfg_from_path, path_from_path) =
+    FormalityConfig::load_layered_with_path(Some(&config_file)).unwrap();
+
+  assert_eq!(path_from_root, Some(config_file.clone()));
+  assert_eq!(path_from_path, Some(config_file));
+  assert_eq!(
+    cfg_from_root.resolve_global().indent_size,
+    cfg_from_path.resolve_global().indent_size
+  );
+  assert_eq!(
+    cfg_from_root.resolve_global().line_length,
+    cfg_from_path.resolve_global().line_length
+  );
+}
+
+#[test]
+fn test_load_layered_with_path_none() {
+  let (cfg, path) = FormalityConfig::load_layered_with_path(None).unwrap();
+  assert_eq!(path, None);
+  assert_eq!(cfg.resolve_global().indent_size, 2);
+}
