@@ -61,7 +61,6 @@ impl NativeConfig for RuffConfig {
     let line_ending =
       match ctx.global_config.end_of_line.to_lowercase().as_str() {
         "crlf" => "crlf",
-        "cr" => "cr",
         _ => "lf",
       };
 
@@ -798,5 +797,22 @@ mod tests {
 
     assert!(!temp.path().join("ruff.toml").exists());
     assert!(!temp.path().join(".ruff.toml").exists());
+  }
+
+  #[test]
+  fn test_ruff_config_line_ending_cr_fallback() {
+    let global = ResolvedGlobalConfig {
+      end_of_line: "cr".to_string(),
+      ..Default::default()
+    };
+    let ctx = ExecutionContext {
+      root: Arc::new(PathBuf::from(".")),
+      paths: Arc::new(Vec::new()),
+      global_config: Arc::new(global),
+      lang_config: ResolvedLangConfig::new("python"),
+      check_only: false,
+    };
+    let cfg = RuffConfig::from_context(&ctx);
+    assert_eq!(cfg.format.line_ending, "lf");
   }
 }

@@ -34,6 +34,9 @@ pub struct ClangFormatConfig {
   pub break_before_braces: String,
   /// Whether to sort `#include` statements.
   pub sort_includes: bool,
+  /// Language standard (e.g. `"c++17"`, `"c++20"`, `"Latest"`).
+  #[serde(skip_serializing_if = "Option::is_none")]
+  pub standard: Option<String>,
 }
 
 impl NativeConfig for ClangFormatConfig {
@@ -48,7 +51,6 @@ impl NativeConfig for ClangFormatConfig {
     let line_ending =
       match ctx.global_config.end_of_line.to_lowercase().as_str() {
         "crlf" => "CRLF",
-        "cr" => "CR",
         _ => "LF",
       };
 
@@ -56,6 +58,9 @@ impl NativeConfig for ClangFormatConfig {
     let based_on_style = cpp_opts
       .and_then(|c| c.based_on_style.clone())
       .unwrap_or_else(|| "LLVM".to_string());
+    let column_limit = cpp_opts
+      .and_then(|c| c.column_limit)
+      .unwrap_or(ctx.lang_config.line_length);
     let pointer_alignment = cpp_opts
       .and_then(|c| c.pointer_alignment.clone())
       .unwrap_or_else(|| "Left".to_string());
@@ -63,17 +68,23 @@ impl NativeConfig for ClangFormatConfig {
       .and_then(|c| c.break_before_braces.clone())
       .unwrap_or_else(|| "Attach".to_string());
     let sort_includes = cpp_opts.and_then(|c| c.sort_includes).unwrap_or(true);
+    let standard = cpp_opts.and_then(|c| {
+      c.standard
+        .as_ref()
+        .map(|s| s.trim().trim_start_matches("-std=").to_string())
+    });
 
     Self {
       language: "Cpp".to_string(),
       based_on_style,
       indent_width: ctx.lang_config.indent_size,
-      column_limit: ctx.lang_config.line_length,
+      column_limit,
       use_tab: use_tab.to_string(),
       line_ending: line_ending.to_string(),
       pointer_alignment,
       break_before_braces,
       sort_includes,
+      standard,
     }
   }
 
@@ -150,8 +161,8 @@ impl DeclaresFacets for CppSurface {
 /// Google/4-space/Allman configuration (Fixes #157).
 #[must_use]
 pub fn build_clang_format_inline_style(cfg: &ClangFormatConfig) -> String {
-  format!(
-    "{{Language: {}, BasedOnStyle: {}, IndentWidth: {}, ColumnLimit: {}, UseTab: {}, LineEnding: {}, PointerAlignment: {}, BreakBeforeBraces: {}, SortIncludes: {}}}",
+  let mut style = format!(
+    "{{Language: {}, BasedOnStyle: {}, IndentWidth: {}, ColumnLimit: {}, UseTab: {}, LineEnding: {}, PointerAlignment: {}, BreakBeforeBraces: {}, SortIncludes: {}",
     cfg.language,
     cfg.based_on_style,
     cfg.indent_width,
@@ -161,7 +172,13 @@ pub fn build_clang_format_inline_style(cfg: &ClangFormatConfig) -> String {
     cfg.pointer_alignment,
     cfg.break_before_braces,
     cfg.sort_includes,
-  )
+  );
+  if let Some(ref standard) = cfg.standard {
+    use std::fmt::Write as _;
+    let _ = write!(style, ", Standard: {standard}");
+  }
+  style.push('}');
+  style
 }
 
 /// Renders a [`ClangTidyConfig`] as the inline `{Key: Value, ...}` YAML-flow
@@ -457,6 +474,29 @@ impl LanguageSurface for CppSurface {
       };
     }
 
+    let cpp_opts = ctx.lang_config.cpp.as_ref();
+    let custom_std = cpp_opts.and_then(|c| c.standard.as_deref());
+
+    let (c_std_flag, cpp_std_flag) = match custom_std {
+      Some(raw) => {
+        let trimmed = raw.trim();
+        let flag = if trimmed.starts_with("-std=") {
+          trimmed.to_string()
+        } else {
+          format!("-std={trimmed}")
+        };
+        let lower = trimmed.to_ascii_lowercase();
+        if lower.contains("++") {
+          ("-std=c17".to_string(), flag)
+        } else if lower.starts_with("c") || lower.starts_with("gnu") {
+          (flag, "-std=c++17".to_string())
+        } else {
+          ("-std=c17".to_string(), flag)
+        }
+      }
+      None => ("-std=c17".to_string(), "-std=c++17".to_string()),
+    };
+
     let mut c_files = Vec::new();
     let mut cpp_files = Vec::new();
 
@@ -469,8 +509,8 @@ impl LanguageSurface for CppSurface {
       }
     }
 
-    let groups: Vec<(Vec<PathBuf>, &'static str)> =
-      [(c_files, "-std=c17"), (cpp_files, "-std=c++17")]
+    let groups: Vec<(Vec<PathBuf>, String)> =
+      [(c_files, c_std_flag), (cpp_files, cpp_std_flag)]
         .into_iter()
         .filter(|(flist, _)| !flist.is_empty())
         .collect();
@@ -489,7 +529,7 @@ impl LanguageSurface for CppSurface {
       let args = build_clang_tidy_args(
         &flist,
         fix,
-        std_flag,
+        &std_flag,
         &ctx.lang_config.extra_args,
       );
       cmd.args(&args);
@@ -780,6 +820,7 @@ mod tests {
       pointer_alignment: "Left".to_string(),
       break_before_braces: "Attach".to_string(),
       sort_includes: true,
+      standard: Some("c++17".to_string()),
     };
     let rendered = cfg.render().unwrap();
     assert!(rendered.starts_with(crate::surfaces::AUTO_GENERATED_HEADER));
@@ -792,6 +833,7 @@ mod tests {
     assert!(rendered.contains("PointerAlignment: Left"));
     assert!(rendered.contains("BreakBeforeBraces: Attach"));
     assert!(rendered.contains("SortIncludes: true"));
+    assert!(rendered.contains("Standard: c++17"));
   }
 
   #[test]
@@ -831,7 +873,9 @@ mod tests {
     let toml_str = r#"
       [lang.cpp]
       indent_size = 4
-      line_length = 120
+      line_length = 80
+      column_limit = 120
+      standard = "c++20"
       use_tabs = false
       based_on_style = "Google"
       pointer_alignment = "Right"
@@ -860,6 +904,7 @@ mod tests {
     assert!(format_content.contains("BasedOnStyle: Google"));
     assert!(format_content.contains("IndentWidth: 4"));
     assert!(format_content.contains("ColumnLimit: 120"));
+    assert!(format_content.contains("Standard: c++20"));
     assert!(format_content.contains("UseTab: Never"));
     assert!(format_content.contains("PointerAlignment: Right"));
     assert!(format_content.contains("BreakBeforeBraces: Allman"));
@@ -881,12 +926,40 @@ mod tests {
       pointer_alignment: "Right".to_string(),
       break_before_braces: "Allman".to_string(),
       sort_includes: false,
+      standard: None,
     };
     let inline = build_clang_format_inline_style(&cfg);
     assert_eq!(
       inline,
       "{Language: Cpp, BasedOnStyle: Google, IndentWidth: 4, ColumnLimit: 100, UseTab: Never, LineEnding: LF, PointerAlignment: Right, BreakBeforeBraces: Allman, SortIncludes: false}"
     );
+
+    let cfg_with_std = ClangFormatConfig {
+      standard: Some("c++20".to_string()),
+      ..cfg
+    };
+    let inline_with_std = build_clang_format_inline_style(&cfg_with_std);
+    assert_eq!(
+      inline_with_std,
+      "{Language: Cpp, BasedOnStyle: Google, IndentWidth: 4, ColumnLimit: 100, UseTab: Never, LineEnding: LF, PointerAlignment: Right, BreakBeforeBraces: Allman, SortIncludes: false, Standard: c++20}"
+    );
+  }
+
+  #[test]
+  fn test_clang_format_config_line_ending_cr_fallback() {
+    let global = crate::config::ResolvedGlobalConfig {
+      end_of_line: "cr".to_string(),
+      ..Default::default()
+    };
+    let ctx = ExecutionContext {
+      root: Arc::new(PathBuf::from(".")),
+      paths: Arc::new(Vec::new()),
+      global_config: Arc::new(global),
+      lang_config: crate::config::ResolvedLangConfig::new("cpp"),
+      check_only: false,
+    };
+    let cfg = ClangFormatConfig::from_context(&ctx);
+    assert_eq!(cfg.line_ending, "LF");
   }
 
   #[test]

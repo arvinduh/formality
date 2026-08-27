@@ -114,7 +114,6 @@ fn test_macro_generated_accessors_default_and_merge_for_all_table_rows() {
     LangConfig {
       rust: Some(RustOptions {
         edition: Some("2018".to_string()),
-        version: None,
       }),
       ..Default::default()
     },
@@ -125,7 +124,6 @@ fn test_macro_generated_accessors_default_and_merge_for_all_table_rows() {
     LangConfig {
       rust: Some(RustOptions {
         edition: Some("2021".to_string()),
-        version: Some("1.80".to_string()),
       }),
       ..Default::default()
     },
@@ -136,7 +134,6 @@ fn test_macro_generated_accessors_default_and_merge_for_all_table_rows() {
     merged_rust.rust,
     Some(RustOptions {
       edition: Some("2021".to_string()),
-      version: Some("1.80".to_string()),
     })
   );
 }
@@ -294,7 +291,6 @@ fn test_typed_options_deserialization_from_toml() {
   let toml = r#"
       [lang.rust]
       edition = "2021"
-      version = "1.75"
 
       [lang.python]
       quote_style = "single"
@@ -328,7 +324,6 @@ fn test_typed_options_deserialization_from_toml() {
     rust.rust,
     Some(RustOptions {
       edition: Some("2021".to_string()),
-      version: Some("1.75".to_string()),
     })
   );
 
@@ -387,7 +382,6 @@ fn test_typed_options_subtable_deserialization() {
   let toml = r#"
       [lang.rust.rust]
       edition = "2024"
-      version = "1.85"
 
       [lang.python.python]
       quote_style = "double"
@@ -412,7 +406,6 @@ fn test_typed_options_subtable_deserialization() {
     rust.rust,
     Some(RustOptions {
       edition: Some("2024".to_string()),
-      version: Some("1.85".to_string()),
     })
   );
 
@@ -470,7 +463,7 @@ fn test_typed_options_merging_semantics() {
 
   let override_toml = r#"
       [lang.rust]
-      version = "1.78"
+      edition = "2024"
       line_length = 100
 
       [lang.python]
@@ -487,8 +480,7 @@ fn test_typed_options_merging_semantics() {
   assert_eq!(
     rust.rust,
     Some(RustOptions {
-      edition: Some("2021".to_string()),
-      version: Some("1.78".to_string()),
+      edition: Some("2024".to_string()),
     })
   );
 
@@ -528,7 +520,6 @@ fn test_serialization_deserialization_roundtrip() {
     indent_size: Some(4),
     rust: Some(RustOptions {
       edition: Some("2024".to_string()),
-      version: Some("1.85".to_string()),
     }),
     ..Default::default()
   };
@@ -554,15 +545,12 @@ fn test_serialization_deserialization_roundtrip() {
 fn test_language_options_merge_units() {
   let mut rust1 = RustOptions {
     edition: Some("2021".to_string()),
-    version: None,
   };
   let rust2 = RustOptions {
-    edition: None,
-    version: Some("1.75".to_string()),
+    edition: Some("2024".to_string()),
   };
   rust1.merge(rust2);
-  assert_eq!(rust1.edition.as_deref(), Some("2021"));
-  assert_eq!(rust1.version.as_deref(), Some("1.75"));
+  assert_eq!(rust1.edition.as_deref(), Some("2024"));
 
   let mut py1 = PythonOptions {
     quote_style: Some("single".to_string()),

@@ -678,7 +678,6 @@ mod tests {
     let mut ctx_configured = dummy_execution_context(temp.path(), false);
     ctx_configured.lang_config.rust = Some(crate::config::RustOptions {
       edition: Some("2018".to_string()),
-      version: None,
     });
     let edition_configured = ctx_configured
       .lang_config

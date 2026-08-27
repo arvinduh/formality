@@ -14,9 +14,6 @@ pub struct RustOptions {
   /// Rust edition (e.g. `"2021"`).
   #[serde(skip_serializing_if = "Option::is_none")]
   pub edition: Option<String>,
-  /// Rustfmt version.
-  #[serde(skip_serializing_if = "Option::is_none")]
-  pub version: Option<String>,
 }
 
 impl RustOptions {
@@ -25,15 +22,12 @@ impl RustOptions {
     if other.edition.is_some() {
       self.edition = other.edition;
     }
-    if other.version.is_some() {
-      self.version = other.version;
-    }
   }
 
   /// Returns `true` if all fields are `None`.
   #[must_use]
   pub fn is_empty(&self) -> bool {
-    self.edition.is_none() && self.version.is_none()
+    self.edition.is_none()
   }
 }
 
