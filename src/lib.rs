@@ -210,10 +210,11 @@ mod tests {
     let src_dir = manifest_dir.join("src");
 
     let mut violations = Vec::new();
-    for entry in walkdir::WalkDir::new(&src_dir)
-      .into_iter()
+    for entry in ignore::WalkBuilder::new(&src_dir)
+      .standard_filters(false)
+      .build()
       .filter_map(Result::ok)
-      .filter(|e| e.file_type().is_file())
+      .filter(|e| e.file_type().is_some_and(|ft| ft.is_file()))
     {
       let path = entry.path();
       let Some(file_name) = path.file_name().and_then(|n| n.to_str()) else {
@@ -304,10 +305,11 @@ mod tests {
     }
 
     let mut violations = Vec::new();
-    for entry in walkdir::WalkDir::new(&src_dir)
-      .into_iter()
+    for entry in ignore::WalkBuilder::new(&src_dir)
+      .standard_filters(false)
+      .build()
       .filter_map(Result::ok)
-      .filter(|e| e.file_type().is_file())
+      .filter(|e| e.file_type().is_some_and(|ft| ft.is_file()))
       .filter(|e| e.path().extension().is_some_and(|ext| ext == "rs"))
     {
       let path = entry.path();
@@ -396,10 +398,11 @@ mod tests {
     let src_dir = manifest_dir.join("src");
 
     let mut violations = Vec::new();
-    for entry in walkdir::WalkDir::new(&src_dir)
-      .into_iter()
+    for entry in ignore::WalkBuilder::new(&src_dir)
+      .standard_filters(false)
+      .build()
       .filter_map(Result::ok)
-      .filter(|e| e.file_type().is_file())
+      .filter(|e| e.file_type().is_some_and(|ft| ft.is_file()))
       .filter(|e| e.path().extension().is_some_and(|ext| ext == "rs"))
     {
       let path = entry.path();
@@ -438,10 +441,11 @@ mod tests {
     let src_dir = manifest_dir.join("src");
 
     let mut violations = Vec::new();
-    for entry in walkdir::WalkDir::new(&src_dir)
-      .into_iter()
+    for entry in ignore::WalkBuilder::new(&src_dir)
+      .standard_filters(false)
+      .build()
       .filter_map(Result::ok)
-      .filter(|e| e.file_type().is_file())
+      .filter(|e| e.file_type().is_some_and(|ft| ft.is_file()))
       .filter(|e| e.path().extension().is_some_and(|ext| ext == "rs"))
     {
       let path = entry.path();
@@ -511,10 +515,11 @@ mod tests {
     let src_dir = manifest_dir.join("src");
 
     let mut violations = Vec::new();
-    for entry in walkdir::WalkDir::new(&src_dir)
-      .into_iter()
+    for entry in ignore::WalkBuilder::new(&src_dir)
+      .standard_filters(false)
+      .build()
       .filter_map(Result::ok)
-      .filter(|e| e.file_type().is_file())
+      .filter(|e| e.file_type().is_some_and(|ft| ft.is_file()))
       .filter(|e| e.path().extension().is_some_and(|ext| ext == "rs"))
     {
       let path = entry.path();
@@ -583,10 +588,11 @@ mod tests {
     let src_dir = manifest_dir.join("src");
 
     let mut violations = Vec::new();
-    for entry in walkdir::WalkDir::new(&src_dir)
-      .into_iter()
+    for entry in ignore::WalkBuilder::new(&src_dir)
+      .standard_filters(false)
+      .build()
       .filter_map(Result::ok)
-      .filter(|e| e.file_type().is_file())
+      .filter(|e| e.file_type().is_some_and(|ft| ft.is_file()))
       .filter(|e| e.path().extension().is_some_and(|ext| ext == "rs"))
     {
       let path = entry.path();
