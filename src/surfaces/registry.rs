@@ -160,7 +160,7 @@ impl SurfaceRegistry {
         if let Some(s) = self.get_surface_by_name(lang_name)
           && !is_ignored(s.name(), s.aliases())
         {
-          let resolved = config.resolve_for_lang(s.name());
+          let resolved = config.resolve_for_lang_with_global(s.name(), &global);
           if resolved.enabled {
             selected.push(s);
           }
@@ -177,11 +177,12 @@ impl SurfaceRegistry {
         if is_ignored(surface.name(), surface.aliases()) {
           return false;
         }
-        let resolved = config.resolve_for_lang(surface.name());
-        if !resolved.enabled {
+        if !surface.detect(root) {
           return false;
         }
-        surface.detect(root)
+        let resolved =
+          config.resolve_for_lang_with_global(surface.name(), &global);
+        resolved.enabled
       })
       .cloned()
       .collect()

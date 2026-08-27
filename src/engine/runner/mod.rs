@@ -106,15 +106,15 @@ impl Runner {
         let lint_results: Vec<SurfaceResult> = surfaces
           .par_iter()
           .map(|surface| {
-            let lang_config = config.resolve_for_lang(surface.name());
-            let ctx = ExecutionContext {
-              root: Arc::clone(&shared_root),
-              paths: Arc::clone(&shared_paths),
-              global_config: Arc::clone(&global_config),
-              lang_config,
-              check_only: false,
-              candidate_files: shared_candidates.clone(),
-            };
+            let ctx = build_ctx(
+              surface.as_ref(),
+              config,
+              &shared_root,
+              &shared_paths,
+              &global_config,
+              &shared_candidates,
+              false,
+            );
             surface.lint(&ctx, true)
           })
           .collect();
@@ -123,15 +123,15 @@ impl Runner {
         let fmt_results: Vec<SurfaceResult> = surfaces
           .par_iter()
           .map(|surface| {
-            let lang_config = config.resolve_for_lang(surface.name());
-            let ctx = ExecutionContext {
-              root: Arc::clone(&shared_root),
-              paths: Arc::clone(&shared_paths),
-              global_config: Arc::clone(&global_config),
-              lang_config,
-              check_only: false,
-              candidate_files: shared_candidates.clone(),
-            };
+            let ctx = build_ctx(
+              surface.as_ref(),
+              config,
+              &shared_root,
+              &shared_paths,
+              &global_config,
+              &shared_candidates,
+              false,
+            );
             surface.format(&ctx)
           })
           .collect();
@@ -146,20 +146,21 @@ impl Runner {
       _ => surfaces
         .par_iter()
         .map(|surface| {
-          let lang_config = config.resolve_for_lang(surface.name());
-          let ctx = ExecutionContext {
-            root: Arc::clone(&shared_root),
-            paths: Arc::clone(&shared_paths),
-            global_config: Arc::clone(&global_config),
-            lang_config,
-            check_only: match action {
-              RunnerAction::Format { check } | RunnerAction::Sync { check } => {
-                check
-              }
-              RunnerAction::Lint { .. } | RunnerAction::Fix => false,
-            },
-            candidate_files: shared_candidates.clone(),
+          let check_only = match action {
+            RunnerAction::Format { check } | RunnerAction::Sync { check } => {
+              check
+            }
+            RunnerAction::Lint { .. } | RunnerAction::Fix => false,
           };
+          let ctx = build_ctx(
+            surface.as_ref(),
+            config,
+            &shared_root,
+            &shared_paths,
+            &global_config,
+            &shared_candidates,
+            check_only,
+          );
 
           match action {
             RunnerAction::Format { .. } => surface.format(&ctx),
@@ -493,6 +494,27 @@ impl Runner {
     println!("  {} in {:.2?}\n", summary_text, start_time.elapsed());
 
     ExitStatus::try_from(exit_code).unwrap_or(ExitStatus::Error)
+  }
+}
+
+fn build_ctx(
+  surface: &dyn LanguageSurface,
+  config: &FormalityConfig,
+  root: &Arc<PathBuf>,
+  paths: &Arc<Vec<PathBuf>>,
+  global_config: &Arc<crate::config::ResolvedGlobalConfig>,
+  candidate_files: &Option<Arc<Vec<PathBuf>>>,
+  check_only: bool,
+) -> ExecutionContext {
+  let lang_config =
+    config.resolve_for_lang_with_global(surface.name(), global_config);
+  ExecutionContext {
+    root: Arc::clone(root),
+    paths: Arc::clone(paths),
+    global_config: Arc::clone(global_config),
+    lang_config,
+    check_only,
+    candidate_files: candidate_files.clone(),
   }
 }
 

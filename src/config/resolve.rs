@@ -138,15 +138,19 @@ impl FormalityConfig {
     }
   }
 
-  /// Resolves effective configuration settings for a specific named language surface.
+  /// Resolves effective configuration settings for a specific named language surface
+  /// using an already-resolved global configuration.
   #[must_use]
-  pub fn resolve_for_lang(&self, lang_name: &str) -> ResolvedLangConfig {
-    let global = self.resolve_global();
+  pub fn resolve_for_lang_with_global(
+    &self,
+    lang_name: &str,
+    global: &ResolvedGlobalConfig,
+  ) -> ResolvedLangConfig {
     let lang_cfg = self.lang.get(lang_name);
 
     let (default_fmt, default_lint) = default_tools_for_lang(lang_name);
     let (layout, indent_size, line_length, use_tabs, prose_wrap) =
-      resolve_layout_for_lang(lang_name, lang_cfg, &global);
+      resolve_layout_for_lang(lang_name, lang_cfg, global);
 
     let markdown = lang_cfg
       .and_then(super::LangConfig::markdown_options)
@@ -193,6 +197,13 @@ impl FormalityConfig {
       markdown,
       extra
     )
+  }
+
+  /// Resolves effective configuration settings for a specific named language surface.
+  #[must_use]
+  pub fn resolve_for_lang(&self, lang_name: &str) -> ResolvedLangConfig {
+    let global = self.resolve_global();
+    self.resolve_for_lang_with_global(lang_name, &global)
   }
 
   /// Returns the raw `[lang.X]` section names from this config whose `X`

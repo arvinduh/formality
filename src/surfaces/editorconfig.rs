@@ -80,7 +80,7 @@ pub fn generate_editorconfig_from_config(
 ) -> String {
   let global = config.resolve_global();
   generate_editorconfig_internal(&global, surfaces, |surface| {
-    let lang_cfg = config.resolve_for_lang(surface.name());
+    let lang_cfg = config.resolve_for_lang_with_global(surface.name(), &global);
     (
       lang_cfg.use_tabs,
       lang_cfg.indent_size,
