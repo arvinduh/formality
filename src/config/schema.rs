@@ -267,7 +267,7 @@ mod tests {
 
   #[test]
   fn test_schema_version_constant() {
-    assert_eq!(SCHEMA_VERSION, SchemaVersion { major: 1, minor: 0 });
+    assert_eq!(SCHEMA_VERSION, SchemaVersion { major: 1, minor: 1 });
   }
 
   #[test]
@@ -324,11 +324,11 @@ mod tests {
       }
     );
 
-    let current_content = "#:schema https://github.com/arvinduh/formality/releases/download/s1.0/formality.schema.json\n[global]\n";
+    let current_content = "#:schema https://github.com/arvinduh/formality/releases/download/s1.1/formality.schema.json\n[global]\n";
     assert_eq!(
       check_schema_version_content(current_content),
       SchemaStatus::UpToDate {
-        version: SchemaVersion { major: 1, minor: 0 }
+        version: SchemaVersion { major: 1, minor: 1 }
       }
     );
 
