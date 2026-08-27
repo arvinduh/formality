@@ -10,6 +10,7 @@ use super::{
   tool_missing_result,
 };
 use serde::{Deserialize, Serialize};
+use std::collections::HashSet;
 use std::path::{Path, PathBuf};
 use std::time::Instant;
 
@@ -226,6 +227,83 @@ pub fn is_c_extension(ext: &str) -> bool {
   ext.eq_ignore_ascii_case("c")
 }
 
+/// Scans the provided file list and directories on disk once upfront for C++ files.
+/// Returns the set of directory paths that contain at least one C++ file.
+#[must_use]
+pub fn scan_cpp_dirs(all_files: &[PathBuf]) -> HashSet<PathBuf> {
+  let mut cpp_dirs = HashSet::new();
+
+  // 1. Mark directories of known C++ files in `all_files`.
+  for f in all_files {
+    if f
+      .extension()
+      .and_then(|e| e.to_str())
+      .is_some_and(is_cpp_extension)
+      && let Some(parent) = f.parent()
+    {
+      cpp_dirs.insert(parent.to_path_buf());
+    }
+  }
+
+  // 2. For headers in `all_files` whose parent directory isn't already known
+  // to contain C++ files, scan the directory on disk once.
+  let mut scanned_dirs = HashSet::new();
+  for f in all_files {
+    let ext = f.extension().and_then(|e| e.to_str()).unwrap_or("");
+    if ext.eq_ignore_ascii_case("h")
+      && let Some(parent) = f.parent()
+      && !cpp_dirs.contains(parent)
+      && scanned_dirs.insert(parent.to_path_buf())
+      && (parent != Path::new("") || f.is_absolute())
+    {
+      let dir_to_read = if parent == Path::new("") {
+        Path::new(".")
+      } else {
+        parent
+      };
+      if let Ok(entries) = std::fs::read_dir(dir_to_read) {
+        let has_cpp_on_disk = entries.filter_map(Result::ok).any(|e| {
+          let ep = e.path();
+          ep.as_path() != f.as_path()
+            && ep
+              .extension()
+              .and_then(|ext| ext.to_str())
+              .is_some_and(is_cpp_extension)
+        });
+        if has_cpp_on_disk {
+          cpp_dirs.insert(parent.to_path_buf());
+        }
+      }
+    }
+  }
+
+  cpp_dirs
+}
+
+/// Determines the appropriate `-std=` compiler flag (`-std=c++17` or `-std=c17`) for a target file,
+/// using a precomputed set of directories known to contain C++ files.
+#[must_use]
+pub fn std_flag_for_file_with_dirs(
+  file: &Path,
+  cpp_dirs: &HashSet<PathBuf>,
+) -> &'static str {
+  let ext = file.extension().and_then(|e| e.to_str()).unwrap_or("");
+  if is_cpp_extension(ext) {
+    "-std=c++17"
+  } else if is_c_extension(ext) {
+    "-std=c17"
+  } else if ext.eq_ignore_ascii_case("h") {
+    let parent = file.parent().unwrap_or(Path::new(""));
+    if cpp_dirs.contains(parent) {
+      "-std=c++17"
+    } else {
+      "-std=c17"
+    }
+  } else {
+    "-std=c++17"
+  }
+}
+
 /// Determines the appropriate `-std=` compiler flag (`-std=c++17` or `-std=c17`) for a target file.
 #[must_use]
 pub fn std_flag_for_file(file: &Path, all_files: &[PathBuf]) -> &'static str {
@@ -235,23 +313,15 @@ pub fn std_flag_for_file(file: &Path, all_files: &[PathBuf]) -> &'static str {
   } else if is_c_extension(ext) {
     "-std=c17"
   } else if ext.eq_ignore_ascii_case("h") {
-    let parent = file.parent();
-    let has_cpp_in_list = all_files.iter().any(|f| {
-      f.as_path() != file
-        && f.parent() == parent
-        && f
-          .extension()
-          .and_then(|e| e.to_str())
-          .is_some_and(is_cpp_extension)
-    });
-    if has_cpp_in_list {
+    let parent = file.parent().unwrap_or(Path::new(""));
+    let cpp_dirs = scan_cpp_dirs(all_files);
+    if cpp_dirs.contains(parent) {
       "-std=c++17"
-    } else if let Some(p) = parent
-      && (p != Path::new("") || file.is_absolute())
-      && let Ok(entries) = std::fs::read_dir(if p == Path::new("") {
+    } else if (parent != Path::new("") || file.is_absolute())
+      && let Ok(entries) = std::fs::read_dir(if parent == Path::new("") {
         Path::new(".")
       } else {
-        p
+        parent
       })
     {
       let has_cpp_on_disk = entries.filter_map(Result::ok).any(|e| {
@@ -450,11 +520,12 @@ impl LanguageSurface for CppSurface {
       None => ("-std=c17".to_string(), "-std=c++17".to_string()),
     };
 
+    let cpp_dirs = scan_cpp_dirs(&files);
     let mut c_files = Vec::new();
     let mut cpp_files = Vec::new();
 
     for f in &files {
-      let flag = std_flag_for_file(f, &files);
+      let flag = std_flag_for_file_with_dirs(f, &cpp_dirs);
       if flag == "-std=c17" {
         c_files.push(f.clone());
       } else {
@@ -682,6 +753,52 @@ mod tests {
 
     assert_eq!(std_flag_for_file(&c_header, &[]), "-std=c17");
     assert_eq!(std_flag_for_file(&cpp_header, &[]), "-std=c++17");
+  }
+
+  #[test]
+  fn test_scan_cpp_dirs_and_std_flag_for_file_with_dirs() {
+    let dir = tempdir().unwrap();
+    let c_dir = dir.path().join("c_pkg");
+    std::fs::create_dir_all(&c_dir).unwrap();
+    let c_header = c_dir.join("c_header.h");
+    let c_source = c_dir.join("c_source.c");
+    std::fs::write(&c_header, "").unwrap();
+    std::fs::write(&c_source, "").unwrap();
+
+    let cpp_dir = dir.path().join("cpp_pkg");
+    std::fs::create_dir_all(&cpp_dir).unwrap();
+    let cpp_header = cpp_dir.join("cpp_header.h");
+    let cpp_source = cpp_dir.join("cpp_source.cpp");
+    std::fs::write(&cpp_header, "").unwrap();
+    std::fs::write(&cpp_source, "").unwrap();
+
+    let files = vec![
+      c_source.clone(),
+      c_header.clone(),
+      cpp_source.clone(),
+      cpp_header.clone(),
+    ];
+
+    let cpp_dirs = scan_cpp_dirs(&files);
+    assert!(cpp_dirs.contains(&cpp_dir));
+    assert!(!cpp_dirs.contains(&c_dir));
+
+    assert_eq!(
+      std_flag_for_file_with_dirs(&c_source, &cpp_dirs),
+      "-std=c17"
+    );
+    assert_eq!(
+      std_flag_for_file_with_dirs(&c_header, &cpp_dirs),
+      "-std=c17"
+    );
+    assert_eq!(
+      std_flag_for_file_with_dirs(&cpp_source, &cpp_dirs),
+      "-std=c++17"
+    );
+    assert_eq!(
+      std_flag_for_file_with_dirs(&cpp_header, &cpp_dirs),
+      "-std=c++17"
+    );
   }
 
   #[test]
