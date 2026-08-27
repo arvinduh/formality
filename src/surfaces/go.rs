@@ -11,6 +11,7 @@ use super::{
 };
 use serde::{Deserialize, Serialize};
 use std::path::PathBuf;
+use std::sync::OnceLock;
 use std::time::Instant;
 
 /// Default set of linters enabled in the generated `.golangci.yml` — matches
@@ -169,14 +170,17 @@ pub fn build_golangci_lint_inline_args(linters: &[String]) -> Vec<String> {
 /// format that could itself drift.
 #[must_use]
 pub fn golangci_lint_supports_enable_only() -> bool {
-  create_tool_command("golangci-lint")
-    .arg("run")
-    .arg("--help")
-    .output()
-    .is_ok_and(|out| {
-      String::from_utf8_lossy(&out.stdout).contains("--enable-only")
-        || String::from_utf8_lossy(&out.stderr).contains("--enable-only")
-    })
+  static CACHE: OnceLock<bool> = OnceLock::new();
+  *CACHE.get_or_init(|| {
+    create_tool_command("golangci-lint")
+      .arg("run")
+      .arg("--help")
+      .output()
+      .is_ok_and(|out| {
+        String::from_utf8_lossy(&out.stdout).contains("--enable-only")
+          || String::from_utf8_lossy(&out.stderr).contains("--enable-only")
+      })
+  })
 }
 
 impl LanguageSurface for GoSurface {
