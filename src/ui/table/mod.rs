@@ -125,15 +125,6 @@ fn default_truncate_suffix() -> String {
   "...".to_string()
 }
 
-impl Overflow {
-  /// Constructs a [`Overflow::Truncate`] variant with given suffix.
-  pub fn truncate(suffix: impl Into<String>) -> Self {
-    Overflow::Truncate {
-      suffix: suffix.into(),
-    }
-  }
-}
-
 /// A single cell inside a table row, composed of semantic spans.
 #[derive(Serialize, Deserialize, Clone, PartialEq, Eq, Debug, Default)]
 pub struct Cell {
@@ -162,16 +153,6 @@ impl Cell {
   pub fn text(text: impl Into<String>) -> Self {
     Self {
       spans: vec![Span::plain(text)],
-      align: None,
-      overflow: None,
-    }
-  }
-
-  /// Constructs a [`Cell`] containing a single span.
-  #[must_use]
-  pub fn span(span: Span) -> Self {
-    Self {
-      spans: vec![span],
       align: None,
       overflow: None,
     }
@@ -226,7 +207,7 @@ impl From<String> for Cell {
 
 impl From<Span> for Cell {
   fn from(s: Span) -> Self {
-    Cell::span(s)
+    Cell::new(vec![s])
   }
 }
 
@@ -474,12 +455,6 @@ impl Row {
     }
   }
 
-  /// Constructs a data [`Row`] with given cells.
-  #[must_use]
-  pub fn data(cells: Vec<Cell>) -> Self {
-    Self::new(cells)
-  }
-
   /// Constructs a horizontal rule divider [`Row`].
   #[must_use]
   pub fn rule() -> Self {
@@ -578,11 +553,7 @@ impl Layout {
   /// Creates compact layout settings.
   #[must_use]
   pub fn compact() -> Self {
-    Self {
-      density: Density::Compact,
-      padding: (1, 1),
-      ..Default::default()
-    }
+    Self::default()
   }
 
   /// Creates comfortable layout settings.

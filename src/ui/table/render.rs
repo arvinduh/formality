@@ -30,21 +30,8 @@ impl Table {
     }
   }
 
-  /// Creates an empty [`Table`].
-  #[must_use]
-  pub fn empty() -> Self {
-    Self::default()
-  }
-
   /// Adds a row to the table in place.
   pub fn add_row(&mut self, row: Row) -> &mut Self {
-    self.rows.push(row);
-    self
-  }
-
-  /// Builder pattern to append a row to the table.
-  #[must_use]
-  pub fn with_row(mut self, row: Row) -> Self {
     self.rows.push(row);
     self
   }
@@ -63,6 +50,20 @@ impl Table {
   }
 }
 
+fn take_prefix_by_width(text: &str, budget: usize) -> (String, usize) {
+  let mut prefix = String::new();
+  let mut width = 0;
+  for ch in text.chars() {
+    let ch_w = UnicodeWidthChar::width(ch).unwrap_or(0);
+    if width + ch_w > budget {
+      break;
+    }
+    prefix.push(ch);
+    width += ch_w;
+  }
+  (prefix, width)
+}
+
 pub(super) fn truncate_spans(
   spans: &[Span],
   max_width: usize,
@@ -70,16 +71,7 @@ pub(super) fn truncate_spans(
 ) -> Vec<Span> {
   let suffix_width = suffix.width();
   if suffix_width >= max_width {
-    let mut truncated_suffix = String::new();
-    let mut current_width = 0;
-    for ch in suffix.chars() {
-      let ch_w = UnicodeWidthChar::width(ch).unwrap_or(0);
-      if current_width + ch_w > max_width {
-        break;
-      }
-      truncated_suffix.push(ch);
-      current_width += ch_w;
-    }
+    let (truncated_suffix, _) = take_prefix_by_width(suffix, max_width);
     return vec![Span::plain(truncated_suffix)];
   }
   let target_width = max_width - suffix_width;
@@ -92,15 +84,10 @@ pub(super) fn truncate_spans(
       result.push(span.clone());
       current_width += span_width;
     } else {
-      let mut partial = String::new();
-      for ch in span.text.chars() {
-        let ch_width = UnicodeWidthChar::width(ch).unwrap_or(0);
-        if current_width + ch_width > target_width {
-          break;
-        }
-        partial.push(ch);
-        current_width += ch_width;
-      }
+      let (partial, _) = take_prefix_by_width(
+        &span.text,
+        target_width.saturating_sub(current_width),
+      );
       if !partial.is_empty() {
         result.push(Span::new(partial, span.style));
       }
@@ -123,15 +110,10 @@ fn clip_spans(spans: &[Span], max_width: usize) -> Vec<Span> {
       result.push(span.clone());
       current_width += span_width;
     } else {
-      let mut partial = String::new();
-      for ch in span.text.chars() {
-        let ch_width = UnicodeWidthChar::width(ch).unwrap_or(0);
-        if current_width + ch_width > max_width {
-          break;
-        }
-        partial.push(ch);
-        current_width += ch_width;
-      }
+      let (partial, _) = take_prefix_by_width(
+        &span.text,
+        max_width.saturating_sub(current_width),
+      );
       if !partial.is_empty() {
         result.push(Span::new(partial, span.style));
       }
@@ -148,24 +130,28 @@ fn render_cell_to_string(
   palette: &Palette,
 ) -> String {
   let overflow = cell.overflow.as_ref().unwrap_or(col_overflow);
-  let spans = if let Some(max_w) = max_width_opt {
-    if cell.display_width() > max_w {
-      match overflow {
-        Overflow::Clip => clip_spans(&cell.spans, max_w),
-        Overflow::Truncate { suffix } => {
-          truncate_spans(&cell.spans, max_w, suffix)
-        }
-        Overflow::Wrap => cell.spans.clone(),
-      }
-    } else {
-      cell.spans.clone()
-    }
-  } else {
-    cell.spans.clone()
-  };
-
   let mut buf = String::new();
-  for span in spans {
+  if let Some(max_w) = max_width_opt
+    && cell.display_width() > max_w
+  {
+    match overflow {
+      Overflow::Clip => {
+        for span in clip_spans(&cell.spans, max_w) {
+          buf.push_str(&palette.apply(&span.text, span.style));
+        }
+        return buf;
+      }
+      Overflow::Truncate { suffix } => {
+        for span in truncate_spans(&cell.spans, max_w, suffix) {
+          buf.push_str(&palette.apply(&span.text, span.style));
+        }
+        return buf;
+      }
+      Overflow::Wrap => {}
+    }
+  }
+
+  for span in &cell.spans {
     buf.push_str(&palette.apply(&span.text, span.style));
   }
   buf
@@ -221,6 +207,27 @@ pub fn render(spec: &Table, palette: &Palette) -> String {
     table.set_header(header_row);
   }
 
+  let padding_w = (spec.layout.padding.0 + spec.layout.padding.1) as usize;
+  let col_max_widths: Vec<Option<usize>> = spec
+    .columns
+    .iter()
+    .map(|col| match col.width {
+      WidthPolicy::Fixed(w) | WidthPolicy::Max(w) => {
+        Some((w as usize).saturating_sub(padding_w))
+      }
+      WidthPolicy::Range(_, max) => {
+        Some((max as usize).saturating_sub(padding_w))
+      }
+      WidthPolicy::Min(w) => Some((w as usize).saturating_sub(padding_w)),
+      WidthPolicy::Pct(pct) => Some(
+        ((table_width as usize * pct as usize) / 100).saturating_sub(padding_w),
+      ),
+      WidthPolicy::Auto => {
+        Some((table_width as usize).saturating_sub(padding_w))
+      }
+    })
+    .collect();
+
   let mut group_titles: Vec<String> = Vec::new();
 
   // Populate data rows
@@ -234,32 +241,9 @@ pub fn render(spec: &Table, palette: &Palette) -> String {
           let col = spec.columns.get(i);
           let col_overflow = col.map_or(&Overflow::Wrap, |c| &c.overflow);
           let col_align = col.map_or(Align::Left, |c| c.align);
+          let max_w = col_max_widths.get(i).copied().flatten();
 
           let (content, align) = if let Some(c) = cell {
-            let max_w = if let Some(col_spec) = col {
-              let padding_w =
-                (spec.layout.padding.0 + spec.layout.padding.1) as usize;
-              match col_spec.width {
-                WidthPolicy::Fixed(w) | WidthPolicy::Max(w) => {
-                  Some((w as usize).saturating_sub(padding_w))
-                }
-                WidthPolicy::Range(_, max) => {
-                  Some((max as usize).saturating_sub(padding_w))
-                }
-                WidthPolicy::Min(w) => {
-                  Some((w as usize).saturating_sub(padding_w))
-                }
-                WidthPolicy::Pct(pct) => Some(
-                  ((table_width as usize * pct as usize) / 100)
-                    .saturating_sub(padding_w),
-                ),
-                WidthPolicy::Auto => {
-                  Some((table_width as usize).saturating_sub(padding_w))
-                }
-              }
-            } else {
-              None
-            };
             (
               render_cell_to_string(c, col_overflow, max_w, palette),
               c.align.unwrap_or(col_align),
