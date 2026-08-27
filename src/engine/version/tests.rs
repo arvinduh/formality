@@ -523,3 +523,42 @@ fn test_tool_status_unknown_version_display_and_predicates() {
   assert!(!status_empty.is_not_found());
   assert_eq!(status_empty.to_string(), "Unknown Version (probe failed)");
 }
+
+#[test]
+fn test_normalize_probed_version() {
+  assert_eq!(
+    normalize_probed_version("rustfmt", "rustfmt 1.7.0 (7576e26b 2024-05-07)"),
+    Some(Version::new(1, 7, 0))
+  );
+  assert_eq!(
+    normalize_probed_version("ruff", "ruff 0.9.6"),
+    Some(Version::new(0, 9, 6))
+  );
+
+  // Clippy 0.1.X is remapped to 1.X.0 for clippy, clippy-driver, and cargo-clippy
+  assert_eq!(
+    normalize_probed_version("clippy", "clippy 0.1.65 (rustc 1.65.0)"),
+    Some(Version::new(1, 65, 0))
+  );
+  assert_eq!(
+    normalize_probed_version("clippy-driver", "clippy 0.1.70"),
+    Some(Version::new(1, 70, 0))
+  );
+  assert_eq!(
+    normalize_probed_version(
+      "cargo-clippy",
+      "clippy 0.1.80-nightly (rustc 1.80.0)"
+    ),
+    Some(Version::with_prerelease(1, 80, 0, "nightly"))
+  );
+
+  // Non-clippy tools with 0.1.X are NOT remapped
+  assert_eq!(
+    normalize_probed_version("other-tool", "other-tool 0.1.65"),
+    Some(Version::new(0, 1, 65))
+  );
+
+  // Invalid strings return None
+  assert_eq!(normalize_probed_version("rustfmt", ""), None);
+  assert_eq!(normalize_probed_version("clippy", "invalid banner"), None);
+}
