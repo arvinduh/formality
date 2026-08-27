@@ -13,9 +13,241 @@ pub use mstv::{
 };
 
 use crate::surfaces::create_tool_command;
+use serde::{Deserialize, Serialize};
 use std::cmp::Ordering;
+use std::collections::BTreeMap;
 use std::fmt;
+use std::path::{Path, PathBuf};
 use std::str::FromStr;
+use std::time::{SystemTime, UNIX_EPOCH};
+
+/// Cache TTL for probed tool versions: 24 hours.
+pub const TOOL_VERSION_CACHE_TTL_SECS: u64 = 24 * 60 * 60;
+
+/// An on-disk cache entry recording the probed version output and metadata for a tool binary.
+#[derive(Serialize, Deserialize, Debug, Clone, PartialEq, Eq)]
+pub struct ToolVersionEntry {
+  /// The raw stdout/stderr output banner obtained from the tool.
+  pub raw_version: String,
+  /// Timestamp (seconds since UNIX epoch) when this entry was probed.
+  pub last_checked_unix: u64,
+  /// File modification timestamp (seconds since UNIX epoch) of the binary at probe time.
+  pub binary_mtime_unix: u64,
+  /// Absolute or resolved path to the tool binary executable at probe time.
+  #[serde(default, skip_serializing_if = "Option::is_none")]
+  pub binary_path: Option<String>,
+}
+
+/// The collection of cached tool versions stored in `tool_versions.json`.
+#[derive(Serialize, Deserialize, Debug, Default, Clone, PartialEq, Eq)]
+pub struct ToolVersionStore {
+  /// Map of tool binary names to their cached version entry.
+  #[serde(default)]
+  pub tools: BTreeMap<String, ToolVersionEntry>,
+}
+
+/// Returns the full path to the `tool_versions.json` cache file in formality's cache directory.
+#[must_use]
+pub fn get_tool_versions_cache_path() -> PathBuf {
+  crate::engine::cache_path("tool_versions.json")
+}
+
+/// Reads and deserializes the tool versions cache from the given path.
+/// Returns `None` if the file cannot be read or parsed.
+#[must_use]
+pub fn read_tool_version_cache_at(path: &Path) -> Option<ToolVersionStore> {
+  let data = std::fs::read_to_string(path).ok()?;
+  serde_json::from_str(&data).ok()
+}
+
+/// Serializes and writes the tool versions cache to the given path.
+/// Creates parent directories as needed and ignores I/O errors to ensure resilient operation.
+pub fn write_tool_version_cache_at(path: &Path, store: &ToolVersionStore) {
+  if let Some(parent) = path.parent() {
+    let _ = std::fs::create_dir_all(parent);
+  }
+  if let Ok(json) = serde_json::to_string_pretty(store) {
+    let _ = std::fs::write(path, json);
+  }
+}
+
+/// Resolves the binary path on PATH and retrieves its file modification timestamp (`mtime`).
+#[must_use]
+pub fn resolve_binary_info(binary: &str) -> Option<(PathBuf, u64)> {
+  let path = if matches!(binary, "clippy" | "clippy-driver" | "cargo-clippy") {
+    which::which("clippy-driver")
+      .or_else(|_| which::which("cargo"))
+      .or_else(|_| which::which(binary))
+      .ok()?
+  } else {
+    which::which(binary).ok()?
+  };
+
+  let mtime = std::fs::metadata(&path)
+    .and_then(|m| m.modified())
+    .ok()
+    .and_then(|t| t.duration_since(UNIX_EPOCH).ok())
+    .map_or(0, |d| d.as_secs());
+
+  Some((path, mtime))
+}
+
+/// Executes the tool binary with `--version` or `-v` uncached and extracts the raw output line.
+#[must_use]
+pub fn probe_raw_tool_version_uncached(binary: &str) -> Option<String> {
+  let output = if binary == "clippy" {
+    if let Ok(out) = create_tool_command("clippy-driver")
+      .arg("--version")
+      .output()
+    {
+      if out.status.success() {
+        Some(out)
+      } else {
+        create_tool_command("cargo")
+          .args(["clippy", "--version"])
+          .output()
+          .ok()
+      }
+    } else {
+      create_tool_command("cargo")
+        .args(["clippy", "--version"])
+        .output()
+        .ok()
+    }
+  } else {
+    let args = tool_version_args(binary).unwrap_or(&["--version"]);
+    create_tool_command(binary).args(args).output().ok()
+  }?;
+
+  if output.status.success() || (binary == "gofmt" && !output.stderr.is_empty())
+  {
+    let stdout = String::from_utf8_lossy(&output.stdout).to_string();
+    if !stdout.trim().is_empty() {
+      if let Some(line) = stdout
+        .lines()
+        .find(|l| l.chars().any(|c| c.is_ascii_digit()))
+      {
+        return Some(line.trim().to_string());
+      }
+      if let Some(first_line) = stdout.lines().find(|l| !l.trim().is_empty()) {
+        return Some(first_line.trim().to_string());
+      }
+    }
+    let stderr = String::from_utf8_lossy(&output.stderr).to_string();
+    if !stderr.trim().is_empty() {
+      if let Some(line) = stderr
+        .lines()
+        .find(|l| l.chars().any(|c| c.is_ascii_digit()))
+      {
+        return Some(line.trim().to_string());
+      }
+      if let Some(first_line) = stderr.lines().find(|l| !l.trim().is_empty()) {
+        return Some(first_line.trim().to_string());
+      }
+    }
+  }
+
+  // Fallback for tools expecting -v or -version
+  if let Ok(output_v) = create_tool_command(binary).arg("-v").output()
+    && output_v.status.success()
+  {
+    let stdout = String::from_utf8_lossy(&output_v.stdout).to_string();
+    if !stdout.trim().is_empty() {
+      if let Some(line) = stdout
+        .lines()
+        .find(|l| l.chars().any(|c| c.is_ascii_digit()))
+      {
+        return Some(line.trim().to_string());
+      }
+      if let Some(first_line) = stdout.lines().find(|l| !l.trim().is_empty()) {
+        return Some(first_line.trim().to_string());
+      }
+    }
+  }
+
+  None
+}
+
+/// Retrieve the raw output line from executing the tool with `--version` or `-v`,
+/// checking the on-disk cache at `cache_path` first.
+/// If cached version is fresh (TTL valid) and binary modification time matches,
+/// returns the cached version string without spawning a subprocess.
+/// Otherwise, invokes the tool CLI, updates the cache, and returns the result.
+#[must_use]
+pub fn get_raw_tool_version_at(
+  binary: &str,
+  cache_path: &Path,
+) -> Option<String> {
+  let bin_info = resolve_binary_info(binary);
+
+  if std::env::var("FORMALITY_NO_VERSION_CACHE").is_err()
+    && let Some((ref bin_path, bin_mtime)) = bin_info
+    && let Some(store) = read_tool_version_cache_at(cache_path)
+    && let Some(entry) = store.tools.get(binary)
+  {
+    let now = SystemTime::now()
+      .duration_since(UNIX_EPOCH)
+      .map_or(0, |d| d.as_secs());
+
+    let is_fresh =
+      now.saturating_sub(entry.last_checked_unix) < TOOL_VERSION_CACHE_TTL_SECS;
+    let mtime_matches = entry.binary_mtime_unix == bin_mtime;
+    let path_matches = entry
+      .binary_path
+      .as_deref()
+      .is_none_or(|p| p == bin_path.to_string_lossy().as_ref());
+
+    if is_fresh && mtime_matches && path_matches {
+      return Some(entry.raw_version.clone());
+    }
+  }
+
+  let raw = probe_raw_tool_version_uncached(binary)?;
+
+  if let Some((ref bin_path, bin_mtime)) = bin_info {
+    let mut store = read_tool_version_cache_at(cache_path).unwrap_or_default();
+    let now = SystemTime::now()
+      .duration_since(UNIX_EPOCH)
+      .map_or(0, |d| d.as_secs());
+
+    store.tools.insert(
+      binary.to_string(),
+      ToolVersionEntry {
+        raw_version: raw.clone(),
+        last_checked_unix: now,
+        binary_mtime_unix: bin_mtime,
+        binary_path: Some(bin_path.to_string_lossy().to_string()),
+      },
+    );
+    write_tool_version_cache_at(cache_path, &store);
+  }
+
+  Some(raw)
+}
+
+/// Retrieve the raw output line from executing the tool with `--version` or `-v`,
+/// using the default on-disk cache store (`tool_versions.json`) in `cache_dir()`.
+#[must_use]
+pub fn get_raw_tool_version(binary: &str) -> Option<String> {
+  get_raw_tool_version_at(binary, &get_tool_versions_cache_path())
+}
+
+/// Probe a tool's version at an explicit cache path.
+#[must_use]
+pub fn probe_tool_version_at(
+  binary: &str,
+  cache_path: &Path,
+) -> Option<Version> {
+  let raw_output = get_raw_tool_version_at(binary, cache_path)?;
+  normalize_probed_version(binary, &raw_output)
+}
+
+/// Probe a tool's version by invoking its CLI (`--version` / `-v`) and parsing the output,
+/// checking the on-disk cache store before spawning subprocesses.
+#[must_use]
+pub fn probe_tool_version(binary: &str) -> Option<Version> {
+  probe_tool_version_at(binary, &get_tool_versions_cache_path())
+}
 
 /// Represents a Semantic Version (`SemVer`) with optional prerelease identifier.
 #[derive(Debug, Clone, Eq, PartialEq, Hash)]
@@ -256,89 +488,6 @@ pub fn normalize_probed_version(binary: &str, raw: &str) -> Option<Version> {
   }
 
   Some(ver)
-}
-
-/// Probe a tool's version by invoking its CLI (`--version` / `-v`) and parsing the output.
-#[must_use]
-pub fn probe_tool_version(binary: &str) -> Option<Version> {
-  let raw_output = get_raw_tool_version(binary)?;
-  normalize_probed_version(binary, &raw_output)
-}
-
-/// Retrieve the raw output line from executing the tool with `--version` or `-v`.
-#[must_use]
-pub fn get_raw_tool_version(binary: &str) -> Option<String> {
-  let output = if binary == "clippy" {
-    if let Ok(out) = create_tool_command("clippy-driver")
-      .arg("--version")
-      .output()
-    {
-      if out.status.success() {
-        Some(out)
-      } else {
-        create_tool_command("cargo")
-          .args(["clippy", "--version"])
-          .output()
-          .ok()
-      }
-    } else {
-      create_tool_command("cargo")
-        .args(["clippy", "--version"])
-        .output()
-        .ok()
-    }
-  } else {
-    let args = tool_version_args(binary).unwrap_or(&["--version"]);
-    create_tool_command(binary).args(args).output().ok()
-  }?;
-
-  if output.status.success() || (binary == "gofmt" && !output.stderr.is_empty())
-  {
-    let stdout = String::from_utf8_lossy(&output.stdout).to_string();
-    if !stdout.trim().is_empty() {
-      if let Some(line) = stdout
-        .lines()
-        .find(|l| l.chars().any(|c| c.is_ascii_digit()))
-      {
-        return Some(line.trim().to_string());
-      }
-      if let Some(first_line) = stdout.lines().find(|l| !l.trim().is_empty()) {
-        return Some(first_line.trim().to_string());
-      }
-    }
-    let stderr = String::from_utf8_lossy(&output.stderr).to_string();
-    if !stderr.trim().is_empty() {
-      if let Some(line) = stderr
-        .lines()
-        .find(|l| l.chars().any(|c| c.is_ascii_digit()))
-      {
-        return Some(line.trim().to_string());
-      }
-      if let Some(first_line) = stderr.lines().find(|l| !l.trim().is_empty()) {
-        return Some(first_line.trim().to_string());
-      }
-    }
-  }
-
-  // Fallback for tools expecting -v or -version
-  if let Ok(output_v) = create_tool_command(binary).arg("-v").output()
-    && output_v.status.success()
-  {
-    let stdout = String::from_utf8_lossy(&output_v.stdout).to_string();
-    if !stdout.trim().is_empty() {
-      if let Some(line) = stdout
-        .lines()
-        .find(|l| l.chars().any(|c| c.is_ascii_digit()))
-      {
-        return Some(line.trim().to_string());
-      }
-      if let Some(first_line) = stdout.lines().find(|l| !l.trim().is_empty()) {
-        return Some(first_line.trim().to_string());
-      }
-    }
-  }
-
-  None
 }
 
 /// Status of a tool relative to its minimum required version.

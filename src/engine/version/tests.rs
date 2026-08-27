@@ -562,3 +562,197 @@ fn test_normalize_probed_version() {
   assert_eq!(normalize_probed_version("rustfmt", ""), None);
   assert_eq!(normalize_probed_version("clippy", "invalid banner"), None);
 }
+
+#[test]
+fn test_tool_version_store_serialization_roundtrip() {
+  let temp = tempfile::TempDir::new().unwrap();
+  let cache_path = temp.path().join("tool_versions.json");
+
+  let mut store = ToolVersionStore::default();
+  store.tools.insert(
+    "rustfmt".to_string(),
+    ToolVersionEntry {
+      raw_version: "rustfmt 1.7.0".to_string(),
+      last_checked_unix: 1700000000,
+      binary_mtime_unix: 1699999000,
+      binary_path: Some("/bin/rustfmt".to_string()),
+    },
+  );
+  store.tools.insert(
+    "ruff".to_string(),
+    ToolVersionEntry {
+      raw_version: "ruff 0.9.6".to_string(),
+      last_checked_unix: 1700000100,
+      binary_mtime_unix: 1699999100,
+      binary_path: None,
+    },
+  );
+
+  write_tool_version_cache_at(&cache_path, &store);
+  let loaded = read_tool_version_cache_at(&cache_path).expect("valid cache");
+  assert_eq!(loaded, store);
+  assert_eq!(loaded.tools.len(), 2);
+  assert_eq!(
+    loaded.tools.get("rustfmt").unwrap().raw_version,
+    "rustfmt 1.7.0"
+  );
+  assert_eq!(loaded.tools.get("ruff").unwrap().raw_version, "ruff 0.9.6");
+}
+
+#[test]
+fn test_tool_version_cache_miss_populates_cache() {
+  let temp = tempfile::TempDir::new().unwrap();
+  let cache_path = temp.path().join("tool_versions.json");
+
+  assert!(read_tool_version_cache_at(&cache_path).is_none());
+
+  if which::which("rustfmt").is_ok() {
+    let raw = get_raw_tool_version_at("rustfmt", &cache_path);
+    assert!(raw.is_some(), "Expected rustfmt raw output");
+
+    let cache = read_tool_version_cache_at(&cache_path)
+      .expect("cache file should be created on miss");
+    let entry = cache
+      .tools
+      .get("rustfmt")
+      .expect("rustfmt entry should be cached");
+    assert_eq!(Some(&entry.raw_version), raw.as_ref());
+    assert!(entry.last_checked_unix > 0);
+  }
+}
+
+#[test]
+fn test_tool_version_cache_hit_avoids_subprocess() {
+  let temp = tempfile::TempDir::new().unwrap();
+  let cache_path = temp.path().join("tool_versions.json");
+
+  if which::which("rustfmt").is_ok() {
+    let (bin_path, bin_mtime) =
+      resolve_binary_info("rustfmt").expect("rustfmt binary info");
+
+    let now = SystemTime::now()
+      .duration_since(UNIX_EPOCH)
+      .unwrap()
+      .as_secs();
+
+    let mut store = ToolVersionStore::default();
+    store.tools.insert(
+      "rustfmt".to_string(),
+      ToolVersionEntry {
+        raw_version: "rustfmt 99.88.77 (mocked cache hit)".to_string(),
+        last_checked_unix: now,
+        binary_mtime_unix: bin_mtime,
+        binary_path: Some(bin_path.to_string_lossy().to_string()),
+      },
+    );
+    write_tool_version_cache_at(&cache_path, &store);
+
+    let raw = get_raw_tool_version_at("rustfmt", &cache_path);
+    assert_eq!(raw, Some("rustfmt 99.88.77 (mocked cache hit)".to_string()));
+
+    let probed = probe_tool_version_at("rustfmt", &cache_path);
+    assert_eq!(probed, Some(Version::new(99, 88, 77)));
+  }
+}
+
+#[test]
+fn test_tool_version_cache_mtime_invalidation() {
+  let temp = tempfile::TempDir::new().unwrap();
+  let cache_path = temp.path().join("tool_versions.json");
+
+  if which::which("rustfmt").is_ok() {
+    let (bin_path, bin_mtime) =
+      resolve_binary_info("rustfmt").expect("rustfmt binary info");
+
+    let now = SystemTime::now()
+      .duration_since(UNIX_EPOCH)
+      .unwrap()
+      .as_secs();
+
+    // Cache has mismatched mtime (e.g. tool binary was upgraded on disk)
+    let stale_mtime = bin_mtime.wrapping_sub(500);
+    let mut store = ToolVersionStore::default();
+    store.tools.insert(
+      "rustfmt".to_string(),
+      ToolVersionEntry {
+        raw_version: "rustfmt 99.88.77 (stale mtime)".to_string(),
+        last_checked_unix: now,
+        binary_mtime_unix: stale_mtime,
+        binary_path: Some(bin_path.to_string_lossy().to_string()),
+      },
+    );
+    write_tool_version_cache_at(&cache_path, &store);
+
+    let raw = get_raw_tool_version_at("rustfmt", &cache_path);
+    assert_ne!(
+      raw,
+      Some("rustfmt 99.88.77 (stale mtime)".to_string()),
+      "mismatched mtime should invalidate cached version"
+    );
+
+    let updated_cache = read_tool_version_cache_at(&cache_path)
+      .expect("cache file should be updated");
+    let entry = updated_cache.tools.get("rustfmt").unwrap();
+    assert_eq!(entry.binary_mtime_unix, bin_mtime);
+  }
+}
+
+#[test]
+fn test_tool_version_cache_ttl_invalidation() {
+  let temp = tempfile::TempDir::new().unwrap();
+  let cache_path = temp.path().join("tool_versions.json");
+
+  if which::which("rustfmt").is_ok() {
+    let (bin_path, bin_mtime) =
+      resolve_binary_info("rustfmt").expect("rustfmt binary info");
+
+    let now = SystemTime::now()
+      .duration_since(UNIX_EPOCH)
+      .unwrap()
+      .as_secs();
+
+    // Cache has expired timestamp (older than TTL)
+    let expired_time = now - (TOOL_VERSION_CACHE_TTL_SECS + 120);
+    let mut store = ToolVersionStore::default();
+    store.tools.insert(
+      "rustfmt".to_string(),
+      ToolVersionEntry {
+        raw_version: "rustfmt 99.88.77 (expired TTL)".to_string(),
+        last_checked_unix: expired_time,
+        binary_mtime_unix: bin_mtime,
+        binary_path: Some(bin_path.to_string_lossy().to_string()),
+      },
+    );
+    write_tool_version_cache_at(&cache_path, &store);
+
+    let raw = get_raw_tool_version_at("rustfmt", &cache_path);
+    assert_ne!(
+      raw,
+      Some("rustfmt 99.88.77 (expired TTL)".to_string()),
+      "expired TTL should invalidate cached version"
+    );
+
+    let updated_cache = read_tool_version_cache_at(&cache_path)
+      .expect("cache file should be updated");
+    let entry = updated_cache.tools.get("rustfmt").unwrap();
+    assert!(entry.last_checked_unix >= now);
+  }
+}
+
+#[test]
+fn test_tool_version_cache_corrupted_json_resilience() {
+  let temp = tempfile::TempDir::new().unwrap();
+  let cache_path = temp.path().join("tool_versions.json");
+
+  std::fs::write(&cache_path, "not valid json {{{").unwrap();
+  assert_eq!(read_tool_version_cache_at(&cache_path), None);
+
+  if which::which("rustfmt").is_ok() {
+    let raw = get_raw_tool_version_at("rustfmt", &cache_path);
+    assert!(raw.is_some());
+
+    let updated = read_tool_version_cache_at(&cache_path)
+      .expect("corrupted cache should be cleanly overwritten with valid JSON");
+    assert!(updated.tools.contains_key("rustfmt"));
+  }
+}
