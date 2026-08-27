@@ -37,7 +37,7 @@ pub const MSTV_GOFMT: Version = Version::new(1, 18, 0);
 /// MSTV for golangci-lint.
 pub const MSTV_GOLANGCI_LINT: Version = Version::new(1, 50, 0);
 
-/// Minimum Supported Tool Version entry with metadata, invocation arguments, regex, and upgrade advice.
+/// Minimum Supported Tool Version entry with metadata, invocation arguments, and upgrade advice.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ToolMstvEntry {
   /// Name of the binary executable.
@@ -46,8 +46,6 @@ pub struct ToolMstvEntry {
   pub min_version: Version,
   /// CLI argument flags to print binary version string.
   pub version_args: &'static [&'static str],
-  /// Regex pattern to extract semver version string from output.
-  pub regex: &'static str,
   /// Upgrade advice message shown when tool is outdated.
   pub advice: &'static str,
 }
@@ -58,112 +56,96 @@ pub const TOOL_MSTV_REGISTRY: &[ToolMstvEntry] = &[
     binary: "rustfmt",
     min_version: MSTV_RUSTFMT,
     version_args: &["--version"],
-    regex: r"rustfmt (\d+\.\d+\.\d+)",
     advice: "Run 'rustup component add rustfmt' or 'rustup update'",
   },
   ToolMstvEntry {
     binary: "clippy",
     min_version: MSTV_CLIPPY,
     version_args: &["--version"],
-    regex: r"clippy (\d+\.\d+\.\d+)",
     advice: "Run 'rustup component add clippy' or 'rustup update'",
   },
   ToolMstvEntry {
     binary: "ruff",
     min_version: MSTV_RUFF,
     version_args: &["--version"],
-    regex: r"ruff (\d+\.\d+\.\d+)",
     advice: "Run 'pip install -U ruff' or 'brew install ruff'",
   },
   ToolMstvEntry {
     binary: "clang-format",
     min_version: MSTV_CLANG_FORMAT,
     version_args: &["--version"],
-    regex: r"clang-format version (\d+\.\d+\.\d+)",
     advice: "Install clang-format >= 14 via system package manager or LLVM toolchain",
   },
   ToolMstvEntry {
     binary: "clang-tidy",
     min_version: MSTV_CLANG_TIDY,
     version_args: &["--version"],
-    regex: r"clang-tidy version (\d+\.\d+\.\d+)",
     advice: "Install clang-tidy >= 14 via system package manager or LLVM toolchain",
   },
   ToolMstvEntry {
     binary: "prettier",
     min_version: MSTV_PRETTIER,
     version_args: &["--version"],
-    regex: r"(\d+\.\d+\.\d+)",
     advice: "Run 'npm install -g prettier' or 'brew install prettier'",
   },
   ToolMstvEntry {
     binary: "taplo",
     min_version: MSTV_TAPLO,
     version_args: &["--version"],
-    regex: r"taplo (\d+\.\d+\.\d+)",
     advice: "Run 'cargo binstall taplo-cli' or 'brew install taplo' or 'cargo install --locked taplo-cli'",
   },
   ToolMstvEntry {
     binary: "markdownlint-cli2",
     min_version: MSTV_MARKDOWNLINT_CLI2,
     version_args: &["--version"],
-    regex: r"markdownlint-cli2 v?(\d+\.\d+\.\d+)",
     advice: "Run 'npm install -g markdownlint-cli2' or 'brew install markdownlint-cli2'",
   },
   ToolMstvEntry {
     binary: "typstyle",
     min_version: MSTV_TYPSTYLE,
     version_args: &["--version"],
-    regex: r"typstyle (\d+\.\d+\.\d+)",
     advice: "Run 'cargo install --locked typstyle' or 'brew install typstyle'",
   },
   ToolMstvEntry {
     binary: "yamllint",
     min_version: MSTV_YAMLLINT,
     version_args: &["--version"],
-    regex: r"yamllint (\d+\.\d+\.\d+)",
     advice: "Run 'pip install -U yamllint' or 'brew install yamllint'",
   },
   ToolMstvEntry {
     binary: "biome",
     min_version: MSTV_BIOME,
     version_args: &["--version"],
-    regex: r"(\d+\.\d+\.\d+)",
     advice: "Run 'npm install -g @biomejs/biome' or 'brew install biome'",
   },
   ToolMstvEntry {
     binary: "checkstyle",
     min_version: MSTV_CHECKSTYLE,
     version_args: &["--version"],
-    regex: r"Checkstyle version:? (\d+\.\d+(?:\.\d+)?)",
     advice: "Run 'brew install checkstyle' or update your checkstyle jar",
   },
   ToolMstvEntry {
     binary: "ktfmt",
     min_version: MSTV_KTFMT,
     version_args: &["--version"],
-    regex: r"ktfmt version (\d+\.\d+(?:\.\d+)?)",
     advice: "Run 'brew install ktfmt'",
   },
   ToolMstvEntry {
     binary: "ktlint",
     min_version: MSTV_KTLINT,
     version_args: &["--version"],
-    regex: r"(\d+\.\d+\.\d+)",
     advice: "Run 'brew install ktlint'",
   },
   ToolMstvEntry {
     binary: "gofmt",
     min_version: MSTV_GOFMT,
     version_args: &["--help"],
-    regex: r"go(\d+\.\d+(?:\.\d+)?)",
     advice: "Update Go toolchain via https://go.dev/dl/",
   },
   ToolMstvEntry {
     binary: "golangci-lint",
     min_version: MSTV_GOLANGCI_LINT,
     version_args: &["version"],
-    regex: r"golangci-lint has version (\d+\.\d+\.\d+)",
     advice: "Run 'brew install golangci-lint' or update via https://golangci-lint.run",
   },
 ];
