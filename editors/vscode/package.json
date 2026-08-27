@@ -21,7 +21,12 @@
     "yaml",
     "json",
     "toml",
-    "typst"
+    "typst",
+    "java",
+    "go",
+    "kotlin",
+    "javascript",
+    "typescript"
   ],
   "activationEvents": [
     "onLanguage:rust",
@@ -34,6 +39,11 @@
     "onLanguage:jsonc",
     "onLanguage:toml",
     "onLanguage:typst",
+    "onLanguage:java",
+    "onLanguage:go",
+    "onLanguage:kotlin",
+    "onLanguage:javascript",
+    "onLanguage:typescript",
     "onCommand:formality.formatWorkspace",
     "onCommand:formality.lintWorkspace",
     "onCommand:formality.lintFix",
@@ -86,16 +96,19 @@
     }
   },
   "scripts": {
-    "vscode:prepublish": "npm run compile",
+    "vscode:prepublish": "npm run package",
     "compile": "tsc -p ./",
-    "watch": "tsc -watch -p ./"
+    "watch": "tsc -watch -p ./",
+    "build": "esbuild ./src/extension.ts --bundle --outfile=out/extension.js --external:vscode --format=cjs --platform=node --sourcemap",
+    "package": "esbuild ./src/extension.ts --bundle --outfile=out/extension.js --external:vscode --format=cjs --platform=node --minify"
   },
   "dependencies": {
     "vscode-languageclient": "^10.1.0"
   },
   "devDependencies": {
     "@types/node": "^26.2.0",
-    "@types/vscode": "^1.134.0",
+    "@types/vscode": "^1.85.0",
+    "esbuild": "^0.28.2",
     "typescript": "^7.0.2"
   }
 }

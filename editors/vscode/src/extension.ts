@@ -1,4 +1,6 @@
 import { execFile } from "child_process";
+import * as fs from "fs";
+import * as os from "os";
 import * as path from "path";
 import * as vscode from "vscode";
 import {
@@ -19,6 +21,11 @@ const SUPPORTED_LANGUAGES = [
   "jsonc",
   "toml",
   "typst",
+  "java",
+  "go",
+  "kotlin",
+  "javascript",
+  "typescript",
 ];
 
 let outputChannel: vscode.LogOutputChannel;
@@ -129,7 +136,7 @@ export async function activate(context: vscode.ExtensionContext) {
 
     if (autoSync) {
       const workspaceFolder =
-        vscode.workspace.getWorkspaceFolder(uri)?.uri.fsPath ||
+        getWorkspaceRoot(uri) ||
         path.dirname(uri.fsPath);
       runFmlCommand(
         ["sync"],
@@ -242,7 +249,20 @@ function getFmlExecutable(): string {
     .get<string>("executablePath", "fml");
 }
 
-function getWorkspaceRoot(): string | undefined {
+function getWorkspaceRoot(uri?: vscode.Uri): string | undefined {
+  if (uri) {
+    const folder = vscode.workspace.getWorkspaceFolder(uri);
+    if (folder) {
+      return folder.uri.fsPath;
+    }
+  }
+  const activeEditorUri = vscode.window.activeTextEditor?.document.uri;
+  if (activeEditorUri) {
+    const folder = vscode.workspace.getWorkspaceFolder(activeEditorUri);
+    if (folder) {
+      return folder.uri.fsPath;
+    }
+  }
   if (
     vscode.workspace.workspaceFolders &&
     vscode.workspace.workspaceFolders.length > 0
@@ -255,48 +275,89 @@ function getWorkspaceRoot(): string | undefined {
 function formatDocument(
   document: vscode.TextDocument,
 ): Promise<vscode.TextEdit[]> {
-  return new Promise((resolve, reject) => {
-    // Save document first if dirty so fml formats the on-disk content.
-    if (document.isDirty) {
-      document.save().then(() => doFormat(document, resolve, reject));
-    } else {
-      doFormat(document, resolve, reject);
-    }
-  });
+  return doFormat(document);
 }
 
-function doFormat(
+async function doFormat(
   document: vscode.TextDocument,
-  resolve: (edits: vscode.TextEdit[]) => void,
-  reject: (err: unknown) => void,
-) {
+): Promise<vscode.TextEdit[]> {
+  if (document.uri.scheme !== "file") {
+    return [];
+  }
+
   const filePath = document.uri.fsPath;
   const workspaceRoot =
-    vscode.workspace.getWorkspaceFolder(document.uri)?.uri.fsPath ||
-    path.dirname(filePath);
+    getWorkspaceRoot(document.uri) || path.dirname(filePath);
   const exe = getFmlExecutable();
+  const originalText = document.getText();
 
-  execFile(
-    exe,
-    ["fmt", filePath],
-    { cwd: workspaceRoot },
-    (error, stdout, stderr) => {
-      if (error) {
-        const msg = stderr || stdout || error.message;
-        // Surface a friendly message if the fml binary was not found.
-        const friendlyMsg =
-          (error as NodeJS.ErrnoException).code === "ENOENT"
-            ? `'${exe}' binary not found. Set formality.executablePath in VS Code settings to the full path of the fml binary.`
-            : `Formality format error: ${msg.split("\n")[0]}`;
-        outputChannel.appendLine(`[Format Error] ${filePath}:\n${msg}`);
-        vscode.window.showErrorMessage(friendlyMsg);
-        return reject(error);
-      }
-      // fml formats the file on disk in-place; return empty edits so VS Code
-      // reloads the saved content.
-      resolve([]);
-    },
+  // Write the in-memory content to a temporary sibling file so fml formats
+  // the exact buffer state and resolves configuration from the same directory
+  // tree, without triggering formatOnSave loops or buffer clobbering races.
+  let tempFilePath = path.join(
+    path.dirname(filePath),
+    `.tmp.${Date.now()}.${Math.random().toString(36).slice(2)}.${path.basename(filePath)}`,
   );
+
+  try {
+    try {
+      await fs.promises.writeFile(tempFilePath, originalText, "utf8");
+    } catch {
+      // Fallback to os.tmpdir() if the document directory is not writable.
+      tempFilePath = path.join(
+        os.tmpdir(),
+        `.tmp.${Date.now()}.${Math.random().toString(36).slice(2)}.${path.basename(filePath)}`,
+      );
+      await fs.promises.writeFile(tempFilePath, originalText, "utf8");
+    }
+
+    const formattedText = await new Promise<string>((resolve, reject) => {
+      execFile(
+        exe,
+        ["fmt", tempFilePath],
+        { cwd: workspaceRoot },
+        async (error, stdout, stderr) => {
+          if (error) {
+            const msg = stderr || stdout || error.message;
+            // Surface a friendly message if the fml binary was not found.
+            const friendlyMsg =
+              (error as NodeJS.ErrnoException).code === "ENOENT"
+                ? `'${exe}' binary not found. Set formality.executablePath in VS Code settings to the full path of the fml binary.`
+                : `Formality format error: ${msg.split("\n")[0]}`;
+            outputChannel.appendLine(`[Format Error] ${filePath}:\n${msg}`);
+            vscode.window.showErrorMessage(friendlyMsg);
+            return reject(error);
+          }
+
+          try {
+            const result = await fs.promises.readFile(tempFilePath, "utf8");
+            resolve(result);
+          } catch (readErr) {
+            reject(readErr);
+          }
+        },
+      );
+    });
+
+    if (formattedText === originalText) {
+      return [];
+    }
+
+    const fullRange = new vscode.Range(
+      document.positionAt(0),
+      document.positionAt(originalText.length),
+    );
+
+    return [vscode.TextEdit.replace(fullRange, formattedText)];
+  } catch {
+    return [];
+  } finally {
+    try {
+      await fs.promises.unlink(tempFilePath);
+    } catch {
+      // Ignore cleanup error if temp file does not exist.
+    }
+  }
 }
 
 function runFmlCommand(
