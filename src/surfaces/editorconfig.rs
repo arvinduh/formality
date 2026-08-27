@@ -66,91 +66,9 @@ pub fn generate_editorconfig(
   global: &ResolvedGlobalConfig,
   surfaces: &[Box<dyn LanguageSurface>],
 ) -> String {
-  let mut out = String::new();
-  out.push_str(AUTO_GENERATED_HEADER);
-  out.push_str("root = true\n\n");
-
-  let global_indent_style = if global.use_tabs { "tab" } else { "space" };
-  let global_indent_size = global.indent_size;
-  let global_max_line_length = Some(global.line_length);
-
-  // Global [*] section
-  out.push_str("[*]\n");
-  let _ = writeln!(out, "charset = {}", global.charset.to_ascii_lowercase());
-  let _ = writeln!(
-    out,
-    "end_of_line = {}",
-    global.end_of_line.to_ascii_lowercase()
-  );
-  let _ = writeln!(
-    out,
-    "insert_final_newline = {}",
-    global.insert_final_newline
-  );
-  let _ = writeln!(
-    out,
-    "trim_trailing_whitespace = {}",
-    global.trim_trailing_whitespace
-  );
-  let _ = writeln!(out, "indent_style = {global_indent_style}");
-  let _ = writeln!(out, "indent_size = {global_indent_size}");
-  let _ = writeln!(out, "max_line_length = {}", global.line_length);
-
-  // Collect ordered distinct surfaces
-  let mut seen = HashSet::new();
-  let mut ordered_surfaces: Vec<&Box<dyn LanguageSurface>> = Vec::new();
-
-  for &canonical_name in CANONICAL_FLEET_ORDER {
-    if let Some(s) = surfaces.iter().find(|s| s.name() == canonical_name)
-      && seen.insert(s.name())
-    {
-      ordered_surfaces.push(s);
-    }
-  }
-
-  for s in surfaces {
-    if seen.insert(s.name()) {
-      ordered_surfaces.push(s);
-    }
-  }
-
-  for surface in ordered_surfaces {
-    let glob = glob_for_surface(surface.as_ref());
-    let indent_style = match surface.facet_support(Facet::IndentTabs) {
-      FacetSupport::Fixed("spaces" | "space") => "space",
-      FacetSupport::Fixed("tabs" | "tab") => "tab",
-      _ => global_indent_style,
-    };
-
-    let indent_size = match surface.facet_support(Facet::IndentWidth) {
-      FacetSupport::Fixed(v) => v.parse().unwrap_or(global.indent_size),
-      _ => global.indent_size,
-    };
-    let max_line_length = match surface.facet_support(Facet::LineLength) {
-      FacetSupport::Unsupported => None,
-      FacetSupport::Fixed(v) => v.parse().ok().or(Some(global.line_length)),
-      FacetSupport::Configurable => Some(global.line_length),
-    };
-
-    let diverges = indent_style != global_indent_style
-      || indent_size != global_indent_size
-      || max_line_length != global_max_line_length;
-
-    if !diverges {
-      continue;
-    }
-
-    out.push('\n');
-    out.push_str(&glob);
-    out.push('\n');
-    let _ = writeln!(out, "indent_style = {indent_style}");
-    let _ = writeln!(out, "indent_size = {indent_size}");
-    if let Some(mll) = max_line_length {
-      let _ = writeln!(out, "max_line_length = {mll}");
-    }
-  }
-
-  out
+  generate_editorconfig_internal(global, surfaces, |_| {
+    (global.use_tabs, global.indent_size, global.line_length)
+  })
 }
 
 /// Synthesizes `.editorconfig` from a full `FormalityConfig`, honoring per-language
@@ -161,6 +79,24 @@ pub fn generate_editorconfig_from_config(
   surfaces: &[Box<dyn LanguageSurface>],
 ) -> String {
   let global = config.resolve_global();
+  generate_editorconfig_internal(&global, surfaces, |surface| {
+    let lang_cfg = config.resolve_for_lang(surface.name());
+    (
+      lang_cfg.use_tabs,
+      lang_cfg.indent_size,
+      lang_cfg.line_length,
+    )
+  })
+}
+
+fn generate_editorconfig_internal<F>(
+  global: &ResolvedGlobalConfig,
+  surfaces: &[Box<dyn LanguageSurface>],
+  surface_layout: F,
+) -> String
+where
+  F: Fn(&dyn LanguageSurface) -> (bool, usize, usize),
+{
   let mut out = String::new();
   out.push_str(AUTO_GENERATED_HEADER);
   out.push_str("root = true\n\n");
@@ -211,13 +147,13 @@ pub fn generate_editorconfig_from_config(
 
   for surface in ordered_surfaces {
     let glob = glob_for_surface(surface.as_ref());
-    let lang_cfg = config.resolve_for_lang(surface.name());
+    let (use_tabs, indent_size, line_length) = surface_layout(surface.as_ref());
 
     let indent_style = match surface.facet_support(Facet::IndentTabs) {
       FacetSupport::Fixed("spaces" | "space") => "space",
       FacetSupport::Fixed("tabs" | "tab") => "tab",
       _ => {
-        if lang_cfg.use_tabs {
+        if use_tabs {
           "tab"
         } else {
           "space"
@@ -226,13 +162,13 @@ pub fn generate_editorconfig_from_config(
     };
 
     let indent_size = match surface.facet_support(Facet::IndentWidth) {
-      FacetSupport::Fixed(v) => v.parse().unwrap_or(lang_cfg.indent_size),
-      _ => lang_cfg.indent_size,
+      FacetSupport::Fixed(v) => v.parse().unwrap_or(indent_size),
+      _ => indent_size,
     };
     let max_line_length = match surface.facet_support(Facet::LineLength) {
       FacetSupport::Unsupported => None,
-      FacetSupport::Fixed(v) => v.parse().ok().or(Some(lang_cfg.line_length)),
-      FacetSupport::Configurable => Some(lang_cfg.line_length),
+      FacetSupport::Fixed(v) => v.parse().ok().or(Some(line_length)),
+      FacetSupport::Configurable => Some(line_length),
     };
 
     let diverges = indent_style != global_indent_style
