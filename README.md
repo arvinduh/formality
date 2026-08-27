@@ -71,42 +71,75 @@ surface? See [docs/new-surface-guide.md](docs/new-surface-guide.md).
 
 ## Installation
 
-### Option A: Download a prebuilt binary
+### 1-Line Quick Install
 
-Prebuilt binaries for Linux (x86_64 and ARM64), macOS (x86_64 and Apple
-Silicon), and Windows (x86_64) are published with every
-[GitHub Release](https://github.com/arvinduh/formality/releases/latest).
-
-#### Linux / macOS
+#### Linux & macOS
 
 ```bash
-# Replace <version> and <target> as appropriate, e.g.:
-# fml-x86_64-unknown-linux-gnu.tar.gz
-# fml-aarch64-apple-darwin.tar.gz
-curl -L https://github.com/arvinduh/formality/releases/latest/download/fml-<target>.tar.gz \
-  | tar -xz
-
-# Move the binary somewhere on your PATH
-sudo mv fml /usr/local/bin/fml
-
-# Verify
-fml --version
+curl -fsSL https://raw.githubusercontent.com/arvinduh/formality/main/install.sh | sh
 ```
 
 #### Windows (PowerShell)
 
 ```powershell
-# Download the zip from the Releases page, then:
-Expand-Archive fml-x86_64-pc-windows-msvc.zip -DestinationPath $env:USERPROFILE\bin
-# Add $env:USERPROFILE\bin to your PATH via System → Environment Variables
+irm https://raw.githubusercontent.com/arvinduh/formality/main/install.ps1 | iex
 ```
 
-### Option B: Build from source
+### Package Managers / Cargo
+
+#### Fast install via `cargo-binstall` (zero compilation)
 
 ```bash
-cargo install --path .
-# or, from the GitHub repository directly:
+cargo binstall fml
+```
+
+#### Build from source via `cargo`
+
+```bash
+cargo install fml
+# or from the git repository:
 cargo install --git https://github.com/arvinduh/formality
+```
+
+### Direct Prebuilt Binaries
+
+Prebuilt standalone binaries are attached to every
+[GitHub Release](https://github.com/arvinduh/formality/releases/latest).
+
+#### macOS (Apple Silicon / ARM64)
+
+```bash
+curl -fsSL https://github.com/arvinduh/formality/releases/latest/download/fml-aarch64-apple-darwin.tar.gz | tar -xz
+mkdir -p ~/.local/bin && mv fml ~/.local/bin/fml
+```
+
+#### macOS (Intel / x86_64)
+
+```bash
+curl -fsSL https://github.com/arvinduh/formality/releases/latest/download/fml-x86_64-apple-darwin.tar.gz | tar -xz
+mkdir -p ~/.local/bin && mv fml ~/.local/bin/fml
+```
+
+#### Linux (x86_64)
+
+```bash
+curl -fsSL https://github.com/arvinduh/formality/releases/latest/download/fml-x86_64-unknown-linux-gnu.tar.gz | tar -xz
+mkdir -p ~/.local/bin && mv fml ~/.local/bin/fml
+```
+
+#### Linux (ARM64 / aarch64)
+
+```bash
+curl -fsSL https://github.com/arvinduh/formality/releases/latest/download/fml-aarch64-unknown-linux-gnu.tar.gz | tar -xz
+mkdir -p ~/.local/bin && mv fml ~/.local/bin/fml
+```
+
+#### Windows (x86_64 / PowerShell)
+
+```powershell
+Invoke-WebRequest -Uri https://github.com/arvinduh/formality/releases/latest/download/fml-x86_64-pc-windows-msvc.zip -OutFile fml.zip
+Expand-Archive fml.zip -DestinationPath $HOME\bin -Force
+Remove-Item fml.zip
 ```
 
 ---
@@ -355,8 +388,8 @@ handles every downstream tool (`ruff`, `prettier`, `markdownlint-cli2`, `taplo`,
 ```yaml
 - name: Install fml
   run: |
-    curl -L https://github.com/arvinduh/formality/releases/latest/download/fml-x86_64-unknown-linux-gnu.tar.gz \
-      | tar -xz && sudo mv fml /usr/local/bin/fml
+    curl -fsSL https://raw.githubusercontent.com/arvinduh/formality/main/install.sh | sh
+    echo "$HOME/.local/bin" >> $GITHUB_PATH
 
 - name: Install tool dependencies
   run: fml install

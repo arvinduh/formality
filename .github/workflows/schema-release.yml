@@ -72,6 +72,7 @@ jobs:
         with:
           files: schema/formality.schema.json
           name: Schema Release ${{ github.ref_name }}
+          make_latest: false
           body: |
             Formality JSON Schema release `${{ github.ref_name }}`.
 
