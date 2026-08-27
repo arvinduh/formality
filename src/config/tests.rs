@@ -313,6 +313,9 @@ fn test_typed_options_deserialization_from_toml() {
       [lang.json]
 
       [lang.toml]
+      align_entries = true
+      indent_entries = false
+      indent_tables = true
 
       [lang.typst]
     "#;
@@ -371,7 +374,14 @@ fn test_typed_options_deserialization_from_toml() {
   assert_eq!(json.json, Some(JsonOptions {}));
 
   let toml_lang = parsed.resolve_for_lang("toml");
-  assert_eq!(toml_lang.toml, Some(TomlOptions {}));
+  assert_eq!(
+    toml_lang.toml,
+    Some(TomlOptions {
+      align_entries: Some(true),
+      indent_entries: Some(false),
+      indent_tables: Some(true),
+    })
+  );
 
   let typst = parsed.resolve_for_lang("typst");
   assert_eq!(typst.typst, Some(TypstOptions {}));
@@ -397,6 +407,10 @@ fn test_typed_options_subtable_deserialization() {
 
       [lang.yaml.yaml]
       indent_sequence = false
+
+      [lang.toml.toml]
+      align_entries = true
+      indent_tables = false
     "#;
   let parsed =
     FormalityConfig::parse_str(toml, Path::new("test.toml")).unwrap();
@@ -440,6 +454,16 @@ fn test_typed_options_subtable_deserialization() {
       truthy: None,
     })
   );
+
+  let toml_lang = parsed.resolve_for_lang("toml");
+  assert_eq!(
+    toml_lang.toml,
+    Some(TomlOptions {
+      align_entries: Some(true),
+      indent_entries: None,
+      indent_tables: Some(false),
+    })
+  );
 }
 
 #[test]
@@ -456,6 +480,10 @@ fn test_typed_options_merging_semantics() {
 
       [lang.python]
       quote_style = "single"
+
+      [lang.toml]
+      align_entries = false
+      indent_entries = true
     "#;
   base.merge(
     FormalityConfig::parse_str(base_toml, Path::new("base.toml")).unwrap(),
@@ -468,6 +496,10 @@ fn test_typed_options_merging_semantics() {
 
       [lang.python]
       target_version = "py312"
+
+      [lang.toml]
+      align_entries = true
+      indent_tables = true
     "#;
   base.merge(
     FormalityConfig::parse_str(override_toml, Path::new("override.toml"))
@@ -490,6 +522,16 @@ fn test_typed_options_merging_semantics() {
     Some(PythonOptions {
       quote_style: Some("single".to_string()),
       target_version: Some("py312".to_string()),
+    })
+  );
+
+  let toml_lang = base.resolve_for_lang("toml");
+  assert_eq!(
+    toml_lang.toml,
+    Some(TomlOptions {
+      align_entries: Some(true),
+      indent_entries: Some(true),
+      indent_tables: Some(true),
     })
   );
 }
@@ -603,6 +645,21 @@ fn test_language_options_merge_units() {
   assert_eq!(yaml1.document_start, Some(true));
   assert_eq!(yaml1.truthy, Some(false));
 
+  let mut toml1 = TomlOptions {
+    align_entries: Some(true),
+    indent_entries: Some(false),
+    indent_tables: None,
+  };
+  let toml2 = TomlOptions {
+    align_entries: None,
+    indent_entries: Some(true),
+    indent_tables: Some(true),
+  };
+  toml1.merge(toml2);
+  assert_eq!(toml1.align_entries, Some(true));
+  assert_eq!(toml1.indent_entries, Some(true));
+  assert_eq!(toml1.indent_tables, Some(true));
+
   let mut layout1 = LayoutFacet {
     indent_size: Some(2),
     line_length: None,
@@ -620,6 +677,27 @@ fn test_language_options_merge_units() {
   assert_eq!(layout1.line_length, Some(100));
   assert_eq!(layout1.use_tabs, Some(true));
   assert_eq!(layout1.prose_wrap.as_deref(), Some("preserve"));
+}
+
+#[test]
+fn test_toml_options_alignment_and_indentation() {
+  let toml = r"
+      [lang.toml]
+      align_entries = true
+      indent_entries = true
+      indent_tables = false
+    ";
+  let parsed =
+    FormalityConfig::parse_str(toml, Path::new("test.toml")).unwrap();
+  let toml_lang = parsed.resolve_for_lang("toml");
+  assert_eq!(
+    toml_lang.toml,
+    Some(TomlOptions {
+      align_entries: Some(true),
+      indent_entries: Some(true),
+      indent_tables: Some(false),
+    })
+  );
 }
 
 #[test]
