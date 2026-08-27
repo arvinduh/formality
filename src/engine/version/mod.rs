@@ -228,24 +228,6 @@ pub fn minimum_supported_tool_version(binary: &str) -> Option<Version> {
   get_tool_mstv_entry(binary).map(|e| e.min_version.clone())
 }
 
-/// Alias for `minimum_supported_tool_version`.
-#[must_use]
-pub fn get_mstv(binary: &str) -> Option<Version> {
-  minimum_supported_tool_version(binary)
-}
-
-/// Retrieve upgrade advice for a given tool binary.
-#[must_use]
-pub fn get_upgrade_advice(binary: &str) -> Option<&'static str> {
-  get_tool_mstv_entry(binary).map(|e| e.advice)
-}
-
-/// Alias for `get_upgrade_advice`.
-#[must_use]
-pub fn tool_upgrade_advice(binary: &str) -> Option<&'static str> {
-  get_upgrade_advice(binary)
-}
-
 /// Retrieve version query arguments for a tool binary.
 #[must_use]
 pub fn tool_version_args(binary: &str) -> Option<&'static [&'static str]> {
@@ -445,74 +427,6 @@ impl fmt::Display for ToolStatus {
   }
 }
 
-/// Engine to evaluate tool compatibility policies.
-#[derive(Debug, Clone, Default)]
-pub struct CompatibilityPolicy;
-
-impl CompatibilityPolicy {
-  /// Checks tool binary compatibility against a specific minimum version.
-  #[must_use]
-  pub fn check(binary: &str, minimum: &Version) -> ToolStatus {
-    check_tool_compatibility(binary, minimum)
-  }
-
-  /// Checks tool binary compatibility against its declared MSTV entry if present.
-  #[must_use]
-  pub fn check_mstv(binary: &str) -> Option<ToolStatus> {
-    let min = minimum_supported_tool_version(binary)?;
-    Some(Self::check(binary, &min))
-  }
-
-  /// Evaluates compatibility status given optional parsed version and minimum requirement.
-  #[must_use]
-  pub fn evaluate(current: Option<&Version>, minimum: &Version) -> ToolStatus {
-    match current {
-      Some(curr) => {
-        if *curr >= *minimum {
-          ToolStatus::Compatible {
-            current: curr.clone(),
-            minimum: minimum.clone(),
-          }
-        } else {
-          ToolStatus::Outdated {
-            current: curr.clone(),
-            minimum: minimum.clone(),
-          }
-        }
-      }
-      None => ToolStatus::NotFound,
-    }
-  }
-
-  /// Evaluates compatibility status considering raw version output fallback.
-  #[must_use]
-  pub fn evaluate_with_raw(
-    current: Option<Version>,
-    raw_output: Option<String>,
-    minimum: &Version,
-  ) -> ToolStatus {
-    match (current, raw_output) {
-      (Some(curr), _) => {
-        if curr >= *minimum {
-          ToolStatus::Compatible {
-            current: curr,
-            minimum: minimum.clone(),
-          }
-        } else {
-          ToolStatus::Outdated {
-            current: curr,
-            minimum: minimum.clone(),
-          }
-        }
-      }
-      (None, Some(raw)) if !raw.trim().is_empty() => {
-        ToolStatus::UnknownVersion(raw)
-      }
-      _ => ToolStatus::NotFound,
-    }
-  }
-}
-
 /// Combines the MSTV-floor check and the exact-pin check into a single
 /// status, given an already-probed current version and raw version banner
 /// (callers that already have these from a prior probe pass them straight
@@ -559,45 +473,6 @@ pub fn evaluate_tool_status(
       Some(raw) if !raw.trim().is_empty() => ToolStatus::UnknownVersion(raw),
       _ => ToolStatus::NotFound,
     },
-  }
-}
-
-/// Check the compatibility status of an installed tool against a minimum required version.
-#[must_use]
-pub fn check_tool_compatibility(binary: &str, minimum: &Version) -> ToolStatus {
-  if which::which(binary).is_err() {
-    if binary == "clippy" {
-      if which::which("clippy-driver").is_err()
-        && which::which("cargo").is_err()
-      {
-        return ToolStatus::NotFound;
-      }
-    } else {
-      return ToolStatus::NotFound;
-    }
-  }
-
-  let raw = get_raw_tool_version(binary);
-  let probed = probe_tool_version(binary);
-
-  match (probed, raw) {
-    (Some(curr), _) => {
-      if curr >= *minimum {
-        ToolStatus::Compatible {
-          current: curr,
-          minimum: minimum.clone(),
-        }
-      } else {
-        ToolStatus::Outdated {
-          current: curr,
-          minimum: minimum.clone(),
-        }
-      }
-    }
-    (None, Some(raw_text)) if !raw_text.trim().is_empty() => {
-      ToolStatus::UnknownVersion(raw_text)
-    }
-    (None, _) => ToolStatus::UnknownVersion(String::new()),
   }
 }
 

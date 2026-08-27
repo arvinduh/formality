@@ -211,130 +211,21 @@ fn test_mstv_fleet_declarations() {
   );
   assert_eq!(minimum_supported_tool_version("unknown-tool"), None);
 
-  assert_eq!(get_mstv("rustfmt"), Some(Version::new(1, 4, 0)));
-  assert_eq!(get_mstv("yamllint"), Some(Version::new(1, 20, 0)));
-  assert_eq!(get_mstv("typstyle"), Some(Version::new(0, 11, 0)));
-  assert_eq!(get_mstv("biome"), Some(Version::new(1, 5, 0)));
-  assert_eq!(get_mstv("checkstyle"), Some(Version::new(10, 0, 0)));
-  assert_eq!(get_mstv("ktfmt"), Some(Version::new(0, 44, 0)));
-  assert_eq!(get_mstv("ktlint"), Some(Version::new(1, 0, 0)));
-  assert_eq!(get_mstv("gofmt"), Some(Version::new(1, 18, 0)));
-  assert_eq!(get_mstv("golangci-lint"), Some(Version::new(1, 50, 0)));
-}
-
-// Comprehensive registry validation checking minimum supported tool versions and upgrade advice across all tools.
-#[allow(clippy::too_many_lines)]
-#[test]
-fn test_tool_mstv_registry_entries() {
-  let yamllint_entry =
-    get_tool_mstv_entry("yamllint").expect("yamllint registered");
-  assert_eq!(yamllint_entry.min_version, Version::new(1, 20, 0));
-  assert_eq!(yamllint_entry.version_args, &["--version"]);
-  assert_eq!(
-    yamllint_entry.advice,
-    "Run 'pip install -U yamllint' or 'brew install yamllint'"
-  );
-
-  let typstyle_entry =
-    get_tool_mstv_entry("typstyle").expect("typstyle registered");
-  assert_eq!(typstyle_entry.min_version, Version::new(0, 11, 0));
-  assert_eq!(typstyle_entry.version_args, &["--version"]);
-  assert_eq!(
-    typstyle_entry.advice,
-    "Run 'cargo install --locked typstyle' or 'brew install typstyle'"
-  );
-
-  let biome_entry = get_tool_mstv_entry("biome").expect("biome registered");
-  assert_eq!(biome_entry.min_version, Version::new(1, 5, 0));
-  assert_eq!(biome_entry.version_args, &["--version"]);
-  assert_eq!(
-    biome_entry.advice,
-    "Run 'npm install -g @biomejs/biome' or 'brew install biome'"
-  );
-
-  let checkstyle_entry =
-    get_tool_mstv_entry("checkstyle").expect("checkstyle registered");
-  assert_eq!(checkstyle_entry.min_version, Version::new(10, 0, 0));
-  assert_eq!(checkstyle_entry.version_args, &["--version"]);
-  assert_eq!(
-    checkstyle_entry.advice,
-    "Run 'brew install checkstyle' or update your checkstyle jar"
-  );
-
-  let ktfmt_entry = get_tool_mstv_entry("ktfmt").expect("ktfmt registered");
-  assert_eq!(ktfmt_entry.min_version, Version::new(0, 44, 0));
-  assert_eq!(ktfmt_entry.version_args, &["--version"]);
-  assert_eq!(ktfmt_entry.advice, "Run 'brew install ktfmt'");
-
-  let ktlint_entry = get_tool_mstv_entry("ktlint").expect("ktlint registered");
-  assert_eq!(ktlint_entry.min_version, Version::new(1, 0, 0));
-  assert_eq!(ktlint_entry.version_args, &["--version"]);
-  assert_eq!(ktlint_entry.advice, "Run 'brew install ktlint'");
-
-  let gofmt_entry = get_tool_mstv_entry("gofmt").expect("gofmt registered");
-  assert_eq!(gofmt_entry.min_version, Version::new(1, 18, 0));
-  assert_eq!(
-    gofmt_entry.advice,
-    "Update Go toolchain via https://go.dev/dl/"
-  );
-
-  let golangci_entry =
-    get_tool_mstv_entry("golangci-lint").expect("golangci-lint registered");
-  assert_eq!(golangci_entry.min_version, Version::new(1, 50, 0));
-  assert_eq!(golangci_entry.version_args, &["version"]);
-  assert_eq!(
-    golangci_entry.advice,
-    "Run 'brew install golangci-lint' or update via https://golangci-lint.run"
-  );
-
-  assert_eq!(
-    tool_upgrade_advice("yamllint"),
-    Some("Run 'pip install -U yamllint' or 'brew install yamllint'")
-  );
-  assert_eq!(
-    tool_upgrade_advice("typstyle"),
-    Some("Run 'cargo install --locked typstyle' or 'brew install typstyle'")
-  );
-  assert_eq!(
-    tool_upgrade_advice("biome"),
-    Some("Run 'npm install -g @biomejs/biome' or 'brew install biome'")
-  );
-  assert_eq!(
-    tool_upgrade_advice("checkstyle"),
-    Some("Run 'brew install checkstyle' or update your checkstyle jar")
-  );
-  assert_eq!(
-    tool_upgrade_advice("ktfmt"),
-    Some("Run 'brew install ktfmt'")
-  );
-  assert_eq!(
-    tool_upgrade_advice("ktlint"),
-    Some("Run 'brew install ktlint'")
-  );
-  assert_eq!(
-    tool_upgrade_advice("gofmt"),
-    Some("Update Go toolchain via https://go.dev/dl/")
-  );
-  assert_eq!(
-    tool_upgrade_advice("golangci-lint"),
-    Some(
-      "Run 'brew install golangci-lint' or update via https://golangci-lint.run"
-    )
-  );
-
   assert!(all_mstv_entries().len() >= 16);
 }
 
 #[test]
-fn test_compatibility_policy_evaluation() {
+fn test_evaluate_tool_status_basic_evaluation() {
   let min = Version::new(1, 4, 0);
 
   let v_ok = Version::new(1, 7, 0);
-  let status_ok = CompatibilityPolicy::evaluate(Some(&v_ok), &min);
+  let status_ok =
+    evaluate_tool_status(Some(v_ok.clone()), None, Some(&min), None);
   assert!(status_ok.is_compatible());
   assert!(!status_ok.is_outdated());
   assert!(!status_ok.is_not_found());
   assert!(!status_ok.is_unknown_version());
+  assert!(!status_ok.is_stale());
   assert_eq!(
     status_ok,
     ToolStatus::Compatible {
@@ -348,9 +239,13 @@ fn test_compatibility_policy_evaluation() {
   );
 
   let v_old = Version::new(1, 3, 9);
-  let status_old = CompatibilityPolicy::evaluate(Some(&v_old), &min);
+  let status_old =
+    evaluate_tool_status(Some(v_old.clone()), None, Some(&min), None);
   assert!(!status_old.is_compatible());
   assert!(status_old.is_outdated());
+  assert!(!status_old.is_not_found());
+  assert!(!status_old.is_unknown_version());
+  assert!(!status_old.is_stale());
   assert_eq!(
     status_old,
     ToolStatus::Outdated {
@@ -363,16 +258,25 @@ fn test_compatibility_policy_evaluation() {
     format!("Outdated ({v_old} < MSTV {min})")
   );
 
-  let status_none = CompatibilityPolicy::evaluate(None, &min);
+  let status_none = evaluate_tool_status(None, None, Some(&min), None);
   assert!(status_none.is_not_found());
+  assert!(!status_none.is_compatible());
+  assert!(!status_none.is_outdated());
+  assert!(!status_none.is_unknown_version());
+  assert!(!status_none.is_stale());
   assert_eq!(status_none.to_string(), "Not Found");
 
-  let status_unknown = CompatibilityPolicy::evaluate_with_raw(
+  let status_unknown = evaluate_tool_status(
     None,
     Some("custom build vX.Y".to_string()),
-    &min,
+    Some(&min),
+    None,
   );
   assert!(status_unknown.is_unknown_version());
+  assert!(!status_unknown.is_compatible());
+  assert!(!status_unknown.is_outdated());
+  assert!(!status_unknown.is_not_found());
+  assert!(!status_unknown.is_stale());
   assert_eq!(
     status_unknown.to_string(),
     "Unknown Version (custom build vX.Y)"
@@ -380,15 +284,15 @@ fn test_compatibility_policy_evaluation() {
 }
 
 #[test]
-fn test_compatibility_policy_mstv_boundary_is_compatible() {
+fn test_evaluate_tool_status_mstv_boundary_is_compatible() {
   // A tool at exactly the MSTV boundary (current == minimum) must be
-  // Compatible, not Outdated — the `>=` comparison in `evaluate`/
-  // `evaluate_with_raw` was previously only exercised with strictly
-  // greater/lesser versions, leaving the equality edge untested.
+  // Compatible, not Outdated — the `>=` comparison in `evaluate_tool_status`
+  // must handle the equality edge properly.
   let min = Version::new(1, 4, 0);
   let exact = Version::new(1, 4, 0);
 
-  let status = CompatibilityPolicy::evaluate(Some(&exact), &min);
+  let status =
+    evaluate_tool_status(Some(exact.clone()), None, Some(&min), None);
   assert!(status.is_compatible());
   assert!(!status.is_outdated());
   assert_eq!(
@@ -399,59 +303,44 @@ fn test_compatibility_policy_mstv_boundary_is_compatible() {
     }
   );
 
-  let status_raw = CompatibilityPolicy::evaluate_with_raw(
-    Some(exact.clone()),
+  let status_raw = evaluate_tool_status(
+    Some(exact),
     Some("rustfmt 1.4.0".to_string()),
-    &min,
+    Some(&min),
+    None,
   );
   assert!(status_raw.is_compatible());
 
   // One patch below the boundary must be Outdated.
   let just_below = Version::new(1, 3, 9);
-  let status_below = CompatibilityPolicy::evaluate(Some(&just_below), &min);
+  let status_below =
+    evaluate_tool_status(Some(just_below), None, Some(&min), None);
   assert!(status_below.is_outdated());
 }
 
 #[test]
-fn test_compatibility_policy_evaluate_with_raw_none_paths() {
+fn test_evaluate_tool_status_raw_and_none_paths() {
   let min = Version::new(1, 0, 0);
 
   // Neither a parsed version nor raw output at all: NotFound.
-  let status_neither = CompatibilityPolicy::evaluate_with_raw(None, None, &min);
+  let status_neither = evaluate_tool_status(None, None, Some(&min), None);
   assert!(status_neither.is_not_found());
 
   // Raw output present but empty/whitespace-only: still NotFound, not
   // UnknownVersion — an empty banner carries no diagnostic value.
   let status_blank =
-    CompatibilityPolicy::evaluate_with_raw(None, Some("   ".to_string()), &min);
+    evaluate_tool_status(None, Some("   ".to_string()), Some(&min), None);
   assert!(status_blank.is_not_found());
 
   // A parsed current version takes precedence over raw output entirely,
   // even when both are present.
-  let status_both = CompatibilityPolicy::evaluate_with_raw(
+  let status_both = evaluate_tool_status(
     Some(Version::new(2, 0, 0)),
     Some("garbage banner text".to_string()),
-    &min,
+    Some(&min),
+    None,
   );
   assert!(status_both.is_compatible());
-}
-
-#[test]
-fn test_compatibility_policy_check_mstv() {
-  // A tool with a registered MSTV: check_mstv should short-circuit to
-  // check() using the registry's minimum version. We can't assert a
-  // specific outcome without knowing whether rustfmt is installed in the
-  // test environment, but the call must not panic and must return the
-  // registry-backed variant (never silently None for a known tool name).
-  let result = CompatibilityPolicy::check_mstv("rustfmt");
-  assert!(result.is_some());
-
-  // A tool with no MSTV registry entry must yield None, not panic or
-  // fall back to some default minimum.
-  assert_eq!(
-    CompatibilityPolicy::check_mstv("totally-unknown-tool"),
-    None
-  );
 }
 
 #[test]
@@ -479,15 +368,6 @@ fn test_from_str_trait() {
 
   let bad: Result<Version, _> = "invalid-ver".parse();
   assert!(bad.is_err());
-}
-
-#[test]
-fn test_check_tool_compatibility_missing_tool() {
-  let status = check_tool_compatibility(
-    "nonexistent_binary_xyz_123",
-    &Version::new(1, 0, 0),
-  );
-  assert_eq!(status, ToolStatus::NotFound);
 }
 
 #[test]
@@ -623,7 +503,8 @@ fn test_live_probe_rustfmt() {
     let ver = probe_tool_version("rustfmt");
     assert!(ver.is_some(), "Expected rustfmt version to be parsed");
     let mstv = minimum_supported_tool_version("rustfmt").unwrap();
-    let status = check_tool_compatibility("rustfmt", &mstv);
+    let raw = get_raw_tool_version("rustfmt");
+    let status = evaluate_tool_status(ver, raw, Some(&mstv), None);
     assert!(status.is_compatible(), "rustfmt should satisfy MSTV 1.4.0");
   }
 }

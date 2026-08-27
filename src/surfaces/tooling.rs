@@ -1469,34 +1469,4 @@ mod tests {
       assert!(guard.contains_key(&binary_name));
     }
   }
-
-  #[test]
-  fn test_check_tool_compatibility_unprobeable_binary_returns_unknown_version()
-  {
-    use crate::engine::version::{
-      ToolStatus, Version, check_tool_compatibility,
-    };
-
-    let bin = if cfg!(windows) { "where" } else { "false" };
-    if which::which(bin).is_err() {
-      return;
-    }
-
-    let status = check_tool_compatibility(bin, &Version::new(1, 0, 0));
-    assert!(
-      status.is_unknown_version(),
-      "Unprobeable binary {bin} must return UnknownVersion status, got {status:?}"
-    );
-    assert!(!status.is_compatible());
-    assert!(!status.is_not_found());
-    assert!(!status.is_stale());
-    assert!(!status.is_outdated());
-    match status {
-      ToolStatus::UnknownVersion(raw) => {
-        // Output must be cleanly captured (or empty) and not panic
-        let _ = raw;
-      }
-      other => panic!("Expected UnknownVersion, got {other:?}"),
-    }
-  }
 }
