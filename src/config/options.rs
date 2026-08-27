@@ -65,9 +65,12 @@ pub struct PythonOptions {
   /// Python target version (e.g. `"py310"`).
   #[serde(skip_serializing_if = "Option::is_none")]
   pub target_version: Option<String>,
+  /// Ruff lint rules to ignore (e.g. `["E501", "F401"]`).
+  #[serde(skip_serializing_if = "Option::is_none")]
+  pub ignore_rules: Option<Vec<String>>,
 }
 
-impl_options_methods!(PythonOptions, quote_style, target_version);
+impl_options_methods!(PythonOptions, quote_style, target_version, ignore_rules);
 
 /// Typed formatting and linting options for C/C++.
 #[derive(
@@ -318,22 +321,26 @@ mod tests {
     assert!(!md.is_empty());
     assert_eq!(md.prose_wrap.as_deref(), Some("always"));
 
-    // 2 fields (PythonOptions, GoOptions)
+    // 2+ fields (PythonOptions, GoOptions)
     let mut py = PythonOptions::default();
     assert!(py.is_empty());
     py.merge(PythonOptions {
       quote_style: Some("single".to_string()),
       target_version: None,
+      ignore_rules: None,
     });
     assert!(!py.is_empty());
     assert_eq!(py.quote_style.as_deref(), Some("single"));
     assert_eq!(py.target_version, None);
+    assert_eq!(py.ignore_rules, None);
     py.merge(PythonOptions {
       quote_style: None,
       target_version: Some("py311".to_string()),
+      ignore_rules: Some(vec!["E501".to_string()]),
     });
     assert_eq!(py.quote_style.as_deref(), Some("single"));
     assert_eq!(py.target_version.as_deref(), Some("py311"));
+    assert_eq!(py.ignore_rules.as_deref(), Some(&["E501".to_string()][..]));
 
     let mut go = GoOptions::default();
     assert!(go.is_empty());

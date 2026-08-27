@@ -425,6 +425,13 @@
       "description": "Typed formatting and linting options for Python.",
       "type": "object",
       "properties": {
+        "ignore_rules": {
+          "description": "Ruff lint rules to ignore (e.g. `[\"E501\", \"F401\"]`).",
+          "type": ["array", "null"],
+          "items": {
+            "type": "string"
+          }
+        },
         "quote_style": {
           "description": "Quote style for strings (`\"single\"` or `\"double\"`).",
           "type": ["string", "null"]
