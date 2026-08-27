@@ -309,7 +309,9 @@ impl LanguageServer for FormalityLsp {
     };
 
     // Run `fml fmt <file>` in-place.
-    let result = std::process::Command::new("fml")
+    let fml_exe =
+      std::env::current_exe().unwrap_or_else(|_| PathBuf::from("fml"));
+    let result = std::process::Command::new(fml_exe)
       .arg("fmt")
       .arg(&path)
       .current_dir(&root)
@@ -318,30 +320,7 @@ impl LanguageServer for FormalityLsp {
     match result {
       Ok(out) if out.status.success() => {
         let after = std::fs::read_to_string(&path).unwrap_or_default();
-        if before == after {
-          // No changes needed.
-          return Ok(Some(vec![]));
-        }
-        // Return a single whole-document replacement edit.
-        let line_count =
-          u32::try_from(before.lines().count()).unwrap_or(u32::MAX);
-        let last_col = before
-          .lines()
-          .last()
-          .map_or(0, |l| u32::try_from(l.len()).unwrap_or(u32::MAX));
-        Ok(Some(vec![TextEdit {
-          range: Range {
-            start: Position {
-              line: 0,
-              character: 0,
-            },
-            end: Position {
-              line: line_count,
-              character: last_col,
-            },
-          },
-          new_text: after,
-        }]))
+        Ok(Some(compute_formatting_edits(&before, &after)))
       }
       Ok(out) => {
         let stderr = String::from_utf8_lossy(&out.stderr);
@@ -398,7 +377,9 @@ impl LanguageServer for FormalityLsp {
     {
       diags
     } else {
-      let result = std::process::Command::new("fml")
+      let fml_exe =
+        std::env::current_exe().unwrap_or_else(|_| PathBuf::from("fml"));
+      let result = std::process::Command::new(fml_exe)
         .arg("lint")
         .arg(&path)
         .current_dir(&root)
@@ -450,6 +431,49 @@ impl LanguageServer for FormalityLsp {
 }
 
 // ---------------------------------------------------------------------------
+// Formatting helper functions
+// ---------------------------------------------------------------------------
+
+/// Computes the whole-document LSP [`Range`] for the given document content.
+///
+/// Per the Language Server Protocol specification:
+/// - Line bounds are 0-indexed, so the end line is `line_count.saturating_sub(1)`.
+/// - Character offsets are based on UTF-16 code units, not UTF-8 byte lengths or
+///   Unicode scalar values.
+#[must_use]
+pub fn full_document_range(text: &str) -> Range {
+  let line_count = u32::try_from(text.lines().count()).unwrap_or(u32::MAX);
+  let last_col = text.lines().last().map_or(0, |l| {
+    u32::try_from(l.encode_utf16().count()).unwrap_or(u32::MAX)
+  });
+
+  Range {
+    start: Position {
+      line: 0,
+      character: 0,
+    },
+    end: Position {
+      line: line_count.saturating_sub(1),
+      character: last_col,
+    },
+  }
+}
+
+/// Computes the [`TextEdit`] list required to replace the document with formatted content.
+///
+/// Returns an empty vector if `before == after`.
+#[must_use]
+pub fn compute_formatting_edits(before: &str, after: &str) -> Vec<TextEdit> {
+  if before == after {
+    return Vec::new();
+  }
+  vec![TextEdit {
+    range: full_document_range(before),
+    new_text: after.to_string(),
+  }]
+}
+
+// ---------------------------------------------------------------------------
 // Entry point called from lib.rs / Commands::Lsp
 // ---------------------------------------------------------------------------
 
@@ -480,4 +504,242 @@ pub fn run_lsp_server(root: Option<std::path::PathBuf>) {
     let (service, socket) = LspService::new(FormalityLsp::new);
     Server::new(stdin, stdout, socket).serve(service).await;
   });
+}
+
+#[cfg(test)]
+#[allow(missing_docs, clippy::missing_errors_doc, clippy::missing_panics_doc)]
+mod tests {
+  use super::*;
+
+  #[test]
+  fn test_full_document_range_empty_document() {
+    let range = full_document_range("");
+    assert_eq!(
+      range.start,
+      Position {
+        line: 0,
+        character: 0
+      }
+    );
+    assert_eq!(
+      range.end,
+      Position {
+        line: 0,
+        character: 0
+      }
+    );
+  }
+
+  #[test]
+  fn test_full_document_range_single_line() {
+    let range = full_document_range("hello world");
+    assert_eq!(
+      range.start,
+      Position {
+        line: 0,
+        character: 0
+      }
+    );
+    assert_eq!(
+      range.end,
+      Position {
+        line: 0,
+        character: 11
+      }
+    );
+  }
+
+  #[test]
+  fn test_full_document_range_single_line_with_trailing_newline() {
+    let range = full_document_range("hello world\n");
+    assert_eq!(
+      range.start,
+      Position {
+        line: 0,
+        character: 0
+      }
+    );
+    assert_eq!(
+      range.end,
+      Position {
+        line: 0,
+        character: 11
+      }
+    );
+  }
+
+  #[test]
+  fn test_full_document_range_multiline() {
+    let text = "fn main() {\n    println!(\"hello\");\n}";
+    let range = full_document_range(text);
+    assert_eq!(
+      range.start,
+      Position {
+        line: 0,
+        character: 0
+      }
+    );
+    assert_eq!(
+      range.end,
+      Position {
+        line: 2,
+        character: 1
+      }
+    );
+  }
+
+  #[test]
+  fn test_full_document_range_multiline_with_trailing_newline() {
+    let text = "line 1\nline 2\nline 3\n";
+    let range = full_document_range(text);
+    assert_eq!(
+      range.start,
+      Position {
+        line: 0,
+        character: 0
+      }
+    );
+    assert_eq!(
+      range.end,
+      Position {
+        line: 2,
+        character: 6
+      }
+    );
+  }
+
+  #[test]
+  fn test_full_document_range_multibyte_unicode_utf16_counts() {
+    // 🦀 is 4 UTF-8 bytes, but 2 UTF-16 code units (surrogate pair)
+    // 🚀 is 4 UTF-8 bytes, but 2 UTF-16 code units
+    let text = "let crab = \"🦀 🚀\";";
+    let range = full_document_range(text);
+    assert_eq!(
+      range.start,
+      Position {
+        line: 0,
+        character: 0
+      }
+    );
+    // "let crab = \"" = 12
+    // "🦀" = 2
+    // " " = 1
+    // "🚀" = 2
+    // "\";" = 2
+    // Total = 19 UTF-16 code units (vs 23 UTF-8 bytes)
+    assert_eq!(
+      range.end,
+      Position {
+        line: 0,
+        character: 19
+      }
+    );
+
+    // Chinese characters: 3 UTF-8 bytes each, 1 UTF-16 code unit each
+    let chinese = "你好世界";
+    let range_chinese = full_document_range(chinese);
+    assert_eq!(
+      range_chinese.start,
+      Position {
+        line: 0,
+        character: 0
+      }
+    );
+    assert_eq!(
+      range_chinese.end,
+      Position {
+        line: 0,
+        character: 4
+      }
+    );
+  }
+
+  #[test]
+  fn test_full_document_range_multiline_with_multibyte_unicode() {
+    let text = "fn main() {\n    // 🦀 🚀\n}";
+    let range = full_document_range(text);
+    assert_eq!(
+      range.start,
+      Position {
+        line: 0,
+        character: 0
+      }
+    );
+    assert_eq!(
+      range.end,
+      Position {
+        line: 2,
+        character: 1
+      }
+    );
+
+    let text_unicode_last_line = "fn main() {\n    let s = \"你好 🌍\";";
+    let range_unicode_last = full_document_range(text_unicode_last_line);
+    assert_eq!(
+      range_unicode_last.start,
+      Position {
+        line: 0,
+        character: 0
+      }
+    );
+    // Line 1: "    let s = \"你好 🌍\";" -> 13 + 2 + 1 + 2 + 2 = 20 UTF-16 code units
+    assert_eq!(
+      range_unicode_last.end,
+      Position {
+        line: 1,
+        character: 20
+      }
+    );
+  }
+
+  #[test]
+  fn test_compute_formatting_edits_no_change() {
+    let content = "fn main() {}\n";
+    let edits = compute_formatting_edits(content, content);
+    assert!(edits.is_empty());
+  }
+
+  #[test]
+  fn test_compute_formatting_edits_with_changes() {
+    let before = "fn main(){\nprintln!(\"hello\");\n}";
+    let after = "fn main() {\n    println!(\"hello\");\n}\n";
+    let edits = compute_formatting_edits(before, after);
+    assert_eq!(edits.len(), 1);
+    assert_eq!(
+      edits[0].range,
+      Range {
+        start: Position {
+          line: 0,
+          character: 0
+        },
+        end: Position {
+          line: 2,
+          character: 1
+        },
+      }
+    );
+    assert_eq!(edits[0].new_text, after);
+  }
+
+  #[test]
+  fn test_compute_formatting_edits_multibyte_unicode() {
+    let before = "fn main() {\nlet msg = \"🦀 世界\";\n}";
+    let after = "fn main() {\n    let msg = \"🦀 世界\";\n}\n";
+    let edits = compute_formatting_edits(before, after);
+    assert_eq!(edits.len(), 1);
+    assert_eq!(
+      edits[0].range,
+      Range {
+        start: Position {
+          line: 0,
+          character: 0
+        },
+        end: Position {
+          line: 2,
+          character: 1
+        },
+      }
+    );
+    assert_eq!(edits[0].new_text, after);
+  }
 }
