@@ -124,6 +124,37 @@ fn test_surface_detection_in_fixtures() {
   let typ_names: Vec<&str> = typ_detected.iter().map(|s| s.name()).collect();
   assert!(typ_names.contains(&"typst"));
 
+  // Java fixture
+  let java_detected =
+    detect_surfaces(&manifest_dir.join("tests/fixtures/java_repo"));
+  let java_names: Vec<&str> = java_detected.iter().map(|s| s.name()).collect();
+  assert!(java_names.contains(&"java"));
+
+  // Go fixture
+  let go_detected =
+    detect_surfaces(&manifest_dir.join("tests/fixtures/go_repo"));
+  let go_names: Vec<&str> = go_detected.iter().map(|s| s.name()).collect();
+  assert!(go_names.contains(&"go"));
+
+  // Kotlin fixture
+  let kotlin_detected =
+    detect_surfaces(&manifest_dir.join("tests/fixtures/kotlin_repo"));
+  let kotlin_names: Vec<&str> =
+    kotlin_detected.iter().map(|s| s.name()).collect();
+  assert!(kotlin_names.contains(&"kotlin"));
+
+  // JavaScript fixture
+  let js_detected =
+    detect_surfaces(&manifest_dir.join("tests/fixtures/javascript_repo"));
+  let js_names: Vec<&str> = js_detected.iter().map(|s| s.name()).collect();
+  assert!(js_names.contains(&"javascript"));
+
+  // TOML fixture
+  let toml_detected =
+    detect_surfaces(&manifest_dir.join("tests/fixtures/toml_repo"));
+  let toml_names: Vec<&str> = toml_detected.iter().map(|s| s.name()).collect();
+  assert!(toml_names.contains(&"toml"));
+
   // Polyglot fixture
   let poly_detected =
     detect_surfaces(&manifest_dir.join("tests/fixtures/polyglot_repo"));
@@ -870,4 +901,71 @@ fn test_fmt_staged_and_changed_with_explicit_paths_filtering() {
     fs::read_to_string(&file_b).unwrap(),
     "[package]\n   name =   \"b_mod\"\n"
   );
+}
+
+#[test]
+fn test_table_command_json_valid_and_invalid_syntax() {
+  // 1. Valid table JSON payload
+  let mut table = fml::ui::table::Table::new(vec![
+    fml::ui::table::Column::new("Name"),
+    fml::ui::table::Column::new("Status"),
+  ]);
+  table.add_row(fml::ui::table::Row::new(vec![
+    fml::ui::table::Cell::text("Rust"),
+    fml::ui::table::Cell::text("PASS"),
+  ]));
+  let valid_table_json = serde_json::to_string(&table).unwrap();
+
+  let valid_args = Cli {
+    config: None,
+    root: None,
+    command: Commands::Table {
+      json: Some(valid_table_json),
+    },
+  };
+  assert_eq!(fml::run_with_args(valid_args), 0);
+
+  // 2. Empty JSON or missing structure
+  let empty_args = Cli {
+    config: None,
+    root: None,
+    command: Commands::Table {
+      json: Some("[]".to_string()),
+    },
+  };
+  assert_ne!(fml::run_with_args(empty_args), 0);
+
+  // 3. Invalid JSON syntax
+  let invalid_args = Cli {
+    config: None,
+    root: None,
+    command: Commands::Table {
+      json: Some("{ not valid json }".to_string()),
+    },
+  };
+  assert_ne!(fml::run_with_args(invalid_args), 0);
+}
+
+#[test]
+fn test_install_command_active_surfaces() {
+  let temp = TempDir::new().unwrap();
+  let root = temp.path().to_path_buf();
+
+  // Create rust repo fixture
+  fs::create_dir_all(root.join("src")).unwrap();
+  fs::write(
+    root.join("Cargo.toml"),
+    "[package]\nname = \"install_test\"\nversion = \"0.1.0\"\nedition = \"2024\"\n",
+  )
+  .unwrap();
+  fs::write(root.join("src/main.rs"), "fn main() {}\n").unwrap();
+
+  // Install for active surfaces (rust is already installed or handled gracefully)
+  let install_active_args = Cli {
+    config: None,
+    root: Some(root),
+    command: Commands::Install { all: false },
+  };
+  let code = fml::run_with_args(install_active_args);
+  assert_eq!(code, 0);
 }

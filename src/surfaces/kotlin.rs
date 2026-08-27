@@ -451,7 +451,13 @@ mod tests {
 
   #[test]
   fn test_kotlin_format_with_real_ktlint() {
-    if !check_binary_exists("ktlint") {
+    if !check_binary_exists("ktlint")
+      || !create_tool_command("ktlint")
+        .arg("--version")
+        .output()
+        .map(|o| o.status.success())
+        .unwrap_or(false)
+    {
       return;
     }
     let temp = TempDir::new().unwrap();

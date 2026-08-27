@@ -321,3 +321,99 @@ fn test_fix_command_changed_with_explicit_paths_filtering() {
   let unformatted_other = fs::read_to_string(&other_file).unwrap();
   assert_eq!(unformatted_other, "[package]\n   name =   \"other_mod\"\n");
 }
+
+#[test]
+fn test_fix_command_python_composite_lifecycle() {
+  let temp = TempDir::new().unwrap();
+  let root = temp.path().to_path_buf();
+
+  let script_py = root.join("main.py");
+  fs::write(
+    &script_py,
+    "import sys\nimport os\n\ndef foo(   x,  y  ):\n    return x+y\n",
+  )
+  .unwrap();
+
+  let fix_args = Cli {
+    config: None,
+    root: Some(root.clone()),
+    command: Commands::Fix {
+      staged: false,
+      changed: false,
+      lang: vec!["python".to_string()],
+      install: false,
+      paths: vec![],
+    },
+  };
+
+  let exit_code = fml::run_with_args(fix_args);
+  if fml::surfaces::check_binary_exists("ruff") {
+    assert_eq!(exit_code, 0);
+    let formatted = fs::read_to_string(&script_py).unwrap();
+    assert!(formatted.contains("def foo(x, y):"));
+  } else {
+    assert_ne!(exit_code, 0);
+  }
+}
+
+#[test]
+fn test_fix_command_javascript_composite_lifecycle() {
+  let temp = TempDir::new().unwrap();
+  let root = temp.path().to_path_buf();
+
+  let script_js = root.join("index.js");
+  fs::write(&script_js, "function   add(  a, b )  {\nreturn a + b;\n}\n")
+    .unwrap();
+
+  let fix_args = Cli {
+    config: None,
+    root: Some(root.clone()),
+    command: Commands::Fix {
+      staged: false,
+      changed: false,
+      lang: vec!["javascript".to_string()],
+      install: false,
+      paths: vec![],
+    },
+  };
+
+  let exit_code = fml::run_with_args(fix_args);
+  if fml::surfaces::check_binary_exists("biome") {
+    assert_eq!(exit_code, 0);
+    let formatted = fs::read_to_string(&script_js).unwrap();
+    assert!(formatted.contains("function add(a, b) {"));
+  } else {
+    assert_ne!(exit_code, 0);
+  }
+}
+
+#[test]
+fn test_fix_command_markdown_composite_lifecycle() {
+  let temp = TempDir::new().unwrap();
+  let root = temp.path().to_path_buf();
+
+  let readme_md = root.join("README.md");
+  fs::write(&readme_md, "# Title\n\nSome paragraph   with   spaces.\n")
+    .unwrap();
+
+  let fix_args = Cli {
+    config: None,
+    root: Some(root.clone()),
+    command: Commands::Fix {
+      staged: false,
+      changed: false,
+      lang: vec!["markdown".to_string()],
+      install: false,
+      paths: vec![],
+    },
+  };
+
+  let exit_code = fml::run_with_args(fix_args);
+  if fml::surfaces::check_binary_exists("prettier") {
+    assert_eq!(exit_code, 0);
+    let formatted = fs::read_to_string(&readme_md).unwrap();
+    assert!(formatted.contains("# Title"));
+  } else {
+    assert_ne!(exit_code, 0);
+  }
+}
