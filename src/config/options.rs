@@ -227,9 +227,24 @@ impl_options_methods!(JsonOptions);
 #[derive(
   Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize, JsonSchema,
 )]
-pub struct TomlOptions {}
+pub struct TomlOptions {
+  /// Whether to align entries across lines.
+  #[serde(skip_serializing_if = "Option::is_none")]
+  pub align_entries: Option<bool>,
+  /// Whether to indent table entry keys.
+  #[serde(skip_serializing_if = "Option::is_none")]
+  pub indent_entries: Option<bool>,
+  /// Whether to indent table contents.
+  #[serde(skip_serializing_if = "Option::is_none")]
+  pub indent_tables: Option<bool>,
+}
 
-impl_options_methods!(TomlOptions);
+impl_options_methods!(
+  TomlOptions,
+  align_entries,
+  indent_entries,
+  indent_tables
+);
 
 /// Typed formatting and linting options for Typst.
 #[derive(
@@ -260,16 +275,11 @@ mod tests {
 
   #[test]
   fn test_options_merge_and_is_empty() {
-    // 0 fields (JsonOptions, TomlOptions, TypstOptions, KotlinOptions)
+    // 0 fields (JsonOptions, TypstOptions, KotlinOptions)
     let mut json = JsonOptions::default();
     assert!(json.is_empty());
     json.merge(JsonOptions::default());
     assert!(json.is_empty());
-
-    let mut toml = TomlOptions::default();
-    assert!(toml.is_empty());
-    toml.merge(TomlOptions::default());
-    assert!(toml.is_empty());
 
     let mut typst = TypstOptions::default();
     assert!(typst.is_empty());
@@ -341,7 +351,7 @@ mod tests {
     assert_eq!(go.local_prefixes.as_deref(), Some("example.com"));
     assert_eq!(go.linters.as_deref(), Some(&["errcheck".to_string()][..]));
 
-    // Multi-field (CppOptions, JavaScriptOptions, YamlOptions)
+    // Multi-field (CppOptions, JavaScriptOptions, YamlOptions, TomlOptions)
     let mut cpp = CppOptions::default();
     assert!(cpp.is_empty());
     cpp.merge(CppOptions {
@@ -378,5 +388,25 @@ mod tests {
     assert_eq!(yaml.indent_sequence, Some(true));
     assert_eq!(yaml.document_start, None);
     assert_eq!(yaml.truthy, Some(false));
+
+    let mut toml = TomlOptions::default();
+    assert!(toml.is_empty());
+    toml.merge(TomlOptions {
+      align_entries: Some(true),
+      indent_entries: None,
+      indent_tables: Some(false),
+    });
+    assert!(!toml.is_empty());
+    assert_eq!(toml.align_entries, Some(true));
+    assert_eq!(toml.indent_entries, None);
+    assert_eq!(toml.indent_tables, Some(false));
+    toml.merge(TomlOptions {
+      align_entries: None,
+      indent_entries: Some(true),
+      indent_tables: None,
+    });
+    assert_eq!(toml.align_entries, Some(true));
+    assert_eq!(toml.indent_entries, Some(true));
+    assert_eq!(toml.indent_tables, Some(false));
   }
 }
