@@ -7,8 +7,8 @@ use super::{
   AUTO_GENERATED_JSON_COMMENT, DeclaresFacets, ExecutionContext, Facet,
   FacetSupport, LanguageSurface, NativeConfig, SurfaceResult, SurfaceStatus,
   ToolInfo, check_binary_exists, create_tool_command, diff_check_via_tempcopy,
-  find_files_with_ext, render_native_config, sync_native_config,
-  tool_missing_result,
+  find_files_with_ext, render_native_config, run_tool_command,
+  sync_native_config, tool_missing_result,
 };
 use crate::config::ResolvedLangConfig;
 use serde::{Deserialize, Serialize};
@@ -311,13 +311,7 @@ impl LanguageSurface for MarkdownSurface {
       );
     }
 
-    let files = find_files_with_ext(
-      ctx.root.as_path(),
-      MD_EXTENSIONS,
-      &ctx.paths,
-      &ctx.lang_config.files,
-      &ctx.lang_config.exclude,
-    );
+    let files = ctx.matched_files(MD_EXTENSIONS);
     if files.is_empty() {
       return SurfaceResult {
         surface_name: self.name(),
@@ -417,43 +411,7 @@ impl LanguageSurface for MarkdownSurface {
     cmd.args(&inline_config);
     cmd.current_dir(ctx.root.as_path());
 
-    match cmd.output() {
-      Ok(output) => {
-        if output.status.success() {
-          SurfaceResult {
-            surface_name: self.name(),
-            status: SurfaceStatus::Passed,
-            duration: start.elapsed(),
-          }
-        } else {
-          let stderr = String::from_utf8_lossy(&output.stderr).to_string();
-          let stdout = String::from_utf8_lossy(&output.stdout).to_string();
-          let msg = if !stdout.trim().is_empty() {
-            stdout
-          } else if !stderr.trim().is_empty() {
-            stderr
-          } else {
-            "Markdown formatting violations found".to_string()
-          };
-
-          SurfaceResult {
-            surface_name: self.name(),
-            status: SurfaceStatus::ViolationsFound {
-              message: msg,
-              diff: None,
-            },
-            duration: start.elapsed(),
-          }
-        }
-      }
-      Err(e) => SurfaceResult {
-        surface_name: self.name(),
-        status: SurfaceStatus::ExecutionError {
-          message: format!("Failed to execute prettier: {e}"),
-        },
-        duration: start.elapsed(),
-      },
-    }
+    run_tool_command(self.name(), &mut cmd)
   }
 
   fn lint(&self, ctx: &ExecutionContext, fix: bool) -> SurfaceResult {
@@ -472,13 +430,7 @@ impl LanguageSurface for MarkdownSurface {
       );
     };
 
-    let files = find_files_with_ext(
-      ctx.root.as_path(),
-      MD_EXTENSIONS,
-      &ctx.paths,
-      &ctx.lang_config.files,
-      &ctx.lang_config.exclude,
-    );
+    let files = ctx.matched_files(MD_EXTENSIONS);
     if files.is_empty() {
       return SurfaceResult {
         surface_name: self.name(),
@@ -516,41 +468,7 @@ impl LanguageSurface for MarkdownSurface {
     ));
     cmd.current_dir(ctx.root.as_path());
 
-    match cmd.output() {
-      Ok(output) => {
-        if output.status.success() {
-          SurfaceResult {
-            surface_name: self.name(),
-            status: SurfaceStatus::Passed,
-            duration: start.elapsed(),
-          }
-        } else {
-          let stderr = String::from_utf8_lossy(&output.stderr).to_string();
-          let stdout = String::from_utf8_lossy(&output.stdout).to_string();
-          let msg = if stderr.trim().is_empty() {
-            stdout
-          } else {
-            stderr
-          };
-
-          SurfaceResult {
-            surface_name: self.name(),
-            status: SurfaceStatus::ViolationsFound {
-              message: msg,
-              diff: None,
-            },
-            duration: start.elapsed(),
-          }
-        }
-      }
-      Err(e) => SurfaceResult {
-        surface_name: self.name(),
-        status: SurfaceStatus::ExecutionError {
-          message: format!("Failed to execute {binary}: {e}"),
-        },
-        duration: start.elapsed(),
-      },
-    }
+    run_tool_command(self.name(), &mut cmd)
   }
 
   // `fml fmt`'s prettier pass no longer goes through the `.prettierrc.json`

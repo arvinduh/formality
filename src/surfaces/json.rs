@@ -8,9 +8,9 @@ use super::{
   markdown::{
     PrettierConfig, build_prettier_inline_args, sync_prettier_config,
   },
-  tool_missing_result,
+  run_tool_command, tool_missing_result,
 };
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use std::time::Instant;
 
 /// JSON language surface implementation.
@@ -80,19 +80,14 @@ impl LanguageSurface for JsonSurface {
       );
     }
 
-    let files: Vec<std::path::PathBuf> = find_files_with_ext(
-      ctx.root.as_path(),
-      JSON_EXTENSIONS,
-      &ctx.paths,
-      &ctx.lang_config.files,
-      &ctx.lang_config.exclude,
-    )
-    .into_iter()
-    .filter(|p| {
-      let fname = p.file_name().and_then(|f| f.to_str()).unwrap_or("");
-      fname != "package-lock.json" && fname != "npm-shrinkwrap.json"
-    })
-    .collect();
+    let files: Vec<PathBuf> = ctx
+      .matched_files(JSON_EXTENSIONS)
+      .into_iter()
+      .filter(|p| {
+        let fname = p.file_name().and_then(|f| f.to_str()).unwrap_or("");
+        fname != "package-lock.json" && fname != "npm-shrinkwrap.json"
+      })
+      .collect();
     if files.is_empty() {
       return SurfaceResult {
         surface_name: self.name(),
@@ -143,43 +138,7 @@ impl LanguageSurface for JsonSurface {
     cmd.args(&ctx.lang_config.extra_args);
     cmd.current_dir(ctx.root.as_path());
 
-    match cmd.output() {
-      Ok(output) => {
-        if output.status.success() {
-          SurfaceResult {
-            surface_name: self.name(),
-            status: SurfaceStatus::Passed,
-            duration: start.elapsed(),
-          }
-        } else {
-          let stderr = String::from_utf8_lossy(&output.stderr).to_string();
-          let stdout = String::from_utf8_lossy(&output.stdout).to_string();
-          let msg = if !stdout.trim().is_empty() {
-            stdout
-          } else if !stderr.trim().is_empty() {
-            stderr
-          } else {
-            "JSON formatting violations found".to_string()
-          };
-
-          SurfaceResult {
-            surface_name: self.name(),
-            status: SurfaceStatus::ViolationsFound {
-              message: msg,
-              diff: None,
-            },
-            duration: start.elapsed(),
-          }
-        }
-      }
-      Err(e) => SurfaceResult {
-        surface_name: self.name(),
-        status: SurfaceStatus::ExecutionError {
-          message: format!("Failed to execute prettier: {e}"),
-        },
-        duration: start.elapsed(),
-      },
-    }
+    run_tool_command(self.name(), &mut cmd)
   }
 
   fn lint(&self, ctx: &ExecutionContext, fix: bool) -> SurfaceResult {

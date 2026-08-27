@@ -8,7 +8,8 @@ use super::{
   markdown::{
     PrettierConfig, build_prettier_inline_args, sync_prettier_config,
   },
-  render_native_config, sync_native_config, tool_missing_result,
+  render_native_config, run_tool_command, sync_native_config,
+  tool_missing_result,
 };
 use serde::{Deserialize, Serialize};
 use std::path::Path;
@@ -213,13 +214,7 @@ impl LanguageSurface for YamlSurface {
       );
     }
 
-    let files = find_files_with_ext(
-      ctx.root.as_path(),
-      YAML_EXTENSIONS,
-      &ctx.paths,
-      &ctx.lang_config.files,
-      &ctx.lang_config.exclude,
-    );
+    let files = ctx.matched_files(YAML_EXTENSIONS);
     if files.is_empty() {
       return SurfaceResult {
         surface_name: self.name(),
@@ -265,43 +260,7 @@ impl LanguageSurface for YamlSurface {
     cmd.args(&ctx.lang_config.extra_args);
     cmd.current_dir(ctx.root.as_path());
 
-    match cmd.output() {
-      Ok(output) => {
-        if output.status.success() {
-          SurfaceResult {
-            surface_name: self.name(),
-            status: SurfaceStatus::Passed,
-            duration: start.elapsed(),
-          }
-        } else {
-          let stderr = String::from_utf8_lossy(&output.stderr).to_string();
-          let stdout = String::from_utf8_lossy(&output.stdout).to_string();
-          let msg = if !stdout.trim().is_empty() {
-            stdout
-          } else if !stderr.trim().is_empty() {
-            stderr
-          } else {
-            "YAML formatting violations found".to_string()
-          };
-
-          SurfaceResult {
-            surface_name: self.name(),
-            status: SurfaceStatus::ViolationsFound {
-              message: msg,
-              diff: None,
-            },
-            duration: start.elapsed(),
-          }
-        }
-      }
-      Err(e) => SurfaceResult {
-        surface_name: self.name(),
-        status: SurfaceStatus::ExecutionError {
-          message: format!("Failed to execute prettier: {e}"),
-        },
-        duration: start.elapsed(),
-      },
-    }
+    run_tool_command(self.name(), &mut cmd)
   }
 
   fn lint(&self, ctx: &ExecutionContext, fix: bool) -> SurfaceResult {
@@ -327,13 +286,7 @@ impl LanguageSurface for YamlSurface {
       );
     }
 
-    let files = find_files_with_ext(
-      ctx.root.as_path(),
-      YAML_EXTENSIONS,
-      &ctx.paths,
-      &ctx.lang_config.files,
-      &ctx.lang_config.exclude,
-    );
+    let files = ctx.matched_files(YAML_EXTENSIONS);
     if files.is_empty() {
       return SurfaceResult {
         surface_name: self.name(),
@@ -364,41 +317,7 @@ impl LanguageSurface for YamlSurface {
     cmd.args(&ctx.lang_config.extra_args);
     cmd.current_dir(ctx.root.as_path());
 
-    match cmd.output() {
-      Ok(output) => {
-        if output.status.success() {
-          SurfaceResult {
-            surface_name: self.name(),
-            status: SurfaceStatus::Passed,
-            duration: start.elapsed(),
-          }
-        } else {
-          let stderr = String::from_utf8_lossy(&output.stderr).to_string();
-          let stdout = String::from_utf8_lossy(&output.stdout).to_string();
-          let msg = if stderr.trim().is_empty() {
-            stdout
-          } else {
-            stderr
-          };
-
-          SurfaceResult {
-            surface_name: self.name(),
-            status: SurfaceStatus::ViolationsFound {
-              message: msg,
-              diff: None,
-            },
-            duration: start.elapsed(),
-          }
-        }
-      }
-      Err(e) => SurfaceResult {
-        surface_name: self.name(),
-        status: SurfaceStatus::ExecutionError {
-          message: format!("Failed to execute yamllint: {e}"),
-        },
-        duration: start.elapsed(),
-      },
-    }
+    run_tool_command(self.name(), &mut cmd)
   }
 
   // `fml fmt`/`fml lint` no longer go through this path (Fixes #151): they
