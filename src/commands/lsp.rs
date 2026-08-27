@@ -40,16 +40,20 @@
 //! collisions across servers) and maps response IDs back to the originating
 //! editor request ID.
 use colored::Colorize;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
+use std::sync::Arc;
 use tower_lsp::jsonrpc::Result as LspResult;
 use tower_lsp::lsp_types::{
-  Diagnostic, DiagnosticSeverity, DidOpenTextDocumentParams,
-  DidSaveTextDocumentParams, DocumentFormattingParams, InitializeParams,
-  InitializeResult, InitializedParams, MessageType, OneOf, Position, Range,
-  ServerCapabilities, ServerInfo, TextDocumentIdentifier,
-  TextDocumentSyncCapability, TextDocumentSyncKind, TextEdit,
+  Diagnostic, DiagnosticSeverity, DidChangeWatchedFilesParams,
+  DidOpenTextDocumentParams, DidSaveTextDocumentParams,
+  DocumentFormattingParams, InitializeParams, InitializeResult,
+  InitializedParams, MessageType, OneOf, Position, Range, ServerCapabilities,
+  ServerInfo, TextDocumentIdentifier, TextDocumentSyncCapability,
+  TextDocumentSyncKind, TextEdit,
 };
 use tower_lsp::{Client, LanguageServer, LspService, Server};
+
+use crate::config::FormalityConfig;
 
 /// Capabilities that the formality LSP layer adds or overrides on top of what
 /// child servers provide. Formatting is always handled by `fml fmt`; all other
@@ -143,6 +147,15 @@ pub fn child_lsp_for_surface(surface: &str) -> Option<&'static ChildLsp> {
     .find(|c| c.surface.eq_ignore_ascii_case(surface))
 }
 
+/// Returns whether the specified path points to a formality configuration file (`formality.toml` or `.formality.toml`).
+#[must_use]
+pub fn is_formality_config_file(path: &Path) -> bool {
+  path
+    .file_name()
+    .and_then(|n| n.to_str())
+    .is_some_and(|name| crate::config::CONFIG_FILE_CANDIDATES.contains(&name))
+}
+
 // ---------------------------------------------------------------------------
 // LSP server backend
 // ---------------------------------------------------------------------------
@@ -157,14 +170,48 @@ pub struct FormalityLsp {
   client: Client,
   /// Workspace root detected at `initialize` time.
   root: tokio::sync::Mutex<Option<PathBuf>>,
+  /// Cached formality configuration, loaded at initialize/initialized time
+  /// and invalidated when `formality.toml` / `.formality.toml` changes.
+  config: Arc<tokio::sync::RwLock<Option<FormalityConfig>>>,
 }
 
 impl FormalityLsp {
-  fn new(client: Client) -> Self {
+  /// Creates a new [`FormalityLsp`] instance with the provided client handle.
+  #[must_use]
+  pub fn new(client: Client) -> Self {
     Self {
       client,
       root: tokio::sync::Mutex::new(None),
+      config: Arc::new(tokio::sync::RwLock::new(None)),
     }
+  }
+
+  /// Returns the cached configuration, or loads and caches it if not yet present.
+  pub async fn get_or_load_config(
+    &self,
+    root: Option<&Path>,
+  ) -> FormalityConfig {
+    if let Some(config) = self.config.read().await.as_ref() {
+      return config.clone();
+    }
+    let mut lock = self.config.write().await;
+    if let Some(config) = lock.as_ref() {
+      return config.clone();
+    }
+    let loaded = FormalityConfig::load_layered(root)
+      .map_or_else(|_| FormalityConfig::with_defaults(), |(c, _)| c);
+    *lock = Some(loaded.clone());
+    loaded
+  }
+
+  /// Returns a clone of the cached config, if present.
+  pub async fn cached_config(&self) -> Option<FormalityConfig> {
+    self.config.read().await.clone()
+  }
+
+  /// Invalidates the cached configuration.
+  pub async fn invalidate_config(&self) {
+    *self.config.write().await = None;
   }
 }
 
@@ -184,7 +231,12 @@ impl LanguageServer for FormalityLsp {
         params.root_path.as_ref().map(PathBuf::from)
       });
 
-    *self.root.lock().await = root;
+    *self.root.lock().await = root.clone();
+
+    // Cache resolved config at initialize time.
+    let config = FormalityConfig::load_layered(root.as_deref())
+      .map_or_else(|_| FormalityConfig::with_defaults(), |(c, _)| c);
+    *self.config.write().await = Some(config);
 
     Ok(InitializeResult {
       server_info: Some(ServerInfo {
@@ -196,9 +248,9 @@ impl LanguageServer for FormalityLsp {
         document_formatting_provider: Some(OneOf::Left(true)),
         // Range formatting delegates to the child LSP (not yet implemented).
         document_range_formatting_provider: None,
-        // Diagnostics are pushed via publishDiagnostics after each save.
+        // Document sync capability: NONE matches disk-reading behavior.
         text_document_sync: Some(TextDocumentSyncCapability::Kind(
-          TextDocumentSyncKind::INCREMENTAL,
+          TextDocumentSyncKind::NONE,
         )),
         // Everything else (hover, completion, go-to-definition, …) is
         // handled by child LSPs. The routing layer (not yet wired) will
@@ -218,14 +270,11 @@ impl LanguageServer for FormalityLsp {
       .await;
 
     // Detect active surfaces and log which child LSPs are available.
-    if let Some(root) = self.root.lock().await.clone() {
-      let config = crate::config::FormalityConfig::load_layered(Some(&root))
-        .map_or_else(
-          |_| crate::config::FormalityConfig::with_defaults(),
-          |(c, _)| c,
-        );
+    let root = self.root.lock().await.clone();
+    let config = self.get_or_load_config(root.as_deref()).await;
 
-      let detected = crate::surfaces::detect_surfaces_smart(&root, &config);
+    if let Some(ref root_path) = root {
+      let detected = crate::surfaces::detect_surfaces_smart(root_path, &config);
       for surface in &detected {
         match child_lsp_for_surface(surface.name()) {
           Some(child) if which::which(child.binary).is_ok() => {
@@ -308,11 +357,7 @@ impl LanguageServer for FormalityLsp {
       }
     };
 
-    let config = crate::config::FormalityConfig::load_layered(Some(&root))
-      .map_or_else(
-        |_| crate::config::FormalityConfig::with_defaults(),
-        |(c, _)| c,
-      );
+    let config = self.get_or_load_config(Some(&root)).await;
 
     let status = crate::commands::fmt::run_fmt(
       &root,
@@ -353,6 +398,7 @@ impl LanguageServer for FormalityLsp {
         .unwrap_or_default()
     });
     let uri = params.text_document.uri.clone();
+    let config = self.get_or_load_config(Some(&root)).await;
 
     // For surfaces with structured-output support wired up (rust via
     // clippy, python via ruff — see `lsp_diagnostics`), publish one
@@ -367,15 +413,13 @@ impl LanguageServer for FormalityLsp {
     // from being published "clean" when the structured tool never actually
     // ran (#177).
     let diagnostics = if let Some(diags) =
-      crate::commands::lsp_diagnostics::diagnostics_for_file(&root, &path)
-    {
+      crate::commands::lsp_diagnostics::diagnostics_for_file_with_config(
+        &root,
+        &path,
+        Some(&config),
+      ) {
       diags
     } else {
-      let config = crate::config::FormalityConfig::load_layered(Some(&root))
-        .map_or_else(
-          |_| crate::config::FormalityConfig::with_defaults(),
-          |(c, _)| c,
-        );
       let status = crate::commands::lint::run_lint(
         &root,
         &config,
@@ -417,6 +461,32 @@ impl LanguageServer for FormalityLsp {
         text: None,
       })
       .await;
+  }
+
+  async fn did_change_watched_files(
+    &self,
+    params: DidChangeWatchedFilesParams,
+  ) {
+    let has_config_change = params.changes.iter().any(|change| {
+      change
+        .uri
+        .to_file_path()
+        .ok()
+        .is_some_and(|p| is_formality_config_file(&p))
+    });
+
+    if has_config_change {
+      self.invalidate_config().await;
+      let root = self.root.lock().await.clone();
+      let _ = self.get_or_load_config(root.as_deref()).await;
+      self
+        .client
+        .log_message(
+          MessageType::INFO,
+          "[formality] configuration invalidated and reloaded",
+        )
+        .await;
+    }
   }
 }
 
@@ -825,6 +895,191 @@ mod tests {
         text: None,
       })
       .await;
+  }
+
+  #[test]
+  fn test_is_formality_config_file() {
+    assert!(is_formality_config_file(Path::new("formality.toml")));
+    assert!(is_formality_config_file(Path::new(".formality.toml")));
+    assert!(is_formality_config_file(Path::new(
+      "/path/to/project/formality.toml"
+    )));
+    assert!(is_formality_config_file(Path::new(
+      "/path/to/project/.formality.toml"
+    )));
+    #[cfg(windows)]
+    assert!(is_formality_config_file(Path::new(
+      "C:\\path\\to\\project\\.formality.toml"
+    )));
+
+    assert!(!is_formality_config_file(Path::new("other.toml")));
+    assert!(!is_formality_config_file(Path::new("Cargo.toml")));
+    assert!(!is_formality_config_file(Path::new("notes.txt")));
+  }
+
+  #[tokio::test]
+  async fn test_lsp_initialize_capabilities_sync_kind_none() {
+    let (service, _) = LspService::new(FormalityLsp::new);
+    let server = service.inner();
+    let temp = tempfile::tempdir().unwrap();
+
+    let init_result = server
+      .initialize(InitializeParams {
+        root_uri: tower_lsp::lsp_types::Url::from_file_path(temp.path()).ok(),
+        ..Default::default()
+      })
+      .await
+      .unwrap();
+
+    assert_eq!(
+      init_result.capabilities.text_document_sync,
+      Some(TextDocumentSyncCapability::Kind(TextDocumentSyncKind::NONE))
+    );
+  }
+
+  #[tokio::test]
+  async fn test_lsp_config_caching_on_initialize() {
+    let (service, _) = LspService::new(FormalityLsp::new);
+    let server = service.inner();
+    let temp = tempfile::tempdir().unwrap();
+    let config_path = temp.path().join("formality.toml");
+    std::fs::write(&config_path, "[global]\nindent_size = 4\n").unwrap();
+
+    assert!(server.cached_config().await.is_none());
+
+    server
+      .initialize(InitializeParams {
+        root_uri: tower_lsp::lsp_types::Url::from_file_path(temp.path()).ok(),
+        ..Default::default()
+      })
+      .await
+      .unwrap();
+
+    let cached = server.cached_config().await;
+    assert!(cached.is_some());
+    let cfg = cached.unwrap();
+    assert_eq!(cfg.global.as_ref().and_then(|g| g.indent_size), Some(4));
+  }
+
+  #[tokio::test]
+  async fn test_lsp_watcher_invalidation_on_did_change_watched_files() {
+    let (service, _) = LspService::new(FormalityLsp::new);
+    let server = service.inner();
+    let temp = tempfile::tempdir().unwrap();
+    let config_path = temp.path().join("formality.toml");
+    std::fs::write(&config_path, "[global]\nindent_size = 4\n").unwrap();
+
+    server
+      .initialize(InitializeParams {
+        root_uri: tower_lsp::lsp_types::Url::from_file_path(temp.path()).ok(),
+        ..Default::default()
+      })
+      .await
+      .unwrap();
+
+    let cfg_before = server.cached_config().await.unwrap();
+    assert_eq!(
+      cfg_before.global.as_ref().and_then(|g| g.indent_size),
+      Some(4)
+    );
+
+    // Modify formality.toml on disk
+    std::fs::write(&config_path, "[global]\nindent_size = 8\n").unwrap();
+
+    // Trigger watcher event
+    let uri = tower_lsp::lsp_types::Url::from_file_path(&config_path).unwrap();
+    server
+      .did_change_watched_files(DidChangeWatchedFilesParams {
+        changes: vec![tower_lsp::lsp_types::FileEvent {
+          uri,
+          typ: tower_lsp::lsp_types::FileChangeType::CHANGED,
+        }],
+      })
+      .await;
+
+    let cfg_after = server.cached_config().await.unwrap();
+    assert_eq!(
+      cfg_after.global.as_ref().and_then(|g| g.indent_size),
+      Some(8)
+    );
+  }
+
+  #[tokio::test]
+  async fn test_lsp_watcher_invalidation_hidden_formality_toml() {
+    let (service, _) = LspService::new(FormalityLsp::new);
+    let server = service.inner();
+    let temp = tempfile::tempdir().unwrap();
+    let config_path = temp.path().join(".formality.toml");
+    std::fs::write(&config_path, "[global]\nline_length = 100\n").unwrap();
+
+    server
+      .initialize(InitializeParams {
+        root_uri: tower_lsp::lsp_types::Url::from_file_path(temp.path()).ok(),
+        ..Default::default()
+      })
+      .await
+      .unwrap();
+
+    let cfg_before = server.cached_config().await.unwrap();
+    assert_eq!(
+      cfg_before.global.as_ref().and_then(|g| g.line_length),
+      Some(100)
+    );
+
+    // Modify .formality.toml on disk
+    std::fs::write(&config_path, "[global]\nline_length = 120\n").unwrap();
+
+    let uri = tower_lsp::lsp_types::Url::from_file_path(&config_path).unwrap();
+    server
+      .did_change_watched_files(DidChangeWatchedFilesParams {
+        changes: vec![tower_lsp::lsp_types::FileEvent {
+          uri,
+          typ: tower_lsp::lsp_types::FileChangeType::CHANGED,
+        }],
+      })
+      .await;
+
+    let cfg_after = server.cached_config().await.unwrap();
+    assert_eq!(
+      cfg_after.global.as_ref().and_then(|g| g.line_length),
+      Some(120)
+    );
+  }
+
+  #[tokio::test]
+  async fn test_lsp_watcher_ignores_non_config_file_changes() {
+    let (service, _) = LspService::new(FormalityLsp::new);
+    let server = service.inner();
+    let temp = tempfile::tempdir().unwrap();
+    let config_path = temp.path().join("formality.toml");
+    std::fs::write(&config_path, "[global]\nindent_size = 4\n").unwrap();
+
+    server
+      .initialize(InitializeParams {
+        root_uri: tower_lsp::lsp_types::Url::from_file_path(temp.path()).ok(),
+        ..Default::default()
+      })
+      .await
+      .unwrap();
+
+    // Modify formality.toml on disk without triggering watcher for it
+    std::fs::write(&config_path, "[global]\nindent_size = 8\n").unwrap();
+
+    // Trigger watcher for an unrelated file
+    let other_path = temp.path().join("src/main.rs");
+    let uri = tower_lsp::lsp_types::Url::from_file_path(&other_path).unwrap();
+    server
+      .did_change_watched_files(DidChangeWatchedFilesParams {
+        changes: vec![tower_lsp::lsp_types::FileEvent {
+          uri,
+          typ: tower_lsp::lsp_types::FileChangeType::CHANGED,
+        }],
+      })
+      .await;
+
+    // Cached config should still hold old values because invalidation was not triggered
+    let cfg = server.cached_config().await.unwrap();
+    assert_eq!(cfg.global.as_ref().and_then(|g| g.indent_size), Some(4));
   }
 
   #[test]

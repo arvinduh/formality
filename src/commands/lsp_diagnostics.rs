@@ -58,6 +58,7 @@ use tower_lsp::lsp_types::{
   Diagnostic, DiagnosticSeverity, NumberOrString, Position, Range,
 };
 
+use crate::config::FormalityConfig;
 use crate::surfaces::{check_binary_exists, default_registry};
 
 // ---------------------------------------------------------------------------
@@ -209,7 +210,11 @@ pub fn parse_clippy_json(
 /// invocation otherwise fails to spawn: those all mean the tool never ran,
 /// so the caller must fall back to `fml lint` rather than publish "no
 /// violations" for a file that was never actually checked (#177).
-fn clippy_diagnostics(root: &Path, file: &Path) -> Option<Vec<Diagnostic>> {
+fn clippy_diagnostics(
+  root: &Path,
+  file: &Path,
+  _config: Option<&FormalityConfig>,
+) -> Option<Vec<Diagnostic>> {
   if !check_binary_exists("cargo") || !root.join("Cargo.toml").exists() {
     return None;
   }
@@ -290,7 +295,11 @@ pub fn parse_ruff_json(
 /// — when ruff is missing or the invocation otherwise fails to spawn, so the
 /// caller falls back to `fml lint` instead of publishing a false "clean"
 /// (#177).
-fn ruff_diagnostics(root: &Path, file: &Path) -> Option<Vec<Diagnostic>> {
+fn ruff_diagnostics(
+  root: &Path,
+  file: &Path,
+  _config: Option<&FormalityConfig>,
+) -> Option<Vec<Diagnostic>> {
   if !check_binary_exists("ruff") {
     return None;
   }
@@ -396,7 +405,11 @@ pub fn parse_biome_json(
 /// `Some(vec![])` — when biome is missing or the invocation otherwise fails
 /// to spawn, so the caller falls back to `fml lint` instead of publishing a
 /// false "clean" (#177).
-fn biome_diagnostics(root: &Path, file: &Path) -> Option<Vec<Diagnostic>> {
+fn biome_diagnostics(
+  root: &Path,
+  file: &Path,
+  _config: Option<&FormalityConfig>,
+) -> Option<Vec<Diagnostic>> {
   if !check_binary_exists("biome") {
     return None;
   }
@@ -487,7 +500,11 @@ pub fn parse_yamllint_parsable(
 /// yamllint is missing or the invocation otherwise fails to spawn, so the
 /// caller falls back to `fml lint` instead of publishing a false "clean"
 /// (#177).
-fn yamllint_diagnostics(root: &Path, file: &Path) -> Option<Vec<Diagnostic>> {
+fn yamllint_diagnostics(
+  root: &Path,
+  file: &Path,
+  _config: Option<&FormalityConfig>,
+) -> Option<Vec<Diagnostic>> {
   if !check_binary_exists("yamllint") {
     return None;
   }
@@ -641,6 +658,7 @@ pub fn parse_markdownlint_text(
 fn markdownlint_diagnostics(
   root: &Path,
   file: &Path,
+  config: Option<&FormalityConfig>,
 ) -> Option<Vec<Diagnostic>> {
   let binary = if check_binary_exists("markdownlint-cli2") {
     "markdownlint-cli2"
@@ -650,12 +668,12 @@ fn markdownlint_diagnostics(
     return None;
   };
 
-  let lang_config = crate::config::FormalityConfig::load_layered(Some(root))
-    .map_or_else(
-      |_| crate::config::FormalityConfig::with_defaults(),
-      |(cfg, _)| cfg,
-    )
-    .resolve_for_lang("markdown");
+  let lang_config = match config {
+    Some(cfg) => cfg.resolve_for_lang("markdown"),
+    None => FormalityConfig::load_layered(Some(root))
+      .map_or_else(|_| FormalityConfig::with_defaults(), |(cfg, _)| cfg)
+      .resolve_for_lang("markdown"),
+  };
   let temp_cfg =
     crate::surfaces::markdown::write_markdownlint_temp_config(&lang_config)
       .ok()?;
@@ -772,7 +790,11 @@ pub fn parse_clang_tidy_plain(
 /// not `Some(vec![])` — when clang-tidy is missing or the invocation
 /// otherwise fails to spawn, so the caller falls back to `fml lint` instead
 /// of publishing a false "clean" (#177).
-fn clang_tidy_diagnostics(root: &Path, file: &Path) -> Option<Vec<Diagnostic>> {
+fn clang_tidy_diagnostics(
+  root: &Path,
+  file: &Path,
+  _config: Option<&FormalityConfig>,
+) -> Option<Vec<Diagnostic>> {
   if !check_binary_exists("clang-tidy") {
     return None;
   }
@@ -901,6 +923,7 @@ pub fn parse_golangci_lint_json(
 fn golangci_lint_diagnostics(
   root: &Path,
   file: &Path,
+  _config: Option<&FormalityConfig>,
 ) -> Option<Vec<Diagnostic>> {
   if !check_binary_exists("golangci-lint") || !root.join("go.mod").exists() {
     return None;
@@ -1032,7 +1055,11 @@ pub fn parse_checkstyle_plain(
 /// `checkstyle.xml`; until then this returns `None` — not `Some(vec![])` —
 /// same as when checkstyle itself is missing, so the caller falls back to
 /// `fml lint` instead of publishing a false "clean".
-fn checkstyle_diagnostics(root: &Path, file: &Path) -> Option<Vec<Diagnostic>> {
+fn checkstyle_diagnostics(
+  root: &Path,
+  file: &Path,
+  _config: Option<&FormalityConfig>,
+) -> Option<Vec<Diagnostic>> {
   let config_path = root.join("checkstyle.xml");
   if !check_binary_exists("checkstyle") || !config_path.is_file() {
     return None;
@@ -1148,7 +1175,11 @@ pub fn parse_ktlint_json(
 /// ktlint is missing or the invocation otherwise fails to spawn, so the
 /// caller falls back to `fml lint` instead of publishing a false "clean"
 /// (#177).
-fn ktlint_diagnostics(root: &Path, file: &Path) -> Option<Vec<Diagnostic>> {
+fn ktlint_diagnostics(
+  root: &Path,
+  file: &Path,
+  _config: Option<&FormalityConfig>,
+) -> Option<Vec<Diagnostic>> {
   if !check_binary_exists("ktlint") {
     return None;
   }
@@ -1275,7 +1306,11 @@ pub fn parse_taplo_lint_plain(
 /// `Some(vec![])` — when taplo is missing or the invocation otherwise fails
 /// to spawn, so the caller falls back to `fml lint` instead of publishing a
 /// false "clean" (#177).
-fn taplo_diagnostics(root: &Path, file: &Path) -> Option<Vec<Diagnostic>> {
+fn taplo_diagnostics(
+  root: &Path,
+  file: &Path,
+  _config: Option<&FormalityConfig>,
+) -> Option<Vec<Diagnostic>> {
   if !check_binary_exists("taplo") {
     return None;
   }
@@ -1370,7 +1405,11 @@ pub fn parse_typst_short(
 /// can't be created, or the invocation otherwise fails to spawn, so the
 /// caller falls back to `fml lint` instead of publishing a false "clean"
 /// (#177).
-fn typst_diagnostics(root: &Path, file: &Path) -> Option<Vec<Diagnostic>> {
+fn typst_diagnostics(
+  root: &Path,
+  file: &Path,
+  _config: Option<&FormalityConfig>,
+) -> Option<Vec<Diagnostic>> {
   if !check_binary_exists("typst") {
     return None;
   }
@@ -1406,7 +1445,8 @@ fn typst_diagnostics(root: &Path, file: &Path) -> Option<Vec<Diagnostic>> {
 /// be run at all (binary missing, no project marker file, spawn failure,
 /// required config missing) and the caller must fall back to `fml lint`;
 /// `Some(vec![])` means the tool ran successfully and found nothing (#177).
-type DiagnosticsRunner = fn(&Path, &Path) -> Option<Vec<Diagnostic>>;
+type DiagnosticsRunner =
+  fn(&Path, &Path, Option<&FormalityConfig>) -> Option<Vec<Diagnostic>>;
 
 /// Maps a canonical surface name to the function that produces structured
 /// diagnostics for it, or `None` for a surface with no parser wired up
@@ -1449,8 +1489,19 @@ pub fn diagnostics_for_file(
   root: &Path,
   file: &Path,
 ) -> Option<Vec<Diagnostic>> {
+  diagnostics_for_file_with_config(root, file, None)
+}
+
+/// Returns structured per-violation `Diagnostic`s for `file` reusing a cached
+/// [`FormalityConfig`] if provided.
+#[must_use]
+pub fn diagnostics_for_file_with_config(
+  root: &Path,
+  file: &Path,
+  config: Option<&FormalityConfig>,
+) -> Option<Vec<Diagnostic>> {
   let runner = diagnostics_runner_for_surface(surface_name_for_file(file)?)?;
-  runner(root, file)
+  runner(root, file, config)
 }
 
 #[cfg(test)]
@@ -1900,13 +1951,35 @@ mod tests {
     assert!(!dir.path().join(".markdownlint.json").exists());
     assert!(!dir.path().join("formality.toml").exists());
 
-    let diagnostics = markdownlint_diagnostics(dir.path(), Path::new("a.md"));
+    let diagnostics =
+      markdownlint_diagnostics(dir.path(), Path::new("a.md"), None);
     assert_eq!(
       diagnostics,
       Some(Vec::new()),
       "expected a clean (Some(vec![])) result honoring formality's default \
        MD013 code_blocks/tables: false, got: {diagnostics:?}"
     );
+  }
+
+  #[test]
+  fn test_markdownlint_diagnostics_reuses_passed_config() {
+    if !check_binary_exists("markdownlint-cli2")
+      && !check_binary_exists("markdownlint")
+    {
+      return;
+    }
+
+    let dir = tempfile::tempdir().unwrap();
+    let file_path = dir.path().join("b.md");
+    std::fs::write(&file_path, "# Title\n\nSome clean paragraph.\n").unwrap();
+
+    let config = FormalityConfig::with_defaults();
+    let diagnostics = diagnostics_for_file_with_config(
+      dir.path(),
+      Path::new("b.md"),
+      Some(&config),
+    );
+    assert_eq!(diagnostics, Some(Vec::new()));
   }
 
   #[test]
@@ -2312,14 +2385,17 @@ mod tests {
     let dir = tempfile::tempdir().unwrap();
     // Deterministic regardless of whether `cargo` is installed in the test
     // environment: no `Cargo.toml` alone is enough to short-circuit.
-    assert!(clippy_diagnostics(dir.path(), Path::new("main.rs")).is_none());
+    assert!(
+      clippy_diagnostics(dir.path(), Path::new("main.rs"), None).is_none()
+    );
   }
 
   #[test]
   fn test_golangci_lint_diagnostics_none_when_no_go_mod() {
     let dir = tempfile::tempdir().unwrap();
     assert!(
-      golangci_lint_diagnostics(dir.path(), Path::new("main.go")).is_none()
+      golangci_lint_diagnostics(dir.path(), Path::new("main.go"), None)
+        .is_none()
     );
   }
 
@@ -2327,7 +2403,8 @@ mod tests {
   fn test_checkstyle_diagnostics_none_when_no_checkstyle_xml() {
     let dir = tempfile::tempdir().unwrap();
     assert!(
-      checkstyle_diagnostics(dir.path(), Path::new("Main.java")).is_none()
+      checkstyle_diagnostics(dir.path(), Path::new("Main.java"), None)
+        .is_none()
     );
   }
 
