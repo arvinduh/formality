@@ -553,6 +553,7 @@ mod tests {
       global_config: Arc::new(ResolvedGlobalConfig::default()),
       lang_config: lang_cfg,
       check_only: false,
+      candidate_files: None,
     };
 
     let checkstyle_cfg = CheckstyleConfig::from_context(&ctx);
@@ -585,6 +586,7 @@ mod tests {
       global_config: Arc::new(cfg.resolve_global()),
       lang_config: lang_cfg,
       check_only: false,
+      candidate_files: None,
     };
 
     let checkstyle_indent = CheckstyleConfig::from_context(&ctx).indent_size;
@@ -623,6 +625,7 @@ mod tests {
       global_config: Arc::new(ResolvedGlobalConfig::default()),
       lang_config: ResolvedLangConfig::new("java"),
       check_only: false,
+      candidate_files: None,
     };
 
     let surface = JavaSurface;
@@ -649,6 +652,7 @@ mod tests {
       global_config: Arc::new(ResolvedGlobalConfig::default()),
       lang_config: ResolvedLangConfig::new("java"),
       check_only: false,
+      candidate_files: None,
     };
     assert!(!is_aosp_style(&ctx));
   }
@@ -667,6 +671,7 @@ mod tests {
       global_config: Arc::new(ResolvedGlobalConfig::default()),
       lang_config: ResolvedLangConfig::new("java"),
       check_only: false,
+      candidate_files: None,
     };
 
     let surface = JavaSurface;
@@ -688,6 +693,7 @@ mod tests {
       global_config: Arc::new(ResolvedGlobalConfig::default()),
       lang_config: ResolvedLangConfig::new("java"),
       check_only: false,
+      candidate_files: None,
     };
 
     let surface = JavaSurface;
@@ -707,6 +713,7 @@ mod tests {
       global_config: Arc::new(ResolvedGlobalConfig::default()),
       lang_config: ResolvedLangConfig::new("java"),
       check_only: false,
+      candidate_files: None,
     };
 
     let surface = JavaSurface;

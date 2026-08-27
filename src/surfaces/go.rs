@@ -631,6 +631,7 @@ mod tests {
       global_config: Arc::new(ResolvedGlobalConfig::default()),
       lang_config: ResolvedLangConfig::new("go"),
       check_only: false,
+      candidate_files: None,
     };
 
     let res = surface.sync_config(&ctx, false);
@@ -665,6 +666,7 @@ mod tests {
       global_config: Arc::new(ResolvedGlobalConfig::default()),
       lang_config: lang_cfg,
       check_only: false,
+      candidate_files: None,
     };
 
     let res = surface.sync_config(&ctx, false);
@@ -694,6 +696,7 @@ mod tests {
       global_config: Arc::new(ResolvedGlobalConfig::default()),
       lang_config: ResolvedLangConfig::new("go"),
       check_only: true,
+      candidate_files: None,
     };
 
     let check_res = surface.format(&ctx_check);
@@ -708,6 +711,7 @@ mod tests {
       global_config: Arc::new(ResolvedGlobalConfig::default()),
       lang_config: ResolvedLangConfig::new("go"),
       check_only: false,
+      candidate_files: None,
     };
 
     let fix_res = surface.format(&ctx_fix);
@@ -777,6 +781,7 @@ mod tests {
       global_config: Arc::new(ResolvedGlobalConfig::default()),
       lang_config: ResolvedLangConfig::new("go"),
       check_only: false,
+      candidate_files: None,
     };
 
     let _ = surface.lint(&ctx, false);
@@ -821,6 +826,7 @@ mod tests {
       global_config: Arc::new(ResolvedGlobalConfig::default()),
       lang_config: errcheck_cfg,
       check_only: false,
+      candidate_files: None,
     };
     let res_errcheck = surface.lint(&ctx_errcheck, false);
     assert!(matches!(
@@ -839,6 +845,7 @@ mod tests {
       global_config: Arc::new(ResolvedGlobalConfig::default()),
       lang_config: govet_cfg,
       check_only: false,
+      candidate_files: None,
     };
     let res_govet = surface.lint(&ctx_govet, false);
     assert!(matches!(res_govet.status, SurfaceStatus::Passed));

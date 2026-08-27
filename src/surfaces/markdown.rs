@@ -677,6 +677,7 @@ mod tests {
       global_config: Arc::new(ResolvedGlobalConfig::default()),
       lang_config: ResolvedLangConfig::new("markdown"),
       check_only: false,
+      candidate_files: None,
     };
 
     let res = surface.lint(&ctx, false);
@@ -719,6 +720,7 @@ mod tests {
       global_config: Arc::new(ResolvedGlobalConfig::default()),
       lang_config: lang_cfg,
       check_only: false,
+      candidate_files: None,
     };
 
     let res = surface.sync_config(&ctx, false);
@@ -775,6 +777,7 @@ mod tests {
       global_config: Arc::new(ResolvedGlobalConfig::default()),
       lang_config: ResolvedLangConfig::new("markdown"),
       check_only: false,
+      candidate_files: None,
     };
 
     let _ = surface.format(&ctx);

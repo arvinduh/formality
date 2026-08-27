@@ -857,6 +857,7 @@ mod tests {
       global_config: Arc::new(cfg.resolve_global()),
       lang_config: cfg.resolve_for_lang("cpp"),
       check_only: false,
+      candidate_files: None,
     };
 
     let surface = CppSurface;
@@ -960,6 +961,7 @@ mod tests {
       global_config: Arc::new(cfg.resolve_global()),
       lang_config: cfg.resolve_for_lang("cpp"),
       check_only: false,
+      candidate_files: None,
     };
 
     let surface = CppSurface;
@@ -1027,6 +1029,7 @@ mod tests {
       global_config: Arc::new(global),
       lang_config: crate::config::ResolvedLangConfig::new("cpp"),
       check_only: false,
+      candidate_files: None,
     };
     let cfg = ClangFormatConfig::from_context(&ctx);
     assert_eq!(cfg.line_ending, "LF");
@@ -1058,6 +1061,7 @@ mod tests {
       global_config: Arc::new(cfg.resolve_global()),
       lang_config: cfg.resolve_for_lang("cpp"),
       check_only: false,
+      candidate_files: None,
     };
 
     let surface = CppSurface;
@@ -1087,6 +1091,7 @@ mod tests {
       global_config: Arc::new(cfg.resolve_global()),
       lang_config: cfg.resolve_for_lang("cpp"),
       check_only: false,
+      candidate_files: None,
     };
 
     let surface = CppSurface;

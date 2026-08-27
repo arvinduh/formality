@@ -52,7 +52,10 @@ use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::time::Duration;
 
-pub use glob::{find_files_with_ext, is_excluded, simple_glob_match};
+pub use glob::{
+  filter_candidates_with_ext, filter_files_for_surface, find_files_with_ext,
+  is_excluded, matches_pattern, simple_glob_match, walk_candidate_files,
+};
 pub use registry::{
   SurfaceRegistry, all_surfaces, default_registry, detect_surfaces,
   detect_surfaces_smart, get_surface_by_name, resolve_canonical_name,
@@ -68,14 +71,14 @@ pub use tooling::{
 /// Execution context shared with every [`LanguageSurface`] invocation for a
 /// single `fml` command.
 ///
-/// `root`, `paths`, and `global_config` are wrapped in [`Arc`] because the
+/// `root`, `paths`, `global_config`, and `candidate_files` are wrapped in [`Arc`] because the
 /// runner builds one `ExecutionContext` per surface and dispatches them in
 /// parallel (`rayon::par_iter`), and all surfaces see the same values for
-/// these three fields. For `paths` and `global_config` this avoids a real
+/// these fields. For `paths`, `global_config`, and `candidate_files` this avoids a real
 /// per-surface cost: without `Arc`, every one of the (currently) 12 surfaces
-/// would deep-clone the *entire* candidate path list and the global config
+/// would deep-clone the candidate path list and the global config
 /// on every invocation, in place of a cheap refcount bump. `root` is wrapped
-/// for consistency with those two shared fields, not for a comparable
+/// for consistency with those shared fields, not for a comparable
 /// saving — it's one short `PathBuf`, so the copy avoided there is small.
 /// `Arc<PathBuf>` (not `Arc<Path>`) matches the `Arc<Vec<PathBuf>>` /
 /// `Arc<ResolvedGlobalConfig>` shape already used above: every field here is
@@ -94,6 +97,8 @@ pub struct ExecutionContext {
   pub lang_config: ResolvedLangConfig,
   /// Whether to perform check-only mode without mutating files.
   pub check_only: bool,
+  /// Pre-discovered candidate files for the workspace, if single-walk was performed.
+  pub candidate_files: Option<Arc<Vec<PathBuf>>>,
 }
 
 impl ExecutionContext {
@@ -106,13 +111,36 @@ impl ExecutionContext {
   /// Discovers target files for the surface matching extensions, honoring scoped paths, files, and excludes.
   #[must_use]
   pub fn matched_files(&self, extensions: &[&str]) -> Vec<PathBuf> {
-    find_files_with_ext(
-      self.root.as_path(),
-      extensions,
-      &self.paths,
-      &self.lang_config.files,
-      &self.lang_config.exclude,
-    )
+    if !self.paths.is_empty() {
+      find_files_with_ext(
+        self.root.as_path(),
+        extensions,
+        &self.paths,
+        &self.lang_config.files,
+        &self.lang_config.exclude,
+      )
+    } else if let Some(ref candidates) = self.candidate_files {
+      let includes: Vec<String> = self
+        .lang_config
+        .files
+        .iter()
+        .map(|p| p.to_string_lossy().into_owned())
+        .collect();
+      filter_candidates_with_ext(
+        candidates,
+        extensions,
+        &includes,
+        &self.lang_config.exclude,
+      )
+    } else {
+      find_files_with_ext(
+        self.root.as_path(),
+        extensions,
+        &self.paths,
+        &self.lang_config.files,
+        &self.lang_config.exclude,
+      )
+    }
   }
 }
 
@@ -405,6 +433,7 @@ mod tests {
       global_config: Arc::new(ResolvedGlobalConfig::default()),
       lang_config: ResolvedLangConfig::new("dummy"),
       check_only: false,
+      candidate_files: None,
     };
 
     let unsupported_surfaces: Vec<Box<dyn LanguageSurface>> = vec![

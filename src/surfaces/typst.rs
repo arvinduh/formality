@@ -223,6 +223,7 @@ mod tests {
       global_config: Arc::new(ResolvedGlobalConfig::default()),
       lang_config,
       check_only: false,
+      candidate_files: None,
     }
   }
 
