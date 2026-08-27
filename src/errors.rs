@@ -406,4 +406,16 @@ mod tests {
     let cli_err = FormalityError::InvalidCli("bad flag".into());
     assert_eq!(cli_err.to_string(), "bad flag");
   }
+
+  fn assert_error<T: std::error::Error>() {}
+
+  #[test]
+  fn test_all_inner_error_enums_implement_std_error() {
+    assert_error::<FormalityError>();
+    assert_error::<ConfigError>();
+    assert_error::<GitError>();
+    assert_error::<ToolMissingError>();
+    assert_error::<SurfaceError>();
+    assert_error::<IoError>();
+  }
 }

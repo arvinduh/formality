@@ -119,11 +119,11 @@ sweep once an audit confirmed nothing used it: no internal call site referenced
 the short form, and this crate's own integration tests (`tests/*.rs`) already
 addressed everything through the canonical structural path
 (`fml::surfaces::editorconfig::generate_editorconfig`, not
-`fml::generate_editorconfig`) except the two items kept below. **Tier 3 (promote
-to tier 2 if a mechanical check is found):** new internal code always spells out
-the canonical, structural path (e.g. `crate::ui::table`,
-`crate::engine::version`) — never a crate-root shortcut, even where one would
-resolve to the same item.
+`fml::generate_editorconfig`) except the two items kept below. **Tier 2
+(enforced by `test_internal_code_uses_canonical_module_paths` in
+`src/lib.rs`):** new internal code always spells out the canonical, structural
+path (e.g. `crate::ui::table`, `crate::engine::version`) — never a crate-root
+shortcut, even where one would resolve to the same item.
 
 Two crate-root re-exports remain, and both are genuinely load-bearing rather
 than compatibility shims: `pub use config::SCHEMA_VERSION;` and
@@ -209,20 +209,16 @@ On top of that tier-1 floor, this codebase's own convention:
   what the module is for, even though `missing_docs` doesn't require this for
   module declarations specifically (see the `pub mod cli;` block at the top of
   `src/lib.rs`, and the per-surface `pub mod <lang>;` block in
-  `src/surfaces/mod.rs`). **Tier 3 (promote to tier 2 if a mechanical check is
-  found).**
+  `src/surfaces/mod.rs`). **Tier 2 (enforced by
+  `test_pub_mod_declarations_carry_doc_comments` in `src/lib.rs`).**
 - An inline `#[cfg(test)] mod tests` block, or a directory module's sibling
   `mod tests;` declaration (§1's exception), carries
   `#[allow(missing_docs, clippy::missing_errors_doc, clippy::missing_panics_doc)]`
   directly under the `#[cfg(test)]` attribute, opting test code out of the
   crate-wide tier-1 doc lints above — test functions document themselves by name
   (§2). A test module that omits it will fail CI's `-D warnings` the moment it
-  adds a `pub` item or a `Result`-returning helper. **Tier 3 (promote to tier 2
-  if a mechanical check is found)** — no repo-local test currently walks every
-  `mod tests` site to confirm this; a `#201` QA review found two real misses
-  (`src/surfaces/tooling.rs`, `src/commands/migrate.rs`) by hand, so a claim
-  that "every test module already does this" is only a review-time snapshot, not
-  a standing guarantee, until this is mechanically checked.
+  adds a `pub` item or a `Result`-returning helper. **Tier 2 (enforced by
+  `test_test_modules_carry_allow_doc_lints` in `src/lib.rs`).**
 - Every file with meaningful crate-level content (not just re-exports) opens
   with a `//!` module-level doc comment summarizing what lives in it (see the
   top of `src/surfaces/mod.rs`, `src/surfaces/registry.rs`). The one exemption
@@ -344,10 +340,9 @@ time this document was written. `src/errors.rs` is the single source of truth:
   `print_diagnostic()` (`[ERR]` red-bold prefix), not an ad hoc
   `eprintln!("Error: {e}")` at the call site.
 
-**Tier 3 (promote to tier 2 if a mechanical check is found):** every
-`FormalityError` variant's inner type implements `std::error::Error`, so
-`?`-conversion via `From` stays ergonomic at call sites. No test currently walks
-the trait impls to confirm this for a newly added variant.
+**Tier 2 (enforced by `test_all_inner_error_enums_implement_std_error` in
+`src/errors.rs`):** every `FormalityError` variant's inner type implements
+`std::error::Error`, so `?`-conversion via `From` stays ergonomic at call sites.
 
 ---
 
