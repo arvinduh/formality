@@ -799,3 +799,75 @@ fn test_fmt_fix_lint_doctor_install_flag_paths() {
   let lint_code = fml::run_with_args(lint_args);
   assert_eq!(lint_code, 0);
 }
+
+#[test]
+fn test_fmt_staged_and_changed_with_explicit_paths_filtering() {
+  let temp = TempDir::new().unwrap();
+  let root = temp.path().to_path_buf();
+
+  let init_ok = std::process::Command::new("git")
+    .arg("init")
+    .current_dir(&root)
+    .output()
+    .map(|o| o.status.success())
+    .unwrap_or(false);
+  if !init_ok {
+    return;
+  }
+  let _ = std::process::Command::new("git")
+    .args(["config", "user.name", "test"])
+    .current_dir(&root)
+    .output();
+  let _ = std::process::Command::new("git")
+    .args(["config", "user.email", "test@example.com"])
+    .current_dir(&root)
+    .output();
+
+  let file_a = root.join("a.toml");
+  let file_b = root.join("b.toml");
+
+  fs::write(&file_a, "[package]\nname = \"a\"\n").unwrap();
+  fs::write(&file_b, "[package]\nname = \"b\"\n").unwrap();
+
+  let _ = std::process::Command::new("git")
+    .args(["add", "."])
+    .current_dir(&root)
+    .output();
+  let _ = std::process::Command::new("git")
+    .args(["commit", "-m", "initial"])
+    .current_dir(&root)
+    .output();
+
+  // Modify and stage both
+  fs::write(&file_a, "[package]\n   name =   \"a_mod\"\n").unwrap();
+  fs::write(&file_b, "[package]\n   name =   \"b_mod\"\n").unwrap();
+  let _ = std::process::Command::new("git")
+    .args(["add", "."])
+    .current_dir(&root)
+    .output();
+
+  // fmt only a.toml
+  let fmt_args = Cli {
+    config: None,
+    root: Some(root),
+    command: Commands::Fmt {
+      check: false,
+      staged: true,
+      changed: false,
+      lang: vec!["toml".to_string()],
+      install: false,
+      paths: vec![file_a.clone()],
+    },
+  };
+  let code = fml::run_with_args(fmt_args);
+  assert_eq!(code, 0);
+
+  assert_eq!(
+    fs::read_to_string(&file_a).unwrap(),
+    "[package]\nname = \"a_mod\"\n"
+  );
+  assert_eq!(
+    fs::read_to_string(&file_b).unwrap(),
+    "[package]\n   name =   \"b_mod\"\n"
+  );
+}
