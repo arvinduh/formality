@@ -6,6 +6,42 @@
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 
+/// Implements `merge` and `is_empty` methods for a typed options struct.
+macro_rules! impl_options_methods {
+  ($ty:ident) => {
+    impl $ty {
+      /// Merges `other` options into `self`.
+      #[allow(clippy::needless_pass_by_value)]
+      pub fn merge(&mut self, _other: Self) {}
+
+      /// Returns `true` if all fields are `None`.
+      #[must_use]
+      pub fn is_empty(&self) -> bool {
+        true
+      }
+    }
+  };
+  ($ty:ident, $($field:ident),+ $(,)?) => {
+    impl $ty {
+      /// Merges `other` options into `self`.
+      #[allow(clippy::needless_pass_by_value)]
+      pub fn merge(&mut self, other: Self) {
+        $(
+          if other.$field.is_some() {
+            self.$field = other.$field;
+          }
+        )*
+      }
+
+      /// Returns `true` if all fields are `None`.
+      #[must_use]
+      pub fn is_empty(&self) -> bool {
+        $( self.$field.is_none() )&&*
+      }
+    }
+  };
+}
+
 /// Typed formatting and linting options for Rust.
 #[derive(
   Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize, JsonSchema,
@@ -16,20 +52,7 @@ pub struct RustOptions {
   pub edition: Option<String>,
 }
 
-impl RustOptions {
-  /// Merges `other` options into `self`.
-  pub fn merge(&mut self, other: RustOptions) {
-    if other.edition.is_some() {
-      self.edition = other.edition;
-    }
-  }
-
-  /// Returns `true` if all fields are `None`.
-  #[must_use]
-  pub fn is_empty(&self) -> bool {
-    self.edition.is_none()
-  }
-}
+impl_options_methods!(RustOptions, edition);
 
 /// Typed formatting and linting options for Python.
 #[derive(
@@ -44,23 +67,7 @@ pub struct PythonOptions {
   pub target_version: Option<String>,
 }
 
-impl PythonOptions {
-  /// Merges `other` options into `self`.
-  pub fn merge(&mut self, other: PythonOptions) {
-    if other.quote_style.is_some() {
-      self.quote_style = other.quote_style;
-    }
-    if other.target_version.is_some() {
-      self.target_version = other.target_version;
-    }
-  }
-
-  /// Returns `true` if all fields are `None`.
-  #[must_use]
-  pub fn is_empty(&self) -> bool {
-    self.quote_style.is_none() && self.target_version.is_none()
-  }
-}
+impl_options_methods!(PythonOptions, quote_style, target_version);
 
 /// Typed formatting and linting options for C/C++.
 #[derive(
@@ -111,40 +118,15 @@ pub struct CppOptions {
   pub sort_includes: Option<bool>,
 }
 
-impl CppOptions {
-  /// Merges `other` options into `self`.
-  pub fn merge(&mut self, other: CppOptions) {
-    if other.standard.is_some() {
-      self.standard = other.standard;
-    }
-    if other.column_limit.is_some() {
-      self.column_limit = other.column_limit;
-    }
-    if other.based_on_style.is_some() {
-      self.based_on_style = other.based_on_style;
-    }
-    if other.pointer_alignment.is_some() {
-      self.pointer_alignment = other.pointer_alignment;
-    }
-    if other.break_before_braces.is_some() {
-      self.break_before_braces = other.break_before_braces;
-    }
-    if other.sort_includes.is_some() {
-      self.sort_includes = other.sort_includes;
-    }
-  }
-
-  /// Returns `true` if all fields are `None`.
-  #[must_use]
-  pub fn is_empty(&self) -> bool {
-    self.standard.is_none()
-      && self.column_limit.is_none()
-      && self.based_on_style.is_none()
-      && self.pointer_alignment.is_none()
-      && self.break_before_braces.is_none()
-      && self.sort_includes.is_none()
-  }
-}
+impl_options_methods!(
+  CppOptions,
+  standard,
+  column_limit,
+  based_on_style,
+  pointer_alignment,
+  break_before_braces,
+  sort_includes,
+);
 
 /// Typed formatting and linting options for Java.
 #[derive(
@@ -157,20 +139,7 @@ pub struct JavaOptions {
   pub style: Option<String>,
 }
 
-impl JavaOptions {
-  /// Merges `other` options into `self`.
-  pub fn merge(&mut self, other: JavaOptions) {
-    if other.style.is_some() {
-      self.style = other.style;
-    }
-  }
-
-  /// Returns `true` if all fields are `None`.
-  #[must_use]
-  pub fn is_empty(&self) -> bool {
-    self.style.is_none()
-  }
-}
+impl_options_methods!(JavaOptions, style);
 
 /// Typed formatting and linting options for JavaScript/TypeScript (Biome).
 #[derive(
@@ -191,32 +160,13 @@ pub struct JavaScriptOptions {
   pub organize_imports: Option<bool>,
 }
 
-impl JavaScriptOptions {
-  /// Merges `other` options into `self`.
-  pub fn merge(&mut self, other: JavaScriptOptions) {
-    if other.quote_style.is_some() {
-      self.quote_style = other.quote_style;
-    }
-    if other.trailing_comma.is_some() {
-      self.trailing_comma = other.trailing_comma;
-    }
-    if other.semicolons.is_some() {
-      self.semicolons = other.semicolons;
-    }
-    if other.organize_imports.is_some() {
-      self.organize_imports = other.organize_imports;
-    }
-  }
-
-  /// Returns `true` if all fields are `None`.
-  #[must_use]
-  pub fn is_empty(&self) -> bool {
-    self.quote_style.is_none()
-      && self.trailing_comma.is_none()
-      && self.semicolons.is_none()
-      && self.organize_imports.is_none()
-  }
-}
+impl_options_methods!(
+  JavaScriptOptions,
+  quote_style,
+  trailing_comma,
+  semicolons,
+  organize_imports,
+);
 
 /// Typed formatting and linting options for Go.
 #[derive(
@@ -233,23 +183,7 @@ pub struct GoOptions {
   pub linters: Option<Vec<String>>,
 }
 
-impl GoOptions {
-  /// Merges `other` options into `self`.
-  pub fn merge(&mut self, other: GoOptions) {
-    if other.local_prefixes.is_some() {
-      self.local_prefixes = other.local_prefixes;
-    }
-    if other.linters.is_some() {
-      self.linters = other.linters;
-    }
-  }
-
-  /// Returns `true` if all fields are `None`.
-  #[must_use]
-  pub fn is_empty(&self) -> bool {
-    self.local_prefixes.is_none() && self.linters.is_none()
-  }
-}
+impl_options_methods!(GoOptions, local_prefixes, linters);
 
 /// Typed formatting and linting options for Markdown.
 #[derive(
@@ -261,20 +195,7 @@ pub struct MarkdownOptions {
   pub prose_wrap: Option<String>,
 }
 
-impl MarkdownOptions {
-  /// Merges `other` options into `self`.
-  pub fn merge(&mut self, other: MarkdownOptions) {
-    if other.prose_wrap.is_some() {
-      self.prose_wrap = other.prose_wrap;
-    }
-  }
-
-  /// Returns `true` if all fields are `None`.
-  #[must_use]
-  pub fn is_empty(&self) -> bool {
-    self.prose_wrap.is_none()
-  }
-}
+impl_options_methods!(MarkdownOptions, prose_wrap);
 
 /// Typed formatting and linting options for YAML.
 #[derive(
@@ -292,29 +213,7 @@ pub struct YamlOptions {
   pub truthy: Option<bool>,
 }
 
-impl YamlOptions {
-  /// Maintains consistent `merge(&mut self, other: Self)` signature across all language option structs.
-  #[allow(clippy::needless_pass_by_value)]
-  pub fn merge(&mut self, other: YamlOptions) {
-    if other.indent_sequence.is_some() {
-      self.indent_sequence = other.indent_sequence;
-    }
-    if other.document_start.is_some() {
-      self.document_start = other.document_start;
-    }
-    if other.truthy.is_some() {
-      self.truthy = other.truthy;
-    }
-  }
-
-  /// Returns `true` if all fields are `None`.
-  #[must_use]
-  pub fn is_empty(&self) -> bool {
-    self.indent_sequence.is_none()
-      && self.document_start.is_none()
-      && self.truthy.is_none()
-  }
-}
+impl_options_methods!(YamlOptions, indent_sequence, document_start, truthy);
 
 /// Typed formatting and linting options for JSON.
 #[derive(
@@ -322,16 +221,7 @@ impl YamlOptions {
 )]
 pub struct JsonOptions {}
 
-impl JsonOptions {
-  /// Merges `other` options into `self`.
-  pub fn merge(&mut self, _other: JsonOptions) {}
-
-  /// Returns `true` if all fields are empty.
-  #[must_use]
-  pub fn is_empty(&self) -> bool {
-    true
-  }
-}
+impl_options_methods!(JsonOptions);
 
 /// Typed formatting and linting options for TOML.
 #[derive(
@@ -339,16 +229,7 @@ impl JsonOptions {
 )]
 pub struct TomlOptions {}
 
-impl TomlOptions {
-  /// Merges `other` options into `self`.
-  pub fn merge(&mut self, _other: TomlOptions) {}
-
-  /// Returns `true` if all fields are empty.
-  #[must_use]
-  pub fn is_empty(&self) -> bool {
-    true
-  }
-}
+impl_options_methods!(TomlOptions);
 
 /// Typed formatting and linting options for Typst.
 #[derive(
@@ -356,16 +237,7 @@ impl TomlOptions {
 )]
 pub struct TypstOptions {}
 
-impl TypstOptions {
-  /// Merges `other` options into `self`.
-  pub fn merge(&mut self, _other: TypstOptions) {}
-
-  /// Returns `true` if all fields are empty.
-  #[must_use]
-  pub fn is_empty(&self) -> bool {
-    true
-  }
-}
+impl_options_methods!(TypstOptions);
 
 /// Typed formatting and linting options for Kotlin.
 ///
@@ -379,13 +251,132 @@ impl TypstOptions {
 )]
 pub struct KotlinOptions {}
 
-impl KotlinOptions {
-  /// Merges `other` options into `self`.
-  pub fn merge(&mut self, _other: KotlinOptions) {}
+impl_options_methods!(KotlinOptions);
 
-  /// Returns `true` if all fields are empty.
-  #[must_use]
-  pub fn is_empty(&self) -> bool {
-    true
+#[cfg(test)]
+#[allow(missing_docs, clippy::missing_errors_doc, clippy::missing_panics_doc)]
+mod tests {
+  use super::*;
+
+  #[test]
+  fn test_options_merge_and_is_empty() {
+    // 0 fields (JsonOptions, TomlOptions, TypstOptions, KotlinOptions)
+    let mut json = JsonOptions::default();
+    assert!(json.is_empty());
+    json.merge(JsonOptions::default());
+    assert!(json.is_empty());
+
+    let mut toml = TomlOptions::default();
+    assert!(toml.is_empty());
+    toml.merge(TomlOptions::default());
+    assert!(toml.is_empty());
+
+    let mut typst = TypstOptions::default();
+    assert!(typst.is_empty());
+    typst.merge(TypstOptions::default());
+    assert!(typst.is_empty());
+
+    let mut kotlin = KotlinOptions::default();
+    assert!(kotlin.is_empty());
+    kotlin.merge(KotlinOptions::default());
+    assert!(kotlin.is_empty());
+
+    // 1 field (RustOptions, JavaOptions, MarkdownOptions)
+    let mut rust = RustOptions::default();
+    assert!(rust.is_empty());
+    rust.merge(RustOptions {
+      edition: Some("2021".to_string()),
+    });
+    assert!(!rust.is_empty());
+    assert_eq!(rust.edition.as_deref(), Some("2021"));
+    rust.merge(RustOptions::default());
+    assert_eq!(rust.edition.as_deref(), Some("2021"));
+
+    let mut java = JavaOptions::default();
+    assert!(java.is_empty());
+    java.merge(JavaOptions {
+      style: Some("aosp".to_string()),
+    });
+    assert!(!java.is_empty());
+    assert_eq!(java.style.as_deref(), Some("aosp"));
+
+    let mut md = MarkdownOptions::default();
+    assert!(md.is_empty());
+    md.merge(MarkdownOptions {
+      prose_wrap: Some("always".to_string()),
+    });
+    assert!(!md.is_empty());
+    assert_eq!(md.prose_wrap.as_deref(), Some("always"));
+
+    // 2 fields (PythonOptions, GoOptions)
+    let mut py = PythonOptions::default();
+    assert!(py.is_empty());
+    py.merge(PythonOptions {
+      quote_style: Some("single".to_string()),
+      target_version: None,
+    });
+    assert!(!py.is_empty());
+    assert_eq!(py.quote_style.as_deref(), Some("single"));
+    assert_eq!(py.target_version, None);
+    py.merge(PythonOptions {
+      quote_style: None,
+      target_version: Some("py311".to_string()),
+    });
+    assert_eq!(py.quote_style.as_deref(), Some("single"));
+    assert_eq!(py.target_version.as_deref(), Some("py311"));
+
+    let mut go = GoOptions::default();
+    assert!(go.is_empty());
+    go.merge(GoOptions {
+      local_prefixes: Some("example.com".to_string()),
+      linters: None,
+    });
+    assert!(!go.is_empty());
+    assert_eq!(go.local_prefixes.as_deref(), Some("example.com"));
+    assert_eq!(go.linters, None);
+    go.merge(GoOptions {
+      local_prefixes: None,
+      linters: Some(vec!["errcheck".to_string()]),
+    });
+    assert_eq!(go.local_prefixes.as_deref(), Some("example.com"));
+    assert_eq!(go.linters.as_deref(), Some(&["errcheck".to_string()][..]));
+
+    // Multi-field (CppOptions, JavaScriptOptions, YamlOptions)
+    let mut cpp = CppOptions::default();
+    assert!(cpp.is_empty());
+    cpp.merge(CppOptions {
+      standard: Some("c++20".to_string()),
+      column_limit: Some(100),
+      ..Default::default()
+    });
+    assert!(!cpp.is_empty());
+    assert_eq!(cpp.standard.as_deref(), Some("c++20"));
+    assert_eq!(cpp.column_limit, Some(100));
+
+    let mut js = JavaScriptOptions::default();
+    assert!(js.is_empty());
+    js.merge(JavaScriptOptions {
+      quote_style: Some("double".to_string()),
+      trailing_comma: Some("all".to_string()),
+      semicolons: Some("always".to_string()),
+      organize_imports: Some(true),
+    });
+    assert!(!js.is_empty());
+    assert_eq!(js.quote_style.as_deref(), Some("double"));
+    assert_eq!(js.trailing_comma.as_deref(), Some("all"));
+    assert_eq!(js.semicolons.as_deref(), Some("always"));
+    assert_eq!(js.organize_imports, Some(true));
+
+    let mut yaml = YamlOptions::default();
+    assert!(yaml.is_empty());
+    yaml.merge(YamlOptions {
+      indent_sequence: Some(true),
+      document_start: None,
+      truthy: Some(false),
+    });
+    assert!(!yaml.is_empty());
+    assert_eq!(yaml.indent_sequence, Some(true));
+    assert_eq!(yaml.document_start, None);
+    assert_eq!(yaml.truthy, Some(false));
   }
 }
