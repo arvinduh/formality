@@ -38,7 +38,7 @@ Two independent tag namespaces, not one and not three:
   additive/compatible one.
 
 See [release.md](../release.md) for the full cutting procedure for each tag
-type, and `COMPATIBILITY.md` at the repo root for the binary-version-to-
+type, and [compatibility.md](../compatibility.md) for the binary-version-to-
 schema-version compatibility matrix this split makes necessary.
 
 ## Consequences
@@ -52,6 +52,6 @@ schema-version compatibility matrix this split makes necessary.
   independent extension release cadence later would be a new decision, not a
   natural extension of this one, since `#126` explicitly considered and rejected
   that shape for now.
-- `COMPATIBILITY.md` and `docs/release.md` both need updating whenever a new
-  schema major/minor is cut — see [release.md](../release.md)'s "Update
+- `docs/compatibility.md` and `docs/release.md` both need updating whenever a
+  new schema major/minor is cut — see [release.md](../release.md)'s "Update
   documentation & matrix" step.
