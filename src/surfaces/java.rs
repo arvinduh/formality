@@ -364,16 +364,61 @@ impl LanguageSurface for JavaSurface {
       };
     }
 
-    // Checkstyle requires an explicit `-c` config; self-heal by generating
-    // the standard formality-managed checkstyle.xml if `fml sync` hasn't
-    // been run yet, so `fml lint` still works out of the box.
-    let config_path = ctx.root.join(CheckstyleConfig::FILE_NAME);
-    if !config_path.is_file() {
+    // Checkstyle requires an explicit `-c` config. If `fml sync` hasn't been
+    // run yet and `checkstyle.xml` is missing from `ctx.root`, render a temporary
+    // config to the system temp directory so `fml lint` remains a read-only
+    // pass without writing files into `ctx.root`.
+    let root_config = ctx.root.join(CheckstyleConfig::FILE_NAME);
+    let (config_path, _temp_config) = if root_config.is_file() {
+      (root_config, None)
+    } else {
       let cfg = CheckstyleConfig::from_context(ctx);
-      if let Ok(c) = cfg.render() {
-        let _ = std::fs::write(&config_path, c);
+      match cfg.render() {
+        Ok(rendered) => {
+          let mut temp_file = match tempfile::Builder::new()
+            .prefix("checkstyle-")
+            .suffix(".xml")
+            .tempfile()
+          {
+            Ok(tf) => tf,
+            Err(e) => {
+              return SurfaceResult {
+                surface_name: self.name(),
+                status: SurfaceStatus::ExecutionError {
+                  message: format!(
+                    "Failed to create temporary checkstyle config: {e}"
+                  ),
+                },
+                duration: start.elapsed(),
+              };
+            }
+          };
+          use std::io::Write;
+          if let Err(e) = temp_file.write_all(rendered.as_bytes()) {
+            return SurfaceResult {
+              surface_name: self.name(),
+              status: SurfaceStatus::ExecutionError {
+                message: format!(
+                  "Failed to write temporary checkstyle config: {e}"
+                ),
+              },
+              duration: start.elapsed(),
+            };
+          }
+          let path = temp_file.path().to_path_buf();
+          (path, Some(temp_file))
+        }
+        Err(e) => {
+          return SurfaceResult {
+            surface_name: self.name(),
+            status: SurfaceStatus::ExecutionError {
+              message: format!("Failed to render checkstyle config: {e}"),
+            },
+            duration: start.elapsed(),
+          };
+        }
       }
-    }
+    };
 
     let mut cmd = create_tool_command("checkstyle");
     cmd.arg("-c").arg(&config_path);
@@ -443,17 +488,11 @@ impl LanguageSurface for JavaSurface {
   // or `taplo -o` do, because the value is passed straight to
   // `ClassLoader.getResource()` — piping XML through stdin isn't a resource
   // location, and there's no separate flag to switch that interpretation.
-  // Writing a fresh temp file per invocation instead of `checkstyle.xml` in
-  // the project root was considered (per the issue's own suggested
-  // fallback) but rejected: it still requires the same
-  // resolve-config/render/write/pass-`-c`/cleanup machinery this exception
-  // exists to avoid, without actually eliminating a file write — it would
-  // just relocate it outside the repo, adding cleanup-on-panic risk for no
-  // real benefit over the current self-healing `checkstyle.xml` write
-  // already done at the top of `lint()` above. google-java-format (the
-  // actual formatter tool) has a fixed, unconfigurable style already, so it
-  // was never reading this file in the first place — this exception is
-  // specific to checkstyle, the linter.
+  // When missing from disk, `JavaSurface::lint` renders a temporary config
+  // file in the system temp directory so `fml lint` remains a read-only pass
+  // without mutating `ctx.root`. google-java-format (the actual formatter tool)
+  // has a fixed, unconfigurable style already, so it was never reading this file
+  // in the first place — this config is specific to checkstyle, the linter.
   fn sync_config(&self, ctx: &ExecutionContext, check: bool) -> SurfaceResult {
     let start = Instant::now();
     sync_native_config::<CheckstyleConfig>(ctx, check, start, self.name())
@@ -718,5 +757,33 @@ mod tests {
     let surface = JavaSurface;
     let res = surface.format(&ctx);
     assert!(matches!(res.status, SurfaceStatus::ToolMissing { .. }));
+  }
+
+  #[test]
+  fn test_java_lint_does_not_write_to_ctx_root() {
+    let temp = TempDir::new().unwrap();
+    let main_java = temp.path().join("Main.java");
+    std::fs::write(&main_java, "class Main {}\n").unwrap();
+
+    let ctx = ExecutionContext {
+      root: Arc::new(temp.path().to_path_buf()),
+      paths: Arc::new(Vec::new()),
+      global_config: Arc::new(ResolvedGlobalConfig::default()),
+      lang_config: ResolvedLangConfig::new("java"),
+      check_only: false,
+    };
+
+    let surface = JavaSurface;
+    let _ = surface.lint(&ctx, false);
+
+    assert!(
+      !temp.path().join("checkstyle.xml").exists(),
+      "fml lint must not write checkstyle.xml to ctx.root"
+    );
+    assert_eq!(
+      std::fs::read_dir(temp.path()).unwrap().count(),
+      1,
+      "ctx.root must contain only Main.java after lint pass"
+    );
   }
 }

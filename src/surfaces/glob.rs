@@ -227,12 +227,19 @@ fn walk_dir_ext(dir: &Path, extensions: &[&str]) -> Vec<PathBuf> {
     .git_exclude(true)
     .filter_entry(|entry| {
       let name = entry.file_name().to_string_lossy();
-      name != "target"
-        && name != "node_modules"
-        && name != ".git"
-        && name != ".venv"
-        && name != "vendor"
-        && name != "fixtures"
+      if name == "target"
+        || name == "node_modules"
+        || name == ".git"
+        || name == ".venv"
+        || name == "vendor"
+        || name == "fixtures"
+      {
+        return false;
+      }
+      if name.ends_with(".tmp") || name.contains(".fml-check-tmp.") {
+        return false;
+      }
+      true
     })
     .build();
 
@@ -359,6 +366,37 @@ mod tests {
       "only src/lib.rs should be found; ignored dirs must be skipped: {matched:?}"
     );
     assert!(matched[0].ends_with("lib.rs"));
+  }
+
+  #[test]
+  fn test_walk_dir_ext_skips_temporary_files() {
+    let temp = tempfile::TempDir::new().unwrap();
+    let root = temp.path();
+
+    let real_rs = root.join("main.rs");
+    let temp_fml = root.join("main.fml-check-tmp.rs");
+    let temp_ext = root.join("main.rs.tmp");
+    let temp_bare = root.join("scratch.tmp");
+    let nested = root.join("nested");
+    std::fs::create_dir_all(&nested).unwrap();
+    let nested_real = nested.join("lib.rs");
+    let nested_temp = nested.join("lib.fml-check-tmp.rs");
+
+    std::fs::write(&real_rs, "fn main() {}").unwrap();
+    std::fs::write(&temp_fml, "fn main() {}").unwrap();
+    std::fs::write(&temp_ext, "fn main() {}").unwrap();
+    std::fs::write(&temp_bare, "fn main() {}").unwrap();
+    std::fs::write(&nested_real, "fn lib() {}").unwrap();
+    std::fs::write(&nested_temp, "fn lib() {}").unwrap();
+
+    let matched = find_files_with_ext(root, &["rs", "tmp"], &[], &[], &[]);
+    assert_eq!(matched.len(), 2);
+    assert!(matched.contains(&real_rs));
+    assert!(matched.contains(&nested_real));
+    assert!(!matched.contains(&temp_fml));
+    assert!(!matched.contains(&temp_ext));
+    assert!(!matched.contains(&temp_bare));
+    assert!(!matched.contains(&nested_temp));
   }
 
   #[test]
