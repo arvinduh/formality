@@ -221,8 +221,11 @@ pub fn render(spec: &Table, palette: &Palette) -> String {
     table.set_header(header_row);
   }
 
+  let mut group_titles: Vec<String> = Vec::new();
+
   // Populate data rows
-  for row in &spec.rows {
+  let mut row_iter = spec.rows.iter().peekable();
+  while let Some(row) = row_iter.next() {
     match &row.kind {
       RowKind::Data => {
         let mut comfy_row = comfy_table::Row::new();
@@ -243,7 +246,16 @@ pub fn render(spec: &Table, palette: &Palette) -> String {
                 WidthPolicy::Range(_, max) => {
                   Some((max as usize).saturating_sub(padding_w))
                 }
-                _ => None,
+                WidthPolicy::Min(w) => {
+                  Some((w as usize).saturating_sub(padding_w))
+                }
+                WidthPolicy::Pct(pct) => Some(
+                  ((table_width as usize * pct as usize) / 100)
+                    .saturating_sub(padding_w),
+                ),
+                WidthPolicy::Auto => {
+                  Some((table_width as usize).saturating_sub(padding_w))
+                }
               }
             } else {
               None
@@ -266,6 +278,19 @@ pub fn render(spec: &Table, palette: &Palette) -> String {
         }
 
         table.add_row(comfy_row);
+
+        // Comfortable density adds an empty spacer line after data rows
+        if spec.layout.density == super::Density::Comfortable
+          && row_iter
+            .peek()
+            .is_some_and(|next| matches!(next.kind, RowKind::Data))
+        {
+          let mut blank_row = comfy_table::Row::new();
+          for _ in 0..num_cols {
+            blank_row.add_cell(comfy_table::Cell::new(""));
+          }
+          table.add_row(blank_row);
+        }
       }
       RowKind::Blank => {
         let mut comfy_row = comfy_table::Row::new();
@@ -283,8 +308,9 @@ pub fn render(spec: &Table, palette: &Palette) -> String {
       }
       RowKind::Group(title) => {
         let mut comfy_row = comfy_table::Row::new();
-        let formatted_title = palette.apply(title, Style::Strong);
-        comfy_row.add_cell(comfy_table::Cell::new(formatted_title));
+        let idx = group_titles.len();
+        group_titles.push(palette.apply(title, Style::Strong));
+        comfy_row.add_cell(comfy_table::Cell::new(format!("_G{idx}_")));
         for _ in 1..num_cols {
           comfy_row.add_cell(comfy_table::Cell::new(""));
         }
@@ -345,7 +371,11 @@ pub fn render(spec: &Table, palette: &Palette) -> String {
       .lines()
       .map(|line| {
         let stripped = strip_ansi_escapes(line);
-        if !stripped.is_empty()
+        if let Some(g_idx) =
+          (0..group_titles.len()).find(|&i| line.contains(&format!("_G{i}_")))
+        {
+          group_titles[g_idx].clone()
+        } else if !stripped.is_empty()
           && stripped.chars().all(|c| c == '\u{2500}' || c == ' ')
         {
           "\u{2500}".repeat(table_width)
