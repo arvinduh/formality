@@ -157,9 +157,10 @@ pub fn preflight_install(
 ) -> bool {
   let mut seen: HashSet<&'static str> = HashSet::new();
   let mut to_install: Vec<ToolInfo> = Vec::new();
+  let global = config.resolve_global();
 
   for surface in surfaces {
-    let resolved = config.resolve_for_lang(surface.name());
+    let resolved = config.resolve_for_lang_with_global(surface.name(), &global);
     for tool in surface.tool_info(&resolved) {
       if seen.contains(tool.binary) {
         continue;
@@ -204,9 +205,10 @@ pub fn preflight_warn_stale_tools(
   for_lint: bool,
 ) {
   let mut seen: HashSet<&'static str> = HashSet::new();
+  let global = config.resolve_global();
 
   for surface in surfaces {
-    let resolved = config.resolve_for_lang(surface.name());
+    let resolved = config.resolve_for_lang_with_global(surface.name(), &global);
     for tool in surface.tool_info(&resolved) {
       if seen.contains(tool.binary) {
         continue;
@@ -550,6 +552,7 @@ fn scan_tools_and_build_table(
   // needs the full `ToolInfo` to reinstall it, same as `missing_unique_tools`.
   let mut stale_unique_tools: Vec<ToolInfo> = Vec::new();
   let mut unknown_unique_tools = HashSet::new();
+  let global = config.resolve_global();
 
   let mut doctor_table = Table::new(vec![
     Column::new(Cell::text("")).width(WidthPolicy::Fixed(10)),
@@ -560,7 +563,7 @@ fn scan_tools_and_build_table(
   .layout(Layout::compact().indent(2).padding(0, 1));
 
   for surface in surfaces {
-    let resolved = config.resolve_for_lang(surface.name());
+    let resolved = config.resolve_for_lang_with_global(surface.name(), &global);
     let tools = surface.tool_info(&resolved);
 
     for tool in tools {

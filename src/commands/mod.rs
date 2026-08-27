@@ -275,8 +275,10 @@ pub fn resolve_target_surfaces(
 
   if !paths.is_empty() {
     let mut active = Vec::new();
+    let global = config.resolve_global();
     for surface in all_surfaces() {
-      let lang_cfg = config.resolve_for_lang(surface.name());
+      let lang_cfg =
+        config.resolve_for_lang_with_global(surface.name(), &global);
       let matching = find_files_with_ext(
         root,
         surface.file_extensions(),
