@@ -210,24 +210,11 @@ impl LanguageSurface for TomlSurface {
       return diff_check_via_tempcopy(
         &files,
         |scratch| {
-          let content = std::fs::read(scratch)?;
           let mut cmd = create_tool_command("taplo");
-          cmd.arg("format").args(&inline_config).arg("-");
+          cmd.arg("format").args(&inline_config).arg(scratch);
           cmd.args(&ctx.lang_config.extra_args);
           cmd.current_dir(ctx.root.as_path());
-          cmd.stdin(std::process::Stdio::piped());
-          cmd.stdout(std::process::Stdio::piped());
-          cmd.stderr(std::process::Stdio::piped());
-          let mut child = cmd.spawn()?;
-          if let Some(mut stdin) = child.stdin.take() {
-            use std::io::Write;
-            stdin.write_all(&content)?;
-          }
-          let output = child.wait_with_output()?;
-          if output.status.success() {
-            std::fs::write(scratch, &output.stdout)?;
-          }
-          Ok(output)
+          cmd.output()
         },
         self.name(),
         start,
@@ -539,5 +526,69 @@ mod tests {
 
     assert!(!temp.path().join("taplo.toml").exists());
     assert!(!temp.path().join(".taplo.toml").exists());
+  }
+
+  #[test]
+  fn test_toml_format_check_large_file_no_deadlock() {
+    // Fixes #22: formatting large TOML files (>128 KB) in check mode must not deadlock.
+    if !check_binary_exists("taplo") {
+      return;
+    }
+    let temp = TempDir::new().unwrap();
+    let file_path = temp.path().join("large_unformatted.toml");
+
+    let mut large_content = String::with_capacity(180_000);
+    for i in 0..8000 {
+      use std::fmt::Write;
+      let _ = writeln!(large_content, "key_{i}=\"value_{i}\"");
+    }
+    assert!(large_content.len() > 128 * 1024);
+    std::fs::write(&file_path, &large_content).unwrap();
+
+    let surface = TomlSurface;
+    let ctx = ExecutionContext {
+      root: Arc::new(temp.path().to_path_buf()),
+      paths: Arc::new(vec![file_path.clone()]),
+      global_config: Arc::new(ResolvedGlobalConfig::default()),
+      lang_config: crate::config::ResolvedLangConfig::new("toml"),
+      check_only: true,
+    };
+
+    let res = surface.format(&ctx);
+    assert!(!res.is_error(), "format returned error: {:?}", res.status);
+    assert!(
+      res.is_violation(),
+      "expected formatting violations for unformatted TOML, got {:?}",
+      res.status
+    );
+    if let SurfaceStatus::ViolationsFound { diff, .. } = res.status {
+      let diff_str = diff.expect("diff should be present");
+      assert!(diff_str.contains("key_0"));
+    }
+
+    // Check mode on already-formatted >128 KB file must also complete cleanly and return Passed.
+    let formatted_path = temp.path().join("large_formatted.toml");
+    let mut formatted_content = String::with_capacity(180_000);
+    for i in 0..8000 {
+      use std::fmt::Write;
+      let _ = writeln!(formatted_content, "key_{i} = \"value_{i}\"");
+    }
+    assert!(formatted_content.len() > 128 * 1024);
+    std::fs::write(&formatted_path, &formatted_content).unwrap();
+
+    let ctx_formatted = ExecutionContext {
+      root: Arc::new(temp.path().to_path_buf()),
+      paths: Arc::new(vec![formatted_path]),
+      global_config: Arc::new(ResolvedGlobalConfig::default()),
+      lang_config: crate::config::ResolvedLangConfig::new("toml"),
+      check_only: true,
+    };
+
+    let res_formatted = surface.format(&ctx_formatted);
+    assert!(
+      matches!(res_formatted.status, SurfaceStatus::Passed),
+      "expected Passed for formatted TOML, got {:?}",
+      res_formatted.status
+    );
   }
 }
