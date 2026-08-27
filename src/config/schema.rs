@@ -37,7 +37,7 @@ impl std::fmt::Display for SchemaVersion {
 
 /// The current `s{major}.{minor}` schema version this build of `fml`
 /// expects a project's `#:schema` directive to reference.
-pub const SCHEMA_VERSION: SchemaVersion = SchemaVersion { major: 1, minor: 0 };
+pub const SCHEMA_VERSION: SchemaVersion = SchemaVersion { major: 1, minor: 1 };
 const SCHEMA_CHECK_INTERVAL_SECS: u64 = 24 * 60 * 60; // 24 hours
 
 /// A config file's schema version status relative to [`SCHEMA_VERSION`].
