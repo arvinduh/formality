@@ -2,6 +2,7 @@
 //! per invocation, printed after the main command finishes) for whether a
 //! newer `fml` release is available.
 
+use crate::engine::version::Version;
 use colored::Colorize;
 use serde::{Deserialize, Serialize};
 use std::path::{Path, PathBuf};
@@ -128,41 +129,12 @@ pub fn parse_latest_tag_from_json(body: &str) -> Option<String> {
   Some(tag.to_string())
 }
 
-fn parse_semver(s: &str) -> Option<(u64, u64, u64)> {
-  let main_part = s.split('-').next().unwrap_or(s);
-  let parts: Vec<&str> = main_part.split('.').collect();
-  if parts.len() >= 3 {
-    let major = parts[0].parse().ok()?;
-    let minor = parts[1].parse().ok()?;
-    let patch = parts[2].parse().ok()?;
-    Some((major, minor, patch))
-  } else if parts.len() == 2 {
-    let major = parts[0].parse().ok()?;
-    let minor = parts[1].parse().ok()?;
-    Some((major, minor, 0))
-  } else if parts.len() == 1 {
-    let major = parts[0].parse().ok()?;
-    Some((major, 0, 0))
-  } else {
-    None
-  }
-}
-
 /// Compares a release tag (e.g. "v0.2.0" or "0.2.0") with the current version.
 #[must_use]
 pub fn is_newer_version(latest_tag: &str, current_version: &str) -> bool {
-  let clean_latest = latest_tag.trim_start_matches('v');
-  let clean_curr = current_version.trim_start_matches('v');
-  if clean_latest.is_empty() || clean_curr.is_empty() {
-    return false;
-  }
-
-  if let (Some(latest_nums), Some(curr_nums)) =
-    (parse_semver(clean_latest), parse_semver(clean_curr))
-  {
-    latest_nums > curr_nums
-  } else {
-    false
+  match (Version::parse(latest_tag), Version::parse(current_version)) {
+    (Some(latest), Some(curr)) => latest > curr,
+    _ => false,
   }
 }
 

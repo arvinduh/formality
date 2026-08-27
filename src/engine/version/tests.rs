@@ -222,7 +222,7 @@ fn test_mstv_fleet_declarations() {
   assert_eq!(get_mstv("golangci-lint"), Some(Version::new(1, 50, 0)));
 }
 
-// Comprehensive registry validation checking minimum supported tool versions and version-probe regexes across all tools.
+// Comprehensive registry validation checking minimum supported tool versions and upgrade advice across all tools.
 #[allow(clippy::too_many_lines)]
 #[test]
 fn test_tool_mstv_registry_entries() {
@@ -230,7 +230,6 @@ fn test_tool_mstv_registry_entries() {
     get_tool_mstv_entry("yamllint").expect("yamllint registered");
   assert_eq!(yamllint_entry.min_version, Version::new(1, 20, 0));
   assert_eq!(yamllint_entry.version_args, &["--version"]);
-  assert_eq!(yamllint_entry.regex, r"yamllint (\d+\.\d+\.\d+)");
   assert_eq!(
     yamllint_entry.advice,
     "Run 'pip install -U yamllint' or 'brew install yamllint'"
@@ -240,7 +239,6 @@ fn test_tool_mstv_registry_entries() {
     get_tool_mstv_entry("typstyle").expect("typstyle registered");
   assert_eq!(typstyle_entry.min_version, Version::new(0, 11, 0));
   assert_eq!(typstyle_entry.version_args, &["--version"]);
-  assert_eq!(typstyle_entry.regex, r"typstyle (\d+\.\d+\.\d+)");
   assert_eq!(
     typstyle_entry.advice,
     "Run 'cargo install --locked typstyle' or 'brew install typstyle'"
@@ -249,7 +247,6 @@ fn test_tool_mstv_registry_entries() {
   let biome_entry = get_tool_mstv_entry("biome").expect("biome registered");
   assert_eq!(biome_entry.min_version, Version::new(1, 5, 0));
   assert_eq!(biome_entry.version_args, &["--version"]);
-  assert_eq!(biome_entry.regex, r"(\d+\.\d+\.\d+)");
   assert_eq!(
     biome_entry.advice,
     "Run 'npm install -g @biomejs/biome' or 'brew install biome'"
@@ -260,10 +257,6 @@ fn test_tool_mstv_registry_entries() {
   assert_eq!(checkstyle_entry.min_version, Version::new(10, 0, 0));
   assert_eq!(checkstyle_entry.version_args, &["--version"]);
   assert_eq!(
-    checkstyle_entry.regex,
-    r"Checkstyle version:? (\d+\.\d+(?:\.\d+)?)"
-  );
-  assert_eq!(
     checkstyle_entry.advice,
     "Run 'brew install checkstyle' or update your checkstyle jar"
   );
@@ -271,18 +264,15 @@ fn test_tool_mstv_registry_entries() {
   let ktfmt_entry = get_tool_mstv_entry("ktfmt").expect("ktfmt registered");
   assert_eq!(ktfmt_entry.min_version, Version::new(0, 44, 0));
   assert_eq!(ktfmt_entry.version_args, &["--version"]);
-  assert_eq!(ktfmt_entry.regex, r"ktfmt version (\d+\.\d+(?:\.\d+)?)");
   assert_eq!(ktfmt_entry.advice, "Run 'brew install ktfmt'");
 
   let ktlint_entry = get_tool_mstv_entry("ktlint").expect("ktlint registered");
   assert_eq!(ktlint_entry.min_version, Version::new(1, 0, 0));
   assert_eq!(ktlint_entry.version_args, &["--version"]);
-  assert_eq!(ktlint_entry.regex, r"(\d+\.\d+\.\d+)");
   assert_eq!(ktlint_entry.advice, "Run 'brew install ktlint'");
 
   let gofmt_entry = get_tool_mstv_entry("gofmt").expect("gofmt registered");
   assert_eq!(gofmt_entry.min_version, Version::new(1, 18, 0));
-  assert_eq!(gofmt_entry.regex, r"go(\d+\.\d+(?:\.\d+)?)");
   assert_eq!(
     gofmt_entry.advice,
     "Update Go toolchain via https://go.dev/dl/"
@@ -292,10 +282,6 @@ fn test_tool_mstv_registry_entries() {
     get_tool_mstv_entry("golangci-lint").expect("golangci-lint registered");
   assert_eq!(golangci_entry.min_version, Version::new(1, 50, 0));
   assert_eq!(golangci_entry.version_args, &["version"]);
-  assert_eq!(
-    golangci_entry.regex,
-    r"golangci-lint has version (\d+\.\d+\.\d+)"
-  );
   assert_eq!(
     golangci_entry.advice,
     "Run 'brew install golangci-lint' or update via https://golangci-lint.run"
