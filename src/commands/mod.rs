@@ -87,18 +87,9 @@ pub fn dispatch_surface_action(
 
   let mut install_failed = false;
   if install {
-    let mut ok = true;
-    if for_lint
-      && !crate::commands::doctor::preflight_install(&surfaces, config, false)
-    {
-      ok = false;
-    }
-    if for_fmt
-      && !crate::commands::doctor::preflight_install(&surfaces, config, true)
-    {
-      ok = false;
-    }
-    if !ok {
+    if !crate::commands::doctor::preflight_install(
+      &surfaces, config, for_fmt, for_lint,
+    ) {
       warn_tool_install_failed(verb);
       install_failed = true;
     }

@@ -14,7 +14,7 @@ pub use gitignore::{
 };
 pub use venv::{
   VirtualEnvInfo, VirtualEnvSource, detect_virtualenv,
-  detect_virtualenv_with_env, find_venv_interpreter,
+  detect_virtualenv_with_env, find_system_python, find_venv_interpreter,
 };
 
 use crate::config::FormalityConfig;
@@ -23,8 +23,8 @@ use crate::engine::version::{
   minimum_supported_tool_version, normalize_probed_version, probe_tool_version,
 };
 use crate::surfaces::{
-  LanguageSurface, ToolInfo, all_surfaces, create_tool_command,
-  detect_surfaces_smart, pinned_version_for,
+  LanguageSurface, ToolInfo, all_surfaces, check_binary_exists,
+  create_tool_command, detect_surfaces_smart, pinned_version_for,
 };
 use crate::ui::table::{
   Cell, Column, Layout, Palette, Row, Span, Style, Table, WidthPolicy, render,
@@ -141,7 +141,7 @@ pub fn install_missing_tools(missing: &[ToolInfo]) -> bool {
   all_ok
 }
 
-/// Collect the tools required by `surfaces` for the given action (format or
+/// Collect the tools required by `surfaces` for the given actions (format and/or
 /// lint) that need installing — genuinely missing, or present but
 /// [`ToolStatus::Stale`] *and* the selected installer carries a matching
 /// inline pin — then install them. If a stale tool's selected installer
@@ -153,6 +153,7 @@ pub fn preflight_install(
   surfaces: &[Box<dyn LanguageSurface>],
   config: &FormalityConfig,
   for_fmt: bool,
+  for_lint: bool,
 ) -> bool {
   let mut seen: HashSet<&'static str> = HashSet::new();
   let mut to_install: Vec<ToolInfo> = Vec::new();
@@ -163,11 +164,8 @@ pub fn preflight_install(
       if seen.contains(tool.binary) {
         continue;
       }
-      let needed = if for_fmt {
-        tool.is_required_for_fmt
-      } else {
-        tool.is_required_for_lint
-      };
+      let needed = (for_fmt && tool.is_required_for_fmt)
+        || (for_lint && tool.is_required_for_lint);
       if !needed {
         continue;
       }
@@ -479,7 +477,7 @@ fn lookup_tool_info(binary: &'static str) -> ToolLookupResult {
     if matches!(binary, "clippy" | "clippy-driver" | "cargo-clippy") {
       clippy_probe_succeeds("clippy-driver", "cargo")
     } else {
-      which::which(binary).is_ok()
+      check_binary_exists(binary)
     };
 
   if is_installed {
