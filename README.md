@@ -275,25 +275,31 @@ Options:
 
 ### Key flags
 
-| Command      | Flag        | Description                                                                                    |
-| :----------- | :---------- | :--------------------------------------------------------------------------------------------- |
-| `fml fmt`    | `--check`   | Exit 1 if any file would be reformatted (CI safe)                                              |
-| `fml fmt`    | `--install` | Auto-install missing tools for active surfaces, then format                                    |
-| `fml fmt`    | `--staged`  | Operate only on `git diff --cached` files                                                      |
-| `fml fmt`    | `--changed` | Operate only on `git diff` (unstaged) files                                                    |
-| `fml fmt`    | `--lang`    | Filter to a specific surface, e.g. `--lang rust`                                               |
-| `fml lint`   | `--fix`     | Apply auto-fixes where the tool supports it                                                    |
-| `fml lint`   | `--install` | Auto-install missing tools for active surfaces, then lint                                      |
-| `fml fix`    | `--staged`  | Operate only on `git diff --cached` files                                                      |
-| `fml fix`    | `--changed` | Operate only on `git diff` (unstaged) files                                                    |
-| `fml fix`    | `--lang`    | Filter to a specific surface                                                                   |
-| `fml fix`    | `--install` | Auto-install missing tools for active surfaces, then fix                                       |
-| `fml sync`   | `--check`   | Exit 1 if any native config is out of sync                                                     |
-| `fml doctor` | `--all`     | Show all surfaces, not just active ones                                                        |
-| `fml doctor` | `--install` | Auto-install all missing toolchains                                                            |
-| `fml init`   | `--force`   | Overwrite an existing config file                                                              |
-| `fml init`   | `--hidden`  | Write `.formality.toml` instead of `formality.toml`                                            |
-| `fml table`  | `--json`    | Table spec JSON string (reads stdin if omitted) — see [docs/table-spec.md](docs/table-spec.md) |
+| Command       | Flag        | Description                                                                                    |
+| :------------ | :---------- | :--------------------------------------------------------------------------------------------- |
+| `fml fmt`     | `--check`   | Exit 1 if any file would be reformatted (CI safe)                                              |
+| `fml fmt`     | `--install` | Auto-install missing tools for active surfaces, then format                                    |
+| `fml fmt`     | `--staged`  | Operate only on `git diff --cached` files                                                      |
+| `fml fmt`     | `--changed` | Operate only on `git diff` (unstaged) files                                                    |
+| `fml fmt`     | `--lang`    | Filter to a specific surface, e.g. `--lang rust`                                               |
+| `fml lint`    | `--fix`     | Apply auto-fixes where the tool supports it                                                    |
+| `fml lint`    | `--install` | Auto-install missing tools for active surfaces, then lint                                      |
+| `fml lint`    | `--staged`  | Operate only on `git diff --cached` files                                                      |
+| `fml lint`    | `--changed` | Operate only on `git diff` (unstaged) files                                                    |
+| `fml lint`    | `--lang`    | Filter to a specific surface                                                                   |
+| `fml fix`     | `--staged`  | Operate only on `git diff --cached` files                                                      |
+| `fml fix`     | `--changed` | Operate only on `git diff` (unstaged) files                                                    |
+| `fml fix`     | `--lang`    | Filter to a specific surface                                                                   |
+| `fml fix`     | `--install` | Auto-install missing tools for active surfaces, then fix                                       |
+| `fml sync`    | `--check`   | Exit 1 if any native config is out of sync                                                     |
+| `fml sync`    | `--lang`    | Filter to a specific surface                                                                   |
+| `fml doctor`  | `--all`     | Show all surfaces, not just active ones                                                        |
+| `fml doctor`  | `--install` | Auto-install all missing toolchains                                                            |
+| `fml install` | `--all`     | Install tools for all supported language surfaces                                              |
+| `fml init`    | `--force`   | Overwrite an existing config file                                                              |
+| `fml init`    | `--hidden`  | Write `.formality.toml` instead of `formality.toml`                                            |
+| `fml table`   | `--json`    | Table spec JSON string (reads stdin if omitted) — see [docs/table-spec.md](docs/table-spec.md) |
+| `fml migrate` | `schema`    | Rewrite `#:schema` directive in config to match current release                                |
 
 ---
 
@@ -388,8 +394,8 @@ command; no extra tooling required:
 git config core.hooksPath .githooks
 ```
 
-The hook (`sync --check` → `fmt --staged` → `lint --staged`) runs on every
-commit. Commit the `.githooks/` directory so the whole team gets it on clone.
+The hook (`fmt --staged` → `lint --staged`) runs on every commit. Commit the
+`.githooks/` directory so the whole team gets it on clone.
 
 #### If your project uses the pre-commit framework
 

@@ -149,7 +149,7 @@ pub enum Commands {
   },
 
   /// List all supported surfaces and indicate which are detected in this project
-  #[command(name = "list-surfaces")]
+  #[command(name = "list-surfaces", alias = "surfaces")]
   ListSurfaces,
 
   /// Output the JSON Schema for formality.toml to stdout or file
@@ -194,4 +194,18 @@ pub enum MigrateCommands {
   /// point at the current release's schema URL, leaving the rest of the file
   /// untouched
   Schema,
+}
+
+#[cfg(test)]
+mod tests {
+  use super::*;
+
+  #[test]
+  fn test_list_surfaces_subcommand_and_alias() {
+    let cli = Cli::try_parse_from(["fml", "list-surfaces"]).unwrap();
+    assert!(matches!(cli.command, Commands::ListSurfaces));
+
+    let cli_alias = Cli::try_parse_from(["fml", "surfaces"]).unwrap();
+    assert!(matches!(cli_alias.command, Commands::ListSurfaces));
+  }
 }

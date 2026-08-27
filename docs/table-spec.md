@@ -158,5 +158,5 @@ fml table --json '{
 ```
 
 This is the same rendering path formality's own commands use internally — e.g.
-`fml list-surfaces` builds a `Table` value in `src/lib.rs` and renders it
-exactly as `fml table` would from equivalent JSON.
+`fml list-surfaces` builds a `Table` value in `src/commands/surfaces.rs` and
+renders it exactly as `fml table` would from equivalent JSON.

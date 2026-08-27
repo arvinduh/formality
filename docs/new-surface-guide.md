@@ -24,10 +24,8 @@ repository:
 - [ ] **3. Per-language configuration**:
   - `src/config/options.rs`: Typed `FooOptions` struct (`merge()`,
     `is_empty()`).
-  - `src/config/mod.rs`: `LangConfig` and `ResolvedLangConfig` fields, `merge()`
-    arm, and `foo_options()` accessor using `extract_options()`.
-  - `src/config/resolve.rs`: Default tools match arm in `resolve_for_lang()` and
-    `ResolvedLangConfig` wiring.
+  - `src/config/lang_table.rs`: Row in `lang_options_table!` X-macro.
+  - `src/config/mod.rs`: `LangConfig` and `ResolvedLangConfig` struct fields.
 - [ ] **4. Registry wiring**: `src/surfaces/registry.rs`
       (`SurfaceRegistry::default()` registration call).
 - [ ] **5. Soft / optional tables**:
@@ -218,71 +216,55 @@ impl FooOptions {
 
 > **Note:** If the tool has no knobs beyond shared facets (like TOML, JSON,
 > Typst, or Kotlin), still add an empty struct (`merge` does nothing, `is_empty`
-> returns `true`). This keeps all surfaces uniform in
-> `LangConfig`/`ResolvedLangConfig` and provides a place for future knobs
-> without breaking changes.
+> returns `true` or pass `|_: &FooOptions| false` in the table). This keeps all
+> surfaces uniform in `LangConfig`/`ResolvedLangConfig` and provides a place for
+> future knobs without breaking changes.
 
-### 3.2. Wire into `src/config/mod.rs`
+### 3.2. Register in `lang_options_table!` (`src/config/lang_table.rs`)
 
-1. Export `FooOptions` from `options`.
-2. Add `pub foo: Option<FooOptions>` to `LangConfig` and `ResolvedLangConfig`.
-3. In `LangConfig::merge()`, merge `other.foo`:
+Add a row to the `lang_options_table!` X-macro in `src/config/lang_table.rs`:
 
-   ```rust
-   if let Some(other_foo) = other.foo {
-     if let Some(ref mut our_foo) = self.foo {
-       our_foo.merge(other_foo);
-     } else {
-       self.foo = Some(other_foo);
-     }
-   }
-   ```
+```rust
+foo { crate::config::options::FooOptions, foo_options, crate::config::options::FooOptions::is_empty, "foofmt", "foolint" }
+```
 
-4. Add the `foo_options()` accessor on `LangConfig` using `extract_options`:
+Each row defines 5 elements:
 
-   ```rust
-   #[must_use]
-   pub fn foo_options(&self) -> Option<FooOptions> {
-     extract_options(
-       self.foo.clone(),
-       &self.options,
-       &self.extra,
-       options::FooOptions::merge,
-       options::FooOptions::is_empty,
-     )
-   }
-   ```
+- `$lang`: the field identifier on `LangConfig`/`ResolvedLangConfig` and
+  `[lang.<name>]` TOML key (`foo`).
+- `$ty`: fully qualified path to the typed options struct
+  (`crate::config::options::FooOptions`).
+- `$accessor`: method name for the generated `LangConfig` accessor
+  (`foo_options`).
+- `$is_empty`: emptiness check used during deserialization (e.g.
+  `crate::config::options::FooOptions::is_empty` or `|_: &FooOptions| false`).
+- `$fmt` / `$lint`: default formatting and linting tool names as string
+  literals, or the `NONE` sentinel if no default tool exists.
 
-### 3.3. Wire into `src/config/resolve.rs`
+The `lang_options_table!` macro automatically generates:
 
-In `FormalityConfig::resolve_for_lang(&self, lang_name: &str)`:
+- `LangConfig::merge()` field merging logic
+- `LangConfig::foo_options()` accessor methods
+- `resolve_for_lang()` struct resolution with fallback defaults
+- `default_tools_for_lang()` default tool lookup
 
-1. Add the default formatter and linter tools in the `match lang_name`
-   expression:
+### 3.3. Add struct fields to `LangConfig` and `ResolvedLangConfig` (`src/config/mod.rs`)
+
+1. Export `FooOptions` in `src/config/mod.rs` (via `pub use options::*;`).
+2. Add the field to `LangConfig`:
 
    ```rust
-   let (default_fmt, default_lint) = match lang_name {
-     // ...existing languages...
-     "foo" => (Some("foofmt"), Some("foolint")),
-     _ => (None, None),
-   };
+   /// Foo surface specific options.
+   #[serde(skip_serializing_if = "Option::is_none")]
+   pub foo: Option<FooOptions>,
    ```
 
-2. Resolve typed options with default fallback:
+3. Add the field to `ResolvedLangConfig`:
 
    ```rust
-   let foo = lang_cfg
-     .and_then(super::LangConfig::foo_options)
-     .or_else(|| {
-       if lang_name == "foo" {
-         Some(FooOptions::default())
-       } else {
-         None
-       }
-     });
+   /// Resolved Foo surface options.
+   pub foo: Option<FooOptions>,
    ```
-
-3. Pass `foo` to the `ResolvedLangConfig` struct instantiation.
 
 ---
 
