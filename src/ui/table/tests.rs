@@ -670,3 +670,61 @@ fn test_render_indent_width_clamping_to_terminal() {
   let rendered_extreme = render(&table_extreme, &Palette::none());
   assert!(!rendered_extreme.is_empty());
 }
+
+#[test]
+fn test_density_comfortable_vs_compact() {
+  let table_compact = Table::new(vec![Column::new("A"), Column::new("B")])
+    .layout(Layout::compact().clamp_to_terminal(false))
+    .with_row(Row::new(vec![Cell::text("r1c1"), Cell::text("r1c2")]))
+    .with_row(Row::new(vec![Cell::text("r2c1"), Cell::text("r2c2")]));
+
+  let table_comfortable = Table::new(vec![Column::new("A"), Column::new("B")])
+    .layout(Layout::comfortable().clamp_to_terminal(false))
+    .with_row(Row::new(vec![Cell::text("r1c1"), Cell::text("r1c2")]))
+    .with_row(Row::new(vec![Cell::text("r2c1"), Cell::text("r2c2")]));
+
+  let rendered_compact = render(&table_compact, &Palette::none());
+  let rendered_comfortable = render(&table_comfortable, &Palette::none());
+
+  assert!(
+    rendered_comfortable.lines().count() > rendered_compact.lines().count(),
+    "Comfortable density should have more vertical lines than compact"
+  );
+}
+
+#[test]
+fn test_group_row_banner_rendering() {
+  let table = Table::new(vec![
+    Column::new("Col1").width(WidthPolicy::Fixed(6)),
+    Column::new("Col2").width(WidthPolicy::Fixed(20)),
+  ])
+  .layout(Layout::compact().clamp_to_terminal(false))
+  .with_row(Row::group("Section Header Title That Is Quite Long"))
+  .with_row(Row::new(vec![Cell::text("1"), Cell::text("data")]));
+
+  let rendered = render(&table, &Palette::none());
+  assert!(rendered.contains("Section Header Title That Is Quite Long"));
+}
+
+#[test]
+fn test_overflow_truncate_on_pct_and_min_columns() {
+  let table = Table::new(vec![
+    Column::new("ColA").width(WidthPolicy::Pct(50)).overflow(
+      Overflow::Truncate {
+        suffix: "...".to_string(),
+      },
+    ),
+    Column::new("ColB")
+      .width(WidthPolicy::Min(10))
+      .overflow(Overflow::Clip),
+  ])
+  .layout(Layout::compact().max_width(40).clamp_to_terminal(false))
+  .with_row(Row::new(vec![
+    Cell::text("Very long text that should be truncated on percentage column"),
+    Cell::text("Clipped text in minimum column"),
+  ]));
+
+  let rendered = render(&table, &Palette::none());
+  assert!(!rendered.is_empty());
+  assert!(rendered.contains("..."));
+}

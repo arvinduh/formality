@@ -414,9 +414,6 @@ pub struct Column {
   /// Column overflow policy.
   #[serde(default)]
   pub overflow: Overflow,
-  /// Column priority ranking for width allocation.
-  #[serde(default)]
-  pub priority: u8,
 }
 
 impl Column {
@@ -427,7 +424,6 @@ impl Column {
       align: Align::Left,
       width: WidthPolicy::Auto,
       overflow: Overflow::Wrap,
-      priority: 0,
     }
   }
 
@@ -449,13 +445,6 @@ impl Column {
   #[must_use]
   pub fn overflow(mut self, overflow: Overflow) -> Self {
     self.overflow = overflow;
-    self
-  }
-
-  /// Sets column layout priority.
-  #[must_use]
-  pub fn priority(mut self, priority: u8) -> Self {
-    self.priority = priority;
     self
   }
 }

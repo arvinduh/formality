@@ -40,7 +40,6 @@ The Rust types backing this spec live in `src/ui/table/mod.rs` and
   "align": "left", // "left" | "center" | "right" — default "left"
   "width": "auto", // WidthPolicy — default "auto"
   "overflow": "wrap", // Overflow — default "wrap"
-  "priority": 0, // u8 — higher-priority columns are kept longest when clamping to terminal width
 }
 ```
 
