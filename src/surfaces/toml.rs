@@ -287,7 +287,6 @@ impl LanguageSurface for TomlSurface {
 #[allow(missing_docs, clippy::missing_errors_doc, clippy::missing_panics_doc)]
 mod tests {
   use super::*;
-  use crate::config::ResolvedGlobalConfig;
   use crate::surfaces::{SurfaceStatus, check_binary_exists, test_ctx};
   use std::sync::Arc;
   use tempfile::TempDir;
@@ -352,13 +351,7 @@ mod tests {
     lang_cfg.line_length = 80;
     lang_cfg.indent_size = 2;
 
-    let ctx = ExecutionContext {
-      root: Arc::new(temp.path().to_path_buf()),
-      paths: Arc::new(Vec::new()),
-      global_config: Arc::new(ResolvedGlobalConfig::default()),
-      lang_config: lang_cfg,
-      check_only: false,
-    };
+    let ctx = test_ctx(temp.path(), lang_cfg);
 
     let res = surface.sync_config(&ctx, false);
     assert!(matches!(
