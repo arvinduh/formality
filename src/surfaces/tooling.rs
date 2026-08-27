@@ -771,6 +771,54 @@ pub fn create_tool_command(binary: &str) -> std::process::Command {
   std::process::Command::new(binary)
 }
 
+/// Runs a tool command, measures execution duration, and translates exit status to a `SurfaceResult`.
+pub fn run_tool_command(
+  surface_name: &'static str,
+  cmd: &mut std::process::Command,
+) -> SurfaceResult {
+  let start = Instant::now();
+  match cmd.output() {
+    Ok(output) => {
+      let duration = start.elapsed();
+      if output.status.success() {
+        SurfaceResult {
+          surface_name,
+          status: SurfaceStatus::Passed,
+          duration,
+        }
+      } else {
+        let stdout = String::from_utf8_lossy(&output.stdout).trim().to_string();
+        let stderr = String::from_utf8_lossy(&output.stderr).trim().to_string();
+        let message = if !stdout.is_empty() {
+          stdout
+        } else if !stderr.is_empty() {
+          stderr
+        } else {
+          format!("Command failed with exit code {}", output.status)
+        };
+        SurfaceResult {
+          surface_name,
+          status: SurfaceStatus::ViolationsFound {
+            message,
+            diff: None,
+          },
+          duration,
+        }
+      }
+    }
+    Err(err) => {
+      let duration = start.elapsed();
+      SurfaceResult {
+        surface_name,
+        status: SurfaceStatus::ExecutionError {
+          message: format!("Failed to execute command: {err}"),
+        },
+        duration,
+      }
+    }
+  }
+}
+
 #[cfg(test)]
 #[allow(missing_docs, clippy::missing_errors_doc, clippy::missing_panics_doc)]
 mod tests {

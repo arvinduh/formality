@@ -5,7 +5,7 @@ use super::{
   DeclaresFacets, ExecutionContext, Facet, FacetSupport, LanguageSurface,
   NativeConfig, SurfaceResult, SurfaceStatus, ToolInfo, check_binary_exists,
   create_tool_command, find_files_with_ext, render_native_config,
-  sync_native_config, tool_missing_result,
+  run_tool_command, sync_native_config, tool_missing_result,
 };
 use serde::{Deserialize, Serialize};
 use std::path::{Path, PathBuf};
@@ -225,13 +225,7 @@ impl LanguageSurface for RustSurface {
       );
     }
 
-    let files = find_files_with_ext(
-      ctx.root.as_path(),
-      &["rs"],
-      &ctx.paths,
-      &ctx.lang_config.files,
-      &ctx.lang_config.exclude,
-    );
+    let files = ctx.matched_files(&["rs"]);
     if files.is_empty() {
       return SurfaceResult {
         surface_name: self.name(),
@@ -299,43 +293,7 @@ impl LanguageSurface for RustSurface {
     cmd.args(&ctx.lang_config.extra_args);
     cmd.current_dir(ctx.root.as_path());
 
-    match cmd.output() {
-      Ok(output) => {
-        if output.status.success() {
-          SurfaceResult {
-            surface_name: self.name(),
-            status: SurfaceStatus::Passed,
-            duration: start.elapsed(),
-          }
-        } else {
-          let stderr = String::from_utf8_lossy(&output.stderr).to_string();
-          let stdout = String::from_utf8_lossy(&output.stdout).to_string();
-          let msg = if !stderr.trim().is_empty() {
-            stderr
-          } else if !stdout.trim().is_empty() {
-            stdout
-          } else {
-            "Formatting issues found in Rust files".to_string()
-          };
-
-          SurfaceResult {
-            surface_name: self.name(),
-            status: SurfaceStatus::ViolationsFound {
-              message: msg,
-              diff: None,
-            },
-            duration: start.elapsed(),
-          }
-        }
-      }
-      Err(e) => SurfaceResult {
-        surface_name: self.name(),
-        status: SurfaceStatus::ExecutionError {
-          message: format!("Failed to execute cargo fmt / rustfmt: {e}"),
-        },
-        duration: start.elapsed(),
-      },
-    }
+    run_tool_command(self.name(), &mut cmd)
   }
 
   fn lint(&self, ctx: &ExecutionContext, fix: bool) -> SurfaceResult {
@@ -373,41 +331,7 @@ impl LanguageSurface for RustSurface {
     cmd.args(build_clippy_args(fix, &ctx.lang_config.extra_args));
     cmd.current_dir(ctx.root.as_path());
 
-    match cmd.output() {
-      Ok(output) => {
-        if output.status.success() {
-          SurfaceResult {
-            surface_name: self.name(),
-            status: SurfaceStatus::Passed,
-            duration: start.elapsed(),
-          }
-        } else {
-          let stderr = String::from_utf8_lossy(&output.stderr).to_string();
-          let stdout = String::from_utf8_lossy(&output.stdout).to_string();
-          let msg = if stderr.trim().is_empty() {
-            stdout
-          } else {
-            stderr
-          };
-
-          SurfaceResult {
-            surface_name: self.name(),
-            status: SurfaceStatus::ViolationsFound {
-              message: msg,
-              diff: None,
-            },
-            duration: start.elapsed(),
-          }
-        }
-      }
-      Err(e) => SurfaceResult {
-        surface_name: self.name(),
-        status: SurfaceStatus::ExecutionError {
-          message: format!("Failed to execute clippy: {e}"),
-        },
-        duration: start.elapsed(),
-      },
-    }
+    run_tool_command(self.name(), &mut cmd)
   }
 
   // `fml fmt`/`fml lint` no longer go through this path (Fixes #151): they

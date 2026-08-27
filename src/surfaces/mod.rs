@@ -61,7 +61,7 @@ pub use sync::{diff_check_via_tempcopy, is_auto_generated, sync_file_helper};
 pub use tooling::{
   InstallMethod, check_binary_exists, create_tool_command, has_cargo_binstall,
   install_chain_for, pinned_installer_for, pinned_version_for,
-  selected_install_method_for, selected_pinned_version_for,
+  run_tool_command, selected_install_method_for, selected_pinned_version_for,
   tool_missing_result,
 };
 
@@ -94,6 +94,26 @@ pub struct ExecutionContext {
   pub lang_config: ResolvedLangConfig,
   /// Whether to perform check-only mode without mutating files.
   pub check_only: bool,
+}
+
+impl ExecutionContext {
+  /// Returns whether explicit file or directory paths were targeted.
+  #[must_use]
+  pub fn is_scoped(&self) -> bool {
+    !self.paths.is_empty()
+  }
+
+  /// Discovers target files for the surface matching extensions, honoring scoped paths, files, and excludes.
+  #[must_use]
+  pub fn matched_files(&self, extensions: &[&str]) -> Vec<PathBuf> {
+    find_files_with_ext(
+      self.root.as_path(),
+      extensions,
+      &self.paths,
+      &self.lang_config.files,
+      &self.lang_config.exclude,
+    )
+  }
 }
 
 /// Metadata describing a binary executable tool required by a surface.
