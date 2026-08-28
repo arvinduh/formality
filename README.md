@@ -439,7 +439,7 @@ source for other projects:
 # .pre-commit-config.yaml in your project
 repos:
   - repo: https://github.com/arvinduh/formality
-    rev: v0.1.0
+    rev: v0.2.0
     hooks:
       - id: fml-sync
       - id: fml-fmt
