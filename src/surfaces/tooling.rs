@@ -950,7 +950,17 @@ fn merge_path_entries(current: &str, additional: &str) -> String {
     .chain(additional.split(separator))
     .filter(|s| !s.is_empty())
   {
-    if seen.insert(entry.to_lowercase()) {
+    // Windows paths are case-insensitive, so `C:\Go\bin` and `C:\go\bin`
+    // are one entry there and folding the key is what stops a second copy
+    // being appended. Unix paths are not: `/b` and `/B` are two different
+    // directories, and folding them would silently drop a real entry the
+    // caller asked to add.
+    let key = if cfg!(windows) {
+      entry.to_lowercase()
+    } else {
+      entry.to_string()
+    };
+    if seen.insert(key) {
       entries.push(entry);
     }
   }
@@ -1942,27 +1952,70 @@ mod tests {
   // but the merge logic itself (case-insensitive dedup, order preservation)
   // is exactly what determines whether a just-installed binary's new
   // directory actually gets picked up, so it's worth locking down directly.
+  // Builds a fixture path that is well-formed for the platform under test.
+  // merge_path_entries splits on the platform's own PATH separator, so a
+  // hardcoded Windows-style `C:\a` fixture splits at its own colon when the
+  // tests run on Unix -- which is exactly how these tests failed on Linux
+  // once the lib started compiling there.
+  fn fixture_path(name: &str) -> String {
+    if cfg!(windows) {
+      format!("C:\\{name}")
+    } else {
+      format!("/{name}")
+    }
+  }
+
   #[test]
-  fn test_merge_path_entries_appends_new_dirs_and_dedupes_case_insensitively() {
+  fn test_merge_path_entries_appends_new_dirs_only() {
     let sep = if cfg!(windows) { ';' } else { ':' };
-    let current = format!("C:\\a{sep}C:\\b");
-    let additional = format!("C:\\B{sep}C:\\c"); // "C:\B" duplicates "C:\b"
+    let (a, b, c) = (fixture_path("a"), fixture_path("b"), fixture_path("c"));
+    let current = format!("{a}{sep}{b}");
+    let additional = format!("{b}{sep}{c}");
 
     let merged = merge_path_entries(&current, &additional);
     let parts: Vec<&str> = merged.split(sep).collect();
 
     assert_eq!(
       parts,
-      vec!["C:\\a", "C:\\b", "C:\\c"],
+      vec![a.as_str(), b.as_str(), c.as_str()],
       "must keep `current`'s entries first, in order, and only append \
        genuinely new entries from `additional`"
     );
   }
 
   #[test]
+  fn test_merge_path_entries_case_folds_only_where_paths_are() {
+    let sep = if cfg!(windows) { ';' } else { ':' };
+    let (a, b, c) = (fixture_path("a"), fixture_path("b"), fixture_path("c"));
+    let b_upper = b.to_uppercase();
+    let current = format!("{a}{sep}{b}");
+    let additional = format!("{b_upper}{sep}{c}");
+
+    let merged = merge_path_entries(&current, &additional);
+    let parts: Vec<&str> = merged.split(sep).collect();
+
+    if cfg!(windows) {
+      assert_eq!(
+        parts,
+        vec![a.as_str(), b.as_str(), c.as_str()],
+        "Windows paths are case-insensitive, so a case-only variant of an \
+         entry already present must not be appended a second time"
+      );
+    } else {
+      assert_eq!(
+        parts,
+        vec![a.as_str(), b.as_str(), b_upper.as_str(), c.as_str()],
+        "Unix paths are case-sensitive: /b and /B are different \
+         directories, and folding them would drop a directory the caller \
+         asked to add"
+      );
+    }
+  }
+
+  #[test]
   fn test_merge_path_entries_noop_when_nothing_new() {
     let sep = if cfg!(windows) { ';' } else { ':' };
-    let current = format!("C:\\a{sep}C:\\b");
+    let current = format!("{}{sep}{}", fixture_path("a"), fixture_path("b"));
     let merged = merge_path_entries(&current, &current);
     assert_eq!(
       merged, current,
@@ -1975,12 +2028,13 @@ mod tests {
   #[test]
   fn test_merge_path_entries_ignores_empty_segments() {
     let sep = if cfg!(windows) { ';' } else { ':' };
-    let current = format!("C:\\a{sep}{sep}C:\\b{sep}");
-    let additional = format!("{sep}C:\\c{sep}");
+    let (a, b, c) = (fixture_path("a"), fixture_path("b"), fixture_path("c"));
+    let current = format!("{a}{sep}{sep}{b}{sep}");
+    let additional = format!("{sep}{c}{sep}");
     let merged = merge_path_entries(&current, &additional);
     let parts: Vec<&str> =
       merged.split(sep).filter(|s| !s.is_empty()).collect();
-    assert_eq!(parts, vec!["C:\\a", "C:\\b", "C:\\c"]);
+    assert_eq!(parts, vec![a.as_str(), b.as_str(), c.as_str()]);
     assert!(
       !merged.contains(&format!("{sep}{sep}")),
       "must not introduce empty PATH segments from empty input segments"
