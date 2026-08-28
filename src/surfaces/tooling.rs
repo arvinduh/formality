@@ -280,8 +280,21 @@ impl InstallMethod {
 // version doesn't reformat/re-lint this repo's own tree differently, then
 // commit.
 
+// `CargoBinstall` sits *below* the npm family here, unlike every other
+// chain that lists it, and deliberately so: cargo-binstall only installs a
+// prebuilt binary when one is published for the target, and for
+// `taplo-cli@0.10.0` none is -- the Fresh-Install Regression job caught it
+// 404ing on both cargo-quickinstall targets and then falling through to
+// "will be installed from source (with cargo)", a 1m54s release build of
+// 279 crates on an ubuntu runner that already had npm sitting right there.
+// A binstall entry ahead of a real prebuilt package is only a win when the
+// prebuilt actually exists; here it inverted the whole point of the chain
+// ordering. The npm-family entries resolve a genuinely prebuilt binary
+// (reporting 0.9.0 -- see ToolChain's doc on why this row's
+// `expected_binary_version` is None -- comfortably above MSTV_TAPLO), and
+// binstall/cargo remain as the fallback for a machine with no Node
+// toolchain at all.
 const TAPLO_CHAIN: &[InstallMethod] = &[
-  InstallMethod::CargoBinstall("taplo-cli@0.10.0"),
   InstallMethod::Npm("@taplo/cli@0.7.0"),
   InstallMethod::Pnpm("@taplo/cli@0.7.0"),
   InstallMethod::Yarn("@taplo/cli@0.7.0"),
@@ -289,6 +302,7 @@ const TAPLO_CHAIN: &[InstallMethod] = &[
   InstallMethod::Brew("taplo"),
   InstallMethod::Scoop("taplo"),
   InstallMethod::WingetId("tamasfe.taplo"),
+  InstallMethod::CargoBinstall("taplo-cli@0.10.0"),
   InstallMethod::Cargo {
     package: "taplo-cli@0.10.0",
     locked: true,
@@ -909,11 +923,10 @@ pub fn ensure_cargo_binstall() -> bool {
 /// source-compile fallback (or nothing at all).
 ///
 /// Deliberately narrower than "the chain merely contains a `CargoBinstall`
-/// step": `taplo`'s chain lists `CargoBinstall` first but falls through to
-/// `Npm` well before reaching the `Cargo` compile step, and on most runners
-/// `npm` is already on `PATH` -- bootstrapping `cargo-binstall` there would
-/// spend a network round-trip changing nothing about which installer
-/// actually runs. This only returns `true` for the case the bootstrap
+/// step": `taplo`'s chain reaches `Npm` well before its `CargoBinstall`
+/// entry, and on most runners `npm` is already on `PATH` -- bootstrapping
+/// `cargo-binstall` there would spend a network round-trip changing
+/// nothing about which installer actually runs. This only returns `true` for the case the bootstrap
 /// exists to fix: a tool that would otherwise silently drop to compiling
 /// from source (`typstyle`, `tinymist`, or `taplo`/`ruff` on a runner with
 /// no Node/Python toolchain at all).
@@ -1255,17 +1268,23 @@ mod tests {
       )
     );
 
+    // Matched by content rather than by chain position: the order of
+    // taplo's chain is a separate decision that has already changed once
+    // (see TAPLO_CHAIN's comment on why binstall sits below the npm
+    // family), and reordering it must not fail an assertion whose actual
+    // subject is that the npm entry stays version-pinned.
     let taplo = install_chain_for("taplo").unwrap();
-    assert_eq!(
-      taplo[1].command(),
-      (
-        "npm".to_string(),
-        vec![
-          "install".to_string(),
-          "-g".to_string(),
-          "@taplo/cli@0.7.0".to_string()
-        ]
-      )
+    let taplo_npm = (
+      "npm".to_string(),
+      vec![
+        "install".to_string(),
+        "-g".to_string(),
+        "@taplo/cli@0.7.0".to_string(),
+      ],
+    );
+    assert!(
+      taplo.iter().any(|method| method.command() == taplo_npm),
+      "taplo's npm entry must stay pinned to @taplo/cli@0.7.0"
     );
 
     let ruff = install_chain_for("ruff").unwrap();
