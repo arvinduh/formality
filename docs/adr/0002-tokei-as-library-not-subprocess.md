@@ -4,9 +4,14 @@
 > resolve — see
 > [`docs/INDEX.md`](../INDEX.md#note-on-pre-recreation-issuepr-numbers).
 
-**Status:** Proposed — `fml stat` does not exist in the codebase yet; this ADR
-backfills a decision made in design conversation ahead of implementation, per
-issue `#131`.
+**Status:** Superseded — `fml stat` will not be built; see
+[Supersession](#supersession-2026-08-28) below. The rest of this document is
+kept as the historical record of the library-vs-subprocess reasoning, per this
+directory's own convention of marking a superseded file rather than deleting it.
+
+**Original status (superseded):** Proposed — `fml stat` does not exist in the
+codebase yet; this ADR backfills a decision made in design conversation ahead of
+implementation, per issue `#131`.
 
 ## Context
 
@@ -74,7 +79,35 @@ conventions (see [language-surfaces.md](../language-surfaces.md) and
 [table-spec.md](../table-spec.md)) — it is not a transcript of the original
 argument. That, together with `fml stat` not existing yet and
 `.agents/orchestrate.md` §10's applied-feature checkpoint still being
-outstanding for it, is why this ADR's status is `Proposed` rather than
-`Accepted`. If a future implementation PR for `fml stat` surfaces different or
-more specific reasoning, update this ADR (or mark it superseded) rather than
-treating it as settled history.
+outstanding for it, is why this ADR's original status was `Proposed` rather than
+`Accepted` — which is exactly what let it be revisited and superseded below
+instead of treated as settled history.
+
+## Supersession (2026-08-28)
+
+Issue `#19` (`feat(dx): fml stat`, `status:design-phase`) was closed
+`not_planned` during a codebase-wide efficiency/scope audit, before reaching
+`.agents/orchestrate.md` §10's applied-feature checkpoint this ADR's
+Consequences section flagged as still outstanding. `fml stat` will not be built,
+so the library-vs-subprocess choice this ADR records no longer applies to
+anything. Closing reasoning (full detail on the issue):
+
+- The Context/Rationale above already concedes the plan was to vendor `tokei` as
+  a Cargo dependency — i.e. `fml stat` would just be tokei recompiled into the
+  `fml` binary, not a genuinely zero-install capability. That trades a one-time
+  external install (`scc`/`tokei` are both single static binaries) for
+  permanently tracking upstream tokei's language-definition updates as a
+  vendored dependency, plus binary-size growth.
+- The one real differentiator — `fml` already knows its own file
+  discovery/exclusion rules — is a much narrower need than the full
+  LOC/comment/test-ratio dashboard issue `#19` proposed, and is cheaper to serve
+  later (if it ever actually matters) by exposing `fml`'s resolved file list for
+  `scc --include-list` to consume than by owning a counting engine.
+- `fml`'s own stated design principle — orchestrate other projects'
+  best-in-class tools rather than reimplement them (README,
+  `docs/facet-rosetta.md`) — argues against this ADR's premise rather than for
+  it: `scc`/`tokei` are exactly that best-in-class tool for polyglot line
+  counting, the same way `rustfmt` is for Rust formatting.
+
+No replacement ADR is needed — this is a "don't build it" decision, not a
+different implementation choice.
