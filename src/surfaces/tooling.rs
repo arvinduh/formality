@@ -280,8 +280,21 @@ impl InstallMethod {
 // version doesn't reformat/re-lint this repo's own tree differently, then
 // commit.
 
+// `CargoBinstall` sits *below* the npm family here, unlike every other
+// chain that lists it, and deliberately so: cargo-binstall only installs a
+// prebuilt binary when one is published for the target, and for
+// `taplo-cli@0.10.0` none is -- the Fresh-Install Regression job caught it
+// 404ing on both cargo-quickinstall targets and then falling through to
+// "will be installed from source (with cargo)", a 1m54s release build of
+// 279 crates on an ubuntu runner that already had npm sitting right there.
+// A binstall entry ahead of a real prebuilt package is only a win when the
+// prebuilt actually exists; here it inverted the whole point of the chain
+// ordering. The npm-family entries resolve a genuinely prebuilt binary
+// (reporting 0.9.0 -- see ToolChain's doc on why this row's
+// `expected_binary_version` is None -- comfortably above MSTV_TAPLO), and
+// binstall/cargo remain as the fallback for a machine with no Node
+// toolchain at all.
 const TAPLO_CHAIN: &[InstallMethod] = &[
-  InstallMethod::CargoBinstall("taplo-cli@0.10.0"),
   InstallMethod::Npm("@taplo/cli@0.7.0"),
   InstallMethod::Pnpm("@taplo/cli@0.7.0"),
   InstallMethod::Yarn("@taplo/cli@0.7.0"),
@@ -289,6 +302,7 @@ const TAPLO_CHAIN: &[InstallMethod] = &[
   InstallMethod::Brew("taplo"),
   InstallMethod::Scoop("taplo"),
   InstallMethod::WingetId("tamasfe.taplo"),
+  InstallMethod::CargoBinstall("taplo-cli@0.10.0"),
   InstallMethod::Cargo {
     package: "taplo-cli@0.10.0",
     locked: true,
@@ -713,6 +727,25 @@ pub fn resolve_binary_path(binary: &str) -> Option<PathBuf> {
   resolved
 }
 
+/// Evicts `binary`'s entry (if any) from [`BINARY_CACHE`], forcing the next
+/// [`resolve_binary_path`]/[`check_binary_exists`] call for it to re-hit the
+/// filesystem instead of returning a stale memoized result.
+///
+/// Required after a successful install performed *within the same process*
+/// (`fml fmt --install`, `fml lint --install`, `fml doctor --install`): the
+/// preflight scan that decided a tool needed installing already called
+/// [`check_binary_exists`] on it and memoized the miss. Without evicting that
+/// entry here, every lookup for the rest of this invocation -- including the
+/// one the just-installed tool's own surface makes before actually running
+/// it -- would keep reading the pre-install "not found" result and report
+/// the tool as still missing, even though the installer just placed it on
+/// `PATH` and a fresh lookup would find it immediately.
+pub fn forget_binary(binary: &str) {
+  let cache = BINARY_CACHE.get_or_init(|| Mutex::new(HashMap::new()));
+  let mut guard = cache.lock().unwrap_or_else(|e| e.into_inner());
+  guard.remove(binary);
+}
+
 /// Returns whether `binary` is resolvable on `PATH`, memoized per-process so
 /// repeated checks for the same binary don't re-hit the filesystem.
 #[must_use]
@@ -781,6 +814,334 @@ pub fn lint_fix_unsupported(
 #[must_use]
 pub fn has_cargo_binstall() -> bool {
   check_binary_exists("cargo") && check_binary_exists("cargo-binstall")
+}
+
+/// Memoizes the outcome of [`ensure_cargo_binstall`]'s bootstrap attempt for
+/// the lifetime of this process: `None` means it hasn't been tried yet,
+/// `Some(bool)` records whether `cargo-binstall` was available afterward.
+/// Shared across every tool in a single `fml ... --install` invocation so a
+/// run that needs `cargo-binstall` for several tools (e.g. `typstyle` and a
+/// `taplo`/`ruff` fallback) only pays the network round-trip once, and a
+/// failed/offline attempt doesn't get retried per tool.
+static BINSTALL_BOOTSTRAP: OnceLock<Mutex<Option<bool>>> = OnceLock::new();
+
+/// Returns whether any step in `chain` would use `cargo-binstall`.
+#[must_use]
+pub fn chain_wants_cargo_binstall(chain: &[InstallMethod]) -> bool {
+  chain
+    .iter()
+    .any(|m| matches!(m, InstallMethod::CargoBinstall(_)))
+}
+
+/// Runs `cargo-binstall`'s official prebuilt-binary install script, so
+/// bootstrapping it never itself falls back to compiling `cargo-binstall`
+/// from source. Uses the same `curl ... | sh` pattern rustup's own installer
+/// documents (`--proto '=https' --tlsv1.2 -sSf`) on Linux/macOS, and the
+/// equivalent PowerShell script on Windows. Returns `false` (rather than
+/// propagating an error) on any failure to run the script -- a missing
+/// `curl`/`powershell`, no network, or a non-zero exit -- so the caller can
+/// fall through to the next installer in the chain instead of aborting.
+fn run_cargo_binstall_bootstrap() -> bool {
+  #[cfg(windows)]
+  {
+    std::process::Command::new("powershell")
+      .args([
+        "-NoProfile",
+        "-NonInteractive",
+        "-ExecutionPolicy",
+        "Bypass",
+        "-Command",
+        "Set-ExecutionPolicy Unrestricted -Scope Process -Force; \
+         iex (iwr 'https://raw.githubusercontent.com/cargo-bins/cargo-binstall/main/install-from-binstall-release.ps1' -UseBasicParsing).Content",
+      ])
+      .status()
+      .is_ok_and(|status| status.success())
+  }
+  #[cfg(not(windows))]
+  {
+    if !check_binary_exists("sh") || !check_binary_exists("curl") {
+      return false;
+    }
+    std::process::Command::new("sh")
+      .arg("-c")
+      .arg(
+        "curl -L --proto '=https' --tlsv1.2 -sSf \
+         https://raw.githubusercontent.com/cargo-bins/cargo-binstall/main/install-from-binstall-release.sh \
+         | sh",
+      )
+      .status()
+      .is_ok_and(|status| status.success())
+  }
+}
+
+/// Ensures `cargo-binstall` is available, bootstrapping it via its official
+/// install script (a real prebuilt binary for Linux/macOS/Windows, not a
+/// source compile) if `cargo` is present but `cargo-binstall` itself isn't
+/// yet on `PATH`.
+///
+/// This exists so tools with no genuine native package anywhere (`typstyle`,
+/// `tinymist`; `taplo`/`ruff` as a fallback) get a real prebuilt-binary
+/// install path on every OS instead of silently dropping straight to
+/// `cargo install --locked` source compilation just because `cargo-binstall`
+/// itself hadn't been bootstrapped yet. Side-effecting (spawns a network
+/// request) and memoized at most once per process via [`BINSTALL_BOOTSTRAP`]
+/// -- callers must only invoke this from an actual `--install` code path,
+/// never from a read-only status scan (`fml doctor` without `--install`,
+/// `fml fmt`/`lint` preflight without `--install`), which must stay free of
+/// side effects.
+#[must_use]
+pub fn ensure_cargo_binstall() -> bool {
+  if has_cargo_binstall() {
+    return true;
+  }
+  if !check_binary_exists("cargo") {
+    return false;
+  }
+
+  let cell = BINSTALL_BOOTSTRAP.get_or_init(|| Mutex::new(None));
+  let mut guard = cell.lock().unwrap_or_else(|e| e.into_inner());
+  if let Some(available) = *guard {
+    return available;
+  }
+
+  let ran_ok = run_cargo_binstall_bootstrap();
+  if ran_ok {
+    // The install script may have placed the binary in a PATH directory
+    // whose "missing" result is already memoized from an earlier lookup
+    // this process -- evict it so the recheck below hits the filesystem.
+    forget_binary("cargo-binstall");
+  }
+  let available = has_cargo_binstall();
+  *guard = Some(available);
+  available
+}
+
+/// Returns whether `binary`'s install chain would *actually* benefit from
+/// bootstrapping `cargo-binstall` right now: its chain references
+/// `CargoBinstall` at all, **and** with `cargo-binstall` unavailable the
+/// chain's current first-available method is the `cargo install --locked`
+/// source-compile fallback (or nothing at all).
+///
+/// Deliberately narrower than "the chain merely contains a `CargoBinstall`
+/// step": `taplo`'s chain reaches `Npm` well before its `CargoBinstall`
+/// entry, and on most runners `npm` is already on `PATH` -- bootstrapping
+/// `cargo-binstall` there would spend a network round-trip changing
+/// nothing about which installer actually runs. This only returns `true` for the case the bootstrap
+/// exists to fix: a tool that would otherwise silently drop to compiling
+/// from source (`typstyle`, `tinymist`, or `taplo`/`ruff` on a runner with
+/// no Node/Python toolchain at all).
+#[must_use]
+pub fn tool_would_benefit_from_cargo_binstall_bootstrap(binary: &str) -> bool {
+  let Some(chain) = install_chain_for(binary) else {
+    return false;
+  };
+  if !chain_wants_cargo_binstall(chain) {
+    return false;
+  }
+  matches!(
+    selected_install_method_for(binary),
+    None | Some(InstallMethod::Cargo { .. })
+  )
+}
+
+/// Merges `additional`'s `PATH`-style entries onto the end of `current`'s,
+/// case-insensitively deduplicated (Windows paths are case-insensitive) and
+/// preserving `current`'s entries and their relative order first. Pure and
+/// platform-independent so it can be unit-tested directly; the only
+/// Windows-specific, side-effecting part of the refresh this supports is
+/// [`refresh_windows_path_from_registry`], which sources `additional` from
+/// the registry and applies the result via `std::env::set_var`.
+#[must_use]
+fn merge_path_entries(current: &str, additional: &str) -> String {
+  let separator = if cfg!(windows) { ';' } else { ':' };
+  let mut seen: std::collections::HashSet<String> =
+    std::collections::HashSet::new();
+  let mut entries: Vec<&str> = Vec::new();
+
+  for entry in current
+    .split(separator)
+    .chain(additional.split(separator))
+    .filter(|s| !s.is_empty())
+  {
+    // Windows paths are case-insensitive, so `C:\Go\bin` and `C:\go\bin`
+    // are one entry there and folding the key is what stops a second copy
+    // being appended. Unix paths are not: `/b` and `/B` are two different
+    // directories, and folding them would silently drop a real entry the
+    // caller asked to add.
+    let key = if cfg!(windows) {
+      entry.to_lowercase()
+    } else {
+      entry.to_string()
+    };
+    if seen.insert(key) {
+      entries.push(entry);
+    }
+  }
+
+  entries.join(&separator.to_string())
+}
+
+/// Re-reads `Path` from the Windows registry (`HKEY_LOCAL_MACHINE`'s System
+/// Environment, then `HKEY_CURRENT_USER`'s -- the same precedence a freshly
+/// started process would inherit) and merges any new entries into this
+/// process's own `PATH`.
+///
+/// Needed because on Windows, an installer that registers a new directory
+/// via the registry (Scoop, `winget`) does not update an *already-running*
+/// process's inherited environment block -- only a process started after
+/// the change picks it up. Without this, a tool Scoop/`winget` just
+/// installed mid-run can be completely unresolvable for the rest of this
+/// invocation: not a [`BINARY_CACHE`] staleness problem (already fixed by
+/// [`forget_binary`]) but a genuine "this process's `PATH` string does not
+/// contain that directory at all" problem underneath it, which shows up as
+/// the tool's post-install version probe reporting "an unparseable
+/// version" -- `which`/`Command::new(bare-name)` both fail to resolve the
+/// binary at all, indistinguishable in that message from a real parse
+/// failure of `--version` output that *did* run.
+///
+/// A no-op (and cheap: no process spawned) on non-Windows, since Scoop and
+/// `winget` don't exist there and every other installer this crate uses on
+/// Unix (`npm`, `cargo`, `pip`, `brew`, `apt`, ...) installs into a
+/// directory already on `PATH` at process start.
+pub fn refresh_windows_path_from_registry() {
+  #[cfg(windows)]
+  {
+    let Ok(output) = std::process::Command::new("powershell")
+      .args([
+        "-NoProfile",
+        "-NonInteractive",
+        "-Command",
+        "[System.Environment]::GetEnvironmentVariable('Path','Machine') + ';' + [System.Environment]::GetEnvironmentVariable('Path','User')",
+      ])
+      .output()
+    else {
+      return;
+    };
+    if !output.status.success() {
+      return;
+    }
+
+    let registry_path =
+      String::from_utf8_lossy(&output.stdout).trim().to_string();
+    if registry_path.is_empty() {
+      return;
+    }
+
+    merge_into_process_path(&registry_path);
+  }
+}
+
+/// Merges `additional`'s entries into this process's own `PATH`, appended
+/// after the entries already there (so nothing already resolvable changes
+/// which binary it resolves to) and de-duplicated by
+/// [`merge_path_entries`]. A no-op when `additional` contributes nothing
+/// new, so the `set_var` below only ever runs when the `PATH` string
+/// actually changes.
+///
+/// Only this process (and anything it spawns from here on) sees the change;
+/// nothing is written to a shell profile or the registry. That is
+/// deliberate -- making a `PATH` addition durable means editing files this
+/// tool doesn't own, and the per-tool `install_hint` already tells the user
+/// what to do about their own shell.
+fn merge_into_process_path(additional: &str) {
+  let current = std::env::var("PATH").unwrap_or_default();
+  let merged = merge_path_entries(&current, additional);
+  if merged != current {
+    // SAFETY: single-threaded call site (`install_missing_tools` runs its
+    // per-tool loop sequentially, not from a `rayon` fan-out like
+    // `Runner::run`'s per-surface dispatch), and no other code in this
+    // crate reads `PATH` concurrently with a call to this function.
+    unsafe {
+      std::env::set_var("PATH", merged);
+    }
+  }
+}
+
+/// Resolves the directory `go install` writes binaries into, from the raw
+/// values of `GOBIN` and `GOPATH`: `GOBIN` when it is set, otherwise the
+/// first `GOPATH` entry plus `bin` (Go's own documented default).
+///
+/// Split out from [`refresh_go_install_path`] and kept pure so the
+/// precedence is unit-testable on a machine with no Go toolchain at all;
+/// the `go env` invocation that sources these two values is the only part
+/// left in the caller.
+#[must_use]
+fn go_bin_dir_from_env(gobin: &str, gopath: &str) -> Option<PathBuf> {
+  let gobin = gobin.trim();
+  if !gobin.is_empty() {
+    return Some(PathBuf::from(gobin));
+  }
+  let separator = if cfg!(windows) { ';' } else { ':' };
+  let first = gopath
+    .split(separator)
+    .map(str::trim)
+    .find(|entry| !entry.is_empty())?;
+  Some(PathBuf::from(first).join("bin"))
+}
+
+/// Adds `go install`'s output directory (`GOBIN`, else `$GOPATH/bin`) to
+/// this process's `PATH` if it isn't already on it.
+///
+/// [`InstallMethod::GoInstall`] is the one installer in this module that
+/// routinely writes into a directory that is *not* already on `PATH`.
+/// Every other installer used here puts binaries next to (or under the same
+/// prefix as) a package manager the user must already be able to invoke:
+/// `npm -g`, `pipx`, `uv`, `brew`, `cargo install`, `rustup`. `$GOPATH/bin`
+/// has no such guarantee -- Go creates it on demand, and it is on `PATH`
+/// only if the user put it there. On a stock GitHub Actions Linux runner it
+/// is not, so `go install golang.org/x/tools/cmd/goimports@v0.49.0`
+/// succeeds and the very next lookup for `goimports` in the same invocation
+/// still finds nothing.
+///
+/// That is the same user-visible symptom as the [`BINARY_CACHE`] staleness
+/// [`forget_binary`] fixes, but a different cause -- here the binary
+/// genuinely is not reachable from this process's `PATH` -- and the same
+/// shape as the Scoop/`winget` case
+/// [`refresh_windows_path_from_registry`] handles on Windows. Both are
+/// dispatched from [`refresh_path_after_install`].
+pub fn refresh_go_install_path() {
+  let mut cmd = create_tool_command("go");
+  cmd.args(["env", "GOBIN", "GOPATH"]);
+  let Ok(output) = cmd.output() else {
+    return;
+  };
+  if !output.status.success() {
+    return;
+  }
+
+  // `go env NAME...` prints one value per line, in the order requested,
+  // emitting an empty line for a variable that is unset -- so GOBIN being
+  // empty (the common case) still leaves GOPATH on line 2.
+  let stdout = String::from_utf8_lossy(&output.stdout);
+  let mut lines = stdout.lines();
+  let gobin = lines.next().unwrap_or_default();
+  let gopath = lines.next().unwrap_or_default();
+
+  if let Some(bin_dir) = go_bin_dir_from_env(gobin, gopath) {
+    merge_into_process_path(&bin_dir.to_string_lossy());
+  }
+}
+
+/// Applies whatever `PATH` fix-up the installer `program` needs for a
+/// binary it just installed to be resolvable for the rest of this process,
+/// and does nothing for the installers that need none.
+///
+/// Called right after a successful install (alongside [`forget_binary`],
+/// which handles the separate in-process caching half of the same
+/// symptom). Keeping the per-installer knowledge here rather than at the
+/// call site means a new [`InstallMethod`] whose bin directory isn't on
+/// `PATH` has exactly one place to be taught about.
+pub fn refresh_path_after_install(program: &str) {
+  match program {
+    // Scoop and winget register their PATH changes in the Windows
+    // registry, which an already-running process's inherited environment
+    // block never picks up on its own.
+    "scoop" | "winget" => refresh_windows_path_from_registry(),
+    // `go install` writes into $GOBIN / $GOPATH/bin, which is frequently
+    // not on PATH at all.
+    "go" => refresh_go_install_path(),
+    _ => {}
+  }
 }
 
 /// Creates a `Command` with proper handling for Windows batch files (.cmd/.bat)
@@ -907,17 +1268,23 @@ mod tests {
       )
     );
 
+    // Matched by content rather than by chain position: the order of
+    // taplo's chain is a separate decision that has already changed once
+    // (see TAPLO_CHAIN's comment on why binstall sits below the npm
+    // family), and reordering it must not fail an assertion whose actual
+    // subject is that the npm entry stays version-pinned.
     let taplo = install_chain_for("taplo").unwrap();
-    assert_eq!(
-      taplo[1].command(),
-      (
-        "npm".to_string(),
-        vec![
-          "install".to_string(),
-          "-g".to_string(),
-          "@taplo/cli@0.7.0".to_string()
-        ]
-      )
+    let taplo_npm = (
+      "npm".to_string(),
+      vec![
+        "install".to_string(),
+        "-g".to_string(),
+        "@taplo/cli@0.7.0".to_string(),
+      ],
+    );
+    assert!(
+      taplo.iter().any(|method| method.command() == taplo_npm),
+      "taplo's npm entry must stay pinned to @taplo/cli@0.7.0"
     );
 
     let ruff = install_chain_for("ruff").unwrap();
@@ -1485,6 +1852,261 @@ mod tests {
     assert_eq!(
       guard.get(existing).map(Option::is_some),
       Some(existing_result)
+    );
+  }
+
+  // Regression coverage for the bug this PR fixes: a tool installed within
+  // an `fml ... --install` invocation was reported ToolMissing by the very
+  // next step of the *same* invocation, because the preflight scan's
+  // "not found" result stayed memoized in BINARY_CACHE for the rest of the
+  // process. `forget_binary` is the fix -- these tests lock its contract
+  // directly against the cache rather than against a real install (which
+  // would need a real package manager and network access to exercise).
+  #[test]
+  fn test_forget_binary_evicts_a_stale_cached_miss() {
+    let binary = "__forget_binary_test_stale_miss__";
+
+    // Prime the cache exactly the way a preflight scan does when a tool is
+    // still missing: a memoized `None`.
+    {
+      let cache = BINARY_CACHE.get_or_init(|| Mutex::new(HashMap::new()));
+      let mut guard = cache.lock().unwrap_or_else(|e| e.into_inner());
+      guard.insert(binary.to_string(), None);
+    }
+    assert!(
+      !check_binary_exists(binary),
+      "check_binary_exists must read the primed cache entry, not re-probe PATH"
+    );
+
+    forget_binary(binary);
+
+    // The entry must be gone entirely, not just still `None` -- leaving a
+    // `None` behind would be exactly the bug this function exists to fix.
+    {
+      let cache = BINARY_CACHE.get().expect("cache should be initialized");
+      let guard = cache.lock().unwrap_or_else(|e| e.into_inner());
+      assert!(
+        !guard.contains_key(binary),
+        "forget_binary must remove the cache entry entirely"
+      );
+    }
+
+    // And the next lookup must actually re-probe (re-populating the entry),
+    // not just leave it absent forever.
+    let _ = check_binary_exists(binary);
+    let cache = BINARY_CACHE.get().expect("cache should be initialized");
+    let guard = cache.lock().unwrap_or_else(|e| e.into_inner());
+    assert!(
+      guard.contains_key(binary),
+      "the lookup right after forget_binary must repopulate the cache"
+    );
+  }
+
+  #[test]
+  fn test_forget_binary_is_a_noop_for_a_binary_never_looked_up() {
+    // Must not panic when called for a binary `install_missing_tools` is
+    // about to install but that was never actually looked up this process
+    // (e.g. a tool added to `missing` via a path that skipped the usual
+    // `lookup_tool_info` preflight probe).
+    forget_binary("__forget_binary_test_never_looked_up__");
+  }
+
+  // Coverage for the "at least one real prebuilt-binary installer per OS"
+  // gap this PR also fixes: typstyle/tinymist/taplo have no genuine native
+  // package anywhere, so cargo-binstall (a real prebuilt binary, not a
+  // source compile) is their only non-source-compile path on every OS,
+  // Linux included.
+  #[test]
+  fn test_chain_wants_cargo_binstall() {
+    let typstyle_chain =
+      install_chain_for("typstyle").expect("typstyle must have a chain");
+    assert!(chain_wants_cargo_binstall(typstyle_chain));
+
+    // rustfmt's chain is rustup-only -- must not spuriously report wanting
+    // cargo-binstall just because *some* chain does.
+    let rustfmt_chain =
+      install_chain_for("rustfmt").expect("rustfmt must have a chain");
+    assert!(!chain_wants_cargo_binstall(rustfmt_chain));
+  }
+
+  #[test]
+  fn test_every_source_compile_only_cargo_tool_offers_cargo_binstall_first() {
+    // If any of these ever loses its CargoBinstall step, the *only*
+    // remaining install path on an OS without a matching Brew/Scoop/Winget
+    // entry (Linux, for all three) becomes compiling from source -- exactly
+    // the multi-minute typstyle build the bug report was filed over.
+    for binary in ["typstyle", "tinymist", "taplo"] {
+      let chain = install_chain_for(binary)
+        .unwrap_or_else(|| panic!("{binary} must have a registered chain"));
+      assert!(
+        chain_wants_cargo_binstall(chain),
+        "{binary}'s chain must include CargoBinstall -- otherwise Linux has \
+         no real prebuilt-binary install path for it at all"
+      );
+    }
+  }
+
+  #[test]
+  fn test_tool_would_benefit_from_cargo_binstall_bootstrap_unknown_binary() {
+    // A binary with no registered chain at all must never claim it would
+    // benefit from bootstrapping cargo-binstall -- there's nothing to
+    // select an installer from.
+    assert!(!tool_would_benefit_from_cargo_binstall_bootstrap(
+      "__no_such_registered_tool__"
+    ));
+  }
+
+  #[test]
+  fn test_tool_would_benefit_from_cargo_binstall_bootstrap_rustup_only_chain() {
+    // rustfmt's chain never references cargo-binstall at all, so it must
+    // never trigger a bootstrap attempt regardless of what's on PATH.
+    assert!(!tool_would_benefit_from_cargo_binstall_bootstrap("rustfmt"));
+  }
+
+  // merge_path_entries is the pure half of every post-install PATH refresh
+  // (refresh_windows_path_from_registry, refresh_go_install_path) -- the
+  // registry/`go env` read plus the std::env::set_var side effect isn't
+  // something a unit test should perform for real (it would mutate the test
+  // process's actual PATH for every other test running in the same binary),
+  // but the merge logic itself (case-insensitive dedup, order preservation)
+  // is exactly what determines whether a just-installed binary's new
+  // directory actually gets picked up, so it's worth locking down directly.
+  // Builds a fixture path that is well-formed for the platform under test.
+  // merge_path_entries splits on the platform's own PATH separator, so a
+  // hardcoded Windows-style `C:\a` fixture splits at its own colon when the
+  // tests run on Unix -- which is exactly how these tests failed on Linux
+  // once the lib started compiling there.
+  fn fixture_path(name: &str) -> String {
+    if cfg!(windows) {
+      format!("C:\\{name}")
+    } else {
+      format!("/{name}")
+    }
+  }
+
+  #[test]
+  fn test_merge_path_entries_appends_new_dirs_only() {
+    let sep = if cfg!(windows) { ';' } else { ':' };
+    let (a, b, c) = (fixture_path("a"), fixture_path("b"), fixture_path("c"));
+    let current = format!("{a}{sep}{b}");
+    let additional = format!("{b}{sep}{c}");
+
+    let merged = merge_path_entries(&current, &additional);
+    let parts: Vec<&str> = merged.split(sep).collect();
+
+    assert_eq!(
+      parts,
+      vec![a.as_str(), b.as_str(), c.as_str()],
+      "must keep `current`'s entries first, in order, and only append \
+       genuinely new entries from `additional`"
+    );
+  }
+
+  #[test]
+  fn test_merge_path_entries_case_folds_only_where_paths_are() {
+    let sep = if cfg!(windows) { ';' } else { ':' };
+    let (a, b, c) = (fixture_path("a"), fixture_path("b"), fixture_path("c"));
+    let b_upper = b.to_uppercase();
+    let current = format!("{a}{sep}{b}");
+    let additional = format!("{b_upper}{sep}{c}");
+
+    let merged = merge_path_entries(&current, &additional);
+    let parts: Vec<&str> = merged.split(sep).collect();
+
+    if cfg!(windows) {
+      assert_eq!(
+        parts,
+        vec![a.as_str(), b.as_str(), c.as_str()],
+        "Windows paths are case-insensitive, so a case-only variant of an \
+         entry already present must not be appended a second time"
+      );
+    } else {
+      assert_eq!(
+        parts,
+        vec![a.as_str(), b.as_str(), b_upper.as_str(), c.as_str()],
+        "Unix paths are case-sensitive: /b and /B are different \
+         directories, and folding them would drop a directory the caller \
+         asked to add"
+      );
+    }
+  }
+
+  #[test]
+  fn test_merge_path_entries_noop_when_nothing_new() {
+    let sep = if cfg!(windows) { ';' } else { ':' };
+    let current = format!("{}{sep}{}", fixture_path("a"), fixture_path("b"));
+    let merged = merge_path_entries(&current, &current);
+    assert_eq!(
+      merged, current,
+      "merging PATH with itself must not change anything (and callers rely \
+       on this to skip the std::env::set_var call entirely when nothing \
+       actually changed)"
+    );
+  }
+
+  #[test]
+  fn test_merge_path_entries_ignores_empty_segments() {
+    let sep = if cfg!(windows) { ';' } else { ':' };
+    let (a, b, c) = (fixture_path("a"), fixture_path("b"), fixture_path("c"));
+    let current = format!("{a}{sep}{sep}{b}{sep}");
+    let additional = format!("{sep}{c}{sep}");
+    let merged = merge_path_entries(&current, &additional);
+    let parts: Vec<&str> =
+      merged.split(sep).filter(|s| !s.is_empty()).collect();
+    assert_eq!(parts, vec![a.as_str(), b.as_str(), c.as_str()]);
+    assert!(
+      !merged.contains(&format!("{sep}{sep}")),
+      "must not introduce empty PATH segments from empty input segments"
+    );
+  }
+
+  // go_bin_dir_from_env decides where `go install` just put a binary, which
+  // is what refresh_go_install_path adds to PATH. Getting the GOBIN/GOPATH
+  // precedence wrong means adding a directory that holds nothing and
+  // leaving `goimports` unresolvable right after installing it -- the exact
+  // failure the Fresh-Install Regression CI job exists to catch.
+  #[test]
+  fn test_go_bin_dir_prefers_gobin_when_set() {
+    let dir = go_bin_dir_from_env("/custom/gobin", "/home/u/go");
+    assert_eq!(
+      dir,
+      Some(PathBuf::from("/custom/gobin")),
+      "GOBIN, when set, is exactly where `go install` writes -- it must win \
+       over $GOPATH/bin"
+    );
+  }
+
+  #[test]
+  fn test_go_bin_dir_falls_back_to_first_gopath_entry() {
+    let sep = if cfg!(windows) { ';' } else { ':' };
+    let gopath = format!("/home/u/go{sep}/home/u/other");
+    let dir = go_bin_dir_from_env("", &gopath);
+    assert_eq!(
+      dir,
+      Some(PathBuf::from("/home/u/go").join("bin")),
+      "with GOBIN unset, `go install` uses the FIRST GOPATH entry's bin \
+       directory, not the last and not all of them"
+    );
+  }
+
+  #[test]
+  fn test_go_bin_dir_tolerates_whitespace_and_empty_values() {
+    assert_eq!(
+      go_bin_dir_from_env("  /custom/gobin  ", ""),
+      Some(PathBuf::from("/custom/gobin")),
+      "`go env` output arrives with a trailing newline per value; a padded \
+       GOBIN must not produce a path with whitespace baked into it"
+    );
+    assert_eq!(
+      go_bin_dir_from_env("", "   "),
+      None,
+      "no GOBIN and no usable GOPATH means there's no directory to add -- \
+       must be None rather than a bare \"bin\" relative path"
+    );
+    assert_eq!(
+      go_bin_dir_from_env("", ""),
+      None,
+      "a Go toolchain that reports neither value must leave PATH alone"
     );
   }
 

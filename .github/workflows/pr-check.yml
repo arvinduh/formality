@@ -197,6 +197,193 @@ jobs:
             echo "schema/formality.schema.json unchanged relative to main - no version bump required."
           fi
 
+  install-regression:
+    # Not currently a required branch-protection status check (only
+    # "Library Tests" is) -- adding one is a call for whoever owns branch
+    # protection to make deliberately, not a side effect of adding this job.
+    # This job exists specifically to catch a class of bug `test-lib`'s
+    # ubuntu-only `fml install` step could not: a tool installed within an
+    # `fml ... --install` invocation being reported ToolMissing by the very
+    # next step of that *same* invocation, because a per-process PATH-lookup
+    # cache (`surfaces::tooling::BINARY_CACHE`) memoized the pre-install
+    # "not found" result and was never evicted after the install succeeded.
+    # The bug itself is platform-independent (pure in-process caching, no
+    # OS-specific code path), but the concrete report that caught it was on
+    # a Windows runner with none of the tools pre-cached -- exactly the kind
+    # of clean-machine, first-run state this matrix reproduces on all three
+    # OSes rather than relying on it to only ever repro on Windows again.
+    # Also catches two more classes in the same family, where the binary
+    # genuinely is not on this process's PATH rather than merely
+    # mis-cached: a Scoop/winget install registering its new PATH entry in
+    # the Windows registry, which an already-running process's environment
+    # block never picks up on its own (see
+    # `tooling::refresh_windows_path_from_registry`), and `go install`
+    # writing into $GOBIN/$GOPATH/bin, which is on PATH only if the user
+    # put it there -- it is not on the stock ubuntu or windows runner
+    # images, so `goimports` reproduces this every run (see
+    # `tooling::refresh_go_install_path`). And exercises the cargo-binstall
+    # auto-bootstrap path (typstyle has no native package on any OS -- see
+    # `tooling::ensure_cargo_binstall`).
+    name: Fresh-Install Regression (${{ matrix.os }})
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest, windows-latest]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v7
+
+      - name: Set up Rust toolchain
+        uses: dtolnay/rust-toolchain@1.97.1
+        with:
+          components: clippy, rustfmt
+
+      - name: Set up Rust cache
+        # cache-bin: false is what makes "fresh install" true. The default
+        # (true) also caches ~/.cargo/bin, which persists every tool a
+        # previous run of this job installed with cargo/cargo-binstall
+        # (typstyle, taplo, ...) into the next run -- so those tools were
+        # already on PATH before `fml fmt --install` ran and their install
+        # chains, including the cargo-binstall bootstrap this job is meant
+        # to exercise, were never entered at all. The workspace target
+        # cache (what actually makes this job fast) is unaffected.
+        uses: Swatinem/rust-cache@v2
+        with:
+          cache-bin: "false"
+
+      - name: Set up a JDK google-java-format can run on
+        # google-java-format 1.28+ requires JDK 21; the stock ubuntu runner
+        # image still defaults to JDK 17, on which the formatter dies with a
+        # NoClassDefFoundError for an internal javac class. That is a
+        # property of the runner image, not of fml's install chain -- but it
+        # left the java surface permanently [FAIL] in this job's output,
+        # which is exactly the kind of standing red that trains people to
+        # stop reading it. (fml itself now explains that failure instead of
+        # dumping the raw stack trace; see `explain_jvm_incompatibility` in
+        # surfaces/java.rs.)
+        uses: actions/setup-java@v5
+        with:
+          distribution: temurin
+          java-version: "21"
+
+      - name: Build fml
+        run: cargo build
+
+      - name: Scaffold a synthetic project covering every registered surface
+        # One file per surface in surfaces::registry::default_registry() (12
+        # total, kept in sync by hand -- see the Rust unit test in this repo
+        # that also enumerates them), in a scratch dir outside the checkout
+        # so it can't collide with this repo's own formality.toml / dogfood
+        # state. Exercises every tool's install chain on all three OSes, not
+        # just the handful the original report happened to touch.
+        #
+        # Sample.java and Sample.kt are PascalCase because their own
+        # toolchains require it: ktlint's standard:filename rule fails a
+        # lowercase .kt outright (a violation that says nothing about
+        # installs, which is all this job is here to test).
+        shell: bash
+        run: |
+          set -e
+          mkdir -p "$RUNNER_TEMP/fml-install-regress"
+          cd "$RUNNER_TEMP/fml-install-regress"
+          {
+            echo '[global]'
+            echo 'indent_size = 2'
+            echo 'line_length = 80'
+            echo 'end_of_line = "lf"'
+            echo 'charset = "utf-8"'
+            echo 'insert_final_newline = true'
+            echo 'trim_trailing_whitespace = true'
+          } > formality.toml
+          printf 'fn main() {}\n' > sample.rs
+          printf 'x = 1\n' > sample.py
+          printf 'int main() { return 0; }\n' > sample.cpp
+          printf 'public class Sample {\n  public static void main(String[] args) {}\n}\n' > Sample.java
+          printf 'package main\n\nfunc main() {}\n' > sample.go
+          printf '# Title\n\nSome text.\n' > sample.md
+          printf 'key: value\n' > sample.yaml
+          printf '{}\n' > sample.json
+          printf 'key = "value"\n' > sample.toml
+          printf '= Heading\n\nSome text.\n' > sample.typ
+          printf 'const x = 1;\n' > sample.js
+          printf 'fun main() {}\n' > Sample.kt
+
+      - name: fml fmt --install on a runner with none of the tools pre-cached
+        # Deliberately does NOT gate on fml's own exit code: a tool that
+        # installs but doesn't land on its exact pinned version (a stale
+        # Homebrew bottle, an npm registry lag, ...) is a real but separate
+        # concern the existing convergence guard already surfaces as a
+        # [WARN] and a non-clean exit -- unrelated to, and much flakier
+        # than, the two things this job exists to catch (both below).
+        #
+        # Failure signature 1: `[MISS] <lang> Missing binary: <tool>` for a
+        # tool that has its own `[OK] Successfully installed <tool>` line
+        # earlier in the same output -- the in-process BINARY_CACHE
+        # staleness bug this job was written for, and the $GOBIN/$GOPATH/bin
+        # PATH gap in `tooling::refresh_go_install_path`. Scoped to exactly
+        # that intersection on purpose: a tool fml never claimed to install
+        # (no chain available on this runner) reporting [MISS] is a runner
+        # image gap, not a regression, and is reported as a notice instead.
+        #
+        # Failure signature 2: a convergence-guard [WARN] whose detail says
+        # "reports an unparseable version" specifically (as opposed to
+        # "reports X, expected Y" with two real version numbers, which is
+        # just an upstream package manager lagging the pin -- tolerated).
+        # "unparseable" fires when the post-install version probe couldn't
+        # resolve/run the binary *at all*, not just parse unexpected output
+        # -- e.g. Scoop/winget on Windows registering the new PATH entry in
+        # the registry, which an already-running process's environment
+        # block never picks up on its own.
+        shell: bash
+        env:
+          # This step parses tool names out of fml's own output, so it needs
+          # that output plain: the workflow-level CLICOLOR_FORCE/FORCE_COLOR
+          # (plus GITHUB_ACTIONS, which fml also treats as force-color) wrap
+          # every tool name in SGR escapes, and the extractions below would
+          # then capture escape bytes instead of a name -- matching nothing
+          # and passing the job no matter what fml actually reported.
+          # NO_COLOR takes precedence over all three (see
+          # `ui::no_color_requested`).
+          NO_COLOR: "1"
+        run: |
+          set +o pipefail
+          cd "$RUNNER_TEMP/fml-install-regress"
+          fml_bin="$GITHUB_WORKSPACE/target/debug/fml"
+          if [ "$RUNNER_OS" = "Windows" ]; then
+            fml_bin="$GITHUB_WORKSPACE/target/debug/fml.exe"
+          fi
+          "$fml_bin" fmt --install > fml-output.log 2>&1 || true
+          cat fml-output.log
+
+          # Only a [MISS] for a tool fml *itself just installed in this same
+          # invocation* is the regression described above. A bare
+          # `grep -q '[MISS]'` also fires for a tool this runner has no
+          # install chain for at all -- on macOS images that ship no Go,
+          # `gofmt`/`goimports` (fml deliberately installs formatters, not
+          # whole language toolchains) -- which is a gap in the runner
+          # image, not a bug in fml, and made this job unpassable on macOS
+          # for a reason no change to this repo could fix.
+          installed=$(sed -n 's/.*Successfully installed \([^ ]*\).*/\1/p' fml-output.log | sort -u)
+          missing=$(sed -n 's/.*Missing binary: \([^ ]*\).*/\1/p' fml-output.log | sort -u)
+          nonempty() { printf '%s\n' "$1" | sed '/^$/d'; }
+          regressed=$(comm -12 <(nonempty "$installed") <(nonempty "$missing"))
+
+          if [ -n "$regressed" ]; then
+            echo "::error::fml reported as [MISS] tools it had just installed within the same invocation: $(nonempty "$regressed" | tr '\n' ' ')-- see the log above. This is the exact regression this job exists to catch."
+            exit 1
+          fi
+          if grep -q 'unparseable version' fml-output.log; then
+            echo "::error::fml could not resolve/run a tool it just installed (reported 'an unparseable version', meaning the post-install probe found nothing to run at all, not just unexpected --version output) -- see the log above."
+            exit 1
+          fi
+
+          uninstallable=$(nonempty "$missing" | grep -vxF -f <(nonempty "$installed") || true)
+          if [ -n "$uninstallable" ]; then
+            echo "::notice::Tolerated: fml never reported installing these on $RUNNER_OS, so their absence is a runner-image gap rather than the install-then-miss regression this job guards: $(nonempty "$uninstallable" | tr '\n' ' ')"
+          fi
+          echo "No just-installed tool reported as missing, and no unresolvable just-installed tool -- regression check passed."
+
   security-audit:
     name: Security Audit
     runs-on: ubuntu-latest

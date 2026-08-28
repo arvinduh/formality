@@ -1,14 +1,14 @@
 //! JSON Schema generation for `formality.toml`, plus schema-version drift
-//! detection: a background check (mirroring [`crate::engine::update`]'s
-//! pattern) that warns when a workspace's config predates the schema
-//! version this binary generates.
+//! detection: a check that warns when a workspace's config predates the
+//! schema version this binary generates. Unlike [`crate::engine::update`],
+//! whose remote version check runs off-thread behind a TTL cache, this one
+//! only reads a local file and so runs inline, uncached (see
+//! [`schema_notice_for`]).
 
 use crate::config::FormalityConfig;
-use crate::engine::cache_path;
 use colored::Colorize;
 use serde::{Deserialize, Serialize};
 use std::path::{Path, PathBuf};
-use std::time::{SystemTime, UNIX_EPOCH};
 
 /// A schema release version: `major.minor`. A major bump means a breaking
 /// schema change; a minor bump means an additive/compatible one.
@@ -37,7 +37,6 @@ impl std::fmt::Display for SchemaVersion {
 /// The current `s{major}.{minor}` schema version this build of `fml`
 /// expects a project's `#:schema` directive to reference.
 pub const SCHEMA_VERSION: SchemaVersion = SchemaVersion { major: 1, minor: 1 };
-const SCHEMA_CHECK_INTERVAL_SECS: u64 = 24 * 60 * 60; // 24 hours
 
 /// A config file's schema version status relative to [`SCHEMA_VERSION`].
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -56,14 +55,6 @@ pub enum SchemaStatus {
   },
   /// The config has no `#:schema` directive at all.
   Missing,
-}
-
-/// On-disk cache of the last schema-staleness check, used to throttle
-/// [`spawn_schema_check`] to once per [`SCHEMA_CHECK_INTERVAL_SECS`].
-#[derive(Serialize, Deserialize, Debug)]
-struct SchemaCheckCache {
-  last_checked_unix: u64,
-  stale_version: Option<SchemaVersion>,
 }
 
 /// Holds a pending stale-schema notice to be printed later via
@@ -150,33 +141,36 @@ pub fn check_schema_version_file(path: &Path) -> SchemaStatus {
   }
 }
 
-fn read_schema_cache() -> Option<SchemaCheckCache> {
-  let path = cache_path("schema_check.json");
-  let data = std::fs::read_to_string(path).ok()?;
-  serde_json::from_str(&data).ok()
-}
-
-fn write_schema_cache(stale_version: Option<SchemaVersion>) {
-  let path = cache_path("schema_check.json");
-  if let Some(parent) = path.parent() {
-    let _ = std::fs::create_dir_all(parent);
-  }
-  let now = SystemTime::now()
-    .duration_since(UNIX_EPOCH)
-    .map_or(0, |d| d.as_secs());
-  let cache = SchemaCheckCache {
-    last_checked_unix: now,
-    stale_version,
-  };
-  if let Ok(json) = serde_json::to_string(&cache) {
-    let _ = std::fs::write(path, json);
-  }
-}
-
-/// Spawns or performs a schema version check for `run_with_args()`.
+/// Decides whether `config_path`'s `#:schema` directive is behind
+/// [`SCHEMA_VERSION`], returning the notice to print if so.
 ///
-/// Accepts an optional pre-discovered config path, skipping directory search if provided.
-/// Respects `FORMALITY_NO_SCHEMA_CHECK` and CI environments, and is throttled by a TTL cache.
+/// Always reads the file. There is no TTL cache in front of this on
+/// purpose: unlike [`crate::engine::update`], whose equivalent check pays
+/// for a network round-trip and therefore has something worth throttling,
+/// this one is a single small local read, and the notice it produces is
+/// printed on every run regardless -- so a cache could only ever make the
+/// result *wrong*. It did: the previous implementation replayed a cached
+/// `stale_version` for 24 hours whenever the config's mtime wasn't newer
+/// than the last check (an ordinary `git checkout` restoring a file with an
+/// older mtime is enough), so a user who had already fixed their directive
+/// kept being told their config referenced a version it no longer
+/// contained.
+#[must_use]
+fn schema_notice_for(config_path: &Path) -> Option<SchemaNotifier> {
+  match check_schema_version_file(config_path) {
+    SchemaStatus::Stale { version, expected } => Some(SchemaNotifier {
+      stale_info: Some((config_path.to_path_buf(), version, expected)),
+    }),
+    SchemaStatus::UpToDate { .. } | SchemaStatus::Missing => None,
+  }
+}
+
+/// Performs the schema version check for `run_with_args()`.
+///
+/// Accepts an optional pre-discovered config path, skipping directory
+/// search if provided. Returns `None` -- checking nothing at all -- under
+/// `CI`/`GITHUB_ACTIONS` or `FORMALITY_NO_SCHEMA_CHECK`, where a nudge
+/// aimed at a human editing the config is just log noise.
 #[must_use]
 pub fn spawn_schema_check(
   config_path: Option<&Path>,
@@ -188,45 +182,7 @@ pub fn spawn_schema_check(
     return None;
   }
 
-  let config_path = config_path?;
-
-  let now = SystemTime::now()
-    .duration_since(UNIX_EPOCH)
-    .map_or(0, |d| d.as_secs());
-
-  let config_mtime = std::fs::metadata(config_path)
-    .and_then(|m| m.modified())
-    .ok()
-    .and_then(|t| t.duration_since(UNIX_EPOCH).ok())
-    .map_or(0, |d| d.as_secs());
-
-  if let Some(cache) = read_schema_cache()
-    && now.saturating_sub(cache.last_checked_unix) < SCHEMA_CHECK_INTERVAL_SECS
-    && config_mtime <= cache.last_checked_unix
-  {
-    if let Some(version) = cache.stale_version
-      && version < SCHEMA_VERSION
-    {
-      return Some(SchemaNotifier {
-        stale_info: Some((config_path.to_path_buf(), version, SCHEMA_VERSION)),
-      });
-    }
-    return None;
-  }
-
-  let status = check_schema_version_file(config_path);
-  match status {
-    SchemaStatus::Stale { version, expected } => {
-      write_schema_cache(Some(version));
-      Some(SchemaNotifier {
-        stale_info: Some((config_path.to_path_buf(), version, expected)),
-      })
-    }
-    _ => {
-      write_schema_cache(None);
-      None
-    }
-  }
+  schema_notice_for(config_path?)
 }
 
 /// Prints schema version warning banner if project schema reference is stale.
@@ -353,5 +309,55 @@ mod tests {
   #[test]
   fn test_spawn_schema_check_none() {
     assert!(spawn_schema_check(None).is_none());
+  }
+
+  // The staleness notice used to be served from a 24h on-disk cache keyed
+  // on the config's mtime, which meant a config the user had *already*
+  // fixed kept producing a warning quoting a version the file no longer
+  // contains (any mtime not newer than the last check -- a plain `git
+  // checkout` is enough -- kept replaying the cached verdict). These lock
+  // in that the verdict always reflects the file as it is on disk right
+  // now. `s0.1` is used as the stale pin because it stays behind
+  // SCHEMA_VERSION no matter how far that is bumped later.
+  #[test]
+  fn test_schema_notice_reflects_current_file_contents() {
+    let dir = tempfile::tempdir().unwrap();
+    let config = dir.path().join("formality.toml");
+
+    let stale =
+      "#:schema https://example.com/s0.1/formality.schema.json\n[global]\n";
+    std::fs::write(&config, stale).unwrap();
+    let notice = schema_notice_for(&config)
+      .expect("a config pinned to an older schema must warn");
+    assert_eq!(
+      notice
+        .stale_info
+        .map(|(_, version, expected)| (version, expected)),
+      Some((SchemaVersion { major: 0, minor: 1 }, SCHEMA_VERSION))
+    );
+
+    // Fixing the directive must clear the warning on the very next call --
+    // no TTL, no mtime comparison, no stale replay.
+    let current = format!(
+      "#:schema https://example.com/s{SCHEMA_VERSION}/formality.schema.json\n[global]\n"
+    );
+    std::fs::write(&config, current).unwrap();
+    assert!(
+      schema_notice_for(&config).is_none(),
+      "a config updated to the current schema version must stop warning \
+       immediately, not once some cache expires"
+    );
+  }
+
+  #[test]
+  fn test_schema_notice_absent_for_config_without_directive() {
+    let dir = tempfile::tempdir().unwrap();
+    let config = dir.path().join("formality.toml");
+    std::fs::write(&config, "[global]\nindent_size = 2\n").unwrap();
+    assert!(
+      schema_notice_for(&config).is_none(),
+      "a config with no #:schema directive at all has no version to be \
+       behind"
+    );
   }
 }

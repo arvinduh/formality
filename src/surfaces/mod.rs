@@ -67,11 +67,14 @@ pub use registry::{
 };
 pub use sync::{diff_check_via_tempcopy, is_auto_generated, sync_file_helper};
 pub use tooling::{
-  InstallMethod, check_binary_exists, create_tool_command, has_cargo_binstall,
-  install_chain_for, lint_fix_unsupported, pinned_installer_for,
-  pinned_version_for, resolve_binary_path, run_tool_command,
-  selected_install_method_for, selected_pinned_version_for, tool_missing_guard,
-  tool_missing_result,
+  InstallMethod, chain_wants_cargo_binstall, check_binary_exists,
+  create_tool_command, ensure_cargo_binstall, forget_binary,
+  has_cargo_binstall, install_chain_for, lint_fix_unsupported,
+  pinned_installer_for, pinned_version_for, refresh_go_install_path,
+  refresh_path_after_install, refresh_windows_path_from_registry,
+  resolve_binary_path, run_tool_command, selected_install_method_for,
+  selected_pinned_version_for, tool_missing_guard, tool_missing_result,
+  tool_would_benefit_from_cargo_binstall_bootstrap,
 };
 
 /// Execution context shared with every [`LanguageSurface`] invocation for a
