@@ -212,8 +212,12 @@ jobs:
     # a Windows runner with none of the tools pre-cached -- exactly the kind
     # of clean-machine, first-run state this matrix reproduces on all three
     # OSes rather than relying on it to only ever repro on Windows again.
-    # This also exercises the cargo-binstall auto-bootstrap path (typstyle
-    # has no native package on any OS -- see `tooling::ensure_cargo_binstall`).
+    # Also catches a second, Windows-specific class in the same family: a
+    # Scoop/winget install registers its new PATH entry in the registry,
+    # which an already-running process's environment block never picks up
+    # on its own -- see `tooling::refresh_windows_path_from_registry`. And
+    # exercises the cargo-binstall auto-bootstrap path (typstyle has no
+    # native package on any OS -- see `tooling::ensure_cargo_binstall`).
     name: Fresh-Install Regression (${{ matrix.os }})
     strategy:
       fail-fast: false
@@ -235,13 +239,13 @@ jobs:
       - name: Build fml
         run: cargo build
 
-      - name: Scaffold a synthetic multi-surface project
-        # A small project touching one surface per package-manager family
-        # in play here (taplo/npm-or-binstall for toml, prettier/npm for
-        # markdown+yaml, ruff/uv-or-pip for python, typstyle/binstall-or-
-        # source-compile for typst), in a scratch dir outside the checkout
+      - name: Scaffold a synthetic project covering every registered surface
+        # One file per surface in surfaces::registry::default_registry() (12
+        # total, kept in sync by hand -- see the Rust unit test in this repo
+        # that also enumerates them), in a scratch dir outside the checkout
         # so it can't collide with this repo's own formality.toml / dogfood
-        # state.
+        # state. Exercises every tool's install chain on all three OSes, not
+        # just the handful the original report happened to touch.
         shell: bash
         run: |
           set -e
@@ -256,28 +260,59 @@ jobs:
             echo 'insert_final_newline = true'
             echo 'trim_trailing_whitespace = true'
           } > formality.toml
-          printf 'key = "value"\n' > sample.toml
+          printf 'fn main() {}\n' > sample.rs
+          printf 'x = 1\n' > sample.py
+          printf 'int main() { return 0; }\n' > sample.cpp
+          printf 'public class Sample {\n  public static void main(String[] args) {}\n}\n' > Sample.java
+          printf 'package main\n\nfunc main() {}\n' > sample.go
           printf '# Title\n\nSome text.\n' > sample.md
           printf 'key: value\n' > sample.yaml
-          printf 'x = 1\n' > sample.py
+          printf '{}\n' > sample.json
+          printf 'key = "value"\n' > sample.toml
           printf '= Heading\n\nSome text.\n' > sample.typ
+          printf 'const x = 1;\n' > sample.js
+          printf 'fun main() {}\n' > sample.kt
 
       - name: fml fmt --install on a runner with none of the tools pre-cached
+        # Deliberately does NOT gate on fml's own exit code: a tool that
+        # installs but doesn't land on its exact pinned version (a stale
+        # Homebrew bottle, an npm registry lag, ...) is a real but separate
+        # concern the existing convergence guard already surfaces as a
+        # [WARN] and a non-clean exit -- unrelated to, and much flakier
+        # than, the two things this job exists to catch (both below).
+        #
+        # Failure signature 1: `[MISS] <lang> Missing binary: <tool>` right
+        # after that exact tool's own [OK] Successfully installed line --
+        # the in-process BINARY_CACHE staleness bug this job was written for.
+        #
+        # Failure signature 2: a convergence-guard [WARN] whose detail says
+        # "reports an unparseable version" specifically (as opposed to
+        # "reports X, expected Y" with two real version numbers, which is
+        # just an upstream package manager lagging the pin -- tolerated).
+        # "unparseable" fires when the post-install version probe couldn't
+        # resolve/run the binary *at all*, not just parse unexpected output
+        # -- e.g. Scoop/winget on Windows registering the new PATH entry in
+        # the registry, which an already-running process's environment
+        # block never picks up on its own.
         shell: bash
         run: |
-          set -o pipefail
+          set +o pipefail
           cd "$RUNNER_TEMP/fml-install-regress"
           fml_bin="$GITHUB_WORKSPACE/target/debug/fml"
           if [ "$RUNNER_OS" = "Windows" ]; then
             fml_bin="$GITHUB_WORKSPACE/target/debug/fml.exe"
           fi
-          "$fml_bin" fmt --install 2>&1 | tee fml-output.log
-          status="${PIPESTATUS[0]}"
+          "$fml_bin" fmt --install > fml-output.log 2>&1 || true
+          cat fml-output.log
           if grep -q '\[MISS\]' fml-output.log; then
             echo "::error::fml reported a tool as [MISS] immediately after installing it within the same invocation -- see the log above. This is the exact regression this job exists to catch."
             exit 1
           fi
-          exit "$status"
+          if grep -q 'unparseable version' fml-output.log; then
+            echo "::error::fml could not resolve/run a tool it just installed (reported 'an unparseable version', meaning the post-install probe found nothing to run at all, not just unexpected --version output) -- see the log above."
+            exit 1
+          fi
+          echo "No [MISS] and no unresolvable just-installed tool reported -- regression check passed."
 
   security-audit:
     name: Security Audit
