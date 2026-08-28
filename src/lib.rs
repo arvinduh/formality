@@ -44,10 +44,17 @@ pub fn run() -> ExitStatus {
 /// Executes the CLI command specified by the provided [`Cli`] arguments.
 #[must_use]
 pub fn run_with_args(args: Cli) -> ExitStatus {
-  if std::env::var("FORCE_COLOR").is_ok()
-    || std::env::var("CLICOLOR_FORCE").is_ok()
-    || std::env::var("GITHUB_ACTIONS").is_ok()
-  {
+  // NO_COLOR wins over every force-color signal, matching the precedence
+  // `ui::table::Palette::detect` already applies to this crate's own escape
+  // codes. Without the first branch the two disagreed under CI, where
+  // GITHUB_ACTIONS/CLICOLOR_FORCE are set: the palette went plain while
+  // `colored` was still forced on, so `NO_COLOR=1 fml ...` emitted a log
+  // that was *mostly* uncolored but still carried bold/color runs around
+  // every status token -- honoring neither mode, and defeating the point
+  // of NO_COLOR for anything parsing the output.
+  if crate::ui::no_color_requested() {
+    colored::control::set_override(false);
+  } else if crate::ui::color_forced() {
     colored::control::set_override(true);
   }
 

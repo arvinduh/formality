@@ -275,14 +275,12 @@ impl Palette {
   #[must_use]
   pub fn detect() -> Self {
     // 1. Respect NO_COLOR if set and non-empty
-    if std::env::var("NO_COLOR").is_ok_and(|val| !val.is_empty()) {
+    if crate::ui::no_color_requested() {
       return Self::none();
     }
 
     // 2. Forced color overrides
-    let force_color = std::env::var("FORCE_COLOR").is_ok()
-      || std::env::var("CLICOLOR_FORCE").is_ok()
-      || std::env::var("GITHUB_ACTIONS").is_ok();
+    let force_color = crate::ui::color_forced();
 
     if !force_color && !std::io::stdout().is_terminal() {
       return Self::none();
