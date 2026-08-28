@@ -70,9 +70,9 @@ pub use tooling::{
   InstallMethod, chain_wants_cargo_binstall, check_binary_exists,
   create_tool_command, ensure_cargo_binstall, forget_binary,
   has_cargo_binstall, install_chain_for, lint_fix_unsupported,
-  pinned_installer_for, pinned_version_for, resolve_binary_path,
-  run_tool_command, selected_install_method_for, selected_pinned_version_for,
-  tool_missing_guard, tool_missing_result,
+  pinned_installer_for, pinned_version_for, refresh_windows_path_from_registry,
+  resolve_binary_path, run_tool_command, selected_install_method_for,
+  selected_pinned_version_for, tool_missing_guard, tool_missing_result,
   tool_would_benefit_from_cargo_binstall_bootstrap,
 };
 

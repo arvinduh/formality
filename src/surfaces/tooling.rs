@@ -931,6 +931,93 @@ pub fn tool_would_benefit_from_cargo_binstall_bootstrap(binary: &str) -> bool {
   )
 }
 
+/// Merges `additional`'s `PATH`-style entries onto the end of `current`'s,
+/// case-insensitively deduplicated (Windows paths are case-insensitive) and
+/// preserving `current`'s entries and their relative order first. Pure and
+/// platform-independent so it can be unit-tested directly; the only
+/// Windows-specific, side-effecting part of the refresh this supports is
+/// [`refresh_windows_path_from_registry`], which sources `additional` from
+/// the registry and applies the result via `std::env::set_var`.
+#[must_use]
+fn merge_path_entries(current: &str, additional: &str) -> String {
+  let separator = if cfg!(windows) { ';' } else { ':' };
+  let mut seen: std::collections::HashSet<String> =
+    std::collections::HashSet::new();
+  let mut entries: Vec<&str> = Vec::new();
+
+  for entry in current
+    .split(separator)
+    .chain(additional.split(separator))
+    .filter(|s| !s.is_empty())
+  {
+    if seen.insert(entry.to_lowercase()) {
+      entries.push(entry);
+    }
+  }
+
+  entries.join(&separator.to_string())
+}
+
+/// Re-reads `Path` from the Windows registry (`HKEY_LOCAL_MACHINE`'s System
+/// Environment, then `HKEY_CURRENT_USER`'s -- the same precedence a freshly
+/// started process would inherit) and merges any new entries into this
+/// process's own `PATH`.
+///
+/// Needed because on Windows, an installer that registers a new directory
+/// via the registry (Scoop, `winget`) does not update an *already-running*
+/// process's inherited environment block -- only a process started after
+/// the change picks it up. Without this, a tool Scoop/`winget` just
+/// installed mid-run can be completely unresolvable for the rest of this
+/// invocation: not a [`BINARY_CACHE`] staleness problem (already fixed by
+/// [`forget_binary`]) but a genuine "this process's `PATH` string does not
+/// contain that directory at all" problem underneath it, which shows up as
+/// the tool's post-install version probe reporting "an unparseable
+/// version" -- `which`/`Command::new(bare-name)` both fail to resolve the
+/// binary at all, indistinguishable in that message from a real parse
+/// failure of `--version` output that *did* run.
+///
+/// A no-op (and cheap: no process spawned) on non-Windows, since Scoop and
+/// `winget` don't exist there and every other installer this crate uses on
+/// Unix (`npm`, `cargo`, `pip`, `brew`, `apt`, ...) installs into a
+/// directory already on `PATH` at process start.
+pub fn refresh_windows_path_from_registry() {
+  #[cfg(windows)]
+  {
+    let Ok(output) = std::process::Command::new("powershell")
+      .args([
+        "-NoProfile",
+        "-NonInteractive",
+        "-Command",
+        "[System.Environment]::GetEnvironmentVariable('Path','Machine') + ';' + [System.Environment]::GetEnvironmentVariable('Path','User')",
+      ])
+      .output()
+    else {
+      return;
+    };
+    if !output.status.success() {
+      return;
+    }
+
+    let registry_path =
+      String::from_utf8_lossy(&output.stdout).trim().to_string();
+    if registry_path.is_empty() {
+      return;
+    }
+
+    let current = std::env::var("PATH").unwrap_or_default();
+    let merged = merge_path_entries(&current, &registry_path);
+    if merged != current {
+      // SAFETY: single-threaded call site (`install_missing_tools` runs
+      // its per-tool loop sequentially, not from a `rayon` fan-out like
+      // `Runner::run`'s per-surface dispatch), and no other code in this
+      // crate reads `PATH` concurrently with a call to this function.
+      unsafe {
+        std::env::set_var("PATH", merged);
+      }
+    }
+  }
+}
+
 /// Creates a `Command` with proper handling for Windows batch files (.cmd/.bat)
 /// such as `npm`, `pnpm`, `yarn`, `npx`, and globally installed node CLIs.
 #[must_use]
@@ -1742,6 +1829,58 @@ mod tests {
     // rustfmt's chain never references cargo-binstall at all, so it must
     // never trigger a bootstrap attempt regardless of what's on PATH.
     assert!(!tool_would_benefit_from_cargo_binstall_bootstrap("rustfmt"));
+  }
+
+  // merge_path_entries is the pure half of refresh_windows_path_from_registry
+  // -- the registry read + std::env::set_var side effect isn't something a
+  // unit test should perform for real (it would mutate the test process's
+  // actual PATH for every other test running in the same binary), but the
+  // merge logic itself (case-insensitive dedup, order preservation) is
+  // exactly what determines whether a Scoop/winget-installed binary's new
+  // directory actually gets picked up, so it's worth locking down directly.
+  #[test]
+  fn test_merge_path_entries_appends_new_dirs_and_dedupes_case_insensitively() {
+    let sep = if cfg!(windows) { ';' } else { ':' };
+    let current = format!("C:\\a{sep}C:\\b");
+    let additional = format!("C:\\B{sep}C:\\c"); // "C:\B" duplicates "C:\b"
+
+    let merged = merge_path_entries(&current, &additional);
+    let parts: Vec<&str> = merged.split(sep).collect();
+
+    assert_eq!(
+      parts,
+      vec!["C:\\a", "C:\\b", "C:\\c"],
+      "must keep `current`'s entries first, in order, and only append \
+       genuinely new entries from `additional`"
+    );
+  }
+
+  #[test]
+  fn test_merge_path_entries_noop_when_nothing_new() {
+    let sep = if cfg!(windows) { ';' } else { ':' };
+    let current = format!("C:\\a{sep}C:\\b");
+    let merged = merge_path_entries(&current, &current);
+    assert_eq!(
+      merged, current,
+      "merging PATH with itself must not change anything (and callers rely \
+       on this to skip the std::env::set_var call entirely when nothing \
+       actually changed)"
+    );
+  }
+
+  #[test]
+  fn test_merge_path_entries_ignores_empty_segments() {
+    let sep = if cfg!(windows) { ';' } else { ':' };
+    let current = format!("C:\\a{sep}{sep}C:\\b{sep}");
+    let additional = format!("{sep}C:\\c{sep}");
+    let merged = merge_path_entries(&current, &additional);
+    let parts: Vec<&str> =
+      merged.split(sep).filter(|s| !s.is_empty()).collect();
+    assert_eq!(parts, vec!["C:\\a", "C:\\b", "C:\\c"]);
+    assert!(
+      !merged.contains(&format!("{sep}{sep}")),
+      "must not introduce empty PATH segments from empty input segments"
+    );
   }
 
   #[test]

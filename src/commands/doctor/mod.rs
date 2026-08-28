@@ -108,6 +108,18 @@ pub fn install_missing_tools(missing: &[ToolInfo]) -> bool {
           // missing.
           crate::surfaces::forget_binary(tool.binary);
 
+          // scoop/winget register their PATH changes in the Windows
+          // registry, which an already-running process's inherited
+          // environment block does not pick up on its own (unlike
+          // npm/cargo/pip, which install into a directory already on
+          // `PATH` at process start) -- evicting BINARY_CACHE above isn't
+          // enough by itself in that case, since the underlying `PATH`
+          // string genuinely doesn't contain the new directory yet. A
+          // no-op on non-Windows and for every other installer.
+          if program == "scoop" || program == "winget" {
+            crate::surfaces::refresh_windows_path_from_registry();
+          }
+
           // Convergence guard: a successful install exit code only proves
           // the package manager *ran* to completion, not that the binary it
           // produced actually reports the pinned version — re-probe and
