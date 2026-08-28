@@ -212,12 +212,18 @@ jobs:
     # a Windows runner with none of the tools pre-cached -- exactly the kind
     # of clean-machine, first-run state this matrix reproduces on all three
     # OSes rather than relying on it to only ever repro on Windows again.
-    # Also catches a second, Windows-specific class in the same family: a
-    # Scoop/winget install registers its new PATH entry in the registry,
-    # which an already-running process's environment block never picks up
-    # on its own -- see `tooling::refresh_windows_path_from_registry`. And
-    # exercises the cargo-binstall auto-bootstrap path (typstyle has no
-    # native package on any OS -- see `tooling::ensure_cargo_binstall`).
+    # Also catches two more classes in the same family, where the binary
+    # genuinely is not on this process's PATH rather than merely
+    # mis-cached: a Scoop/winget install registering its new PATH entry in
+    # the Windows registry, which an already-running process's environment
+    # block never picks up on its own (see
+    # `tooling::refresh_windows_path_from_registry`), and `go install`
+    # writing into $GOBIN/$GOPATH/bin, which is on PATH only if the user
+    # put it there -- it is not on the stock ubuntu or windows runner
+    # images, so `goimports` reproduces this every run (see
+    # `tooling::refresh_go_install_path`). And exercises the cargo-binstall
+    # auto-bootstrap path (typstyle has no native package on any OS -- see
+    # `tooling::ensure_cargo_binstall`).
     name: Fresh-Install Regression (${{ matrix.os }})
     strategy:
       fail-fast: false
@@ -234,7 +240,17 @@ jobs:
           components: clippy, rustfmt
 
       - name: Set up Rust cache
+        # cache-bin: false is what makes "fresh install" true. The default
+        # (true) also caches ~/.cargo/bin, which persists every tool a
+        # previous run of this job installed with cargo/cargo-binstall
+        # (typstyle, taplo, ...) into the next run -- so those tools were
+        # already on PATH before `fml fmt --install` ran and their install
+        # chains, including the cargo-binstall bootstrap this job is meant
+        # to exercise, were never entered at all. The workspace target
+        # cache (what actually makes this job fast) is unaffected.
         uses: Swatinem/rust-cache@v2
+        with:
+          cache-bin: "false"
 
       - name: Build fml
         run: cargo build
@@ -281,9 +297,14 @@ jobs:
         # [WARN] and a non-clean exit -- unrelated to, and much flakier
         # than, the two things this job exists to catch (both below).
         #
-        # Failure signature 1: `[MISS] <lang> Missing binary: <tool>` right
-        # after that exact tool's own [OK] Successfully installed line --
-        # the in-process BINARY_CACHE staleness bug this job was written for.
+        # Failure signature 1: `[MISS] <lang> Missing binary: <tool>` for a
+        # tool that has its own `[OK] Successfully installed <tool>` line
+        # earlier in the same output -- the in-process BINARY_CACHE
+        # staleness bug this job was written for, and the $GOBIN/$GOPATH/bin
+        # PATH gap in `tooling::refresh_go_install_path`. Scoped to exactly
+        # that intersection on purpose: a tool fml never claimed to install
+        # (no chain available on this runner) reporting [MISS] is a runner
+        # image gap, not a regression, and is reported as a notice instead.
         #
         # Failure signature 2: a convergence-guard [WARN] whose detail says
         # "reports an unparseable version" specifically (as opposed to
@@ -295,6 +316,16 @@ jobs:
         # the registry, which an already-running process's environment
         # block never picks up on its own.
         shell: bash
+        env:
+          # This step parses tool names out of fml's own output, so it needs
+          # that output plain: the workflow-level CLICOLOR_FORCE/FORCE_COLOR
+          # (plus GITHUB_ACTIONS, which fml also treats as force-color) wrap
+          # every tool name in SGR escapes, and the extractions below would
+          # then capture escape bytes instead of a name -- matching nothing
+          # and passing the job no matter what fml actually reported.
+          # NO_COLOR takes precedence over all three (see
+          # `ui::no_color_requested`).
+          NO_COLOR: "1"
         run: |
           set +o pipefail
           cd "$RUNNER_TEMP/fml-install-regress"
@@ -304,15 +335,34 @@ jobs:
           fi
           "$fml_bin" fmt --install > fml-output.log 2>&1 || true
           cat fml-output.log
-          if grep -q '\[MISS\]' fml-output.log; then
-            echo "::error::fml reported a tool as [MISS] immediately after installing it within the same invocation -- see the log above. This is the exact regression this job exists to catch."
+
+          # Only a [MISS] for a tool fml *itself just installed in this same
+          # invocation* is the regression described above. A bare
+          # `grep -q '[MISS]'` also fires for a tool this runner has no
+          # install chain for at all -- on macOS images that ship no Go,
+          # `gofmt`/`goimports` (fml deliberately installs formatters, not
+          # whole language toolchains) -- which is a gap in the runner
+          # image, not a bug in fml, and made this job unpassable on macOS
+          # for a reason no change to this repo could fix.
+          installed=$(sed -n 's/.*Successfully installed \([^ ]*\).*/\1/p' fml-output.log | sort -u)
+          missing=$(sed -n 's/.*Missing binary: \([^ ]*\).*/\1/p' fml-output.log | sort -u)
+          nonempty() { printf '%s\n' "$1" | sed '/^$/d'; }
+          regressed=$(comm -12 <(nonempty "$installed") <(nonempty "$missing"))
+
+          if [ -n "$regressed" ]; then
+            echo "::error::fml reported as [MISS] tools it had just installed within the same invocation: $(nonempty "$regressed" | tr '\n' ' ')-- see the log above. This is the exact regression this job exists to catch."
             exit 1
           fi
           if grep -q 'unparseable version' fml-output.log; then
             echo "::error::fml could not resolve/run a tool it just installed (reported 'an unparseable version', meaning the post-install probe found nothing to run at all, not just unexpected --version output) -- see the log above."
             exit 1
           fi
-          echo "No [MISS] and no unresolvable just-installed tool reported -- regression check passed."
+
+          uninstallable=$(nonempty "$missing" | grep -vxF -f <(nonempty "$installed") || true)
+          if [ -n "$uninstallable" ]; then
+            echo "::notice::Tolerated: fml never reported installing these on $RUNNER_OS, so their absence is a runner-image gap rather than the install-then-miss regression this job guards: $(nonempty "$uninstallable" | tr '\n' ' ')"
+          fi
+          echo "No just-installed tool reported as missing, and no unresolvable just-installed tool -- regression check passed."
 
   security-audit:
     name: Security Audit
