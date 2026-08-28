@@ -252,6 +252,21 @@ jobs:
         with:
           cache-bin: "false"
 
+      - name: Set up a JDK google-java-format can run on
+        # google-java-format 1.28+ requires JDK 21; the stock ubuntu runner
+        # image still defaults to JDK 17, on which the formatter dies with a
+        # NoClassDefFoundError for an internal javac class. That is a
+        # property of the runner image, not of fml's install chain -- but it
+        # left the java surface permanently [FAIL] in this job's output,
+        # which is exactly the kind of standing red that trains people to
+        # stop reading it. (fml itself now explains that failure instead of
+        # dumping the raw stack trace; see `explain_jvm_incompatibility` in
+        # surfaces/java.rs.)
+        uses: actions/setup-java@v5
+        with:
+          distribution: temurin
+          java-version: "21"
+
       - name: Build fml
         run: cargo build
 
@@ -262,6 +277,11 @@ jobs:
         # so it can't collide with this repo's own formality.toml / dogfood
         # state. Exercises every tool's install chain on all three OSes, not
         # just the handful the original report happened to touch.
+        #
+        # Sample.java and Sample.kt are PascalCase because their own
+        # toolchains require it: ktlint's standard:filename rule fails a
+        # lowercase .kt outright (a violation that says nothing about
+        # installs, which is all this job is here to test).
         shell: bash
         run: |
           set -e
@@ -287,7 +307,7 @@ jobs:
           printf 'key = "value"\n' > sample.toml
           printf '= Heading\n\nSome text.\n' > sample.typ
           printf 'const x = 1;\n' > sample.js
-          printf 'fun main() {}\n' > sample.kt
+          printf 'fun main() {}\n' > Sample.kt
 
       - name: fml fmt --install on a runner with none of the tools pre-cached
         # Deliberately does NOT gate on fml's own exit code: a tool that

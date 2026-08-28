@@ -11,6 +11,81 @@ use super::{
 use std::path::Path;
 use std::time::Instant;
 
+/// Detects the failure google-java-format produces when the `java` on
+/// `PATH` is older than the JDK its bundled javac API was built against.
+///
+/// The raw output is a `NoClassDefFoundError` for an internal javac class
+/// (`com.sun.tools.javac.tree.JCTree$JCAnyPattern`, which only exists in
+/// newer JDKs) followed by twelve frames of JVM stack trace and a node
+/// wrapper's own stack on top of that -- none of which says the one thing
+/// the user needs to know, which is that their JDK is too old for the
+/// formatter. `UnsupportedClassVersionError` is the same situation
+/// detected earlier by the JVM, when the jar's class-file version alone is
+/// already out of range.
+#[must_use]
+fn is_jvm_too_old_for_formatter(message: &str) -> bool {
+  if message.contains("UnsupportedClassVersionError") {
+    return true;
+  }
+  (message.contains("NoClassDefFoundError")
+    || message.contains("ClassNotFoundException"))
+    && (message.contains("com.sun.tools.javac")
+      || message.contains("com/sun/tools/javac"))
+}
+
+/// Returns the JVM's own version line (`java -version` writes to stderr),
+/// e.g. `openjdk version "17.0.13" 2024-10-15`, for naming the actual
+/// culprit in the message below. Only called on the error path.
+#[must_use]
+fn java_version_line() -> Option<String> {
+  let output = create_tool_command("java").arg("-version").output().ok()?;
+  let stderr = String::from_utf8_lossy(&output.stderr);
+  stderr.lines().next().map(str::trim).map(str::to_string)
+}
+
+/// Replaces a raw JVM stack trace with an explanation of what to do about
+/// it, keeping the original text underneath so nothing is hidden.
+///
+/// Applied to the result of every `google-java-format` invocation:
+/// google-java-format 1.28 and newer require JDK 21+, and the JDK a
+/// machine happens to have on `PATH` is entirely outside this tool's
+/// control -- a stock `ubuntu-latest` GitHub runner still defaults to JDK
+/// 17, which is exactly where this fires.
+#[must_use]
+fn explain_jvm_incompatibility(result: SurfaceResult) -> SurfaceResult {
+  let rewrite = |message: String| {
+    if !is_jvm_too_old_for_formatter(&message) {
+      return message;
+    }
+    let found = java_version_line()
+      .map_or_else(String::new, |line| format!(" (found: {line})"));
+    format!(
+      "google-java-format could not run on the JVM on PATH{found}: it \
+       failed to load a javac class that only exists in newer JDKs. \
+       google-java-format 1.28 and newer require JDK 21 or later. Install \
+       a newer JDK and make sure it is the `java` on PATH.\n\nOriginal \
+       error:\n{message}"
+    )
+  };
+
+  let status = match result.status {
+    SurfaceStatus::ViolationsFound { message, diff } => {
+      SurfaceStatus::ViolationsFound {
+        message: rewrite(message),
+        diff,
+      }
+    }
+    SurfaceStatus::ExecutionError { message } => {
+      SurfaceStatus::ExecutionError {
+        message: rewrite(message),
+      }
+    }
+    other => other,
+  };
+
+  SurfaceResult { status, ..result }
+}
+
 /// Typed configuration for Checkstyle, rendered as a Checkstyle XML module
 /// tree. `indent_size` is read from `ResolvedLangConfig::indent_size` — the
 /// same value `fml sync` uses to generate `.editorconfig` — rather than
@@ -235,7 +310,7 @@ impl LanguageSurface for JavaSurface {
     // reorders and de-duplicates imports as part of normal formatting, so
     // there is no separate import-sort pass needed like Python's ruff.
     if ctx.check_only {
-      return diff_check_via_tempcopy(
+      return explain_jvm_incompatibility(diff_check_via_tempcopy(
         &files,
         |scratch| {
           let mut cmd = create_tool_command("google-java-format");
@@ -249,7 +324,7 @@ impl LanguageSurface for JavaSurface {
         },
         self.name(),
         start,
-      );
+      ));
     }
 
     let mut cmd = create_tool_command("google-java-format");
@@ -265,7 +340,7 @@ impl LanguageSurface for JavaSurface {
     cmd.args(&ctx.lang_config.extra_args);
     cmd.current_dir(ctx.root.as_path());
 
-    run_tool_command(self.name(), &mut cmd)
+    explain_jvm_incompatibility(run_tool_command(self.name(), &mut cmd))
   }
 
   fn lint(&self, ctx: &ExecutionContext, fix: bool) -> SurfaceResult {
@@ -667,6 +742,76 @@ mod tests {
       std::fs::read_dir(temp.path()).unwrap().count(),
       1,
       "ctx.root must contain only Main.java after lint pass"
+    );
+  }
+
+  // The real stack trace an ubuntu-latest runner (JDK 17 by default)
+  // produces for google-java-format 1.35, trimmed to the frames that carry
+  // the signature. Without the rewrite this is the entire diagnostic the
+  // user sees for "your JDK is too old".
+  const JDK_TOO_OLD_STACK: &str = "error: com/sun/tools/javac/tree/JCTree$JCAnyPattern\njava.lang.NoClassDefFoundError: com/sun/tools/javac/tree/JCTree$JCAnyPattern\n\tat com.google.googlejavaformat.java.JavaInputAstVisitor.scan(JavaInputAstVisitor.java:369)\nCaused by: java.lang.ClassNotFoundException: com.sun.tools.javac.tree.JCTree$JCAnyPattern\n";
+
+  #[test]
+  fn test_detects_jvm_too_old_signatures() {
+    assert!(is_jvm_too_old_for_formatter(JDK_TOO_OLD_STACK));
+    assert!(is_jvm_too_old_for_formatter(
+      "java.lang.UnsupportedClassVersionError: com/google/googlejavaformat/java/Main has been compiled by a more recent version of the Java Runtime"
+    ));
+  }
+
+  #[test]
+  fn test_does_not_claim_jvm_too_old_for_ordinary_failures() {
+    assert!(!is_jvm_too_old_for_formatter(
+      "Sample.java:1:1: error: class, interface, enum, or record expected"
+    ));
+    assert!(
+      !is_jvm_too_old_for_formatter(
+        "java.lang.NoClassDefFoundError: org/example/Missing"
+      ),
+      "a NoClassDefFoundError for some unrelated class is not evidence \
+       that the JDK is too old for the formatter"
+    );
+  }
+
+  #[test]
+  fn test_explain_jvm_incompatibility_rewrites_only_the_matching_message() {
+    let result = SurfaceResult {
+      surface_name: "java",
+      status: SurfaceStatus::ExecutionError {
+        message: JDK_TOO_OLD_STACK.to_string(),
+      },
+      duration: std::time::Duration::from_millis(1),
+    };
+    let SurfaceStatus::ExecutionError { message } =
+      explain_jvm_incompatibility(result).status
+    else {
+      panic!("status variant must be preserved");
+    };
+    assert!(
+      message.contains("require JDK 21 or later"),
+      "the rewrite must state the actual requirement: {message}"
+    );
+    assert!(
+      message.contains("JCAnyPattern"),
+      "the original error must be kept underneath, not discarded: {message}"
+    );
+
+    let untouched = SurfaceResult {
+      surface_name: "java",
+      status: SurfaceStatus::ViolationsFound {
+        message: "Sample.java:1:1: needs formatting".to_string(),
+        diff: None,
+      },
+      duration: std::time::Duration::from_millis(1),
+    };
+    let SurfaceStatus::ViolationsFound { message, .. } =
+      explain_jvm_incompatibility(untouched).status
+    else {
+      panic!("status variant must be preserved");
+    };
+    assert_eq!(
+      message, "Sample.java:1:1: needs formatting",
+      "an ordinary violation message must pass through verbatim"
     );
   }
 }
