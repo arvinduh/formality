@@ -197,6 +197,88 @@ jobs:
             echo "schema/formality.schema.json unchanged relative to main - no version bump required."
           fi
 
+  install-regression:
+    # Not currently a required branch-protection status check (only
+    # "Library Tests" is) -- adding one is a call for whoever owns branch
+    # protection to make deliberately, not a side effect of adding this job.
+    # This job exists specifically to catch a class of bug `test-lib`'s
+    # ubuntu-only `fml install` step could not: a tool installed within an
+    # `fml ... --install` invocation being reported ToolMissing by the very
+    # next step of that *same* invocation, because a per-process PATH-lookup
+    # cache (`surfaces::tooling::BINARY_CACHE`) memoized the pre-install
+    # "not found" result and was never evicted after the install succeeded.
+    # The bug itself is platform-independent (pure in-process caching, no
+    # OS-specific code path), but the concrete report that caught it was on
+    # a Windows runner with none of the tools pre-cached -- exactly the kind
+    # of clean-machine, first-run state this matrix reproduces on all three
+    # OSes rather than relying on it to only ever repro on Windows again.
+    # This also exercises the cargo-binstall auto-bootstrap path (typstyle
+    # has no native package on any OS -- see `tooling::ensure_cargo_binstall`).
+    name: Fresh-Install Regression (${{ matrix.os }})
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest, windows-latest]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v7
+
+      - name: Set up Rust toolchain
+        uses: dtolnay/rust-toolchain@1.97.1
+        with:
+          components: clippy, rustfmt
+
+      - name: Set up Rust cache
+        uses: Swatinem/rust-cache@v2
+
+      - name: Build fml
+        run: cargo build
+
+      - name: Scaffold a synthetic multi-surface project
+        # A small project touching one surface per package-manager family
+        # in play here (taplo/npm-or-binstall for toml, prettier/npm for
+        # markdown+yaml, ruff/uv-or-pip for python, typstyle/binstall-or-
+        # source-compile for typst), in a scratch dir outside the checkout
+        # so it can't collide with this repo's own formality.toml / dogfood
+        # state.
+        shell: bash
+        run: |
+          set -e
+          mkdir -p "$RUNNER_TEMP/fml-install-regress"
+          cd "$RUNNER_TEMP/fml-install-regress"
+          {
+            echo '[global]'
+            echo 'indent_size = 2'
+            echo 'line_length = 80'
+            echo 'end_of_line = "lf"'
+            echo 'charset = "utf-8"'
+            echo 'insert_final_newline = true'
+            echo 'trim_trailing_whitespace = true'
+          } > formality.toml
+          printf 'key = "value"\n' > sample.toml
+          printf '# Title\n\nSome text.\n' > sample.md
+          printf 'key: value\n' > sample.yaml
+          printf 'x = 1\n' > sample.py
+          printf '= Heading\n\nSome text.\n' > sample.typ
+
+      - name: fml fmt --install on a runner with none of the tools pre-cached
+        shell: bash
+        run: |
+          set -o pipefail
+          cd "$RUNNER_TEMP/fml-install-regress"
+          fml_bin="$GITHUB_WORKSPACE/target/debug/fml"
+          if [ "$RUNNER_OS" = "Windows" ]; then
+            fml_bin="$GITHUB_WORKSPACE/target/debug/fml.exe"
+          fi
+          "$fml_bin" fmt --install 2>&1 | tee fml-output.log
+          status="${PIPESTATUS[0]}"
+          if grep -q '\[MISS\]' fml-output.log; then
+            echo "::error::fml reported a tool as [MISS] immediately after installing it within the same invocation -- see the log above. This is the exact regression this job exists to catch."
+            exit 1
+          fi
+          exit "$status"
+
   security-audit:
     name: Security Audit
     runs-on: ubuntu-latest
