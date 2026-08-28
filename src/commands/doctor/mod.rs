@@ -48,7 +48,39 @@ pub fn install_missing_tools(missing: &[ToolInfo]) -> bool {
   println!("\n{}", separator.dimmed());
   println!("{}", "Installing Missing / Stale Toolchains:".bold().cyan());
 
+  // Bootstrap cargo-binstall once, up front, if any tool here would prefer
+  // it and it isn't on PATH yet. Tools like typstyle/tinymist have no real
+  // native package on any OS -- cargo-binstall (a prebuilt binary, fetched
+  // from the crate's GitHub releases) is their only non-source-compile
+  // install path everywhere, including Linux. Without this, a chain would
+  // silently skip past it (since `CargoBinstall::is_available()` is false)
+  // straight to the `cargo install --locked` source-compile fallback.
+  if !crate::surfaces::has_cargo_binstall()
+    && missing.iter().any(|tool| {
+      crate::surfaces::tool_would_benefit_from_cargo_binstall_bootstrap(
+        tool.binary,
+      )
+    })
+  {
+    println!(
+      "\n  {} Bootstrapping {} (prebuilt-binary installer for cargo crates)...",
+      "[INSTALL]".cyan().bold(),
+      "cargo-binstall".bold()
+    );
+    if crate::surfaces::ensure_cargo_binstall() {
+      println!("    {} cargo-binstall is ready", "[OK]  ".green().bold());
+    } else {
+      println!(
+        "    {} Could not bootstrap cargo-binstall (no cargo, no network, \
+         or the install script failed) -- tools that need it will fall back \
+         to source-compiling instead.",
+        "[WARN]".yellow().bold()
+      );
+    }
+  }
+
   let mut all_ok = true;
+  let mut summary_rows: Vec<InstallSummaryRow> = Vec::new();
 
   for tool in missing {
     if let Some((program, args)) = tool.get_auto_install_cmd() {
@@ -65,6 +97,17 @@ pub fn install_missing_tools(missing: &[ToolInfo]) -> bool {
 
       match cmd.status() {
         Ok(status) if status.success() => {
+          // The preflight scan that put this tool in `missing` already
+          // called `check_binary_exists(tool.binary)` and memoized the miss
+          // in `BINARY_CACHE` (`surfaces::tooling`). Evict that entry now
+          // that the install just succeeded, so every lookup for the rest
+          // of this process -- including the `Runner::run` pass that
+          // executes right after `install_missing_tools` returns -- sees
+          // the binary on `PATH` instead of replaying the stale "not
+          // found" result and reporting a tool we just installed as still
+          // missing.
+          crate::surfaces::forget_binary(tool.binary);
+
           // Convergence guard: a successful install exit code only proves
           // the package manager *ran* to completion, not that the binary it
           // produced actually reports the pinned version — re-probe and
@@ -86,6 +129,12 @@ pub fn install_missing_tools(missing: &[ToolInfo]) -> bool {
                 "[OK]  ".green().bold(),
                 tool.binary.bold()
               );
+              summary_rows.push(InstallSummaryRow {
+                binary: tool.binary,
+                installer: program.clone(),
+                outcome: InstallOutcome::Ok,
+                detail: expected.to_string(),
+              });
             } else {
               let actual_str = actual
                 .map(|v| v.to_string())
@@ -99,6 +148,12 @@ pub fn install_missing_tools(missing: &[ToolInfo]) -> bool {
                 tool.binary.bold()
               );
               all_ok = false;
+              summary_rows.push(InstallSummaryRow {
+                binary: tool.binary,
+                installer: program.clone(),
+                outcome: InstallOutcome::Warn,
+                detail: format!("reports {actual_str}, expected {expected}"),
+              });
             }
           } else {
             println!(
@@ -106,6 +161,12 @@ pub fn install_missing_tools(missing: &[ToolInfo]) -> bool {
               "[OK]  ".green().bold(),
               tool.binary.bold()
             );
+            summary_rows.push(InstallSummaryRow {
+              binary: tool.binary,
+              installer: program.clone(),
+              outcome: InstallOutcome::Ok,
+              detail: String::new(),
+            });
           }
         }
         Ok(status) => {
@@ -116,6 +177,12 @@ pub fn install_missing_tools(missing: &[ToolInfo]) -> bool {
             status.code().unwrap_or(1)
           );
           all_ok = false;
+          summary_rows.push(InstallSummaryRow {
+            binary: tool.binary,
+            installer: program.clone(),
+            outcome: InstallOutcome::Fail,
+            detail: format!("exit code {}", status.code().unwrap_or(1)),
+          });
         }
         Err(e) => {
           println!(
@@ -125,6 +192,12 @@ pub fn install_missing_tools(missing: &[ToolInfo]) -> bool {
             e
           );
           all_ok = false;
+          summary_rows.push(InstallSummaryRow {
+            binary: tool.binary,
+            installer: program.clone(),
+            outcome: InstallOutcome::Fail,
+            detail: e.to_string(),
+          });
         }
       }
     } else {
@@ -135,10 +208,87 @@ pub fn install_missing_tools(missing: &[ToolInfo]) -> bool {
         tool.install_hint
       );
       all_ok = false;
+      summary_rows.push(InstallSummaryRow {
+        binary: tool.binary,
+        installer: "-".to_string(),
+        outcome: InstallOutcome::NoInstaller,
+        detail: tool.install_hint.to_string(),
+      });
     }
   }
 
+  print_install_summary_table(&summary_rows);
+
   all_ok
+}
+
+/// One row of the recap table [`print_install_summary_table`] renders after
+/// every tool in a `--install` run has been attempted. Kept separate from
+/// the live `[INSTALL]`/`[OK]`/`[FAIL]` lines printed during the loop above
+/// -- those are progress output for a run that can take minutes (source
+/// compiles included), this is the "what actually happened, at a glance"
+/// recap once it's done, the same relationship `fml doctor`'s own scan
+/// table has to its live tool-by-tool output.
+struct InstallSummaryRow {
+  binary: &'static str,
+  installer: String,
+  outcome: InstallOutcome,
+  detail: String,
+}
+
+/// Outcome of one tool's install attempt, for [`InstallSummaryRow`].
+enum InstallOutcome {
+  /// Installed and (where a pin exists) confirmed at the expected version.
+  Ok,
+  /// Installed, but the convergence guard above found its reported version
+  /// didn't match the pin.
+  Warn,
+  /// The installer command ran and failed, or failed to run at all.
+  Fail,
+  /// No installer chain entry was available at all -- manual install only.
+  NoInstaller,
+}
+
+/// Renders and prints the post-install recap table: one row per tool this
+/// `install_missing_tools` call attempted, its installer, and the outcome.
+/// A no-op if `rows` is empty (shouldn't happen -- `install_missing_tools`
+/// already returns early when `missing` is empty -- but keeps this function
+/// safe to call unconditionally regardless).
+fn print_install_summary_table(rows: &[InstallSummaryRow]) {
+  if rows.is_empty() {
+    return;
+  }
+
+  println!("\n{}", "Install Summary:".bold().cyan());
+
+  let mut table = Table::new(vec![
+    Column::new(Cell::text("")).width(WidthPolicy::Fixed(10)),
+    Column::new(Cell::text("")).width(WidthPolicy::Fixed(20)),
+    Column::new(Cell::text("")).width(WidthPolicy::Fixed(14)),
+    Column::new(Cell::text("")).width(WidthPolicy::Auto),
+  ])
+  .layout(Layout::compact().indent(2).padding(0, 1));
+
+  for row in rows {
+    let (label, style) = match row.outcome {
+      InstallOutcome::Ok => ("[OK]  ", Style::Ok),
+      InstallOutcome::Warn => ("[WARN]", Style::Warn),
+      InstallOutcome::Fail => ("[FAIL]", Style::Error),
+      InstallOutcome::NoInstaller => ("[MISS]", Style::Warn),
+    };
+    table.add_row(Row::new(vec![
+      Cell::styled(label, style),
+      Cell::styled(row.binary, Style::Tool),
+      Cell::styled(row.installer.as_str(), Style::Dim),
+      Cell::styled(row.detail.as_str(), Style::Dim),
+    ]));
+  }
+
+  let palette = Palette::detect();
+  let rendered = render(&table, &palette);
+  if !rendered.is_empty() {
+    println!("{rendered}");
+  }
 }
 
 /// Collect the tools required by `surfaces` for the given actions (format and/or

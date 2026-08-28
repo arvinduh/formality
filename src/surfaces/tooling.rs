@@ -713,6 +713,25 @@ pub fn resolve_binary_path(binary: &str) -> Option<PathBuf> {
   resolved
 }
 
+/// Evicts `binary`'s entry (if any) from [`BINARY_CACHE`], forcing the next
+/// [`resolve_binary_path`]/[`check_binary_exists`] call for it to re-hit the
+/// filesystem instead of returning a stale memoized result.
+///
+/// Required after a successful install performed *within the same process*
+/// (`fml fmt --install`, `fml lint --install`, `fml doctor --install`): the
+/// preflight scan that decided a tool needed installing already called
+/// [`check_binary_exists`] on it and memoized the miss. Without evicting that
+/// entry here, every lookup for the rest of this invocation -- including the
+/// one the just-installed tool's own surface makes before actually running
+/// it -- would keep reading the pre-install "not found" result and report
+/// the tool as still missing, even though the installer just placed it on
+/// `PATH` and a fresh lookup would find it immediately.
+pub fn forget_binary(binary: &str) {
+  let cache = BINARY_CACHE.get_or_init(|| Mutex::new(HashMap::new()));
+  let mut guard = cache.lock().unwrap_or_else(|e| e.into_inner());
+  guard.remove(binary);
+}
+
 /// Returns whether `binary` is resolvable on `PATH`, memoized per-process so
 /// repeated checks for the same binary don't re-hit the filesystem.
 #[must_use]
@@ -781,6 +800,135 @@ pub fn lint_fix_unsupported(
 #[must_use]
 pub fn has_cargo_binstall() -> bool {
   check_binary_exists("cargo") && check_binary_exists("cargo-binstall")
+}
+
+/// Memoizes the outcome of [`ensure_cargo_binstall`]'s bootstrap attempt for
+/// the lifetime of this process: `None` means it hasn't been tried yet,
+/// `Some(bool)` records whether `cargo-binstall` was available afterward.
+/// Shared across every tool in a single `fml ... --install` invocation so a
+/// run that needs `cargo-binstall` for several tools (e.g. `typstyle` and a
+/// `taplo`/`ruff` fallback) only pays the network round-trip once, and a
+/// failed/offline attempt doesn't get retried per tool.
+static BINSTALL_BOOTSTRAP: OnceLock<Mutex<Option<bool>>> = OnceLock::new();
+
+/// Returns whether any step in `chain` would use `cargo-binstall`.
+#[must_use]
+pub fn chain_wants_cargo_binstall(chain: &[InstallMethod]) -> bool {
+  chain
+    .iter()
+    .any(|m| matches!(m, InstallMethod::CargoBinstall(_)))
+}
+
+/// Runs `cargo-binstall`'s official prebuilt-binary install script, so
+/// bootstrapping it never itself falls back to compiling `cargo-binstall`
+/// from source. Uses the same `curl ... | sh` pattern rustup's own installer
+/// documents (`--proto '=https' --tlsv1.2 -sSf`) on Linux/macOS, and the
+/// equivalent PowerShell script on Windows. Returns `false` (rather than
+/// propagating an error) on any failure to run the script -- a missing
+/// `curl`/`powershell`, no network, or a non-zero exit -- so the caller can
+/// fall through to the next installer in the chain instead of aborting.
+fn run_cargo_binstall_bootstrap() -> bool {
+  #[cfg(windows)]
+  {
+    std::process::Command::new("powershell")
+      .args([
+        "-NoProfile",
+        "-NonInteractive",
+        "-ExecutionPolicy",
+        "Bypass",
+        "-Command",
+        "Set-ExecutionPolicy Unrestricted -Scope Process -Force; \
+         iex (iwr 'https://raw.githubusercontent.com/cargo-bins/cargo-binstall/main/install-from-binstall-release.ps1' -UseBasicParsing).Content",
+      ])
+      .status()
+      .is_ok_and(|status| status.success())
+  }
+  #[cfg(not(windows))]
+  {
+    if !check_binary_exists("sh") || !check_binary_exists("curl") {
+      return false;
+    }
+    std::process::Command::new("sh")
+      .arg("-c")
+      .arg(
+        "curl -L --proto '=https' --tlsv1.2 -sSf \
+         https://raw.githubusercontent.com/cargo-bins/cargo-binstall/main/install-from-binstall-release.sh \
+         | sh",
+      )
+      .status()
+      .is_ok_and(|status| status.success())
+  }
+}
+
+/// Ensures `cargo-binstall` is available, bootstrapping it via its official
+/// install script (a real prebuilt binary for Linux/macOS/Windows, not a
+/// source compile) if `cargo` is present but `cargo-binstall` itself isn't
+/// yet on `PATH`.
+///
+/// This exists so tools with no genuine native package anywhere (`typstyle`,
+/// `tinymist`; `taplo`/`ruff` as a fallback) get a real prebuilt-binary
+/// install path on every OS instead of silently dropping straight to
+/// `cargo install --locked` source compilation just because `cargo-binstall`
+/// itself hadn't been bootstrapped yet. Side-effecting (spawns a network
+/// request) and memoized at most once per process via [`BINSTALL_BOOTSTRAP`]
+/// -- callers must only invoke this from an actual `--install` code path,
+/// never from a read-only status scan (`fml doctor` without `--install`,
+/// `fml fmt`/`lint` preflight without `--install`), which must stay free of
+/// side effects.
+#[must_use]
+pub fn ensure_cargo_binstall() -> bool {
+  if has_cargo_binstall() {
+    return true;
+  }
+  if !check_binary_exists("cargo") {
+    return false;
+  }
+
+  let cell = BINSTALL_BOOTSTRAP.get_or_init(|| Mutex::new(None));
+  let mut guard = cell.lock().unwrap_or_else(|e| e.into_inner());
+  if let Some(available) = *guard {
+    return available;
+  }
+
+  let ran_ok = run_cargo_binstall_bootstrap();
+  if ran_ok {
+    // The install script may have placed the binary in a PATH directory
+    // whose "missing" result is already memoized from an earlier lookup
+    // this process -- evict it so the recheck below hits the filesystem.
+    forget_binary("cargo-binstall");
+  }
+  let available = has_cargo_binstall();
+  *guard = Some(available);
+  available
+}
+
+/// Returns whether `binary`'s install chain would *actually* benefit from
+/// bootstrapping `cargo-binstall` right now: its chain references
+/// `CargoBinstall` at all, **and** with `cargo-binstall` unavailable the
+/// chain's current first-available method is the `cargo install --locked`
+/// source-compile fallback (or nothing at all).
+///
+/// Deliberately narrower than "the chain merely contains a `CargoBinstall`
+/// step": `taplo`'s chain lists `CargoBinstall` first but falls through to
+/// `Npm` well before reaching the `Cargo` compile step, and on most runners
+/// `npm` is already on `PATH` -- bootstrapping `cargo-binstall` there would
+/// spend a network round-trip changing nothing about which installer
+/// actually runs. This only returns `true` for the case the bootstrap
+/// exists to fix: a tool that would otherwise silently drop to compiling
+/// from source (`typstyle`, `tinymist`, or `taplo`/`ruff` on a runner with
+/// no Node/Python toolchain at all).
+#[must_use]
+pub fn tool_would_benefit_from_cargo_binstall_bootstrap(binary: &str) -> bool {
+  let Some(chain) = install_chain_for(binary) else {
+    return false;
+  };
+  if !chain_wants_cargo_binstall(chain) {
+    return false;
+  }
+  matches!(
+    selected_install_method_for(binary),
+    None | Some(InstallMethod::Cargo { .. })
+  )
 }
 
 /// Creates a `Command` with proper handling for Windows batch files (.cmd/.bat)
@@ -1486,6 +1634,114 @@ mod tests {
       guard.get(existing).map(Option::is_some),
       Some(existing_result)
     );
+  }
+
+  // Regression coverage for the bug this PR fixes: a tool installed within
+  // an `fml ... --install` invocation was reported ToolMissing by the very
+  // next step of the *same* invocation, because the preflight scan's
+  // "not found" result stayed memoized in BINARY_CACHE for the rest of the
+  // process. `forget_binary` is the fix -- these tests lock its contract
+  // directly against the cache rather than against a real install (which
+  // would need a real package manager and network access to exercise).
+  #[test]
+  fn test_forget_binary_evicts_a_stale_cached_miss() {
+    let binary = "__forget_binary_test_stale_miss__";
+
+    // Prime the cache exactly the way a preflight scan does when a tool is
+    // still missing: a memoized `None`.
+    {
+      let cache = BINARY_CACHE.get_or_init(|| Mutex::new(HashMap::new()));
+      let mut guard = cache.lock().unwrap_or_else(|e| e.into_inner());
+      guard.insert(binary.to_string(), None);
+    }
+    assert!(
+      !check_binary_exists(binary),
+      "check_binary_exists must read the primed cache entry, not re-probe PATH"
+    );
+
+    forget_binary(binary);
+
+    // The entry must be gone entirely, not just still `None` -- leaving a
+    // `None` behind would be exactly the bug this function exists to fix.
+    {
+      let cache = BINARY_CACHE.get().expect("cache should be initialized");
+      let guard = cache.lock().unwrap_or_else(|e| e.into_inner());
+      assert!(
+        !guard.contains_key(binary),
+        "forget_binary must remove the cache entry entirely"
+      );
+    }
+
+    // And the next lookup must actually re-probe (re-populating the entry),
+    // not just leave it absent forever.
+    let _ = check_binary_exists(binary);
+    let cache = BINARY_CACHE.get().expect("cache should be initialized");
+    let guard = cache.lock().unwrap_or_else(|e| e.into_inner());
+    assert!(
+      guard.contains_key(binary),
+      "the lookup right after forget_binary must repopulate the cache"
+    );
+  }
+
+  #[test]
+  fn test_forget_binary_is_a_noop_for_a_binary_never_looked_up() {
+    // Must not panic when called for a binary `install_missing_tools` is
+    // about to install but that was never actually looked up this process
+    // (e.g. a tool added to `missing` via a path that skipped the usual
+    // `lookup_tool_info` preflight probe).
+    forget_binary("__forget_binary_test_never_looked_up__");
+  }
+
+  // Coverage for the "at least one real prebuilt-binary installer per OS"
+  // gap this PR also fixes: typstyle/tinymist/taplo have no genuine native
+  // package anywhere, so cargo-binstall (a real prebuilt binary, not a
+  // source compile) is their only non-source-compile path on every OS,
+  // Linux included.
+  #[test]
+  fn test_chain_wants_cargo_binstall() {
+    let typstyle_chain =
+      install_chain_for("typstyle").expect("typstyle must have a chain");
+    assert!(chain_wants_cargo_binstall(typstyle_chain));
+
+    // rustfmt's chain is rustup-only -- must not spuriously report wanting
+    // cargo-binstall just because *some* chain does.
+    let rustfmt_chain =
+      install_chain_for("rustfmt").expect("rustfmt must have a chain");
+    assert!(!chain_wants_cargo_binstall(rustfmt_chain));
+  }
+
+  #[test]
+  fn test_every_source_compile_only_cargo_tool_offers_cargo_binstall_first() {
+    // If any of these ever loses its CargoBinstall step, the *only*
+    // remaining install path on an OS without a matching Brew/Scoop/Winget
+    // entry (Linux, for all three) becomes compiling from source -- exactly
+    // the multi-minute typstyle build the bug report was filed over.
+    for binary in ["typstyle", "tinymist", "taplo"] {
+      let chain = install_chain_for(binary)
+        .unwrap_or_else(|| panic!("{binary} must have a registered chain"));
+      assert!(
+        chain_wants_cargo_binstall(chain),
+        "{binary}'s chain must include CargoBinstall -- otherwise Linux has \
+         no real prebuilt-binary install path for it at all"
+      );
+    }
+  }
+
+  #[test]
+  fn test_tool_would_benefit_from_cargo_binstall_bootstrap_unknown_binary() {
+    // A binary with no registered chain at all must never claim it would
+    // benefit from bootstrapping cargo-binstall -- there's nothing to
+    // select an installer from.
+    assert!(!tool_would_benefit_from_cargo_binstall_bootstrap(
+      "__no_such_registered_tool__"
+    ));
+  }
+
+  #[test]
+  fn test_tool_would_benefit_from_cargo_binstall_bootstrap_rustup_only_chain() {
+    // rustfmt's chain never references cargo-binstall at all, so it must
+    // never trigger a bootstrap attempt regardless of what's on PATH.
+    assert!(!tool_would_benefit_from_cargo_binstall_bootstrap("rustfmt"));
   }
 
   #[test]
