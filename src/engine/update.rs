@@ -130,6 +130,11 @@ pub fn parse_latest_tag_from_json(body: &str) -> Option<String> {
 }
 
 /// Compares a release tag (e.g. "v0.2.0" or "0.2.0") with the current version.
+///
+/// Both sides are scraped by [`Version::parse`] (the custom extraction layer —
+/// it tolerates the `v` prefix GitHub tags carry); the `>` that decides the
+/// banner is `semver`-backed via [`Version`]'s `Ord`. An unparseable tag can
+/// never trip the banner: it yields `false`, not a spurious "update available".
 #[must_use]
 pub fn is_newer_version(latest_tag: &str, current_version: &str) -> bool {
   match (Version::parse(latest_tag), Version::parse(current_version)) {
@@ -273,6 +278,20 @@ mod tests {
     assert!(!is_newer_version("v0.0.9", "0.1.0"));
     assert!(!is_newer_version("https", "0.1.0"));
     assert!(!is_newer_version("", "0.1.0"));
+  }
+
+  #[test]
+  fn test_is_newer_version_prerelease_transitions() {
+    // The semver-backed ordering the doc-comment now relies on: a final
+    // release supersedes its own prereleases; a prerelease never supersedes
+    // the matching final release; prereleases order among themselves.
+    assert!(is_newer_version("v1.0.0", "1.0.0-rc.1"));
+    assert!(!is_newer_version("v1.0.0-rc.1", "1.0.0"));
+    assert!(is_newer_version("v1.0.0-rc.2", "1.0.0-rc.1"));
+    assert!(!is_newer_version("v1.0.0-rc.1", "1.0.0-rc.2"));
+    assert!(!is_newer_version("v1.0.0-rc.1", "1.0.0-rc.1"));
+    // A higher release with a prerelease tag still beats a lower release.
+    assert!(is_newer_version("v1.2.0-beta", "1.1.0"));
   }
 
   #[test]
