@@ -1,9 +1,18 @@
 mod common;
 
-use common::{fix_cmd, fmt_cmd, init_git_repo, run_cli, temp_repo};
+use common::{fix_cmd, fmt_cmd, init_git_repo, lint_cmd, run_cli, temp_repo};
 use fml::cli::Commands;
 use std::fs;
 use std::path::PathBuf;
+
+/// `true` only when both tools the markdown surface drives are installed, so a
+/// `fml fix` run actually exercises the lint pass *and* the format pass rather
+/// than bailing out early with a `ToolMissing`.
+fn markdown_toolchain_available() -> bool {
+  fml::surfaces::check_binary_exists("prettier")
+    && (fml::surfaces::check_binary_exists("markdownlint-cli2")
+      || fml::surfaces::check_binary_exists("markdownlint"))
+}
 
 #[test]
 fn test_fix_command_rust_lifecycle() {
@@ -240,6 +249,60 @@ fn test_fix_command_javascript_composite_lifecycle() {
   } else {
     assert_ne!(exit_code, 0);
   }
+}
+
+/// Issue #116: the lint pass records an MD013 long-line violation that
+/// markdownlint cannot auto-fix, then the format pass wraps the line with
+/// prettier. `fml fix` must re-check the surface afterwards and report the
+/// final, clean state: `[PASS]` and exit 0, with the file left correctly
+/// wrapped.
+#[test]
+fn test_fix_command_reports_pass_when_format_pass_resolves_lint_violation() {
+  if !markdown_toolchain_available() {
+    return;
+  }
+
+  // One over-long prose line (~135 cols) and nothing else wrong. markdownlint
+  // flags MD013 (default line_length 80); MD013 is not in markdownlint's
+  // auto-fixable set, so the lint pass genuinely records a violation.
+  let long_line = "This is a long sentence of ordinary prose that will exceed \
+                   the configured line length limit for sure and then some \
+                   more words to be safe.";
+  let doc = format!("# Title\n\n{long_line}\n");
+  let temp = temp_repo(&[("doc.md", doc.as_str())]);
+  let root = temp.path();
+  let doc_md = root.join("doc.md");
+
+  assert_eq!(run_cli(root, fix_cmd(&["markdown"])), 0);
+
+  // prettier's prose-wrap pass (default `--prose-wrap=always`) rewrapped the
+  // line, so the file on disk is now within the limit ...
+  let formatted = fs::read_to_string(&doc_md).unwrap();
+  assert!(formatted.contains("# Title"));
+  assert!(
+    formatted.lines().all(|l| l.chars().count() <= 80),
+    "expected every line wrapped to <=80 cols, got:\n{formatted}"
+  );
+
+  // ... and a subsequent plain lint agrees the tree is clean.
+  assert_eq!(run_cli(root, lint_cmd(false, &["markdown"])), 0);
+}
+
+/// Issue #116, inverse guard: a violation that *neither* pass can fix must
+/// still fail. Two top-level headings trip MD025 — markdownlint has no
+/// auto-fix for it and prettier does not merge headings — so `fml fix` must
+/// still report `[FAIL]` and exit non-zero. The re-check must not turn into
+/// "fix always succeeds".
+#[test]
+fn test_fix_command_still_fails_when_no_pass_resolves_violation() {
+  if !markdown_toolchain_available() {
+    return;
+  }
+
+  let temp = temp_repo(&[("doc.md", "# First Heading\n\n# Second Heading\n")]);
+  let root = temp.path();
+
+  assert_ne!(run_cli(root, fix_cmd(&["markdown"])), 0);
 }
 
 #[test]

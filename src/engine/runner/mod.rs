@@ -11,7 +11,7 @@ use colored::Colorize;
 use rayon::prelude::*;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
-use std::time::Instant;
+use std::time::{Duration, Instant};
 
 /// Action type dispatched by the runner across target language surfaces.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -136,11 +136,44 @@ impl Runner {
           })
           .collect();
 
-        // Merge results across both stages per surface
+        // Stage 3: targeted re-lint (check-only) for surfaces whose lint
+        // pass reported violations. The format pass runs *after* the lint
+        // pass, so a violation the linter could not auto-fix may already be
+        // gone by now (e.g. markdownlint's MD013 long line that prettier
+        // then wrapped). Re-checking only those surfaces keeps the common
+        // clean case free of a third lint: a surface that passed the lint
+        // pass is not re-run, and the format pass's own result stays
+        // authoritative for it.
+        let recheck_results: Vec<Option<SurfaceResult>> = surfaces
+          .par_iter()
+          .zip(&lint_results)
+          .map(|(surface, lint_res)| {
+            if matches!(lint_res.status, SurfaceStatus::ViolationsFound { .. })
+            {
+              let ctx = build_ctx(
+                surface.as_ref(),
+                config,
+                &shared_root,
+                &shared_paths,
+                &global_config,
+                &shared_candidates,
+                false,
+              );
+              Some(surface.lint(&ctx, false))
+            } else {
+              None
+            }
+          })
+          .collect();
+
+        // Merge results across all stages per surface
         lint_results
           .into_iter()
           .zip(fmt_results)
-          .map(|(lint_res, fmt_res)| combine_fix_results(lint_res, fmt_res))
+          .zip(recheck_results)
+          .map(|((lint_res, fmt_res), recheck)| {
+            combine_fix_results(lint_res, fmt_res, recheck)
+          })
           .collect()
       }
       _ => surfaces
@@ -518,14 +551,28 @@ fn build_ctx(
   }
 }
 
+/// Merges the per-surface results of `fml fix`'s lint pass and format pass
+/// into one reported status.
+///
+/// `recheck`, when present, is a check-only lint run performed *after* the
+/// format pass for a surface whose lint pass reported violations (see the
+/// `RunnerAction::Fix` branch in [`Runner::run`]). Its status supersedes the
+/// original lint status so a violation the format pass resolved no longer
+/// reports `[FAIL]`; its duration is folded into the total so the reported
+/// time still reflects all the work done. A surface that passed the lint
+/// pass has no `recheck` and its outcome is decided by the format pass alone.
 fn combine_fix_results(
   lint_res: SurfaceResult,
   fmt_res: SurfaceResult,
+  recheck: Option<SurfaceResult>,
 ) -> SurfaceResult {
   let surface_name = lint_res.surface_name;
-  let duration = lint_res.duration + fmt_res.duration;
+  let recheck_duration =
+    recheck.as_ref().map_or(Duration::ZERO, |r| r.duration);
+  let duration = lint_res.duration + fmt_res.duration + recheck_duration;
+  let lint_status = recheck.map_or(lint_res.status, |r| r.status);
 
-  let status = match (lint_res.status, fmt_res.status) {
+  let status = match (lint_status, fmt_res.status) {
     // 1. Execution errors take highest precedence
     (
       SurfaceStatus::ExecutionError { message: m1 },
