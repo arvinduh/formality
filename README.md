@@ -73,32 +73,42 @@ surface? See [docs/new-surface-guide.md](docs/new-surface-guide.md).
 
 ### 1-Line Quick Install
 
+These download the matching prebuilt binary from the latest
+[GitHub Release](https://github.com/arvinduh/formality/releases/latest), verify
+its checksum, and put `fml` on your `PATH`. No Rust toolchain required. The
+installer scripts are generated and published by
+[cargo-dist](https://opensource.axo.dev/cargo-dist/).
+
 #### Linux & macOS
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/arvinduh/formality/main/install.sh | sh
+curl --proto '=https' --tlsv1.2 -LsSf https://github.com/arvinduh/formality/releases/latest/download/fml-installer.sh | sh
 ```
 
 #### Windows (PowerShell)
 
 ```powershell
-irm https://raw.githubusercontent.com/arvinduh/formality/main/install.ps1 | iex
+powershell -c "irm https://github.com/arvinduh/formality/releases/latest/download/fml-installer.ps1 | iex"
 ```
 
-### Package Managers / Cargo
+#### Windows (`.msi`)
 
-#### Fast install via `cargo-binstall` (zero compilation)
+Download and run
+[`fml-x86_64-pc-windows-msvc.msi`](https://github.com/arvinduh/formality/releases/latest/download/fml-x86_64-pc-windows-msvc.msi)
+from the latest release.
+
+> The shorter
+> `raw.githubusercontent.com/arvinduh/formality/main/install.{sh,ps1}` URLs
+> still work — they now forward to the installers above.
+
+### Build from source via `cargo`
+
+`fml` is not published to crates.io; build it from the Git repository (needs a
+Rust toolchain). The trailing `fml` package name is required — the repository
+carries more than one binary-bearing manifest, so the bare form errors.
 
 ```bash
-cargo binstall fml
-```
-
-#### Build from source via `cargo`
-
-```bash
-cargo install fml
-# or from the git repository:
-cargo install --git https://github.com/arvinduh/formality
+cargo install --git https://github.com/arvinduh/formality fml
 ```
 
 ### Direct Prebuilt Binaries
@@ -392,8 +402,8 @@ handles every downstream tool (`ruff`, `prettier`, `markdownlint-cli2`, `taplo`,
 ```yaml
 - name: Install fml
   run: |
-    curl -fsSL https://raw.githubusercontent.com/arvinduh/formality/main/install.sh | sh
-    echo "$HOME/.local/bin" >> $GITHUB_PATH
+    curl --proto '=https' --tlsv1.2 -LsSf https://github.com/arvinduh/formality/releases/latest/download/fml-installer.sh | sh
+    echo "$HOME/.cargo/bin" >> "$GITHUB_PATH"
 
 - name: Install tool dependencies
   run: fml install

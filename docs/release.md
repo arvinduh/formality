@@ -6,8 +6,9 @@ today: the crate is intentionally pinned at `0.1.0` pre-release for now (see
 `Cargo.toml` and `editors/vscode/package.json`, which are kept in lockstep by
 `tests/version_lockstep.rs`). The tooling that will eventually own bumping that
 version is tracked separately; this document only covers the mechanics that
-already exist — changelog generation, tagging, and publishing — so they are
-ready to use once version bumps begin.
+already exist — tagging, building, and publishing via
+[cargo-dist](https://opensource.axo.dev/cargo-dist/) — so they are ready to use
+once version bumps begin.
 
 > The `#126` citation below predates the 2026-08-26 repo recreation and no
 > longer resolves — see
@@ -18,28 +19,34 @@ ready to use once version bumps begin.
 Releases are cut from `main` and are driven by
 [Conventional Commits](https://www.conventionalcommits.org/). Every commit
 merged to `main` should follow the `<type>(<scope>): <description>` format
-already used throughout this repository's history (see `git log`). This lets
-[git-cliff](https://git-cliff.org/) derive a structured changelog directly from
-commit messages, and lets a future automated version-bump tool infer the correct
-semver bump (`feat` -> minor, `fix` -> patch, `!`/`BREAKING CHANGE` -> major).
+already used throughout this repository's history (see `git log`). GitHub's
+`--generate-notes` groups the merged PRs into the release body, and a future
+automated version-bump tool can infer the correct semver bump (`feat` -> minor,
+`fix` -> patch, `!`/`BREAKING CHANGE` -> major).
+
+The binary release pipeline is
+[cargo-dist](https://opensource.axo.dev/cargo-dist/):
+`[workspace.metadata.dist]` in `Cargo.toml` is the source of truth for targets,
+installers, and the dist version, and it generates
+`.github/workflows/release.yml`. There is **no** crates.io publish and **no**
+committed `CHANGELOG.md`.
 
 ## Prerequisites
 
-- [`git-cliff`](https://git-cliff.org/) installed locally for previewing
-  changelog output:
+- [`dist`](https://opensource.axo.dev/cargo-dist/) installed locally for
+  previewing what a tag will build:
 
   ```sh
-  cargo install git-cliff --locked
+  curl --proto '=https' --tlsv1.2 -LsSf https://github.com/axodotdev/cargo-dist/releases/download/v0.32.0/cargo-dist-installer.sh | sh
+  dist plan
   ```
 
-  (CI does not require a local install — the workflow below runs it via the
-  `orhun/git-cliff-action` GitHub Action.)
+  (CI installs its own pinned copy — the version in `[workspace.metadata.dist]`
+  `cargo-dist-version` — so a local install is only for previewing.)
 
 - Push access to `main` and permission to push tags.
 - The commit history on `main` since the last tag should already follow
-  Conventional Commits — `git cliff --unreleased` will silently skip anything
-  that doesn't parse, so a noisy changelog usually means a commit message needs
-  fixing before tagging, not after.
+  Conventional Commits so the generated release notes read cleanly.
 
 ## Steps
 
@@ -64,53 +71,51 @@ semver bump (`feat` -> minor, `fix` -> patch, `!`/`BREAKING CHANGE` -> major).
    otherwise a patch bump. Commit this as its own
    `chore(release): bump version to vX.Y.Z` commit.
 
-3. **Preview the changelog.**
+3. **Preview what the tag will build.**
 
    ```sh
-   git cliff --unreleased --tag vX.Y.Z
+   dist plan
    ```
 
-   Review the output for accuracy. If a commit is miscategorized, that usually
-   means its type/scope prefix was wrong — fix it going forward rather than
-   trying to edit history.
+   Confirm all five target archives (`fml-<target>.tar.gz` / `.zip`), the three
+   installers (`fml-installer.sh`, `fml-installer.ps1`,
+   `fml-x86_64-pc-windows-msvc.msi`), and the checksum files are listed.
 
-4. **Generate and commit the changelog.**
-
-   ```sh
-   git cliff --tag vX.Y.Z --output CHANGELOG.md
-   git add CHANGELOG.md
-   git commit -m "chore(release): update changelog for vX.Y.Z"
-   git push origin main
-   ```
-
-5. **Tag the release.**
+4. **Tag the release.**
 
    ```sh
    git tag -a vX.Y.Z -m "vX.Y.Z"
    git push origin vX.Y.Z
    ```
 
-   Pushing the tag triggers `.github/workflows/release.yml`, which:
+   Pushing the tag triggers two workflows in parallel:
+
+   `.github/workflows/release.yml` (cargo-dist), which:
    - Builds the `fml` binary for Linux (x86_64, aarch64), macOS (x86_64,
-     aarch64), and Windows (x86_64) and uploads each archive to the GitHub
-     Release.
+     aarch64), and Windows (x86_64), packaging each as `fml-<target>.tar.gz`
+     (`.zip` on Windows) with a `.sha256` sidecar.
+   - Builds the `shell` / `powershell` / `msi` installers and a combined
+     `sha256.sum`.
+   - Creates the GitHub Release for the tag with
+     `gh release create --generate-notes` (GitHub groups the merged PRs into the
+     body) and marks it the latest release, so `/releases/latest/download/...`
+     resolves here.
+
+   `.github/workflows/release-extras.yml`, which:
    - Builds the VS Code extension `.vsix` package.
    - Generates `schema/formality.schema.json` from the built binary.
-   - Generates the release-scoped changelog section via `git-cliff` and attaches
-     it as `CHANGELOG.md` on the release, and uses it as the GitHub Release
-     body.
-   - Uploads the `.vsix` and the JSON schema as release assets.
-   - Sets `make_latest: true` so GitHub's latest release pointer and
-     `/releases/latest/download/` URLs point to this binary release.
+   - Waits for the release above to exist, then **appends** the `.vsix` and the
+     JSON schema to it as assets (it never creates the release itself — that
+     would race dist).
 
-6. **Verify the published release.**
+5. **Verify the published release.**
 
    Check the [Releases page](https://github.com/arvinduh/formality/releases) for
-   the new tag: confirm all five platform archives, the `.vsix`, and
-   `schema/formality.schema.json` are attached, and that the release notes look
-   correct.
+   the new tag: confirm all five platform archives, the three installers, the
+   `.msi`, the checksum files, the `.vsix`, and `schema/formality.schema.json`
+   are attached, and that the release notes look correct.
 
-7. **Announce / update references.**
+6. **Announce / update references.**
 
    If anything (docs, `#:schema` directives in example `formality.toml` files,
    install instructions) references a specific release URL or version number,
@@ -139,20 +144,23 @@ versions via `#:schema` directives:
 #:schema https://github.com/arvinduh/formality/releases/download/s1.0/formality.schema.json
 ```
 
-### Latest Release Invariant (`make_latest`)
+### Latest Release Invariant
 
 Because binary releases (`v*`) and schema releases (`s*`) share the same GitHub
 Releases space, workflow configuration enforces a strict invariant:
 
-- **Binary releases (`v*`)**: Explicitly set `make_latest: true` in
-  `.github/workflows/release.yml`. This ensures GitHub's `/releases/latest`
-  endpoint, prebuilt binary download URLs (`/releases/latest/download/...`), and
-  install scripts (`install.sh`, `install.ps1`) always resolve to the most
-  recent binary release.
+- **Binary releases (`v*`)**: cargo-dist creates the release without
+  `--prerelease` for a plain `vX.Y.Z` tag, so GitHub marks it the latest
+  release. This keeps GitHub's `/releases/latest` endpoint, the prebuilt
+  download URLs (`/releases/latest/download/...`), and the dist installer assets
+  (`fml-installer.sh` / `fml-installer.ps1`) resolving to the most recent binary
+  release. A `vX.Y.Z-rc.N` tag is published as a prerelease and does not move
+  the latest pointer.
 - **Schema releases (`s*`)**: Explicitly set `make_latest: false` in
   `.github/workflows/schema-release.yml`. This ensures publishing an independent
   schema tag (e.g. `s1.0`, `s1.1`) never overtakes the latest binary release or
-  breaks binary downloads.
+  breaks binary downloads. `s*` tags do not match `release.yml`'s tag filter, so
+  cargo-dist never runs for them.
 
 ### Schema Release Procedure
 
@@ -191,26 +199,15 @@ Releases space, workflow configuration enforces a strict invariant:
    Individual users don't need to hand-edit their own `formality.toml` —
    `fml migrate schema` rewrites their `#:schema` line to the current tag.
 
-## Changelog conventions
+## Release notes
 
-`cliff.toml` at the repository root controls how `git-cliff` groups and formats
-commits. Commit types map to changelog sections as follows:
+Release notes are produced by GitHub's own `gh release create --generate-notes`
+in `.github/workflows/release.yml` (the cargo-dist `host` job). GitHub lists the
+pull requests merged since the previous release and links each contributor.
+There is no committed `CHANGELOG.md` and no `git-cliff` step.
 
-| Commit type      | Changelog section        |
-| ---------------- | ------------------------ |
-| `feat`           | Features                 |
-| `fix`            | Bug Fixes                |
-| `perf`           | Performance              |
-| `refactor`       | Refactor                 |
-| `doc`/`docs`     | Documentation            |
-| `style`          | Styling                  |
-| `test`           | Testing                  |
-| `build`          | Build                    |
-| `ci`             | CI/CD                    |
-| `chore(release)` | (omitted from changelog) |
-| `chore`          | Miscellaneous            |
-| `revert`         | Reverts                  |
-
-Commits that don't match a Conventional Commits prefix are skipped when
-generating the changelog, so keeping commit messages conventional is what keeps
-the changelog useful.
+Keeping PR titles in Conventional Commits form
+(`<type>(<scope>): <description>`) is still what makes the generated notes
+readable, and lets a future version-bump tool infer the semver bump.
+`.github/release.yml` (if added later) can group those PRs into labelled
+sections; nothing at the repo root controls this today.
