@@ -551,43 +551,17 @@ see the example `.vscode/settings.json` in that section.
 
 No plugin required — not even `nvim-lspconfig`. Copy
 [`editors/nvim/formality.lua`](editors/nvim/formality.lua) to
-`~/.config/nvim/plugin/formality.lua` (Neovim 0.10+). It starts `fml lsp` for
-every filetype `fml` formats, rooted at the nearest `formality.toml`, and
-formats on save.
+`~/.config/nvim/plugin/formality.lua` (Neovim 0.10+, verified against 0.11).
 
-The core of it — attach `fml lsp` to the relevant filetypes:
+It uses two autocommands: a `FileType` hook that runs `vim.lsp.start` with
+`cmd = { "fml", "lsp" }` for every filetype `fml` formats (rooted at the nearest
+`formality.toml`), and a `BufWritePost` hook that formats and reloads the
+buffer. Format-on-save runs _after_ the write, not on `BufWritePre`, because
+`fml lsp` declares `textDocumentSync = none` and formats by rewriting the
+**saved file on disk** — doing it before the write makes Neovim warn that the
+file "changed since reading it" on every save.
 
-```lua
-vim.api.nvim_create_autocmd("FileType", {
-  pattern = {
-    "rust", "python", "markdown", "yaml", "json", "jsonc", "toml", "typst",
-    "go", "c", "cpp", "java", "kotlin", "javascript", "typescript",
-  },
-  callback = function(args)
-    local root = vim.fs.root(args.buf, {
-      "formality.toml", ".formality.toml", ".git",
-    })
-    if not root then
-      return
-    end
-    vim.lsp.start({
-      name = "formality",
-      cmd = { "fml", "lsp" },
-      root_dir = root,
-    }, { bufnr = args.buf })
-  end,
-})
-```
-
-Format on save needs one extra detail: `fml lsp` declares
-`textDocumentSync = none` and formats by rewriting the **saved file on disk**,
-so the format request has to run _after_ the write, not before it. The shipped
-[`editors/nvim/formality.lua`](editors/nvim/formality.lua) does this on
-`BufWritePost` and then reloads the buffer (preserving cursor and scroll
-position); formatting in `BufWritePre` instead makes Neovim warn that the file
-"changed since reading it" on every save.
-
-This configuration was verified against Neovim 0.11.
+Edit the file if `fml` isn't on your `PATH`, or to trim the filetype list.
 
 ### Helix
 

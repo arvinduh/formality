@@ -38,7 +38,9 @@ local FILETYPES = {
   "java",
   "kotlin",
   "javascript",
+  "javascriptreact",
   "typescript",
+  "typescriptreact",
 }
 
 local group = vim.api.nvim_create_augroup("formality", { clear = true })
