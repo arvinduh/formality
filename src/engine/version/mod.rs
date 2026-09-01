@@ -345,9 +345,10 @@ enum TokenParse {
 /// Read a version out of one token. Strips surrounding punctuation and a
 /// leading `v`/`go` marker, then tries, in order: the 3-part core plus any
 /// real `-pre`/`+build` suffix (keeps `1.7.0-nightly`, `14.0.0-1ubuntu1`);
-/// then the bare core alone, dropping a suffix or 4th component `semver`
-/// rejects (distro `18.1.8-0ubuntu1~22.04.1`, PyPI `1.35.1.post1` / `0.9.6.dev0`
-/// — which the pre-`semver` parser also ignored).
+/// then the bare core alone, dropping a `-`/`+` suffix or a clean 4th component
+/// `semver` rejects (`18.1.8-0ubuntu1~22.04.1`, `1.35.1.post1`, `0.9.6.dev0` —
+/// which the pre-`semver` parser also ignored). A non-numeric 3rd component
+/// (`0.9.6rc1`, `1.2.x`) is rejected, never zeroed.
 fn classify_token(token: &str) -> TokenParse {
   let cleaned = token.trim_matches(|c: char| "()[]{}<>\"',:;".contains(c));
 
@@ -371,11 +372,13 @@ fn classify_token(token: &str) -> TokenParse {
   if !(2..=4).contains(&comps.len()) || !comps[..2].iter().all(numeric) {
     return TokenParse::NotVersion;
   }
-  // 3rd component is the patch only if it too is a plain integer; any 4th is
-  // dropped. Rebuild from the original text so a leading-zero core still fails.
+  // Patch = a plain-integer 3rd component (any 4th is dropped). A non-numeric
+  // 3rd can't become a patch without fabricating one, so reject rather than
+  // zero it. Rebuild from original text so a leading-zero core still fails.
   let core = match comps.get(2) {
     Some(p) if numeric(p) => format!("{}.{}.{}", comps[0], comps[1], p),
-    _ => format!("{}.{}.0", comps[0], comps[1]),
+    Some(_) => return TokenParse::Rejected,
+    None => format!("{}.{}.0", comps[0], comps[1]),
   };
 
   let parsed = semver::Version::parse(&format!("{core}{suffix}"))

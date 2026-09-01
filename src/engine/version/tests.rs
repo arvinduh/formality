@@ -36,8 +36,17 @@ fn test_version_parsing_direct() {
   assert_eq!(Version::parse("01.2.3"), None);
   assert_eq!(Version::parse("1.2.03"), None);
 
-  // A non-semver *suffix* after a valid core is salvaged down to the bare
-  // `MAJOR.MINOR.PATCH` (the pre-`semver` parser ignored trailing junk too).
+  // A present-but-non-numeric 3rd component cannot become a patch without
+  // fabricating a lower-than-reality `X.Y.0`: reject, don't salvage.
+  // (PEP440 separator-less prereleases like `0.9.6rc1` are real for
+  // pip-installed ruff / yamllint.)
+  assert_eq!(Version::parse("0.9.6rc1"), None);
+  assert_eq!(Version::parse("1.35.dev1"), None);
+  assert_eq!(Version::parse("1.2.x"), None);
+
+  // A non-semver *suffix* after a valid `MAJOR.MINOR.PATCH` core (or a clean
+  // 4th component) is salvaged down to that core — the pre-`semver` parser
+  // ignored trailing junk too, and the patch is preserved, not zeroed.
   assert_eq!(Version::parse("1.0.0-01"), Some(Version::new(1, 0, 0)));
   assert_eq!(
     Version::parse("18.1.8-0ubuntu1~22.04.1"),
@@ -45,6 +54,8 @@ fn test_version_parsing_direct() {
   );
   assert_eq!(Version::parse("1.35.1.post1"), Some(Version::new(1, 35, 1)));
   assert_eq!(Version::parse("0.9.6.dev0"), Some(Version::new(0, 9, 6)));
+  // Dotted separator keeps the patch; only the 4th component is dropped.
+  assert_eq!(Version::parse("0.9.6.rc1"), Some(Version::new(0, 9, 6)));
 
   // First-match-wins is bounded: a malformed-beyond-salvage version-shaped
   // token aborts the scan rather than skipping ahead to a later number.
@@ -94,6 +105,11 @@ fn test_version_extraction_from_tool_banners() {
   );
   let ruff_dev = "ruff 0.9.6.dev0";
   assert_eq!(Version::extract(ruff_dev), Some(Version::new(0, 9, 6)));
+
+  // ...but a PEP440 separator-less prerelease (`0.9.6rc1`) has no clean patch
+  // to keep: it is rejected, not salvaged to a fabricated `0.9.0`.
+  assert_eq!(Version::extract("ruff 0.9.6rc1"), None);
+  assert_eq!(normalize_probed_version("ruff", "ruff 0.9.6rc1"), None);
 
   let prettier = "prettier 3.5.1";
   assert_eq!(Version::extract(prettier), Some(Version::new(3, 5, 1)));
