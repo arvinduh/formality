@@ -1,17 +1,18 @@
 # Release Procedure
 
-This document describes how a release of `fml` is cut once the project starts
-publishing versioned releases. It is not describing something that happens
-today: the crate is intentionally pinned at `0.1.0` pre-release for now (see
-`Cargo.toml` and `editors/vscode/package.json`, which are kept in lockstep by
-`tests/version_lockstep.rs`). The tooling that will eventually own bumping that
-version is tracked separately; this document only covers the mechanics that
-already exist — changelog generation, tagging, and publishing — so they are
-ready to use once version bumps begin.
+This document describes how a release of `fml` is cut. Versioned releases are
+live: several `v*` releases have already shipped, each with published binaries
+for five targets, a generated changelog, and attached schema/extension assets.
+The mechanics below — changelog generation, tagging, and publishing — are in
+continuous use, and this is the document to follow before cutting the next one.
 
-> The `#126` citation below predates the 2026-08-26 repo recreation and no
-> longer resolves — see
-> [`docs/INDEX.md`](INDEX.md#note-on-pre-recreation-issuepr-numbers).
+For the current version, read `version` in `Cargo.toml` (do not restate it here
+— it goes stale). `editors/vscode/package.json` is kept identical to it,
+enforced by `tests/version_lockstep.rs`.
+
+The version bump lands as its own `chore(release): bump version to X.Y.Z` commit
+through a pull request rather than a direct push to `main`; pushing the matching
+`vX.Y.Z` tag afterward is what drives changelog generation and publishing.
 
 ## Overview
 
@@ -20,8 +21,8 @@ Releases are cut from `main` and are driven by
 merged to `main` should follow the `<type>(<scope>): <description>` format
 already used throughout this repository's history (see `git log`). This lets
 [git-cliff](https://git-cliff.org/) derive a structured changelog directly from
-commit messages, and lets a future automated version-bump tool infer the correct
-semver bump (`feat` -> minor, `fix` -> patch, `!`/`BREAKING CHANGE` -> major).
+commit messages, and makes the right semver bump for a release obvious (`feat`
+-> minor, `fix` -> patch, `!`/`BREAKING CHANGE` -> major).
 
 ## Prerequisites
 
@@ -61,8 +62,9 @@ semver bump (`feat` -> minor, `fix` -> patch, `!`/`BREAKING CHANGE` -> major).
    (they must stay identical — `tests/version_lockstep.rs` enforces this).
    Follow semver based on the changes since the last tag: any `feat` commit
    means at least a minor bump, any breaking change means a major bump,
-   otherwise a patch bump. Commit this as its own
-   `chore(release): bump version to vX.Y.Z` commit.
+   otherwise a patch bump. This lands as its own
+   `chore(release): bump version to X.Y.Z` commit through a pull request, not a
+   direct push to `main`.
 
 3. **Preview the changelog.**
 
@@ -74,14 +76,16 @@ semver bump (`feat` -> minor, `fix` -> patch, `!`/`BREAKING CHANGE` -> major).
    means its type/scope prefix was wrong — fix it going forward rather than
    trying to edit history.
 
-4. **Generate and commit the changelog.**
+4. **Do not commit a changelog.**
 
-   ```sh
-   git cliff --tag vX.Y.Z --output CHANGELOG.md
-   git add CHANGELOG.md
-   git commit -m "chore(release): update changelog for vX.Y.Z"
-   git push origin main
-   ```
+   `CHANGELOG.md` is deliberately **not** checked into the repo. It is generated
+   fresh at release time by `.github/workflows/release.yml` (via
+   `orhun/git-cliff-action` with `--latest --strip header`) when the tag is
+   pushed, and published two ways: as the GitHub Release body and as a
+   `CHANGELOG.md` file attached to the release as an asset. The local
+   `git cliff` invocation in step 3 is a preview only — there is no committed
+   copy to update, and adding one would immediately drift from the release-time
+   output.
 
 5. **Tag the release.**
 
@@ -127,8 +131,8 @@ additive/compatible one. This is deliberately independent of the binary's
 `v{semver}` tag — the two change at different rates, and forcing them to track
 each other (e.g. `s0.1.0` mirroring `v0.1.0`) would either churn the schema tag
 on every binary release or let it silently drift out of a parity it never really
-had. See [`SchemaVersion`](../src/config/schema.rs) and #126 for the original
-design rationale.
+had. See [`SchemaVersion`](../src/config/schema.rs) and
+[ADR 0003](adr/0003-two-tag-release-versioning.md) for the design rationale.
 
 Schema releases publish `schema/formality.schema.json` as an independent GitHub
 Release asset under the corresponding `s{major}.{minor}` tag so users can pin
