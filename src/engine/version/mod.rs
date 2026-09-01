@@ -1,5 +1,16 @@
-//! Tool version detection: `SemVer` parsing, MSRV/MSTV compatibility tables,
-//! and CLI version probing.
+//! Tool version detection, split into two layers with one explicit crossing:
+//!
+//! - **Extraction (custom, kept):** `probe_raw_tool_version_uncached` and
+//!   `classify_token` scrape a version out of frequently-non-semver CLI output
+//!   (`go version go1.27.0 ...`, `0.44`, `18.1.8-0ubuntu1~22.04.1`,
+//!   `1.35.1.post1`). A non-semver suffix or 4th component is salvaged down to
+//!   the bare `MAJOR.MINOR.PATCH`; a malformed core (`01.2.3`) is not.
+//! - **Comparison (`semver`-backed):** [`Version`] ordering/precedence and the
+//!   MSTV "installed >= minimum" check are delegated to the `semver` crate via
+//!   the sole crossing, [`Version::to_semver`].
+//!
+//! A version-shaped token that is invalid semver even bare surfaces as
+//! [`ToolStatus::UnknownVersion`] — never a silently-satisfied MSTV.
 
 /// Minimum Supported Tool Version (MSTV) definitions and registry.
 pub mod mstv;
@@ -92,6 +103,17 @@ pub fn resolve_binary_info(binary: &str) -> Option<(PathBuf, u64)> {
   Some((path, mtime))
 }
 
+/// First line of `text` that contains a digit, else the first non-blank line,
+/// trimmed; `None` when `text` is entirely blank. The crude "looks like it
+/// carries a version" pick the raw-banner scrape has always used.
+fn first_versionish_line(text: &str) -> Option<String> {
+  text
+    .lines()
+    .find(|l| l.chars().any(|c| c.is_ascii_digit()))
+    .or_else(|| text.lines().find(|l| !l.trim().is_empty()))
+    .map(|l| l.trim().to_string())
+}
+
 /// Executes the tool binary with `--version` or `-v` uncached and extracts the raw output line.
 #[must_use]
 pub fn probe_raw_tool_version_uncached(binary: &str) -> Option<String> {
@@ -121,48 +143,25 @@ pub fn probe_raw_tool_version_uncached(binary: &str) -> Option<String> {
 
   if output.status.success() || (binary == "gofmt" && !output.stderr.is_empty())
   {
-    let stdout = String::from_utf8_lossy(&output.stdout).to_string();
-    if !stdout.trim().is_empty() {
-      if let Some(line) = stdout
-        .lines()
-        .find(|l| l.chars().any(|c| c.is_ascii_digit()))
-      {
-        return Some(line.trim().to_string());
-      }
-      if let Some(first_line) = stdout.lines().find(|l| !l.trim().is_empty()) {
-        return Some(first_line.trim().to_string());
-      }
+    if let Some(v) =
+      first_versionish_line(&String::from_utf8_lossy(&output.stdout))
+    {
+      return Some(v);
     }
-    let stderr = String::from_utf8_lossy(&output.stderr).to_string();
-    if !stderr.trim().is_empty() {
-      if let Some(line) = stderr
-        .lines()
-        .find(|l| l.chars().any(|c| c.is_ascii_digit()))
-      {
-        return Some(line.trim().to_string());
-      }
-      if let Some(first_line) = stderr.lines().find(|l| !l.trim().is_empty()) {
-        return Some(first_line.trim().to_string());
-      }
+    if let Some(v) =
+      first_versionish_line(&String::from_utf8_lossy(&output.stderr))
+    {
+      return Some(v);
     }
   }
 
   // Fallback for tools expecting -v or -version
   if let Ok(output_v) = create_tool_command(binary).arg("-v").output()
     && output_v.status.success()
+    && let Some(v) =
+      first_versionish_line(&String::from_utf8_lossy(&output_v.stdout))
   {
-    let stdout = String::from_utf8_lossy(&output_v.stdout).to_string();
-    if !stdout.trim().is_empty() {
-      if let Some(line) = stdout
-        .lines()
-        .find(|l| l.chars().any(|c| c.is_ascii_digit()))
-      {
-        return Some(line.trim().to_string());
-      }
-      if let Some(first_line) = stdout.lines().find(|l| !l.trim().is_empty()) {
-        return Some(first_line.trim().to_string());
-      }
-    }
+    return Some(v);
   }
 
   None
@@ -249,7 +248,9 @@ pub fn probe_tool_version(binary: &str) -> Option<Version> {
   probe_tool_version_at(binary, &get_tool_versions_cache_path())
 }
 
-/// Represents a Semantic Version (`SemVer`) with optional prerelease identifier.
+/// A version *scraped* from a tool's `--version` banner. Owns no ordering
+/// logic of its own: comparison, precedence and the MSTV check are delegated
+/// to `semver` via [`Version::to_semver`].
 #[derive(Debug, Clone, Eq, PartialEq, Hash)]
 pub struct Version {
   /// Major version component.
@@ -274,160 +275,154 @@ impl Version {
     }
   }
 
-  /// Create a new `Version` with prerelease metadata.
+  /// Create a `Version` with prerelease metadata. The prerelease must be a
+  /// valid SemVer identifier (what the parse path always yields); one `semver`
+  /// rejects still constructs but makes [`Version::to_semver`] lossy, so
+  /// ordering stops matching structural equality — a `debug_assert` catches it.
   pub fn with_prerelease(
     major: u64,
     minor: u64,
     patch: u64,
     prerelease: impl Into<String>,
   ) -> Self {
+    let prerelease = prerelease.into();
+    debug_assert!(
+      semver::Prerelease::new(&prerelease).is_ok(),
+      "invalid SemVer prerelease identifier {prerelease:?}"
+    );
     Self {
       major,
       minor,
       patch,
-      prerelease: Some(prerelease.into()),
+      prerelease: Some(prerelease),
     }
   }
 
-  /// Parse a version string directly or extract it from a tool output banner.
+  /// Parse a version string directly, or extract one from a tool banner.
+  /// `None` when there is no version, or when the only version-shaped token is
+  /// malformed beyond salvage (e.g. leading-zero core `01.2.3`) — the caller
+  /// then surfaces [`ToolStatus::UnknownVersion`], not a fabricated number.
   #[must_use]
   pub fn parse(input: &str) -> Option<Self> {
     let trimmed = input.trim();
-    if trimmed.is_empty() {
-      return None;
+    match classify_token(trimmed) {
+      TokenParse::Ok(v) => Some(v),
+      TokenParse::Rejected => None,
+      TokenParse::NotVersion => Self::extract(trimmed),
     }
-
-    if let Some(v) = parse_single_token(trimmed) {
-      return Some(v);
-    }
-
-    Self::extract(trimmed)
   }
 
-  /// Extract the first valid semantic version from a multi-token text string.
+  /// Scan a multi-token banner. The first *version-shaped* token decides the
+  /// result: if valid it wins; if malformed beyond salvage the scan aborts
+  /// with `None` rather than walking on to a later, unrelated number.
   #[must_use]
   pub fn extract(input: &str) -> Option<Self> {
     for token in input.split_whitespace() {
-      if let Some(v) = parse_single_token(token) {
-        return Some(v);
+      match classify_token(token) {
+        TokenParse::Ok(v) => return Some(v),
+        TokenParse::Rejected => return None,
+        TokenParse::NotVersion => {}
       }
     }
     None
   }
 }
 
-fn parse_single_token(token: &str) -> Option<Version> {
-  let cleaned = token.trim_matches(|c: char| {
-    c == '('
-      || c == ')'
-      || c == '['
-      || c == ']'
-      || c == '{'
-      || c == '}'
-      || c == '<'
-      || c == '>'
-      || c == '"'
-      || c == '\''
-      || c == ','
-      || c == ':'
-      || c == ';'
-  });
+// === Extraction / scraping layer (custom domain code — kept, not delegated) ==
+// `semver::Version::parse` can't be pointed straight at tool output, so this
+// layer scrapes a `MAJOR.MINOR.PATCH` core out of the token and hands that to
+// `semver` for the real parse. No ordering semantics live here.
 
-  if cleaned.is_empty() {
-    return None;
-  }
-
-  // Strip leading 'v' or 'V' or 'go'/'Go' if immediately followed by a digit
-  let s = if (cleaned.starts_with('v') || cleaned.starts_with('V'))
-    && cleaned.len() > 1
-    && cleaned.as_bytes()[1].is_ascii_digit()
-  {
-    &cleaned[1..]
-  } else if (cleaned.starts_with("go") || cleaned.starts_with("Go"))
-    && cleaned.len() > 2
-    && cleaned.as_bytes()[2].is_ascii_digit()
-  {
-    &cleaned[2..]
-  } else {
-    cleaned
-  };
-
-  // Must start with an ASCII digit
-  if !s.starts_with(|c: char| c.is_ascii_digit()) {
-    return None;
-  }
-
-  // Strip build metadata after '+'
-  let s_no_build = if let Some((base, _)) = s.split_once('+') {
-    base
-  } else {
-    s
-  };
-
-  // Extract prerelease after '-'
-  let (base, prerelease) = if let Some((ver, pre)) = s_no_build.split_once('-')
-  {
-    (ver, Some(pre.to_string()))
-  } else {
-    (s_no_build, None)
-  };
-
-  // Base must consist of 2 to 4 dot-separated integer components
-  let parts: Vec<&str> = base.split('.').collect();
-  if parts.len() < 2 || parts.len() > 4 {
-    return None;
-  }
-
-  let major = parts[0].parse::<u64>().ok()?;
-  let minor = parts[1].parse::<u64>().ok()?;
-  let patch = if parts.len() >= 3 {
-    parts[2].parse::<u64>().ok()?
-  } else {
-    0
-  };
-
-  Some(Version {
-    major,
-    minor,
-    patch,
-    prerelease,
-  })
+enum TokenParse {
+  /// Parsed — strict (suffix preserved) or salvaged to the bare `M.M.P` core.
+  Ok(Version),
+  /// Not version-shaped: keep scanning.
+  NotVersion,
+  /// Version-shaped but invalid semver even bare (leading-zero core): abort.
+  Rejected,
 }
 
-fn compare_prerelease(a: &str, b: &str) -> Ordering {
-  let a_parts = a.split('.');
-  let b_parts = b.split('.');
+/// Read a version out of one token. Strips surrounding punctuation and a
+/// leading `v`/`go` marker, then tries, in order: the 3-part core plus any
+/// real `-pre`/`+build` suffix (keeps `1.7.0-nightly`, `14.0.0-1ubuntu1`);
+/// then the bare core alone, dropping a `-`/`+` suffix or a clean 4th component
+/// `semver` rejects (`18.1.8-0ubuntu1~22.04.1`, `1.35.1.post1`, `0.9.6.dev0` —
+/// which the pre-`semver` parser also ignored). A non-numeric 3rd component
+/// (`0.9.6rc1`, `1.2.x`) is rejected, never zeroed.
+fn classify_token(token: &str) -> TokenParse {
+  let cleaned = token.trim_matches(|c: char| "()[]{}<>\"',:;".contains(c));
 
-  for (p_a, p_b) in a_parts.zip(b_parts) {
-    let ord = match (p_a.parse::<u64>(), p_b.parse::<u64>()) {
-      (Ok(num_a), Ok(num_b)) => num_a.cmp(&num_b),
-      (Ok(_), Err(_)) => Ordering::Less,
-      (Err(_), Ok(_)) => Ordering::Greater,
-      (Err(_), Err(_)) => p_a.cmp(p_b),
-    };
-    if ord != Ordering::Equal {
-      return ord;
-    }
+  // Strip a leading `v`/`V`/`go`/`Go` marker, kept only if a digit follows.
+  let s = ["v", "V", "go", "Go"]
+    .iter()
+    .find_map(|p| cleaned.strip_prefix(p))
+    .filter(|rest| rest.starts_with(|c: char| c.is_ascii_digit()))
+    .unwrap_or(cleaned);
+  if !s.starts_with(|c: char| c.is_ascii_digit()) {
+    return TokenParse::NotVersion;
   }
 
-  a.split('.').count().cmp(&b.split('.').count())
+  let (numeric_zone, suffix) =
+    s.split_at(s.find(['-', '+']).unwrap_or(s.len()));
+  let comps: Vec<&str> = numeric_zone.split('.').collect();
+  let numeric =
+    |c: &&str| !c.is_empty() && c.bytes().all(|b| b.is_ascii_digit());
+  // Version-shaped: 2..=4 dot components, first two plain integers. Otherwise
+  // it is just a digit-leading token (git short-hash, date fragment).
+  if !(2..=4).contains(&comps.len()) || !comps[..2].iter().all(numeric) {
+    return TokenParse::NotVersion;
+  }
+  // Patch = a plain-integer 3rd component (any 4th is dropped). A non-numeric
+  // 3rd can't become a patch without fabricating one, so reject rather than
+  // zero it. Rebuild from original text so a leading-zero core still fails.
+  let core = match comps.get(2) {
+    Some(p) if numeric(p) => format!("{}.{}.{}", comps[0], comps[1], p),
+    Some(_) => return TokenParse::Rejected,
+    None => format!("{}.{}.0", comps[0], comps[1]),
+  };
+
+  let parsed = semver::Version::parse(&format!("{core}{suffix}"))
+    .or_else(|_| semver::Version::parse(&core));
+  match parsed {
+    Ok(sv) => TokenParse::Ok(Version {
+      major: sv.major,
+      minor: sv.minor,
+      patch: sv.patch,
+      prerelease: (!sv.pre.is_empty()).then(|| sv.pre.as_str().to_string()),
+    }),
+    Err(_) => TokenParse::Rejected,
+  }
+}
+
+// === Comparison layer (delegated wholesale to the `semver` crate) ===========
+
+impl Version {
+  /// The sole crossing from the extraction layer into `semver`-backed
+  /// comparison. The parse path only stores `semver`-valid prereleases, so the
+  /// `"0"` fallback is unreachable in practice; if a caller hand-builds an
+  /// invalid one anyway it sorts below the matching release (rule 9) but two
+  /// such strings then compare `Equal` while `PartialEq` sees them distinct —
+  /// [`Version::with_prerelease`]'s `debug_assert` guards that.
+  fn to_semver(&self) -> semver::Version {
+    let pre = match self.prerelease.as_deref() {
+      None | Some("") => semver::Prerelease::EMPTY,
+      Some(p) => semver::Prerelease::new(p)
+        .unwrap_or_else(|_| semver::Prerelease::new("0").unwrap()),
+    };
+    semver::Version {
+      major: self.major,
+      minor: self.minor,
+      patch: self.patch,
+      pre,
+      build: semver::BuildMetadata::EMPTY,
+    }
+  }
 }
 
 impl Ord for Version {
+  /// Delegated to `semver` (precedence rules 9-11, prerelease chain included).
   fn cmp(&self, other: &Self) -> Ordering {
-    match (self.major, self.minor, self.patch).cmp(&(
-      other.major,
-      other.minor,
-      other.patch,
-    )) {
-      Ordering::Equal => match (&self.prerelease, &other.prerelease) {
-        (None, None) => Ordering::Equal,
-        (Some(_), None) => Ordering::Less,
-        (None, Some(_)) => Ordering::Greater,
-        (Some(a), Some(b)) => compare_prerelease(a, b),
-      },
-      ord => ord,
-    }
+    self.to_semver().cmp(&other.to_semver())
   }
 }
 
@@ -438,12 +433,9 @@ impl PartialOrd for Version {
 }
 
 impl fmt::Display for Version {
+  /// Rendered by `semver`, so the text matches what the comparison layer sees.
   fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-    if let Some(ref pre) = self.prerelease {
-      write!(f, "{}.{}.{}-{}", self.major, self.minor, self.patch, pre)
-    } else {
-      write!(f, "{}.{}.{}", self.major, self.minor, self.patch)
-    }
+    write!(f, "{}", self.to_semver())
   }
 }
 
@@ -583,6 +575,14 @@ impl fmt::Display for ToolStatus {
   }
 }
 
+/// The MSTV-floor predicate — `current >= minimum` under [`semver::Version`]
+/// ordering. (`semver::VersionReq` is avoided on purpose: its Cargo-style rule
+/// that `>=1.4.0` never matches a prerelease would flip nightly tools to
+/// Outdated.)
+fn satisfies_minimum(current: &Version, minimum: &Version) -> bool {
+  current.to_semver() >= minimum.to_semver()
+}
+
 /// Combines the MSTV-floor check and the exact-pin check into a single
 /// status, given an already-probed current version and raw version banner
 /// (callers that already have these from a prior probe pass them straight
@@ -605,7 +605,7 @@ pub fn evaluate_tool_status(
   match current {
     Some(curr) => {
       if let Some(min) = minimum
-        && curr < *min
+        && !satisfies_minimum(&curr, min)
       {
         return ToolStatus::Outdated {
           current: curr,

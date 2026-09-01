@@ -304,12 +304,17 @@ every subcommand that acts across surfaces (`fmt`, `lint`, `sync`, `fix`) — it
 takes the already-filtered `Vec<Box<dyn LanguageSurface>>`, builds one
 `ExecutionContext` per surface, and fans out via `rayon::par_iter`. `Fix` is the
 one multi-stage action: it runs `lint(fix: true)` across every surface first,
-then `format(check: false)`, as two separate parallel stages rather than
-interleaving lint-then-format per surface — so a fix pass is
-lint-fix-everything, then format-everything, not format(surface A) before
-lint(surface B) has even started. A new subcommand that needs to act across
-surfaces goes through `Runner::run` with a new or existing `RunnerAction`
-variant, rather than writing its own dispatch loop.
+then `format(check: false)`, then a check-only re-lint of just the surfaces
+whose lint pass still reported violations — three separate parallel stages
+rather than interleaving lint-then-format per surface, so a fix pass is
+lint-fix-everything, then format-everything, then recheck-the-still-dirty, not
+format(surface A) before lint(surface B) has even started. The third stage
+exists so the reported status and exit code reflect the tree _after_ formatting:
+a violation the linter could not auto-fix but the format pass then resolved
+(e.g. a long line prettier rewrapped) must not still report `[FAIL]`. A new
+subcommand that needs to act across surfaces goes through `Runner::run` with a
+new or existing `RunnerAction` variant, rather than writing its own dispatch
+loop.
 
 ---
 

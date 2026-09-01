@@ -8,7 +8,8 @@ use std::path::PathBuf;
 /// Top-level command-line arguments parser for formality.
 #[derive(Parser, Debug)]
 #[command(
-  name = "fml",
+  name = "formality",
+  bin_name = "fml",
   author,
   version,
   about = "One CLI to format, lint, and sync configs across all languages",
@@ -200,6 +201,7 @@ pub enum MigrateCommands {
 #[allow(missing_docs, clippy::missing_errors_doc, clippy::missing_panics_doc)]
 mod tests {
   use super::*;
+  use clap::CommandFactory;
 
   #[test]
   fn test_list_surfaces_subcommand_and_alias() {
@@ -208,5 +210,40 @@ mod tests {
 
     let cli_alias = Cli::try_parse_from(["fml", "surfaces"]).unwrap();
     assert!(matches!(cli_alias.command, Commands::ListSurfaces));
+  }
+
+  #[test]
+  fn test_product_name_is_formality() {
+    let cmd = Cli::command();
+    assert_eq!(
+      cmd.get_name(),
+      "formality",
+      "clap command name should report the product name"
+    );
+  }
+
+  #[test]
+  fn test_bin_name_is_fml() {
+    let cmd = Cli::command();
+    assert_eq!(
+      cmd.get_bin_name(),
+      Some("fml"),
+      "bin_name should stay as the executable / invocation name"
+    );
+  }
+
+  #[test]
+  fn test_version_output_reports_product_name() {
+    let expected = format!("formality {}\n", env!("CARGO_PKG_VERSION"));
+    assert_eq!(Cli::command().render_version(), expected);
+  }
+
+  #[test]
+  fn test_help_usage_line_uses_executable_name() {
+    let help = Cli::command().render_help().to_string();
+    assert!(
+      help.contains("Usage: fml [OPTIONS] <COMMAND>"),
+      "help usage line should invoke the executable name `fml`, got:\n{help}"
+    );
   }
 }

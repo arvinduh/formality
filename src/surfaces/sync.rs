@@ -2,7 +2,8 @@
 //! expected-vs-current file sync helper, and the tempcopy-based diff-check
 //! used by in-place formatters during `fml fmt --check`.
 
-use super::{SurfaceResult, SurfaceStatus};
+use super::tooling::merge_tool_streams;
+use super::{ExitClass, SurfaceResult, SurfaceStatus};
 use crate::engine::diff::render_diff;
 use rayon::prelude::*;
 use std::path::{Path, PathBuf};
@@ -130,22 +131,57 @@ pub fn sync_file_helper(
 enum PerFileCheckResult {
   Clean,
   Diff(String),
-  FormatterError(String),
+  /// The formatter exited non-zero. `message` already merges both captured
+  /// streams; `code` is [`std::process::ExitStatus::code`] for the caller's
+  /// classifier.
+  FormatterError {
+    message: String,
+    code: Option<i32>,
+  },
   ExecutionError(String),
 }
 
-/// Executes an in-place formatter on temporary copies of the given files in parallel and generates
-/// unified diffs between the original content and the formatted content.
+/// Executes an in-place formatter on temporary copies of the given files in
+/// parallel and generates unified diffs between the original content and the
+/// formatted content, treating **any** non-zero formatter exit as
+/// [`SurfaceStatus::ViolationsFound`].
 ///
-/// Uses an isolated temporary directory under [`std::env::temp_dir()`] so that scratch
-/// files do not pollute the workspace, and guarantees cleanup on all exit paths.
-// Implements temporary-file copy, in-place formatting execution, unified diff generation, and RAII cleanup across file sets.
-#[allow(clippy::too_many_lines)]
+/// Surfaces whose formatter distinguishes "could not run" from a formatting
+/// result via its exit code should call [`diff_check_via_tempcopy_classified`]
+/// so a tool *failure* is reported as [`SurfaceStatus::ExecutionError`],
+/// consistently with the non-`--check` write path.
 pub fn diff_check_via_tempcopy(
   files: &[PathBuf],
   run_in_place: impl Fn(&Path) -> std::io::Result<std::process::Output> + Sync,
   surface_name: &'static str,
   start: Instant,
+) -> SurfaceResult {
+  diff_check_via_tempcopy_classified(
+    files,
+    run_in_place,
+    surface_name,
+    start,
+    |_| ExitClass::ViolationsFound,
+  )
+}
+
+/// Like [`diff_check_via_tempcopy`], but lets the caller classify a non-zero
+/// formatter exit code as either a formatting result or a tool failure via
+/// `classify` (receives [`std::process::ExitStatus::code`], `None` on a
+/// signal). On a non-zero exit both captured streams are surfaced when both
+/// are non-empty — no non-empty stream is discarded.
+///
+/// Uses an isolated temporary directory under [`std::env::temp_dir()`] so that
+/// scratch files do not pollute the workspace, and guarantees cleanup on all
+/// exit paths.
+// Implements temporary-file copy, in-place formatting execution, unified diff generation, and RAII cleanup across file sets.
+#[allow(clippy::too_many_lines)]
+pub fn diff_check_via_tempcopy_classified(
+  files: &[PathBuf],
+  run_in_place: impl Fn(&Path) -> std::io::Result<std::process::Output> + Sync,
+  surface_name: &'static str,
+  start: Instant,
+  classify: impl Fn(Option<i32>) -> ExitClass,
 ) -> SurfaceResult {
   if files.is_empty() {
     return SurfaceResult {
@@ -221,16 +257,17 @@ pub fn diff_check_via_tempcopy(
       };
 
       if !output.status.success() {
-        let stderr = String::from_utf8_lossy(&output.stderr).to_string();
-        let stdout = String::from_utf8_lossy(&output.stdout).to_string();
-        let msg = if !stderr.trim().is_empty() {
-          stderr
-        } else if !stdout.trim().is_empty() {
-          stdout
-        } else {
-          format!("Formatter failed for {}", original.display())
+        let stdout = String::from_utf8_lossy(&output.stdout);
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        let message = merge_tool_streams(
+          &stdout,
+          &stderr,
+          &format!("Formatter failed for {}", original.display()),
+        );
+        return PerFileCheckResult::FormatterError {
+          message,
+          code: output.status.code(),
         };
-        return PerFileCheckResult::FormatterError(msg);
       }
 
       let formatted = match std::fs::read_to_string(&scratch) {
@@ -269,13 +306,19 @@ pub fn diff_check_via_tempcopy(
           duration: start.elapsed(),
         };
       }
-      PerFileCheckResult::FormatterError(message) => {
-        return SurfaceResult {
-          surface_name,
-          status: SurfaceStatus::ViolationsFound {
+      PerFileCheckResult::FormatterError { message, code } => {
+        let status = match classify(code) {
+          ExitClass::ViolationsFound => SurfaceStatus::ViolationsFound {
             message,
             diff: None,
           },
+          ExitClass::ExecutionError => {
+            SurfaceStatus::ExecutionError { message }
+          }
+        };
+        return SurfaceResult {
+          surface_name,
+          status,
           duration: start.elapsed(),
         };
       }
@@ -327,6 +370,48 @@ mod tests {
       std::process::Command::new("true")
         .output()
         .expect("true failed")
+    }
+  }
+
+  /// A real `Output` that writes `stdout`/`stderr` (each skipped when empty)
+  /// and exits with `code`, via the platform shell — so tests exercise the
+  /// same `ExitStatus`/stream plumbing production does.
+  fn scripted_output(
+    stdout: &str,
+    stderr: &str,
+    code: i32,
+  ) -> std::process::Output {
+    #[cfg(windows)]
+    {
+      let mut steps: Vec<String> = Vec::new();
+      if !stdout.is_empty() {
+        steps.push(format!("echo {stdout}"));
+      }
+      if !stderr.is_empty() {
+        steps.push(format!("echo {stderr} 1>&2"));
+      }
+      steps.push(format!("exit /b {code}"));
+      std::process::Command::new("cmd")
+        .arg("/C")
+        .arg(steps.join(" & "))
+        .output()
+        .expect("scripted cmd failed")
+    }
+    #[cfg(not(windows))]
+    {
+      let mut script = String::new();
+      if !stdout.is_empty() {
+        script.push_str(&format!("printf '%s\\n' '{stdout}'; "));
+      }
+      if !stderr.is_empty() {
+        script.push_str(&format!("printf '%s\\n' '{stderr}' 1>&2; "));
+      }
+      script.push_str(&format!("exit {code}"));
+      std::process::Command::new("sh")
+        .arg("-c")
+        .arg(script)
+        .output()
+        .expect("scripted sh failed")
     }
   }
 
@@ -961,5 +1046,79 @@ mod tests {
     );
 
     assert!(matches!(res.status, SurfaceStatus::Passed));
+  }
+
+  #[test]
+  fn test_diff_check_via_tempcopy_default_formatter_error_is_violation() {
+    // Non-opting callers keep today's behavior: a non-zero formatter exit
+    // is `ViolationsFound`.
+    let temp = TempDir::new().unwrap();
+    let file = temp.path().join("a.rs");
+    std::fs::write(&file, "fn a() {}\n").unwrap();
+
+    let res = diff_check_via_tempcopy(
+      std::slice::from_ref(&file),
+      |_scratch| Ok(scripted_output("", "boom", 2)),
+      "rust",
+      Instant::now(),
+    );
+
+    match res.status {
+      SurfaceStatus::ViolationsFound { message, diff } => {
+        assert!(diff.is_none());
+        assert_eq!(message, "boom");
+      }
+      other => panic!("expected ViolationsFound, got {other:?}"),
+    }
+  }
+
+  #[test]
+  fn test_diff_check_via_tempcopy_classified_error_exit_and_both_streams() {
+    // Opting in via `classify_all_nonzero_as_error`: the same non-zero exit
+    // is now an `ExecutionError`, and both captured streams survive.
+    let temp = TempDir::new().unwrap();
+    let file = temp.path().join("a.yaml");
+    std::fs::write(&file, "a: 1\n").unwrap();
+
+    let res = diff_check_via_tempcopy_classified(
+      std::slice::from_ref(&file),
+      |_scratch| Ok(scripted_output("BANNER", "PARSEFAIL", 2)),
+      "yaml",
+      Instant::now(),
+      crate::surfaces::classify_all_nonzero_as_error,
+    );
+
+    match res.status {
+      SurfaceStatus::ExecutionError { message } => {
+        let out = message.find("BANNER").expect("stdout kept");
+        let err = message.find("PARSEFAIL").expect("stderr kept");
+        assert!(out < err, "stdout precedes stderr");
+        assert!(message.contains("stderr:"), "stderr block labelled");
+      }
+      other => panic!("expected ExecutionError, got {other:?}"),
+    }
+  }
+
+  #[test]
+  fn test_diff_check_via_tempcopy_classified_violation_exit() {
+    // A classifier can still route a specific code to `ViolationsFound`.
+    let temp = TempDir::new().unwrap();
+    let file = temp.path().join("a.rs");
+    std::fs::write(&file, "fn a() {}\n").unwrap();
+
+    let res = diff_check_via_tempcopy_classified(
+      std::slice::from_ref(&file),
+      |_scratch| Ok(scripted_output("drift", "", 1)),
+      "rust",
+      Instant::now(),
+      crate::surfaces::classify_exit_one_as_violation,
+    );
+
+    match res.status {
+      SurfaceStatus::ViolationsFound { message, .. } => {
+        assert_eq!(message, "drift");
+      }
+      other => panic!("expected ViolationsFound, got {other:?}"),
+    }
   }
 }
