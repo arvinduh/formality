@@ -441,9 +441,11 @@ repos:
   - repo: https://github.com/arvinduh/formality
     rev: v0.2.1
     hooks:
-      - id: fml-sync
       - id: fml-fmt
       - id: fml-lint
+      # Optional escape hatch — only if your project also commits native tool
+      # configs and you want them verified against formality.toml on commit.
+      - id: fml-sync
 ```
 
 ---
@@ -504,84 +506,107 @@ code --install-extension formality-<version>.vsix
 
 ---
 
-## LSP server (`fml lsp`)
+## Editor setup
 
-`fml lsp` starts formality as a Language Server Protocol server over stdio,
-making it usable from any LSP-capable editor (Neovim, Zed, Helix, Emacs, …) —
-not just VS Code.
+The whole point of `fml` is that you configure formatting **once** and stop
+wiring up a formatter extension per language. In an editor that means a single
+step: point it at **`fml lsp`** and let it format every language `fml` covers.
 
-### Architecture
+`fml lsp` is a Language Server that speaks over stdio, so any LSP-capable editor
+can run it with no plugin. It provides exactly two things:
 
-The formality LSP acts as a **passthrough multiplexer**: it spawns the
-appropriate underlying language server for each active surface and routes LSP
-protocol messages between the editor and those child servers. Formality
-intercepts only the requests where it adds value:
+- **Formatting** (`textDocument/formatting`), routed through `fml fmt`
+- **Lint diagnostics** (`fml lint` output), published on open and on save
 
-| Request                           | Handled by                                 |
-| :-------------------------------- | :----------------------------------------- |
-| `textDocument/formatting`         | `fml fmt` (always — ensures config parity) |
-| `textDocument/publishDiagnostics` | `fml lint` output + child LSP diagnostics  |
-| Everything else                   | Routed to the appropriate child LSP server |
+It is **not** a replacement for `rust-analyzer`, `pyright`, `gopls`, `clangd`,
+or any other language server, and it does not proxy or spawn them. Keep your
+existing language servers attached for completion, hover, and go-to-definition;
+`fml lsp` only owns formatting and lint diagnostics.
 
-### Child LSP servers
+### `fml lsp` vs `fml sync` — pick one
 
-| Surface  | Child LSP binary             | Install                                       |
-| :------- | :--------------------------- | :-------------------------------------------- |
-| rust     | `rust-analyzer`              | `rustup component add rust-analyzer`          |
-| python   | `pyright-langserver`         | `npm install -g pyright`                      |
-| cpp      | `clangd`                     | `apt install clangd` / `brew install llvm`    |
-| typst    | `tinymist`                   | `cargo install tinymist`                      |
-| yaml     | `yaml-language-server`       | `npm install -g yaml-language-server`         |
-| json     | `vscode-json-languageserver` | `npm install -g vscode-langservers-extracted` |
-| toml     | `taplo lsp stdio`            | `cargo install taplo-cli --locked`            |
-| markdown | _(diagnostics only)_         | —                                             |
+Both keep formatting consistent with `formality.toml`. They are opposites, and
+only one of them reduces how much you configure in your editor:
 
-Child servers are spawned lazily — only for surfaces detected in the workspace.
-Missing child servers are logged as warnings; formality still provides
-formatting and its own diagnostics for those surfaces.
+|                        | `fml lsp`                       | `fml sync`                                        |
+| :--------------------- | :------------------------------ | :------------------------------------------------ |
+| Who runs the formatter | `fml` does                      | your editor's own per-language extensions do      |
+| Editor setup           | one formatter, pointed at `fml` | still one extension per language                  |
+| What it writes to disk | nothing                         | `.rustfmt.toml`, `.prettierrc.json`, `biome.json` |
+| Config lives in        | `formality.toml` only           | `formality.toml`, mirrored onto disk              |
 
-### Editor configuration
+Use **`fml lsp`** for the one-formatter workflow. Reach for **`fml sync`** only
+as an escape hatch — when an editor, a teammate's setup, or another tool insists
+on reading a native config file off disk. `fml sync` does not reduce the number
+of formatters you configure; it only keeps the ones you already have in
+agreement with `formality.toml`.
 
-#### Neovim (nvim-lspconfig)
+### VS Code
 
-```lua
-require('lspconfig').fml.setup({
-  cmd = { 'fml', 'lsp' },
-  filetypes = { 'rust', 'python', 'cpp', 'c', 'markdown', 'yaml', 'json', 'toml', 'typst' },
-  root_dir = require('lspconfig.util').root_pattern('formality.toml', '.formality.toml', '.git'),
-})
-```
+Install the [extension](#vs-code-extension) (below); it launches `fml lsp` for
+you. Then set formality as the default formatter and turn on format on save —
+see the example `.vscode/settings.json` in that section.
 
-#### Zed
+### Neovim
 
-```json
-{
-  "language_servers": ["fml-lsp"],
-  "lsp": {
-    "fml-lsp": {
-      "binary": { "path": "fml", "arguments": ["lsp"] }
-    }
-  }
-}
-```
+No plugin required — not even `nvim-lspconfig`. Copy
+[`editors/nvim/formality.lua`](editors/nvim/formality.lua) to
+`~/.config/nvim/plugin/formality.lua` (Neovim 0.10+, verified against 0.11).
 
-#### Helix (`~/.config/helix/languages.toml`)
+It uses two autocommands: a `FileType` hook that runs `vim.lsp.start` with
+`cmd = { "fml", "lsp" }` for every filetype `fml` formats (rooted at the nearest
+`formality.toml`), and a `BufWritePost` hook that formats and reloads the
+buffer. Format-on-save runs _after_ the write, not on `BufWritePre`, because
+`fml lsp` declares `textDocumentSync = none` and formats by rewriting the
+**saved file on disk** — doing it before the write makes Neovim warn that the
+file "changed since reading it" on every save.
+
+Edit the file if `fml` isn't on your `PATH`, or to trim the filetype list.
+
+### Helix
+
+Helix takes stdio language servers directly in `~/.config/helix/languages.toml`,
+no plugin needed. Register `fml lsp`, then add it to each language and use
+Helix's per-server feature filtering so `fml` owns formatting while the primary
+server keeps everything else:
 
 ```toml
-[[language]]
-name = "rust"
-language-servers = ["fml-lsp", "rust-analyzer"]
-
-[language-server.fml-lsp]
+[language-server.formality]
 command = "fml"
 args = ["lsp"]
+
+[[language]]
+name = "rust"
+auto-format = true
+language-servers = [
+  { name = "rust-analyzer", except-features = ["format"] },
+  { name = "formality", only-features = ["format", "diagnostics"] },
+]
+
+[[language]]
+name = "python"
+auto-format = true
+language-servers = [
+  { name = "pyright", except-features = ["format"] },
+  { name = "formality", only-features = ["format", "diagnostics"] },
+]
 ```
 
-> **Status**: The routing layer (proxying LSP messages to child servers) is
-> under active development. The current release handles formatting
-> (`textDocument/formatting`) and save diagnostics (`fml lint` output) for all
-> surfaces. Full child-server passthrough for hover, completion, and
-> go-to-definition is coming in a future release.
+This follows the documented Helix config format but was not run in this
+environment.
+
+### Zed
+
+Out of scope for now: Zed cannot attach an arbitrary stdio language server from
+`settings.json` alone — it requires a published Zed extension to register the
+server for a language, which formality does not yet ship.
+
+### Emacs, and other LSP clients
+
+Any client that can launch a stdio server works the same way: run `fml lsp`, let
+it handle `textDocument/formatting`, and keep your other servers for everything
+else. The disk-rewrite behavior noted for Neovim applies anywhere — format
+on/after save, then let the client re-read the file.
 
 ---
 
