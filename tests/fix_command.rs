@@ -259,6 +259,10 @@ fn test_fix_command_javascript_composite_lifecycle() {
 #[test]
 fn test_fix_command_reports_pass_when_format_pass_resolves_lint_violation() {
   if !markdown_toolchain_available() {
+    eprintln!(
+      "SKIP: test_fix_command_reports_pass_when_format_pass_resolves_lint_violation \
+       — markdownlint/prettier not on PATH"
+    );
     return;
   }
 
@@ -296,13 +300,21 @@ fn test_fix_command_reports_pass_when_format_pass_resolves_lint_violation() {
 #[test]
 fn test_fix_command_still_fails_when_no_pass_resolves_violation() {
   if !markdown_toolchain_available() {
+    eprintln!(
+      "SKIP: test_fix_command_still_fails_when_no_pass_resolves_violation \
+       — markdownlint/prettier not on PATH"
+    );
     return;
   }
 
   let temp = temp_repo(&[("doc.md", "# First Heading\n\n# Second Heading\n")]);
   let root = temp.path();
 
-  assert_ne!(run_cli(root, fix_cmd(&["markdown"])), 0);
+  // Exit code 1 exactly (`ExitStatus::Violations`) — not merely non-zero: a
+  // code of 2 (`ExitStatus::Error`) would mean the surface blew up rather
+  // than reporting the surviving MD025 violation, which is a different and
+  // wrong failure mode this guard must not accept.
+  assert_eq!(run_cli(root, fix_cmd(&["markdown"])), 1);
 }
 
 #[test]
