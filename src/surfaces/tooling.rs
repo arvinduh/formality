@@ -916,20 +916,73 @@ pub fn ensure_cargo_binstall() -> bool {
   available
 }
 
+/// Returns whether bootstrapping `cargo-binstall` would let a *pinned*
+/// prebuilt `CargoBinstall` entry take over from the installer the chain
+/// currently resolves to, when that installer can't itself pin to the tool's
+/// confirmed `expected_binary_version`.
+///
+/// This is the `typstyle`/`tinymist` case: their chains list
+/// `CargoBinstall("<tool>@<pin>")` first, but on a machine where
+/// `cargo-binstall` isn't on `PATH` yet the first *available* method is
+/// `Brew`, whose core-tap bottle routinely trails the crates.io pin
+/// (`typstyle` 0.15.0 vs. the pinned 0.15.1). Installing via that lagging
+/// Homebrew formula then trips `install_missing_tools`' post-install
+/// convergence guard -- a spurious `[WARN]` + non-clean exit on every macOS
+/// `fml install` until the bottle catches up. Bootstrapping `cargo-binstall`
+/// up front lets the already-first, pin-carrying prebuilt win instead;
+/// Homebrew stays in the chain as the fallback if the bootstrap fails.
+///
+/// Kept pure (chain + pin + currently-selected method in, `bool` out) so it's
+/// testable without touching `PATH`. `expected` is only ever `Some` for a row
+/// whose `expected_binary_version` is a hand-confirmed 1:1 match with its
+/// chain pins (see [`ToolChain`]), so a `Brew`-style unpinned entry losing to
+/// `CargoBinstall` here can't regress a tool whose binary version legitimately
+/// differs from its package-manager pin.
+fn binstall_bootstrap_would_fix_pin_lag(
+  chain: &[InstallMethod],
+  expected: Option<&Version>,
+  selected: Option<&InstallMethod>,
+) -> bool {
+  let Some(expected) = expected else {
+    return false;
+  };
+  let Some(selected) = selected else {
+    return false;
+  };
+  // The currently-selected installer already pins to the exact version --
+  // nothing for a bootstrap to improve.
+  if selected.pinned_version().as_ref() == Some(expected) {
+    return false;
+  }
+  let binstall_idx = chain.iter().position(|m| {
+    matches!(m, InstallMethod::CargoBinstall(_))
+      && m.pinned_version().as_ref() == Some(expected)
+  });
+  let selected_idx = chain.iter().position(|m| m == selected);
+  match (binstall_idx, selected_idx) {
+    // The pin-carrying `CargoBinstall` entry sits ahead of whatever's
+    // currently winning, so making it available flips the selection.
+    (Some(b), Some(s)) => b < s,
+    _ => false,
+  }
+}
+
 /// Returns whether `binary`'s install chain would *actually* benefit from
-/// bootstrapping `cargo-binstall` right now: its chain references
-/// `CargoBinstall` at all, **and** with `cargo-binstall` unavailable the
-/// chain's current first-available method is the `cargo install --locked`
-/// source-compile fallback (or nothing at all).
+/// bootstrapping `cargo-binstall` right now. Two cases:
+///
+/// 1. With `cargo-binstall` unavailable the chain's current first-available
+///    method is the `cargo install --locked` source-compile fallback (or
+///    nothing at all) -- bootstrapping the prebuilt-binary installer avoids a
+///    multi-minute source build.
+/// 2. A pin-carrying `CargoBinstall` entry sits ahead of the currently-winning
+///    installer, which can't pin to the tool's confirmed version -- see
+///    [`binstall_bootstrap_would_fix_pin_lag`].
 ///
 /// Deliberately narrower than "the chain merely contains a `CargoBinstall`
 /// step": `taplo`'s chain reaches `Npm` well before its `CargoBinstall`
 /// entry, and on most runners `npm` is already on `PATH` -- bootstrapping
 /// `cargo-binstall` there would spend a network round-trip changing
-/// nothing about which installer actually runs. This only returns `true` for the case the bootstrap
-/// exists to fix: a tool that would otherwise silently drop to compiling
-/// from source (`typstyle`, `tinymist`, or `taplo`/`ruff` on a runner with
-/// no Node/Python toolchain at all).
+/// nothing about which installer actually runs.
 #[must_use]
 pub fn tool_would_benefit_from_cargo_binstall_bootstrap(binary: &str) -> bool {
   let Some(chain) = install_chain_for(binary) else {
@@ -938,10 +991,13 @@ pub fn tool_would_benefit_from_cargo_binstall_bootstrap(binary: &str) -> bool {
   if !chain_wants_cargo_binstall(chain) {
     return false;
   }
-  matches!(
-    selected_install_method_for(binary),
-    None | Some(InstallMethod::Cargo { .. })
-  )
+  let selected = selected_install_method_for(binary);
+  matches!(selected, None | Some(InstallMethod::Cargo { .. }))
+    || binstall_bootstrap_would_fix_pin_lag(
+      chain,
+      pinned_version_for(binary).as_ref(),
+      selected.as_ref(),
+    )
 }
 
 /// Merges `additional`'s `PATH`-style entries onto the end of `current`'s,
@@ -1961,6 +2017,178 @@ mod tests {
     // rustfmt's chain never references cargo-binstall at all, so it must
     // never trigger a bootstrap attempt regardless of what's on PATH.
     assert!(!tool_would_benefit_from_cargo_binstall_bootstrap("rustfmt"));
+  }
+
+  #[test]
+  fn test_typstyle_chain_prefers_pinned_cargo_binstall_over_brew() {
+    // Chain-definition guard: `CargoBinstall("typstyle@<pin>")` must sit
+    // ahead of `Brew("typstyle")`, and its inline pin must equal the
+    // confirmed `expected_binary_version`. This is the ordering the
+    // pin-lag bootstrap (below) relies on -- if the chain ever regresses so
+    // Brew comes first, `selected_install_method_for` would hand back the
+    // lagging Homebrew bottle even after cargo-binstall is bootstrapped.
+    let chain =
+      install_chain_for("typstyle").expect("typstyle must have a chain");
+    let expected =
+      pinned_version_for("typstyle").expect("typstyle has a confirmed pin");
+
+    let binstall_idx = chain
+      .iter()
+      .position(|m| {
+        matches!(m, InstallMethod::CargoBinstall(_))
+          && m.pinned_version().as_ref() == Some(&expected)
+      })
+      .expect("typstyle chain must carry a pin-matching CargoBinstall entry");
+    let brew_idx = chain
+      .iter()
+      .position(|m| matches!(m, InstallMethod::Brew(_)))
+      .expect("typstyle chain keeps Brew as a fallback");
+
+    assert!(
+      binstall_idx < brew_idx,
+      "pinned CargoBinstall must be preferred over Brew for typstyle"
+    );
+  }
+
+  #[test]
+  fn test_binstall_bootstrap_fixes_brew_pin_lag_for_typstyle() {
+    // The macOS #102 case: cargo-binstall isn't on PATH, so the first
+    // *available* installer is Brew, whose core-tap bottle trails the
+    // crates.io pin. Bootstrapping cargo-binstall lets the already-first,
+    // pin-carrying prebuilt win -- so this must report `true`.
+    let chain =
+      install_chain_for("typstyle").expect("typstyle must have a chain");
+    let expected = pinned_version_for("typstyle");
+    let brew = chain
+      .iter()
+      .find(|m| matches!(m, InstallMethod::Brew(_)))
+      .copied();
+
+    assert!(binstall_bootstrap_would_fix_pin_lag(
+      chain,
+      expected.as_ref(),
+      brew.as_ref(),
+    ));
+  }
+
+  #[test]
+  fn test_binstall_bootstrap_no_op_when_binstall_already_selected() {
+    // If the currently-selected installer *is* the pin-carrying
+    // CargoBinstall entry, there is nothing for a bootstrap to improve.
+    let chain =
+      install_chain_for("typstyle").expect("typstyle must have a chain");
+    let expected = pinned_version_for("typstyle");
+    let binstall = chain
+      .iter()
+      .find(|m| matches!(m, InstallMethod::CargoBinstall(_)))
+      .copied();
+
+    assert!(!binstall_bootstrap_would_fix_pin_lag(
+      chain,
+      expected.as_ref(),
+      binstall.as_ref(),
+    ));
+  }
+
+  #[test]
+  fn test_binstall_bootstrap_no_op_without_a_confirmed_pin() {
+    // Isolates the `expected: None` guard specifically. taplo's chain has a
+    // `CargoBinstall` entry *ahead of* its `cargo install` source-compile
+    // fallback, so if `expected` were `Some(<that pin>)` the index check
+    // (binstall before selected) would fire and return `true`. taplo
+    // deliberately carries `expected_binary_version: None` (its installed
+    // binary reports a different number than any chain pin), so the guard
+    // must short-circuit to `false` before the ordering is ever considered.
+    let chain = install_chain_for("taplo").expect("taplo must have a chain");
+    let cargo_fallback = chain
+      .iter()
+      .find(|m| matches!(m, InstallMethod::Cargo { .. }))
+      .copied();
+    let binstall_idx = chain
+      .iter()
+      .position(|m| matches!(m, InstallMethod::CargoBinstall(_)))
+      .expect("taplo chain has a CargoBinstall entry");
+    let cargo_idx = chain
+      .iter()
+      .position(|m| matches!(m, InstallMethod::Cargo { .. }))
+      .expect("taplo chain has a cargo-install fallback");
+    assert!(
+      binstall_idx < cargo_idx,
+      "precondition: taplo's CargoBinstall sits ahead of its cargo fallback, \
+       so only the `expected: None` guard can make this return false"
+    );
+    assert_eq!(
+      pinned_version_for("taplo"),
+      None,
+      "taplo must stay opted out of the pin comparison for this test to \
+       isolate the guard it targets"
+    );
+
+    assert!(!binstall_bootstrap_would_fix_pin_lag(
+      chain,
+      None,
+      cargo_fallback.as_ref(),
+    ));
+  }
+
+  #[test]
+  fn test_binstall_bootstrap_fixes_brew_pin_lag_for_tinymist() {
+    // tinymist has the identical chain shape to typstyle (pin-carrying
+    // `CargoBinstall` first, `Brew` as fallback) and a confirmed
+    // `expected_binary_version`, so the same #102 mechanism must cover it.
+    let chain =
+      install_chain_for("tinymist").expect("tinymist must have a chain");
+    let expected = pinned_version_for("tinymist");
+    let brew = chain
+      .iter()
+      .find(|m| matches!(m, InstallMethod::Brew(_)))
+      .copied();
+
+    assert!(binstall_bootstrap_would_fix_pin_lag(
+      chain,
+      expected.as_ref(),
+      brew.as_ref(),
+    ));
+  }
+
+  #[test]
+  fn test_binstall_bootstrap_pin_lag_for_ruff_is_scoop_winget_only() {
+    // ruff's chain is the asymmetric case: `Brew` sits *ahead* of the
+    // pin-carrying `CargoBinstall` entry, but `Scoop`/`WingetName` sit
+    // *after* it. So a Windows host with only scoop (no Python toolchain)
+    // selects the unpinned scoop package and benefits from a bootstrap,
+    // while a brew-selected ruff does not -- brew wins regardless of whether
+    // cargo-binstall gets bootstrapped, an incidental consequence of chain
+    // order, not a deliberate exemption.
+    let chain = install_chain_for("ruff").expect("ruff must have a chain");
+    let expected = pinned_version_for("ruff");
+
+    let scoop = chain
+      .iter()
+      .find(|m| matches!(m, InstallMethod::Scoop(_)))
+      .copied();
+    assert!(
+      binstall_bootstrap_would_fix_pin_lag(
+        chain,
+        expected.as_ref(),
+        scoop.as_ref(),
+      ),
+      "scoop-selected ruff (no pin) benefits from the cargo-binstall bootstrap"
+    );
+
+    let brew = chain
+      .iter()
+      .find(|m| matches!(m, InstallMethod::Brew(_)))
+      .copied();
+    assert!(
+      !binstall_bootstrap_would_fix_pin_lag(
+        chain,
+        expected.as_ref(),
+        brew.as_ref(),
+      ),
+      "brew-selected ruff is unaffected -- Brew sits ahead of CargoBinstall \
+       in RUFF_CHAIN, so bootstrapping changes nothing about the selection"
+    );
   }
 
   // merge_path_entries is the pure half of every post-install PATH refresh

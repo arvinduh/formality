@@ -54,7 +54,18 @@ pub fn install_missing_tools(missing: &[ToolInfo]) -> bool {
   // from the crate's GitHub releases) is their only non-source-compile
   // install path everywhere, including Linux. Without this, a chain would
   // silently skip past it (since `CargoBinstall::is_available()` is false)
-  // straight to the `cargo install --locked` source-compile fallback.
+  // straight to the `cargo install --locked` source-compile fallback. It's
+  // also what lets a pin-carrying `CargoBinstall` entry win over an earlier
+  // *available* but unpinned installer (Homebrew's lagging `typstyle` bottle
+  // -- #102), which `tool_would_benefit_from_cargo_binstall_bootstrap` now
+  // detects.
+  //
+  // Known limitation: `ensure_cargo_binstall()` needs `cargo` on PATH to
+  // bootstrap, so a machine with a package manager but no Rust toolchain at
+  // all (e.g. Homebrew-only macOS) can't take this path -- for those the
+  // chain still resolves to the lagging system-package install and #102's
+  // spurious post-install `[WARN]` can still occur. Giving no-cargo hosts a
+  // real prebuilt install path is the broader question tracked in #104.
   if !crate::surfaces::has_cargo_binstall()
     && missing.iter().any(|tool| {
       crate::surfaces::tool_would_benefit_from_cargo_binstall_bootstrap(
@@ -72,8 +83,9 @@ pub fn install_missing_tools(missing: &[ToolInfo]) -> bool {
     } else {
       println!(
         "    {} Could not bootstrap cargo-binstall (no cargo, no network, \
-         or the install script failed) -- tools that need it will fall back \
-         to source-compiling instead.",
+         or the install script failed) -- tools that would have used it fall \
+         back to the next installer in their chain (a system package manager, \
+         or source-compiling with cargo).",
         "[WARN]".yellow().bold()
       );
     }
