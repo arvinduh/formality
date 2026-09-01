@@ -1,4 +1,5 @@
 use super::*;
+use std::path::Path;
 use tempfile::tempdir;
 
 #[test]
@@ -467,7 +468,7 @@ fn test_scan_tools_and_build_table_surfaces_unprobeable_status_not_ready() {
     vec![Box::new(UnprobeableSurface { bin: binary_name })];
   let config = FormalityConfig::default();
 
-  let scan = scan_tools_and_build_table(&surfaces, &config);
+  let scan = scan_tools_and_build_table(Path::new("."), &surfaces, &config);
 
   assert!(scan.missing.is_empty());
   assert!(scan.installed.contains(binary_name));

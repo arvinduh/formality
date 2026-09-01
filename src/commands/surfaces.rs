@@ -24,7 +24,12 @@ pub fn run_surfaces(root: &Path, config: &FormalityConfig) -> ExitStatus {
       .width(table::WidthPolicy::Fixed(14)),
     table::Column::new(table::Cell::text("")).width(table::WidthPolicy::Auto),
   ])
-  .layout(table::Layout::compact().indent(2).padding(0, 1));
+  .layout(
+    table::Layout::compact()
+      .indent(2)
+      .padding(0, 1)
+      .max_width(80),
+  );
 
   let mut active_count = 0;
   for surface in registry.surfaces() {
@@ -51,18 +56,14 @@ pub fn run_surfaces(root: &Path, config: &FormalityConfig) -> ExitStatus {
 
   let palette = table::Palette::detect();
   let rendered_table = table::render(&surfaces_table, &palette);
-  let separator = table::separator_for_content(&rendered_table);
+  let frame = table::Frame::for_body(&rendered_table);
 
-  println!(
+  let title = format!(
     "{} {}",
     "fml surfaces".bold().cyan(),
     format!("({total_count} supported)").dimmed()
   );
-  println!("{}", separator.dimmed());
-  if !rendered_table.is_empty() {
-    println!("{rendered_table}");
-  }
-  println!("{}", separator.dimmed());
+  println!("{}", frame.section(&title, &rendered_table, &palette));
   println!(
     "  {} active, {} inactive\n",
     active_count.to_string().green().bold(),

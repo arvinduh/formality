@@ -157,6 +157,275 @@ fn render_cell_to_string(
   buf
 }
 
+/// Characters after which a soft line break is allowed when wrapping a cell:
+/// path separators and list punctuation. A break is also always allowed at a
+/// space. Deliberately excludes `.`/`-`/`_`/`:` so `rustfmt.exe`,
+/// `v1.9.0-stable`, and `C:` stay glued and remain copy/double-click friendly.
+const BREAK_AFTER: [char; 4] = ['/', '\\', ',', ';'];
+
+/// Splits `text` into wrap tokens: maximal runs that must not be broken across
+/// lines. A trailing [`BREAK_AFTER`] char stays with its token; runs of spaces
+/// each become a single `" "` token so the caller can collapse them at a wrap.
+fn break_into_tokens(text: &str) -> Vec<String> {
+  let mut toks = Vec::new();
+  let mut cur = String::new();
+  for ch in text.chars() {
+    if ch == ' ' {
+      if !cur.is_empty() {
+        toks.push(std::mem::take(&mut cur));
+      }
+      toks.push(" ".to_string());
+      continue;
+    }
+    cur.push(ch);
+    if BREAK_AFTER.contains(&ch) {
+      toks.push(std::mem::take(&mut cur));
+    }
+  }
+  if !cur.is_empty() {
+    toks.push(cur);
+  }
+  toks
+}
+
+/// Display width of the widest single token in `text` — the minimum inner
+/// column width at which `text` can be laid out without splitting a token.
+fn token_display_width(text: &str) -> usize {
+  break_into_tokens(text)
+    .iter()
+    .filter(|t| t.as_str() != " ")
+    .map(|t| t.as_str().width())
+    .max()
+    .unwrap_or(0)
+}
+
+/// Last-resort hard split of a single token that is genuinely wider than the
+/// column (only reachable when a column's width cap is below its own longest
+/// token, e.g. a `Max`/`Pct` cap tighter than an unbreakable path segment).
+fn hard_split(text: &str, width: usize) -> Vec<String> {
+  let width = width.max(1);
+  let mut out = Vec::new();
+  let mut cur = String::new();
+  let mut w = 0;
+  for ch in text.chars() {
+    let cw = UnicodeWidthChar::width(ch).unwrap_or(0);
+    if w + cw > width && !cur.is_empty() {
+      out.push(std::mem::take(&mut cur));
+      w = 0;
+    }
+    cur.push(ch);
+    w += cw;
+  }
+  if !cur.is_empty() {
+    out.push(cur);
+  }
+  out
+}
+
+/// Wrap `spans` onto lines no wider than `width`, breaking only at spaces and
+/// after path separators / list punctuation so a token is never split across
+/// lines. Span styles are preserved on every fragment.
+pub(super) fn wrap_spans(spans: &[Span], width: usize) -> Vec<Vec<Span>> {
+  let width = width.max(1);
+  let mut lines: Vec<Vec<Span>> = vec![Vec::new()];
+  let mut cur_w = 0usize;
+
+  for span in spans {
+    for tok in break_into_tokens(&span.text) {
+      if tok.as_str() == " " {
+        if cur_w == 0 || cur_w + 1 > width {
+          continue;
+        }
+        lines.last_mut().unwrap().push(Span::new(" ", span.style));
+        cur_w += 1;
+        continue;
+      }
+
+      let tw = tok.as_str().width();
+      if tw > width {
+        for piece in hard_split(&tok, width) {
+          if cur_w > 0 {
+            lines.push(Vec::new());
+          }
+          cur_w = piece.as_str().width();
+          lines.last_mut().unwrap().push(Span::new(piece, span.style));
+        }
+        continue;
+      }
+
+      if cur_w + tw > width && cur_w > 0 {
+        lines.push(Vec::new());
+        cur_w = 0;
+      }
+      lines.last_mut().unwrap().push(Span::new(tok, span.style));
+      cur_w += tw;
+    }
+  }
+
+  // Trailing spaces left dangling by a wrap add nothing visible.
+  for line in &mut lines {
+    while line
+      .last()
+      .is_some_and(|s| !s.text.is_empty() && s.text.chars().all(|c| c == ' '))
+    {
+      line.pop();
+    }
+  }
+  if lines.len() > 1 && lines.last().is_some_and(Vec::is_empty) {
+    lines.pop();
+  }
+  lines
+}
+
+/// Renders a cell to a (possibly multi-line) string already fitted to
+/// `inner_width`: token-boundary wrapping for [`Overflow::Wrap`], the existing
+/// clip/truncate behavior otherwise.
+fn wrap_cell_content(
+  cell: &Cell,
+  col_overflow: &Overflow,
+  inner_width: usize,
+  palette: &Palette,
+) -> String {
+  let overflow = cell.overflow.as_ref().unwrap_or(col_overflow);
+  match overflow {
+    Overflow::Wrap => wrap_spans(&cell.spans, inner_width)
+      .iter()
+      .map(|line| {
+        line
+          .iter()
+          .map(|s| palette.apply(&s.text, s.style))
+          .collect::<String>()
+      })
+      .collect::<Vec<_>>()
+      .join("\n"),
+    Overflow::Clip | Overflow::Truncate { .. } => {
+      render_cell_to_string(cell, col_overflow, Some(inner_width), palette)
+    }
+  }
+}
+
+/// Resolves every column to one concrete outer width (content + padding) that
+/// respects the column's [`WidthPolicy`], never splits a token, and keeps the
+/// total within `table_width` when the content allows it. This is the single
+/// place table geometry is decided — comfy-table is then told exact widths and
+/// only aligns/pads.
+#[allow(clippy::too_many_lines)]
+fn solve_column_widths(
+  spec: &Table,
+  table_width: usize,
+  padding_w: usize,
+) -> Vec<usize> {
+  let n = spec.columns.len();
+  if n == 0 {
+    return Vec::new();
+  }
+
+  let mut natural = vec![0usize; n];
+  let mut floor = vec![1usize; n];
+  for (i, col) in spec.columns.iter().enumerate() {
+    let header_text: String =
+      col.header.spans.iter().map(|s| s.text.as_str()).collect();
+    natural[i] = natural[i].max(header_text.as_str().width());
+    floor[i] = floor[i].max(token_display_width(&header_text).max(1));
+    for row in &spec.rows {
+      if !matches!(row.kind, RowKind::Data) {
+        continue;
+      }
+      if let Some(cell) = row.cells.get(i) {
+        let text: String = cell.spans.iter().map(|s| s.text.as_str()).collect();
+        natural[i] = natural[i].max(text.as_str().width());
+        floor[i] = floor[i].max(token_display_width(&text).max(1));
+      }
+    }
+  }
+
+  let inner = |w: u16| (w as usize).saturating_sub(padding_w);
+  let avail = table_width.saturating_sub(n * padding_w).max(n);
+
+  let mut want = vec![0usize; n];
+  let mut can_shrink = vec![false; n];
+  let mut can_grow = vec![false; n];
+  for (i, col) in spec.columns.iter().enumerate() {
+    match col.width {
+      WidthPolicy::Auto => {
+        want[i] = natural[i].max(1);
+        can_shrink[i] = true;
+        can_grow[i] = true;
+      }
+      WidthPolicy::Fixed(w) => {
+        // "At least this wide": honor the request, but never so narrow a
+        // token would have to split.
+        want[i] = inner(w).max(floor[i]).max(1);
+      }
+      WidthPolicy::Min(w) => {
+        want[i] = natural[i].max(inner(w)).max(floor[i]).max(1);
+        can_grow[i] = true;
+        can_shrink[i] = natural[i] > inner(w);
+      }
+      WidthPolicy::Max(w) => {
+        want[i] = natural[i].min(inner(w)).max(floor[i]).max(1);
+        can_shrink[i] = true;
+      }
+      WidthPolicy::Range(a, b) => {
+        want[i] = natural[i].clamp(inner(a), inner(b)).max(floor[i]).max(1);
+        can_shrink[i] = true;
+        can_grow[i] = want[i] < inner(b);
+      }
+      WidthPolicy::Pct(p) => {
+        want[i] = ((table_width * p as usize) / 100)
+          .saturating_sub(padding_w)
+          .max(floor[i])
+          .max(1);
+      }
+    }
+  }
+
+  let sum: usize = want.iter().sum();
+  if sum > avail {
+    let mut over = sum - avail;
+    for pass in 0..2 {
+      if over == 0 {
+        break;
+      }
+      let mut order: Vec<usize> = (0..n)
+        .filter(|&i| pass == 1 || can_shrink[i])
+        .filter(|&i| want[i] > floor[i])
+        .collect();
+      order.sort_by_key(|&i| std::cmp::Reverse(want[i]));
+      let mut progress = true;
+      while over > 0 && progress {
+        progress = false;
+        for &i in &order {
+          if over == 0 {
+            break;
+          }
+          if want[i] > floor[i] {
+            want[i] -= 1;
+            over -= 1;
+            progress = true;
+          }
+        }
+      }
+    }
+  } else if sum < avail {
+    let growers: Vec<usize> = (0..n).filter(|&i| can_grow[i]).collect();
+    if !growers.is_empty() {
+      let slack = avail - sum;
+      let each = slack / growers.len();
+      let mut rem = slack % growers.len();
+      for &i in &growers {
+        want[i] += each;
+        if rem > 0 {
+          want[i] += 1;
+          rem -= 1;
+        }
+      }
+    }
+  }
+
+  want.iter().map(|w| w + padding_w).collect()
+}
+
 fn to_comfy_align(align: Align) -> comfy_table::CellAlignment {
   match align {
     Align::Left => comfy_table::CellAlignment::Left,
@@ -175,6 +444,9 @@ pub fn render(spec: &Table, palette: &Palette) -> String {
     comfy_table::LineStyle::new('\u{2500}', '\u{2500}', '\u{2500}', '\u{2500}'),
   ));
   table.style_text_only();
+  // Every column is pinned to an exact width computed by `solve_column_widths`
+  // below, and cell content is pre-wrapped to that width, so comfy-table only
+  // has to align and pad — never re-flow or split a token of its own accord.
   table.set_content_arrangement(comfy_table::ContentArrangement::Dynamic);
 
   // Terminal width / max_width handling
@@ -185,8 +457,8 @@ pub fn render(spec: &Table, palette: &Palette) -> String {
       target_width = term_width;
     }
   }
-  let table_width = target_width.saturating_sub(spec.layout.indent);
-  table.set_width(table_width);
+  let table_width =
+    target_width.saturating_sub(spec.layout.indent).max(1) as usize;
 
   let num_cols = spec.columns.len();
   let has_headers = spec
@@ -194,11 +466,32 @@ pub fn render(spec: &Table, palette: &Palette) -> String {
     .iter()
     .any(|c| c.header.spans.iter().any(|s| !s.text.is_empty()));
 
+  let padding_w = (spec.layout.padding.0 + spec.layout.padding.1) as usize;
+  // The `NOTHING` preset still reserves one space for the left border and one
+  // between each pair of columns (the right border is reclaimed by
+  // `trim_fmt`). Reserve that overhead so `col_widths` + borders lands inside
+  // `table_width` rather than spilling `num_cols` columns past it.
+  let border_overhead = num_cols;
+  let budget = table_width.saturating_sub(border_overhead).max(1);
+  let col_widths = solve_column_widths(spec, budget, padding_w);
+  let solved_width: usize = col_widths.iter().sum::<usize>() + border_overhead;
+  let render_width = solved_width.clamp(1, table_width);
+  table.set_width(u16::try_from(render_width).unwrap_or(u16::MAX));
+
+  let inner_width = |i: usize| {
+    col_widths
+      .get(i)
+      .copied()
+      .unwrap_or(0)
+      .saturating_sub(padding_w)
+      .max(1)
+  };
+
   if has_headers {
     let mut header_row = comfy_table::Row::new();
-    for col in &spec.columns {
+    for (i, col) in spec.columns.iter().enumerate() {
       let content =
-        render_cell_to_string(&col.header, &col.overflow, None, palette);
+        wrap_cell_content(&col.header, &col.overflow, inner_width(i), palette);
       let cell_align = col.header.align.unwrap_or(col.align);
       let cell = comfy_table::Cell::new(content)
         .set_alignment(to_comfy_align(cell_align));
@@ -206,27 +499,6 @@ pub fn render(spec: &Table, palette: &Palette) -> String {
     }
     table.set_header(header_row);
   }
-
-  let padding_w = (spec.layout.padding.0 + spec.layout.padding.1) as usize;
-  let col_max_widths: Vec<Option<usize>> = spec
-    .columns
-    .iter()
-    .map(|col| match col.width {
-      WidthPolicy::Fixed(w) | WidthPolicy::Max(w) => {
-        Some((w as usize).saturating_sub(padding_w))
-      }
-      WidthPolicy::Range(_, max) => {
-        Some((max as usize).saturating_sub(padding_w))
-      }
-      WidthPolicy::Min(w) => Some((w as usize).saturating_sub(padding_w)),
-      WidthPolicy::Pct(pct) => Some(
-        ((table_width as usize * pct as usize) / 100).saturating_sub(padding_w),
-      ),
-      WidthPolicy::Auto => {
-        Some((table_width as usize).saturating_sub(padding_w))
-      }
-    })
-    .collect();
 
   let mut group_titles: Vec<String> = Vec::new();
 
@@ -241,16 +513,20 @@ pub fn render(spec: &Table, palette: &Palette) -> String {
           let col = spec.columns.get(i);
           let col_overflow = col.map_or(&Overflow::Wrap, |c| &c.overflow);
           let col_align = col.map_or(Align::Left, |c| c.align);
-          let max_w = col_max_widths.get(i).copied().flatten();
 
-          let (content, align) = if let Some(c) = cell {
+          let (mut content, align) = if let Some(c) = cell {
             (
-              render_cell_to_string(c, col_overflow, max_w, palette),
+              wrap_cell_content(c, col_overflow, inner_width(i), palette),
               c.align.unwrap_or(col_align),
             )
           } else {
             (String::new(), col_align)
           };
+
+          if let Some(max_h) = row.max_height {
+            content =
+              content.lines().take(max_h).collect::<Vec<_>>().join("\n");
+          }
 
           let comfy_cell = comfy_table::Cell::new(content)
             .set_alignment(to_comfy_align(align));
@@ -303,53 +579,40 @@ pub fn render(spec: &Table, palette: &Palette) -> String {
     }
   }
 
-  // Apply column constraints & padding
+  // Pin every column to the width `solve_column_widths` chose. Content was
+  // already wrapped to exactly this width above, so comfy-table only aligns
+  // and pads within it.
   for (i, col) in spec.columns.iter().enumerate() {
     if let Some(comfy_col) = table.column_mut(i) {
       comfy_col.set_padding((spec.layout.padding.0, spec.layout.padding.1));
       comfy_col.set_cell_alignment(to_comfy_align(col.align));
-
-      match col.width {
-        WidthPolicy::Auto => {}
-        WidthPolicy::Fixed(w) => {
-          comfy_col.set_constraint(comfy_table::ColumnConstraint::Absolute(
-            comfy_table::Width::Fixed(w),
-          ));
-        }
-        WidthPolicy::Min(w) => {
-          comfy_col.set_constraint(
-            comfy_table::ColumnConstraint::LowerBoundary(
-              comfy_table::Width::Fixed(w),
-            ),
-          );
-        }
-        WidthPolicy::Max(w) => {
-          comfy_col.set_constraint(
-            comfy_table::ColumnConstraint::UpperBoundary(
-              comfy_table::Width::Fixed(w),
-            ),
-          );
-        }
-        WidthPolicy::Range(min, max) => {
-          comfy_col.set_constraint(comfy_table::ColumnConstraint::Boundaries {
-            lower: comfy_table::Width::Fixed(min),
-            upper: comfy_table::Width::Fixed(max),
-          });
-        }
-        WidthPolicy::Pct(pct) => {
-          comfy_col.set_constraint(comfy_table::ColumnConstraint::Absolute(
-            comfy_table::Width::Percentage(u16::from(pct)),
-          ));
-        }
+      // comfy-table's `Absolute(Fixed(w))` is the *total* column width, padding
+      // included — which is exactly what `col_widths[i]` is.
+      if let Some(&w) = col_widths.get(i) {
+        comfy_col.set_constraint(comfy_table::ColumnConstraint::Absolute(
+          comfy_table::Width::Fixed(u16::try_from(w).unwrap_or(u16::MAX)),
+        ));
       }
     }
   }
 
   let formatted = table.trim_fmt();
 
-  // If there are rule rows (which comfy-table may render as spaces separated by '─'),
-  // post-process rule rows so they form a continuous unbroken rule line across the full table width.
-  let table_width = max_line_display_width(&formatted);
+  // Normalize every horizontal rule (`Row::rule()` rows, and comfy-table's own
+  // header separator) to the width of the actual content — never wider — so a
+  // rogue over-wide separator line from the renderer can't push the whole
+  // block past its budget.
+  let content_width = formatted
+    .lines()
+    .map(strip_ansi_escapes)
+    .filter(|s| {
+      let t = s.trim();
+      !t.is_empty() && !t.chars().all(|c| c == '\u{2500}' || c == ' ')
+    })
+    .map(|s| unicode_width::UnicodeWidthStr::width(s.as_str()))
+    .max()
+    .unwrap_or(0);
+  let table_width = content_width.min(render_width);
   let processed = if table_width > 0 {
     formatted
       .lines()
@@ -525,15 +788,15 @@ pub fn detect_terminal_width() -> u16 {
   80
 }
 
-/// Returns a horizontal rule line of `─` matching the specified width.
+/// Returns a horizontal rule of exactly `width` `─` characters.
+///
+/// This is a dumb primitive: the one place that decides how wide a rule should
+/// be is [`crate::ui::table::Frame`] (content-sized, 80-column target). The old
+/// `separator_line(0)` "size to the terminal" behavior was removed with #122 so
+/// two rules in one command's output can never disagree about width.
 #[must_use]
 pub fn separator_line(width: usize) -> String {
-  let w = if width == 0 {
-    detect_terminal_width() as usize
-  } else {
-    width
-  };
-  "\u{2500}".repeat(w)
+  "\u{2500}".repeat(width)
 }
 
 /// Returns a horizontal rule line of `─` matching the maximum visual width of the provided content.

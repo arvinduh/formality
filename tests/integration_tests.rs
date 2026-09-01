@@ -279,18 +279,22 @@ fn test_doctor_command_prints_sync_optional_notice() {
     .expect("failed to run fml doctor");
 
   let stdout = String::from_utf8_lossy(&output.stdout);
+  // `fml doctor` now wraps notice prose to the frame width, so the notice text
+  // can carry hard line breaks — compare with all whitespace runs collapsed.
+  let normalize = |s: &str| s.split_whitespace().collect::<Vec<_>>().join(" ");
+  let flat = normalize(&stdout);
   assert!(
     stdout.contains("fml sync:"),
     "expected doctor output to contain the 'fml sync:' notice heading, \
      got:\n{stdout}"
   );
   assert!(
-    stdout.contains(fml::commands::doctor::SYNC_NOTICE_SUMMARY),
+    flat.contains(&normalize(fml::commands::doctor::SYNC_NOTICE_SUMMARY)),
     "expected doctor output to contain the sync-optional summary, \
      got:\n{stdout}"
   );
   assert!(
-    stdout.contains(fml::commands::doctor::SYNC_NOTICE_DETAIL),
+    flat.contains(&normalize(fml::commands::doctor::SYNC_NOTICE_DETAIL)),
     "expected doctor output to contain the sync-optional detail line, \
      got:\n{stdout}"
   );

@@ -9,6 +9,7 @@ use crate::surfaces::{
 };
 use colored::Colorize;
 use rayon::prelude::*;
+use std::fmt::Write as _;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::time::Instant;
@@ -198,7 +199,12 @@ impl Runner {
         .align(crate::ui::table::Align::Right)
         .width(crate::ui::table::WidthPolicy::Fixed(12)),
     ])
-    .layout(crate::ui::table::Layout::compact().indent(2).padding(0, 1));
+    .layout(
+      crate::ui::table::Layout::compact()
+        .indent(2)
+        .padding(0, 1)
+        .max_width(80),
+    );
 
     for res in &results {
       let duration_str = format!("{:.2?}", res.duration);
@@ -423,9 +429,9 @@ impl Runner {
 
     let palette = crate::ui::table::Palette::detect();
     let rendered_table = crate::ui::table::render(&runner_table, &palette);
-    let separator = crate::ui::table::separator_for_content(&rendered_table);
+    let frame = crate::ui::table::Frame::for_body(&rendered_table);
 
-    println!(
+    let title = format!(
       "{} {} {}",
       "fml".bold().cyan(),
       action_verb.bold(),
@@ -436,23 +442,34 @@ impl Runner {
       )
       .dimmed()
     );
-    println!("{}", separator.dimmed());
-    if !rendered_table.is_empty() {
-      println!("{rendered_table}");
-    }
+    println!("{}", frame.section(&title, &rendered_table, &palette));
 
     if !diagnostics.is_empty() {
-      println!("\n{}", separator.dimmed());
-      println!("{}", "Diagnostics & Suggestions:".bold());
-      for (surface, detail) in diagnostics {
-        println!("\n  {} {}", "::".cyan().bold(), surface.bold().magenta());
+      let mut body = String::new();
+      for (surface, detail) in &diagnostics {
+        // Paths under the run root render relative here, via the same helper
+        // the table cells use — see `crate::ui::paths`.
+        let detail = crate::ui::paths::relativize_text(root, detail);
+        let _ = write!(
+          body,
+          "\n  {} {}\n",
+          "::".cyan().bold(),
+          surface.bold().magenta()
+        );
         for line in detail.lines() {
-          println!("    {line}");
+          let _ = writeln!(body, "    {line}");
         }
       }
+      println!(
+        "{}",
+        frame.section(
+          &"Diagnostics & Suggestions:".bold().to_string(),
+          &frame.wrap_body(&body),
+          &palette,
+        )
+      );
     }
 
-    println!("{}", separator.dimmed());
     let mut parts = Vec::new();
     if pass_count > 0 {
       parts.push(format!("{pass_count} passed").green().bold().to_string());

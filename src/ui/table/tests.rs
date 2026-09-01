@@ -283,16 +283,15 @@ fn test_max_line_display_width_ignores_ansi_and_counts_cjk() {
 }
 
 #[test]
-fn test_separator_line_explicit_width_vs_zero_fallback() {
+fn test_separator_line_is_a_plain_repeat() {
   let explicit = separator_line(10);
   assert_eq!(explicit.chars().count(), 10);
   assert!(explicit.chars().all(|c| c == '\u{2500}'));
 
-  // width == 0 falls back to detect_terminal_width(), which is always
-  // clamped into [40, 160] regardless of environment.
-  let fallback = separator_line(0);
-  assert!(fallback.chars().count() >= 40);
-  assert!(fallback.chars().count() <= 160);
+  // #122 removed the `separator_line(0)` "size to the terminal" behavior:
+  // it is now a dumb repeater, and 0 means an empty string. `Frame` is the
+  // single place a rule's width is decided.
+  assert_eq!(separator_line(0), "");
 }
 
 #[test]
@@ -491,7 +490,7 @@ fn test_terminal_width_extremes_and_alignments() {
     );
 
     let sep = separator_line(width as usize);
-    assert!(!sep.is_empty());
+    assert_eq!(sep.chars().count(), width as usize);
     let sep_content = separator_for_content(&rendered);
     assert!(!sep_content.is_empty());
   }
@@ -730,4 +729,75 @@ fn test_overflow_truncate_on_pct_and_min_columns() {
   let rendered = render(&table, &Palette::none());
   assert!(!rendered.is_empty());
   assert!(rendered.contains("..."));
+}
+
+#[test]
+fn test_wrap_never_splits_a_token_long_windows_path() {
+  // Regression for #122: a long Windows path in a wrapping column, plus a
+  // column whose own value ("javascript") is wider than its Fixed width.
+  let mut table = Table::new(vec![
+    Column::new(Cell::text("")).width(WidthPolicy::Fixed(10)),
+    Column::new(Cell::text("")).width(WidthPolicy::Fixed(10)),
+    Column::new(Cell::text("")).width(WidthPolicy::Auto),
+  ])
+  .layout(
+    Layout::compact()
+      .indent(2)
+      .padding(0, 1)
+      .max_width(80)
+      .clamp_to_terminal(false),
+  );
+  table.add_row(Row::new(vec![
+    Cell::styled("[READY]", Style::Ok),
+    Cell::styled("javascript", Style::Dim),
+    Cell::new(vec![
+      Span::styled("C:\\Users\\olives\\.cargo\\bin\\rustfmt.exe", Style::Dim),
+      Span::styled(" (v1.9.0-stable)", Style::Info),
+    ]),
+  ]));
+
+  let rendered = render(&table, &Palette::none());
+
+  // Output stays within 80 columns, continuation lines included.
+  for line in rendered.lines() {
+    assert!(
+      max_line_display_width(line) <= 80,
+      "line exceeds 80 cols: {line:?}"
+    );
+  }
+
+  // Every path token survives intact on some single line — nothing is chopped
+  // mid-token the way `rustf` / `mt.exe` was.
+  for token in [
+    "C:\\",
+    "Users\\",
+    "olives\\",
+    ".cargo\\",
+    "bin\\",
+    "rustfmt.exe",
+  ] {
+    assert!(
+      rendered.lines().any(|l| l.contains(token)),
+      "token {token:?} was split across lines:\n{rendered}"
+    );
+  }
+
+  // The Fixed(10) column widened to fit its own value rather than chopping it.
+  assert!(rendered.contains("javascript"));
+  assert!(!rendered.lines().any(|l| l.trim() == "javascrip"));
+}
+
+#[test]
+fn test_wrap_spans_breaks_on_separators_and_spaces_only() {
+  let spans = vec![Span::plain("alpha/beta gamma-delta")];
+  let lines = render::wrap_spans(&spans, 12);
+  let joined: Vec<String> = lines
+    .iter()
+    .map(|l| l.iter().map(|s| s.text.as_str()).collect())
+    .collect();
+  // "gamma-delta" has no interior break point (`-` is not a break char), so
+  // it is never split when the column can hold it.
+  assert!(joined.iter().any(|l| l == "gamma-delta"));
+  // "alpha/" is a legal break (path separator).
+  assert!(joined.iter().any(|l| l.starts_with("alpha/")));
 }

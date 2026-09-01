@@ -3,6 +3,9 @@
 /// Semantic table layout and rendering components.
 pub mod table;
 
+/// One shared relative-vs-absolute rendering for filesystem paths in output.
+pub mod paths;
+
 /// Returns whether the environment explicitly asks for *no* color, per the
 /// `NO_COLOR` convention (<https://no-color.org>): the variable set to any
 /// non-empty value. Empty means "unset" there, so `NO_COLOR=` deliberately

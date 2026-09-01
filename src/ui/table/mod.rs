@@ -5,9 +5,14 @@
 /// Comfy-table based terminal rendering and ANSI styling engine.
 pub mod render;
 
+/// The one output frame (`header → rule → body → rule`) every `fml` command
+/// shares — see [`frame::Frame`].
+pub mod frame;
+
+pub use frame::Frame;
 pub use render::{
-  Table, max_line_display_width, render, render_json, separator_for_content,
-  separator_line, strip_ansi_escapes,
+  Table, detect_terminal_width, max_line_display_width, render, render_json,
+  separator_for_content, separator_line, strip_ansi_escapes,
 };
 
 use serde::{Deserialize, Serialize};
