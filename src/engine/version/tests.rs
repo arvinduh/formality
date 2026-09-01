@@ -30,6 +30,13 @@ fn test_version_parsing_direct() {
   );
   assert_eq!(Version::parse(""), None);
   assert_eq!(Version::parse("invalid"), None);
+
+  // `semver` is stricter than the old hand-rolled parser: forms it rejects
+  // (leading-zero components / prerelease identifiers) now fail extraction
+  // outright rather than resolve to a fabricated comparable version.
+  assert_eq!(Version::parse("01.2.3"), None);
+  assert_eq!(Version::parse("1.2.03"), None);
+  assert_eq!(Version::parse("1.0.0-01"), None);
 }
 
 #[test]
@@ -316,6 +323,14 @@ fn test_evaluate_tool_status_mstv_boundary_is_compatible() {
   let status_below =
     evaluate_tool_status(Some(just_below), None, Some(&min), None);
   assert!(status_below.is_outdated());
+
+  // A prerelease *at* the boundary triple stays below it (semver precedence
+  // rule 9), matching the pre-semver verdict — the floor check is delegated
+  // to `semver` ordering, not `VersionReq`.
+  let at_boundary_pre = Version::with_prerelease(1, 4, 0, "rc.1");
+  let status_pre =
+    evaluate_tool_status(Some(at_boundary_pre), None, Some(&min), None);
+  assert!(status_pre.is_outdated());
 }
 
 #[test]
@@ -481,6 +496,18 @@ fn test_evaluate_tool_status_unparsed_version_fails_soft_to_unknown() {
     Some(&pinned),
   );
   assert!(status.is_unknown_version());
+
+  // The regression this refactor must not introduce: even with an MSTV floor
+  // present, an unparseable version is UnknownVersion -- never Compatible,
+  // never Outdated, never silently "satisfies the minimum".
+  let floored = evaluate_tool_status(
+    None,
+    Some("custom build, no version number".to_string()),
+    Some(&Version::new(1, 4, 0)),
+    Some(&pinned),
+  );
+  assert!(floored.is_unknown_version());
+  assert!(!floored.is_compatible() && !floored.is_outdated());
 }
 
 #[test]
