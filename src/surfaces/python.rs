@@ -3,9 +3,11 @@
 
 use super::{
   DeclaresFacets, ExecutionContext, Facet, FacetSupport, LanguageSurface,
-  NativeConfig, SurfaceResult, SurfaceStatus, ToolInfo, create_tool_command,
-  diff_check_via_tempcopy, find_files_with_ext, render_native_config,
-  run_tool_command, sync_native_config, tool_missing_guard,
+  NativeConfig, SurfaceResult, SurfaceStatus, ToolInfo,
+  classify_all_nonzero_as_error, create_tool_command,
+  diff_check_via_tempcopy_classified, find_files_with_ext,
+  render_native_config, run_tool_command, sync_native_config,
+  tool_missing_guard,
 };
 use serde::{Deserialize, Serialize};
 use std::path::{Path, PathBuf};
@@ -327,7 +329,7 @@ impl LanguageSurface for PythonSurface {
       build_ruff_inline_config_args(&RuffConfig::from_context(ctx));
 
     if ctx.check_only {
-      return diff_check_via_tempcopy(
+      return diff_check_via_tempcopy_classified(
         &files,
         |scratch| {
           let mut isort_cmd = create_tool_command("ruff");
@@ -353,6 +355,16 @@ impl LanguageSurface for PythonSurface {
         },
         self.name(),
         start,
+        // Neither pass has an exit code that means "ran fine, found
+        // formatting drift": the isort pass runs `ruff check --select I
+        // --fix`, so any drift is fixed in place and a non-zero exit means
+        // violations ruff could not fix under an import-only selection —
+        // in practice an `E999` syntax error (ruff always reports those) or,
+        // at exit 2, ruff itself erroring. `ruff format` (no `--check`) exits
+        // 0 formatted-or-not and only exits 2 on a parse/IO/config error.
+        // Every non-zero exit on this path is therefore an operational
+        // failure, not a lint result (Fixes #151).
+        classify_all_nonzero_as_error,
       );
     }
 
@@ -751,5 +763,32 @@ mod tests {
     ctx.global_config = Arc::new(global);
     let cfg = RuffConfig::from_context(&ctx);
     assert_eq!(cfg.format.line_ending, "lf");
+  }
+
+  #[test]
+  fn test_python_check_reports_execution_error_on_formatter_failure() {
+    // Fixes #151: an unparseable file on `fml fmt --check` makes both ruff
+    // passes fail (the isort `ruff check` pass reports `E999` and exits
+    // non-zero, `ruff format` exits 2). That must classify as
+    // `ExecutionError` (`[ERR]`), not a lint-style `ViolationsFound`
+    // (`[FAIL]`) — nothing on this path is a formatting result.
+    if !check_binary_exists("ruff") {
+      return;
+    }
+    let temp = TempDir::new().unwrap();
+    std::fs::write(temp.path().join("broken.py"), "def (:\n    return\n")
+      .unwrap();
+
+    let surface = PythonSurface;
+    let mut ctx = test_ctx(temp.path(), ResolvedLangConfig::new("python"));
+    ctx.check_only = true;
+
+    let res = surface.format(&ctx);
+    assert!(
+      matches!(res.status, SurfaceStatus::ExecutionError { .. }),
+      "a formatter failure on --check must be ExecutionError, got: {:?}",
+      res.status
+    );
+    assert!(!res.is_success());
   }
 }

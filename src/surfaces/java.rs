@@ -4,9 +4,11 @@
 
 use super::{
   DeclaresFacets, ExecutionContext, Facet, FacetSupport, LanguageSurface,
-  NativeConfig, SurfaceResult, SurfaceStatus, ToolInfo, create_tool_command,
-  diff_check_via_tempcopy, find_files_with_ext, lint_fix_unsupported,
-  run_tool_command, sync_native_config, tool_missing_guard,
+  NativeConfig, SurfaceResult, SurfaceStatus, ToolInfo,
+  classify_all_nonzero_as_error, create_tool_command,
+  diff_check_via_tempcopy_classified, find_files_with_ext,
+  lint_fix_unsupported, run_tool_command, sync_native_config,
+  tool_missing_guard,
 };
 use std::path::Path;
 use std::time::Instant;
@@ -310,7 +312,7 @@ impl LanguageSurface for JavaSurface {
     // reorders and de-duplicates imports as part of normal formatting, so
     // there is no separate import-sort pass needed like Python's ruff.
     if ctx.check_only {
-      return explain_jvm_incompatibility(diff_check_via_tempcopy(
+      return explain_jvm_incompatibility(diff_check_via_tempcopy_classified(
         &files,
         |scratch| {
           let mut cmd = create_tool_command("google-java-format");
@@ -324,6 +326,15 @@ impl LanguageSurface for JavaSurface {
         },
         self.name(),
         start,
+        // `google-java-format --replace` rewrites the scratch copy and exits
+        // 0 whether or not it changed anything; it has no "would reformat"
+        // exit code (that is `--dry-run --set-exit-if-changed`, never passed
+        // here). A non-zero exit means it could not format — a file that does
+        // not parse, or the `NoClassDefFoundError` a too-old JVM raises
+        // (which `explain_jvm_incompatibility` then annotates). Every
+        // non-zero exit is therefore an `ExecutionError`, matching the
+        // non-`--check` write path (Fixes #151).
+        classify_all_nonzero_as_error,
       ));
     }
 
@@ -813,5 +824,35 @@ mod tests {
       message, "Sample.java:1:1: needs formatting",
       "an ordinary violation message must pass through verbatim"
     );
+  }
+
+  #[test]
+  fn test_java_check_reports_execution_error_on_formatter_failure() {
+    // Fixes #151: an unparseable `.java` file on `fml fmt --check` makes
+    // google-java-format exit non-zero. That must classify as
+    // `ExecutionError` (`[ERR]`), not a lint-style `ViolationsFound`
+    // (`[FAIL]`) — `--replace` has no "would reformat" exit code, so a
+    // non-zero exit is always operational.
+    if !check_binary_exists("google-java-format") {
+      return;
+    }
+    let temp = TempDir::new().unwrap();
+    std::fs::write(
+      temp.path().join("Broken.java"),
+      "class Broken { void m( { int x = ; } }\n",
+    )
+    .unwrap();
+
+    let surface = JavaSurface;
+    let mut ctx = test_ctx(temp.path(), ResolvedLangConfig::new("java"));
+    ctx.check_only = true;
+
+    let res = surface.format(&ctx);
+    assert!(
+      matches!(res.status, SurfaceStatus::ExecutionError { .. }),
+      "a formatter failure on --check must be ExecutionError, got: {:?}",
+      res.status
+    );
+    assert!(!res.is_success());
   }
 }
