@@ -1229,39 +1229,134 @@ pub fn create_tool_command(binary: &str) -> std::process::Command {
   std::process::Command::new(binary)
 }
 
-/// Runs a tool command, measures execution duration, and translates exit status to a `SurfaceResult`.
+/// How a caller of [`run_tool_command_classified`] /
+/// [`crate::surfaces::diff_check_via_tempcopy_classified`] wants a given
+/// non-zero exit code from its tool interpreted.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ExitClass {
+  /// The tool ran to completion and reported rule violations or formatting
+  /// drift — translated to [`SurfaceStatus::ViolationsFound`].
+  ViolationsFound,
+  /// The tool could not do its job (bad config, typecheck failure, internal
+  /// crash, unusable arguments) — translated to
+  /// [`SurfaceStatus::ExecutionError`]. This is *not* a lint result.
+  ExecutionError,
+}
+
+/// Classifier for a tool that signals "ran, found violations" with exit code
+/// `1` and a genuine failure with any other non-zero exit. Fits
+/// `golangci-lint` (`1` = issues found; `7` = typecheck/config error, `2`,
+/// `3`, `5`, `6` = other internal failures). An exit with no numeric code
+/// (killed by a signal) classifies as [`ExitClass::ExecutionError`].
+#[must_use]
+pub fn classify_exit_one_as_violation(code: Option<i32>) -> ExitClass {
+  if code == Some(1) {
+    ExitClass::ViolationsFound
+  } else {
+    ExitClass::ExecutionError
+  }
+}
+
+/// Classifier for a tool that has **no** exit code meaning "found
+/// violations", so every non-zero exit is a real failure. This is the case
+/// for every write-mode formatter `fml` drives — `gofmt -w`, `goimports -w`,
+/// `prettier --write`, `biome format --write` all exit `0` whether or not
+/// they reformatted anything and only exit non-zero (`2`) on a syntax error,
+/// an unreadable file, or a bad config. Formatting drift on the `--check`
+/// path is detected by comparing file contents, never by the exit code.
+#[must_use]
+pub fn classify_all_nonzero_as_error(_code: Option<i32>) -> ExitClass {
+  ExitClass::ExecutionError
+}
+
+/// Combines a failed tool's captured `stdout` and `stderr` into one
+/// human-readable message. When both streams carry content, **neither is
+/// dropped**: stdout is shown first, then a `stderr:`-labelled block — this is
+/// what keeps findings visible for tools (markdownlint-cli2, golangci-lint)
+/// that print a banner to stdout and their actual diagnostics to stderr. When
+/// only one stream is non-empty it is returned trimmed; when neither is,
+/// `fallback` is used verbatim.
+pub(crate) fn merge_tool_streams(
+  stdout: &str,
+  stderr: &str,
+  fallback: &str,
+) -> String {
+  let stdout = stdout.trim();
+  let stderr = stderr.trim();
+  match (stdout.is_empty(), stderr.is_empty()) {
+    (false, false) => format!("{stdout}\n\nstderr:\n{stderr}"),
+    (false, true) => stdout.to_string(),
+    (true, false) => stderr.to_string(),
+    (true, true) => fallback.to_string(),
+  }
+}
+
+/// Plain-text description of a non-zero [`std::process::ExitStatus`] with no
+/// `Display`-stutter (`ExitStatus`'s own `Display` is already `exit code: N`).
+fn exit_status_summary(status: &std::process::ExitStatus) -> String {
+  status.code().map_or_else(
+    || "Command failed (terminated by signal)".to_string(),
+    |code| format!("Command failed with exit code {code}"),
+  )
+}
+
+/// Runs a tool command, measures execution duration, and translates exit
+/// status to a `SurfaceResult`, treating **every** non-zero exit as
+/// [`SurfaceStatus::ViolationsFound`].
+///
+/// Surfaces whose tool distinguishes "found violations" from "could not run"
+/// through its exit code should call [`run_tool_command_classified`] instead,
+/// so a tool *failure* is reported as [`SurfaceStatus::ExecutionError`] rather
+/// than a spurious lint violation.
 pub fn run_tool_command(
   surface_name: &'static str,
   cmd: &mut std::process::Command,
+) -> SurfaceResult {
+  run_tool_command_classified(surface_name, cmd, |_| ExitClass::ViolationsFound)
+}
+
+/// Like [`run_tool_command`], but lets the caller classify each non-zero exit
+/// code as either a violation result or a tool failure via `classify`, which
+/// receives [`std::process::ExitStatus::code`] (`None` when the process was
+/// killed by a signal).
+///
+/// On any non-zero exit, both captured streams are surfaced when both are
+/// non-empty (see [`merge_tool_streams`]); no non-empty stream is discarded.
+pub fn run_tool_command_classified(
+  surface_name: &'static str,
+  cmd: &mut std::process::Command,
+  classify: impl Fn(Option<i32>) -> ExitClass,
 ) -> SurfaceResult {
   let start = Instant::now();
   match cmd.output() {
     Ok(output) => {
       let duration = start.elapsed();
       if output.status.success() {
-        SurfaceResult {
+        return SurfaceResult {
           surface_name,
           status: SurfaceStatus::Passed,
           duration,
-        }
-      } else {
-        let stdout = String::from_utf8_lossy(&output.stdout).trim().to_string();
-        let stderr = String::from_utf8_lossy(&output.stderr).trim().to_string();
-        let message = if !stdout.is_empty() {
-          stdout
-        } else if !stderr.is_empty() {
-          stderr
-        } else {
-          format!("Command failed with exit code {}", output.status)
         };
-        SurfaceResult {
-          surface_name,
-          status: SurfaceStatus::ViolationsFound {
-            message,
-            diff: None,
-          },
-          duration,
-        }
+      }
+
+      let stdout = String::from_utf8_lossy(&output.stdout);
+      let stderr = String::from_utf8_lossy(&output.stderr);
+      let message = merge_tool_streams(
+        &stdout,
+        &stderr,
+        &exit_status_summary(&output.status),
+      );
+      let status = match classify(output.status.code()) {
+        ExitClass::ViolationsFound => SurfaceStatus::ViolationsFound {
+          message,
+          diff: None,
+        },
+        ExitClass::ExecutionError => SurfaceStatus::ExecutionError { message },
+      };
+      SurfaceResult {
+        surface_name,
+        status,
+        duration,
       }
     }
     Err(err) => {
@@ -2416,6 +2511,158 @@ mod tests {
         );
       }
       other => panic!("Expected Skipped, got {other:?}"),
+    }
+  }
+
+  /// Builds a `Command` that writes the given text to stdout and/or stderr
+  /// (each skipped when empty) and then exits with `exit_code`, using the
+  /// platform shell so the tests run on both Windows and Unix CI.
+  fn scripted_command(
+    stdout: &str,
+    stderr: &str,
+    exit_code: i32,
+  ) -> std::process::Command {
+    #[cfg(windows)]
+    {
+      let mut steps: Vec<String> = Vec::new();
+      if !stdout.is_empty() {
+        steps.push(format!("echo {stdout}"));
+      }
+      if !stderr.is_empty() {
+        steps.push(format!("echo {stderr} 1>&2"));
+      }
+      steps.push(format!("exit /b {exit_code}"));
+      let mut cmd = std::process::Command::new("cmd");
+      cmd.arg("/C").arg(steps.join(" & "));
+      cmd
+    }
+    #[cfg(not(windows))]
+    {
+      let mut script = String::new();
+      if !stdout.is_empty() {
+        script.push_str(&format!("printf '%s\\n' '{stdout}'; "));
+      }
+      if !stderr.is_empty() {
+        script.push_str(&format!("printf '%s\\n' '{stderr}' 1>&2; "));
+      }
+      script.push_str(&format!("exit {exit_code}"));
+      let mut cmd = std::process::Command::new("sh");
+      cmd.arg("-c").arg(script);
+      cmd
+    }
+  }
+
+  #[test]
+  fn test_run_tool_command_success_is_passed() {
+    let mut cmd = scripted_command("", "", 0);
+    let res = run_tool_command("t", &mut cmd);
+    assert!(matches!(res.status, SurfaceStatus::Passed));
+  }
+
+  #[test]
+  fn test_run_tool_command_stdout_only() {
+    let mut cmd = scripted_command("ONLYOUT", "", 1);
+    let res = run_tool_command("t", &mut cmd);
+    match res.status {
+      SurfaceStatus::ViolationsFound { message, .. } => {
+        assert_eq!(message, "ONLYOUT");
+        assert!(!message.contains("stderr:"));
+      }
+      other => panic!("expected ViolationsFound, got {other:?}"),
+    }
+  }
+
+  #[test]
+  fn test_run_tool_command_stderr_only() {
+    let mut cmd = scripted_command("", "ONLYERR", 1);
+    let res = run_tool_command("t", &mut cmd);
+    match res.status {
+      SurfaceStatus::ViolationsFound { message, .. } => {
+        assert_eq!(message, "ONLYERR");
+        assert!(!message.contains("stderr:"));
+      }
+      other => panic!("expected ViolationsFound, got {other:?}"),
+    }
+  }
+
+  #[test]
+  fn test_run_tool_command_both_streams_surface_both() {
+    let mut cmd = scripted_command("BANNER", "FINDINGS", 1);
+    let res = run_tool_command("t", &mut cmd);
+    match res.status {
+      SurfaceStatus::ViolationsFound { message, .. } => {
+        let out = message.find("BANNER").expect("stdout kept");
+        let err = message.find("FINDINGS").expect("stderr kept");
+        assert!(out < err, "stdout is shown before stderr");
+        assert!(message.contains("stderr:"), "stderr block is labelled");
+      }
+      other => panic!("expected ViolationsFound, got {other:?}"),
+    }
+  }
+
+  #[test]
+  fn test_run_tool_command_neither_stream() {
+    let mut cmd = scripted_command("", "", 3);
+    let res = run_tool_command("t", &mut cmd);
+    match res.status {
+      SurfaceStatus::ViolationsFound { message, .. } => {
+        // Exact, so a reintroduced `Display` stutter ("exit code exit
+        // code: 3") fails the assertion.
+        assert_eq!(message, "Command failed with exit code 3");
+      }
+      other => panic!("expected ViolationsFound, got {other:?}"),
+    }
+  }
+
+  #[test]
+  fn test_run_tool_command_classified_all_nonzero_as_error() {
+    // The write-mode-formatter classifier: exit 2 (prettier/gofmt parse
+    // failure) is a tool failure, not formatting drift, and both streams
+    // are still surfaced.
+    let mut cmd = scripted_command("BANNER", "PARSEFAIL", 2);
+    let res =
+      run_tool_command_classified("t", &mut cmd, classify_all_nonzero_as_error);
+    match res.status {
+      SurfaceStatus::ExecutionError { message } => {
+        assert!(message.contains("BANNER"));
+        assert!(message.contains("PARSEFAIL"));
+      }
+      other => panic!("expected ExecutionError, got {other:?}"),
+    }
+  }
+
+  #[test]
+  fn test_run_tool_command_classified_error_exit() {
+    // Classifier maps everything but exit 1 to a tool failure; exit 7 is
+    // golangci-lint's typecheck/config error.
+    let mut cmd = scripted_command("0 issues.", "TYPECHECKFAIL", 7);
+    let res = run_tool_command_classified(
+      "t",
+      &mut cmd,
+      classify_exit_one_as_violation,
+    );
+    match res.status {
+      SurfaceStatus::ExecutionError { message } => {
+        assert!(message.contains("TYPECHECKFAIL"), "real cause surfaced");
+        assert!(message.contains("0 issues."), "banner stream not dropped");
+      }
+      other => panic!("expected ExecutionError, got {other:?}"),
+    }
+  }
+
+  #[test]
+  fn test_run_tool_command_classified_violation_exit() {
+    let mut cmd = scripted_command("ONEISSUE", "", 1);
+    let res = run_tool_command_classified(
+      "t",
+      &mut cmd,
+      classify_exit_one_as_violation,
+    );
+    match res.status {
+      SurfaceStatus::ViolationsFound { message, .. } => {
+        assert_eq!(message, "ONEISSUE");
+      }
+      other => panic!("expected ViolationsFound, got {other:?}"),
     }
   }
 }

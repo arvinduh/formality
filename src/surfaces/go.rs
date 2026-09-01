@@ -4,9 +4,11 @@
 
 use super::{
   DeclaresFacets, ExecutionContext, Facet, FacetSupport, LanguageSurface,
-  NativeConfig, SurfaceResult, SurfaceStatus, ToolInfo, create_tool_command,
-  diff_check_via_tempcopy, find_files_with_ext, render_native_config,
-  run_tool_command, sync_native_config, tool_missing_guard,
+  NativeConfig, SurfaceResult, SurfaceStatus, ToolInfo,
+  classify_all_nonzero_as_error, classify_exit_one_as_violation,
+  create_tool_command, diff_check_via_tempcopy_classified, find_files_with_ext,
+  render_native_config, run_tool_command_classified, sync_native_config,
+  tool_missing_guard,
 };
 use serde::{Deserialize, Serialize};
 use std::path::PathBuf;
@@ -278,7 +280,7 @@ impl LanguageSurface for GoSurface {
     // handles import grouping/sorting, chained in a single `fml fmt` pass so
     // files land ready to pass `fml lint` immediately afterward.
     if ctx.check_only {
-      return diff_check_via_tempcopy(
+      return diff_check_via_tempcopy_classified(
         &files,
         |scratch| {
           let mut gofmt_cmd = create_tool_command("gofmt");
@@ -300,6 +302,10 @@ impl LanguageSurface for GoSurface {
         },
         self.name(),
         start,
+        // `gofmt -w` / `goimports -w` exit non-zero only on a parse
+        // failure — never to signal reformatting — so any non-zero exit
+        // is an `ExecutionError`, matching the non-`--check` write path.
+        classify_all_nonzero_as_error,
       );
     }
 
@@ -440,7 +446,16 @@ impl LanguageSurface for GoSurface {
     ));
     cmd.current_dir(ctx.root.as_path());
 
-    run_tool_command(self.name(), &mut cmd)
+    // golangci-lint exits `1` for "issues found" and non-`1` for "could not
+    // run" (`7` = typecheck/config error, `2`/`3`/`5`/`6` = other internal
+    // failures). Only `1` is a lint result; everything else is an
+    // `ExecutionError` so `fml lint` renders `[ERR]` with the real cause
+    // instead of a misleading `Violations found` (Fixes #107).
+    run_tool_command_classified(
+      self.name(),
+      &mut cmd,
+      classify_exit_one_as_violation,
+    )
   }
 
   // `fml lint` no longer goes through this path (Fixes #157): it passes the
@@ -477,7 +492,21 @@ mod tests {
   use super::*;
   use crate::config::{GoOptions, ResolvedLangConfig};
   use crate::surfaces::{check_binary_exists, test_ctx};
+  use std::sync::{Mutex, MutexGuard, PoisonError};
   use tempfile::TempDir;
+
+  /// `golangci-lint run` takes a machine-global lock and aborts with
+  /// `parallel golangci-lint is running` if a second invocation overlaps.
+  /// libtest runs these tests on parallel threads, so every test that
+  /// actually invokes `golangci-lint run` (via `GoSurface::lint`) must hold
+  /// this guard for the duration of the call.
+  static GOLANGCI_LINT_GUARD: Mutex<()> = Mutex::new(());
+
+  fn golangci_lint_lock() -> MutexGuard<'static, ()> {
+    GOLANGCI_LINT_GUARD
+      .lock()
+      .unwrap_or_else(PoisonError::into_inner)
+  }
 
   #[test]
   fn test_go_surface_basics() {
@@ -720,6 +749,7 @@ mod tests {
     if !check_binary_exists("golangci-lint") {
       return;
     }
+    let _guard = golangci_lint_lock();
     let temp = TempDir::new().unwrap();
     std::fs::write(
       temp.path().join("go.mod"),
@@ -751,6 +781,7 @@ mod tests {
     if !check_binary_exists("golangci-lint") {
       return;
     }
+    let _guard = golangci_lint_lock();
     let temp = TempDir::new().unwrap();
     std::fs::write(
       temp.path().join("go.mod"),
@@ -786,5 +817,48 @@ mod tests {
     let ctx_govet = test_ctx(temp.path(), govet_cfg);
     let res_govet = surface.lint(&ctx_govet, false);
     assert!(matches!(res_govet.status, SurfaceStatus::Passed));
+  }
+
+  #[test]
+  fn test_go_lint_without_go_mod_is_execution_error_not_violation() {
+    // Headline repro for #107: golangci-lint in a directory with no `go.mod`
+    // exits 7 with a typecheck error on stderr and "0 issues." on stdout.
+    // Before the fix this rendered as `[FAIL] Violations found` showing only
+    // the contradictory "0 issues." line; it must now be an `ExecutionError`
+    // carrying the real cause.
+    if !check_binary_exists("golangci-lint") {
+      return;
+    }
+    let _guard = golangci_lint_lock();
+    let temp = TempDir::new().unwrap();
+    // Deliberately no go.mod.
+    std::fs::write(
+      temp.path().join("main.go"),
+      "package main\n\nfunc main() {}\n",
+    )
+    .unwrap();
+
+    let surface = GoSurface;
+    let ctx = test_ctx(temp.path(), ResolvedLangConfig::new("go"));
+    let res = surface.lint(&ctx, false);
+
+    match res.status {
+      SurfaceStatus::ExecutionError { message } => {
+        let lower = message.to_lowercase();
+        assert!(
+          lower.contains("module")
+            || lower.contains("go.mod")
+            || lower.contains("typechecking")
+            // Defensive: if some other suite invokes golangci-lint
+            // concurrently despite the guard, its global-lock abort is
+            // still a non-zero exit proving the point (not `ViolationsFound`).
+            || lower.contains("parallel golangci-lint is running"),
+          "message should carry golangci-lint's real cause, got: {message}"
+        );
+      }
+      other => panic!(
+        "no-go.mod golangci-lint failure must be ExecutionError, got {other:?}"
+      ),
+    }
   }
 }

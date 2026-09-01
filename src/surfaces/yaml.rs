@@ -4,9 +4,10 @@
 use super::{
   DeclaresFacets, ExecutionContext, Facet, FacetSupport, LanguageSurface,
   NativeConfig, PrettierConfig, SurfaceResult, ToolInfo,
-  build_prettier_inline_args, create_tool_command, diff_check_via_tempcopy,
-  find_files_with_ext, lint_fix_unsupported, render_native_config,
-  run_tool_command, sync_native_config, sync_prettier_config,
+  build_prettier_inline_args, classify_all_nonzero_as_error,
+  create_tool_command, diff_check_via_tempcopy_classified, find_files_with_ext,
+  lint_fix_unsupported, render_native_config, run_tool_command,
+  run_tool_command_classified, sync_native_config, sync_prettier_config,
   tool_missing_guard,
 };
 use serde::{Deserialize, Serialize};
@@ -224,7 +225,7 @@ impl LanguageSurface for YamlSurface {
       build_prettier_inline_args(&PrettierConfig::from_context(ctx));
 
     if ctx.check_only {
-      return diff_check_via_tempcopy(
+      return diff_check_via_tempcopy_classified(
         &files,
         |scratch| {
           let mut cmd = create_tool_command("prettier");
@@ -240,6 +241,7 @@ impl LanguageSurface for YamlSurface {
         },
         self.name(),
         start,
+        classify_all_nonzero_as_error,
       );
     }
 
@@ -254,7 +256,16 @@ impl LanguageSurface for YamlSurface {
     cmd.args(&ctx.lang_config.extra_args);
     cmd.current_dir(ctx.root.as_path());
 
-    run_tool_command(self.name(), &mut cmd)
+    // `prettier --write` exits `0` whether or not it reformats and only
+    // exits non-zero (`2`) on a parse error / bad config / unreadable file
+    // — never `1`, which is `--check`-only. So every non-zero exit here is
+    // a tool failure (`ExecutionError`), not formatting drift, and the
+    // `--check` path above classifies identically (Fixes #107).
+    run_tool_command_classified(
+      self.name(),
+      &mut cmd,
+      classify_all_nonzero_as_error,
+    )
   }
 
   fn lint(&self, ctx: &ExecutionContext, fix: bool) -> SurfaceResult {
