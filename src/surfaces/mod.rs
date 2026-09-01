@@ -65,11 +65,15 @@ pub use registry::{
   SurfaceRegistry, all_surfaces, default_registry, detect_surfaces,
   detect_surfaces_smart, get_surface_by_name, resolve_canonical_name,
 };
-pub use sync::{diff_check_via_tempcopy, is_auto_generated, sync_file_helper};
+pub use sync::{
+  diff_check_via_tempcopy, diff_check_via_tempcopy_classified,
+  is_auto_generated, sync_file_helper,
+};
 pub use tooling::{
   ExitClass, InstallMethod, chain_wants_cargo_binstall, check_binary_exists,
-  classify_exit_one_as_violation, create_tool_command, ensure_cargo_binstall,
-  forget_binary, has_cargo_binstall, install_chain_for, lint_fix_unsupported,
+  classify_all_nonzero_as_error, classify_exit_one_as_violation,
+  create_tool_command, ensure_cargo_binstall, forget_binary,
+  has_cargo_binstall, install_chain_for, lint_fix_unsupported,
   pinned_installer_for, pinned_version_for, refresh_go_install_path,
   refresh_path_after_install, refresh_windows_path_from_registry,
   resolve_binary_path, run_tool_command, run_tool_command_classified,

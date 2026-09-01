@@ -4,8 +4,8 @@
 use super::{
   DeclaresFacets, ExecutionContext, Facet, FacetSupport, LanguageSurface,
   NativeConfig, PrettierConfig, SurfaceResult, ToolInfo,
-  build_prettier_inline_args, classify_exit_one_as_violation,
-  create_tool_command, diff_check_via_tempcopy, find_files_with_ext,
+  build_prettier_inline_args, classify_all_nonzero_as_error,
+  create_tool_command, diff_check_via_tempcopy_classified, find_files_with_ext,
   lint_fix_unsupported, render_native_config, run_tool_command,
   run_tool_command_classified, sync_native_config, sync_prettier_config,
   tool_missing_guard,
@@ -225,7 +225,7 @@ impl LanguageSurface for YamlSurface {
       build_prettier_inline_args(&PrettierConfig::from_context(ctx));
 
     if ctx.check_only {
-      return diff_check_via_tempcopy(
+      return diff_check_via_tempcopy_classified(
         &files,
         |scratch| {
           let mut cmd = create_tool_command("prettier");
@@ -241,6 +241,7 @@ impl LanguageSurface for YamlSurface {
         },
         self.name(),
         start,
+        classify_all_nonzero_as_error,
       );
     }
 
@@ -255,14 +256,15 @@ impl LanguageSurface for YamlSurface {
     cmd.args(&ctx.lang_config.extra_args);
     cmd.current_dir(ctx.root.as_path());
 
-    // prettier exits `1` when files would be reformatted (a real drift
-    // result) and `2` on a parse error / bad config / internal failure —
-    // the latter is a tool failure, not formatting drift, so classify it as
-    // `ExecutionError` rather than `ViolationsFound` (Fixes #107).
+    // `prettier --write` exits `0` whether or not it reformats and only
+    // exits non-zero (`2`) on a parse error / bad config / unreadable file
+    // — never `1`, which is `--check`-only. So every non-zero exit here is
+    // a tool failure (`ExecutionError`), not formatting drift, and the
+    // `--check` path above classifies identically (Fixes #107).
     run_tool_command_classified(
       self.name(),
       &mut cmd,
-      classify_exit_one_as_violation,
+      classify_all_nonzero_as_error,
     )
   }
 

@@ -4,8 +4,8 @@
 use super::{
   DeclaresFacets, ExecutionContext, Facet, FacetSupport, LanguageSurface,
   NativeConfig, PrettierConfig, SurfaceResult, ToolInfo,
-  build_prettier_inline_args, classify_exit_one_as_violation,
-  create_tool_command, diff_check_via_tempcopy, find_files_with_ext,
+  build_prettier_inline_args, classify_all_nonzero_as_error,
+  create_tool_command, diff_check_via_tempcopy_classified, find_files_with_ext,
   lint_fix_unsupported, run_tool_command_classified, sync_prettier_config,
   tool_missing_guard,
 };
@@ -98,7 +98,7 @@ impl LanguageSurface for JsonSurface {
       build_prettier_inline_args(&PrettierConfig::from_context(ctx));
 
     if ctx.check_only {
-      return diff_check_via_tempcopy(
+      return diff_check_via_tempcopy_classified(
         &files,
         |scratch| {
           let parser = if scratch.to_string_lossy().contains(".jsonc.") {
@@ -119,6 +119,7 @@ impl LanguageSurface for JsonSurface {
         },
         self.name(),
         start,
+        classify_all_nonzero_as_error,
       );
     }
 
@@ -133,13 +134,15 @@ impl LanguageSurface for JsonSurface {
     cmd.args(&ctx.lang_config.extra_args);
     cmd.current_dir(ctx.root.as_path());
 
-    // prettier exits `1` for "would reformat" (drift) and `2` for a parse
-    // error / bad config / internal failure — classify the latter as an
-    // `ExecutionError` instead of spurious formatting drift (Fixes #107).
+    // `prettier --write` exits `0` regardless of whether it reformats and
+    // only exits non-zero (`2`) on a parse error / bad config / unreadable
+    // file — never `1` (that is `--check`-only). Every non-zero exit here
+    // is a tool failure (`ExecutionError`), and the `--check` path above
+    // classifies identically (Fixes #107).
     run_tool_command_classified(
       self.name(),
       &mut cmd,
-      classify_exit_one_as_violation,
+      classify_all_nonzero_as_error,
     )
   }
 

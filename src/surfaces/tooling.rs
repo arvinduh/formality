@@ -1173,8 +1173,9 @@ pub fn create_tool_command(binary: &str) -> std::process::Command {
   std::process::Command::new(binary)
 }
 
-/// How [`run_tool_command_classified`] should interpret a given non-zero exit
-/// code from a tool.
+/// How a caller of [`run_tool_command_classified`] /
+/// [`crate::surfaces::diff_check_via_tempcopy_classified`] wants a given
+/// non-zero exit code from its tool interpreted.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ExitClass {
   /// The tool ran to completion and reported rule violations or formatting
@@ -1186,13 +1187,11 @@ pub enum ExitClass {
   ExecutionError,
 }
 
-/// A ready-made [`run_tool_command_classified`] classifier for the common
-/// convention where exit code `1` means "ran, found violations" and every
-/// other non-zero exit means "the tool itself failed". Fits `golangci-lint`
-/// (`1` = issues found, `7` = typecheck/config error) and the prettier family
-/// (`1` = would reformat, `2` = parse error / bad config) alike. An exit with
-/// no numeric code (killed by a signal) classifies as
-/// [`ExitClass::ExecutionError`].
+/// Classifier for a tool that signals "ran, found violations" with exit code
+/// `1` and a genuine failure with any other non-zero exit. Fits
+/// `golangci-lint` (`1` = issues found; `7` = typecheck/config error, `2`,
+/// `3`, `5`, `6` = other internal failures). An exit with no numeric code
+/// (killed by a signal) classifies as [`ExitClass::ExecutionError`].
 #[must_use]
 pub fn classify_exit_one_as_violation(code: Option<i32>) -> ExitClass {
   if code == Some(1) {
@@ -1202,24 +1201,47 @@ pub fn classify_exit_one_as_violation(code: Option<i32>) -> ExitClass {
   }
 }
 
+/// Classifier for a tool that has **no** exit code meaning "found
+/// violations", so every non-zero exit is a real failure. This is the case
+/// for every write-mode formatter `fml` drives — `gofmt -w`, `goimports -w`,
+/// `prettier --write`, `biome format --write` all exit `0` whether or not
+/// they reformatted anything and only exit non-zero (`2`) on a syntax error,
+/// an unreadable file, or a bad config. Formatting drift on the `--check`
+/// path is detected by comparing file contents, never by the exit code.
+#[must_use]
+pub fn classify_all_nonzero_as_error(_code: Option<i32>) -> ExitClass {
+  ExitClass::ExecutionError
+}
+
 /// Combines a failed tool's captured `stdout` and `stderr` into one
 /// human-readable message. When both streams carry content, **neither is
 /// dropped**: stdout is shown first, then a `stderr:`-labelled block — this is
 /// what keeps findings visible for tools (markdownlint-cli2, golangci-lint)
 /// that print a banner to stdout and their actual diagnostics to stderr. When
-/// only one stream is non-empty it is returned verbatim; when neither is, a
-/// generic exit-code line is synthesized.
-fn merge_tool_output(
+/// only one stream is non-empty it is returned trimmed; when neither is,
+/// `fallback` is used verbatim.
+pub(crate) fn merge_tool_streams(
   stdout: &str,
   stderr: &str,
-  status: &std::process::ExitStatus,
+  fallback: &str,
 ) -> String {
+  let stdout = stdout.trim();
+  let stderr = stderr.trim();
   match (stdout.is_empty(), stderr.is_empty()) {
     (false, false) => format!("{stdout}\n\nstderr:\n{stderr}"),
     (false, true) => stdout.to_string(),
     (true, false) => stderr.to_string(),
-    (true, true) => format!("Command failed with exit code {status}"),
+    (true, true) => fallback.to_string(),
   }
+}
+
+/// Plain-text description of a non-zero [`std::process::ExitStatus`] with no
+/// `Display`-stutter (`ExitStatus`'s own `Display` is already `exit code: N`).
+fn exit_status_summary(status: &std::process::ExitStatus) -> String {
+  status.code().map_or_else(
+    || "Command failed (terminated by signal)".to_string(),
+    |code| format!("Command failed with exit code {code}"),
+  )
 }
 
 /// Runs a tool command, measures execution duration, and translates exit
@@ -1243,7 +1265,7 @@ pub fn run_tool_command(
 /// killed by a signal).
 ///
 /// On any non-zero exit, both captured streams are surfaced when both are
-/// non-empty (see [`merge_tool_output`]); no non-empty stream is discarded.
+/// non-empty (see [`merge_tool_streams`]); no non-empty stream is discarded.
 pub fn run_tool_command_classified(
   surface_name: &'static str,
   cmd: &mut std::process::Command,
@@ -1261,9 +1283,13 @@ pub fn run_tool_command_classified(
         };
       }
 
-      let stdout = String::from_utf8_lossy(&output.stdout).trim().to_string();
-      let stderr = String::from_utf8_lossy(&output.stderr).trim().to_string();
-      let message = merge_tool_output(&stdout, &stderr, &output.status);
+      let stdout = String::from_utf8_lossy(&output.stdout);
+      let stderr = String::from_utf8_lossy(&output.stderr);
+      let message = merge_tool_streams(
+        &stdout,
+        &stderr,
+        &exit_status_summary(&output.status),
+      );
       let status = match classify(output.status.code()) {
         ExitClass::ViolationsFound => SurfaceStatus::ViolationsFound {
           message,
@@ -2352,12 +2378,28 @@ mod tests {
     let res = run_tool_command("t", &mut cmd);
     match res.status {
       SurfaceStatus::ViolationsFound { message, .. } => {
-        assert!(
-          message.contains("exit code"),
-          "synthesized message names the exit code, got {message:?}"
-        );
+        // Exact, so a reintroduced `Display` stutter ("exit code exit
+        // code: 3") fails the assertion.
+        assert_eq!(message, "Command failed with exit code 3");
       }
       other => panic!("expected ViolationsFound, got {other:?}"),
+    }
+  }
+
+  #[test]
+  fn test_run_tool_command_classified_all_nonzero_as_error() {
+    // The write-mode-formatter classifier: exit 2 (prettier/gofmt parse
+    // failure) is a tool failure, not formatting drift, and both streams
+    // are still surfaced.
+    let mut cmd = scripted_command("BANNER", "PARSEFAIL", 2);
+    let res =
+      run_tool_command_classified("t", &mut cmd, classify_all_nonzero_as_error);
+    match res.status {
+      SurfaceStatus::ExecutionError { message } => {
+        assert!(message.contains("BANNER"));
+        assert!(message.contains("PARSEFAIL"));
+      }
+      other => panic!("expected ExecutionError, got {other:?}"),
     }
   }
 
