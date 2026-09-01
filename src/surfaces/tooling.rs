@@ -2092,21 +2092,103 @@ mod tests {
 
   #[test]
   fn test_binstall_bootstrap_no_op_without_a_confirmed_pin() {
-    // taplo deliberately has `expected_binary_version: None` (its installed
-    // binary reports a different number than any chain pin). With no
-    // confirmed pin there is no lag to detect, so a Brew selection must not
-    // trigger a bootstrap on pin-lag grounds.
+    // Isolates the `expected: None` guard specifically. taplo's chain has a
+    // `CargoBinstall` entry *ahead of* its `cargo install` source-compile
+    // fallback, so if `expected` were `Some(<that pin>)` the index check
+    // (binstall before selected) would fire and return `true`. taplo
+    // deliberately carries `expected_binary_version: None` (its installed
+    // binary reports a different number than any chain pin), so the guard
+    // must short-circuit to `false` before the ordering is ever considered.
     let chain = install_chain_for("taplo").expect("taplo must have a chain");
+    let cargo_fallback = chain
+      .iter()
+      .find(|m| matches!(m, InstallMethod::Cargo { .. }))
+      .copied();
+    let binstall_idx = chain
+      .iter()
+      .position(|m| matches!(m, InstallMethod::CargoBinstall(_)))
+      .expect("taplo chain has a CargoBinstall entry");
+    let cargo_idx = chain
+      .iter()
+      .position(|m| matches!(m, InstallMethod::Cargo { .. }))
+      .expect("taplo chain has a cargo-install fallback");
+    assert!(
+      binstall_idx < cargo_idx,
+      "precondition: taplo's CargoBinstall sits ahead of its cargo fallback, \
+       so only the `expected: None` guard can make this return false"
+    );
+    assert_eq!(
+      pinned_version_for("taplo"),
+      None,
+      "taplo must stay opted out of the pin comparison for this test to \
+       isolate the guard it targets"
+    );
+
+    assert!(!binstall_bootstrap_would_fix_pin_lag(
+      chain,
+      None,
+      cargo_fallback.as_ref(),
+    ));
+  }
+
+  #[test]
+  fn test_binstall_bootstrap_fixes_brew_pin_lag_for_tinymist() {
+    // tinymist has the identical chain shape to typstyle (pin-carrying
+    // `CargoBinstall` first, `Brew` as fallback) and a confirmed
+    // `expected_binary_version`, so the same #102 mechanism must cover it.
+    let chain =
+      install_chain_for("tinymist").expect("tinymist must have a chain");
+    let expected = pinned_version_for("tinymist");
     let brew = chain
       .iter()
       .find(|m| matches!(m, InstallMethod::Brew(_)))
       .copied();
 
-    assert!(!binstall_bootstrap_would_fix_pin_lag(
+    assert!(binstall_bootstrap_would_fix_pin_lag(
       chain,
-      pinned_version_for("taplo").as_ref(),
+      expected.as_ref(),
       brew.as_ref(),
     ));
+  }
+
+  #[test]
+  fn test_binstall_bootstrap_pin_lag_for_ruff_is_scoop_winget_only() {
+    // ruff's chain is the asymmetric case: `Brew` sits *ahead* of the
+    // pin-carrying `CargoBinstall` entry, but `Scoop`/`WingetName` sit
+    // *after* it. So a Windows host with only scoop (no Python toolchain)
+    // selects the unpinned scoop package and benefits from a bootstrap,
+    // while a brew-selected ruff does not -- brew wins regardless of whether
+    // cargo-binstall gets bootstrapped, an incidental consequence of chain
+    // order, not a deliberate exemption.
+    let chain = install_chain_for("ruff").expect("ruff must have a chain");
+    let expected = pinned_version_for("ruff");
+
+    let scoop = chain
+      .iter()
+      .find(|m| matches!(m, InstallMethod::Scoop(_)))
+      .copied();
+    assert!(
+      binstall_bootstrap_would_fix_pin_lag(
+        chain,
+        expected.as_ref(),
+        scoop.as_ref(),
+      ),
+      "scoop-selected ruff (no pin) benefits from the cargo-binstall bootstrap"
+    );
+
+    let brew = chain
+      .iter()
+      .find(|m| matches!(m, InstallMethod::Brew(_)))
+      .copied();
+    assert!(
+      !binstall_bootstrap_would_fix_pin_lag(
+        chain,
+        expected.as_ref(),
+        brew.as_ref(),
+      ),
+      "brew-selected ruff is unaffected -- Brew sits ahead of CargoBinstall \
+       in RUFF_CHAIN, so bootstrapping changes nothing about the selection"
+    );
   }
 
   // merge_path_entries is the pure half of every post-install PATH refresh
