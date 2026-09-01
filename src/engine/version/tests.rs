@@ -31,12 +31,24 @@ fn test_version_parsing_direct() {
   assert_eq!(Version::parse(""), None);
   assert_eq!(Version::parse("invalid"), None);
 
-  // `semver` is stricter than the old hand-rolled parser: forms it rejects
-  // (leading-zero components / prerelease identifiers) now fail extraction
-  // outright rather than resolve to a fabricated comparable version.
+  // A leading-zero *core* is malformed beyond salvage: `None` (surfaced as
+  // UnknownVersion downstream), never a fabricated comparable version.
   assert_eq!(Version::parse("01.2.3"), None);
   assert_eq!(Version::parse("1.2.03"), None);
-  assert_eq!(Version::parse("1.0.0-01"), None);
+
+  // A non-semver *suffix* after a valid core is salvaged down to the bare
+  // `MAJOR.MINOR.PATCH` (the pre-`semver` parser ignored trailing junk too).
+  assert_eq!(Version::parse("1.0.0-01"), Some(Version::new(1, 0, 0)));
+  assert_eq!(
+    Version::parse("18.1.8-0ubuntu1~22.04.1"),
+    Some(Version::new(18, 1, 8))
+  );
+  assert_eq!(Version::parse("1.35.1.post1"), Some(Version::new(1, 35, 1)));
+  assert_eq!(Version::parse("0.9.6.dev0"), Some(Version::new(0, 9, 6)));
+
+  // First-match-wins is bounded: a malformed-beyond-salvage version-shaped
+  // token aborts the scan rather than skipping ahead to a later number.
+  assert_eq!(Version::parse("weird 01.2.3 (built 2024.1.5)"), None);
 }
 
 #[test]
@@ -58,6 +70,30 @@ fn test_version_extraction_from_tool_banners() {
     Version::extract(clang_tidy),
     Some(Version::with_prerelease(14, 0, 0, "1ubuntu1"))
   );
+
+  // Ubuntu distro revision: `~` and a leading-zero identifier make the suffix
+  // invalid semver, so it is salvaged to the bare core (Compatible, not
+  // Unknown, against clang's MSTV of 14.0.0).
+  let clang_fmt_ubuntu = "clang-format version 18.1.8-0ubuntu1~22.04.1";
+  assert_eq!(
+    Version::extract(clang_fmt_ubuntu),
+    Some(Version::new(18, 1, 8))
+  );
+  let clang_tidy_ubuntu = "Ubuntu clang-tidy version 18.1.8-0ubuntu1~22.04.1";
+  assert_eq!(
+    Version::extract(clang_tidy_ubuntu),
+    Some(Version::new(18, 1, 8))
+  );
+
+  // PyPI post/dev builds carry a non-numeric 4th component the pre-`semver`
+  // parser ignored; the bare-core salvage keeps that behaviour.
+  let yamllint_post = "yamllint 1.35.1.post1";
+  assert_eq!(
+    Version::extract(yamllint_post),
+    Some(Version::new(1, 35, 1))
+  );
+  let ruff_dev = "ruff 0.9.6.dev0";
+  assert_eq!(Version::extract(ruff_dev), Some(Version::new(0, 9, 6)));
 
   let prettier = "prettier 3.5.1";
   assert_eq!(Version::extract(prettier), Some(Version::new(3, 5, 1)));
@@ -331,6 +367,23 @@ fn test_evaluate_tool_status_mstv_boundary_is_compatible() {
   let status_pre =
     evaluate_tool_status(Some(at_boundary_pre), None, Some(&min), None);
   assert!(status_pre.is_outdated());
+}
+
+#[test]
+fn test_salvaged_distro_build_still_gets_a_real_mstv_verdict() {
+  // End to end: an Ubuntu clang-format banner whose distro-revision suffix is
+  // not valid semver must still yield a comparable version and a real MSTV
+  // verdict -- not `UnknownVersion`, which would silently drop the check on a
+  // normal Ubuntu dev box (QA finding #1).
+  let raw = "clang-format version 18.1.8-0ubuntu1~22.04.1";
+  let current = normalize_probed_version("clang-format", raw);
+  assert_eq!(current, Some(Version::new(18, 1, 8)));
+
+  let min = Version::new(14, 0, 0);
+  let status =
+    evaluate_tool_status(current, Some(raw.to_string()), Some(&min), None);
+  assert!(status.is_compatible());
+  assert!(!status.is_unknown_version());
 }
 
 #[test]

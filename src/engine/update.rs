@@ -281,6 +281,20 @@ mod tests {
   }
 
   #[test]
+  fn test_is_newer_version_prerelease_transitions() {
+    // The semver-backed ordering the doc-comment now relies on: a final
+    // release supersedes its own prereleases; a prerelease never supersedes
+    // the matching final release; prereleases order among themselves.
+    assert!(is_newer_version("v1.0.0", "1.0.0-rc.1"));
+    assert!(!is_newer_version("v1.0.0-rc.1", "1.0.0"));
+    assert!(is_newer_version("v1.0.0-rc.2", "1.0.0-rc.1"));
+    assert!(!is_newer_version("v1.0.0-rc.1", "1.0.0-rc.2"));
+    assert!(!is_newer_version("v1.0.0-rc.1", "1.0.0-rc.1"));
+    // A higher release with a prerelease tag still beats a lower release.
+    assert!(is_newer_version("v1.2.0-beta", "1.1.0"));
+  }
+
+  #[test]
   fn test_process_release_response_caches_timestamp_on_malformed_json() {
     let temp = tempfile::TempDir::new().unwrap();
     let cache_path = temp.path().join("update_check.json");
