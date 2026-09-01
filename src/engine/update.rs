@@ -237,8 +237,29 @@ pub fn print_update_notice(notifier: Option<UpdateNotifier>) {
       "⚡".yellow().bold(),
       tag.green().bold(),
       format!("v{current_version}").dimmed(),
-      "cargo install --git https://github.com/arvinduh/formality".cyan()
+      update_command(cfg!(windows)).cyan()
     );
+  }
+}
+
+/// The OS-appropriate one-liner that re-runs the official installer in place.
+///
+/// Selected at **compile time** by the caller via `cfg!(windows)`: the binary
+/// is built per target, so the host OS is already known and can't be wrong at
+/// runtime. Both installer scripts auto-detect OS/arch and are idempotent, so
+/// re-running one is a working in-place upgrade that needs no Rust toolchain —
+/// unlike the `cargo install --git` command this replaced, which also failed
+/// outright because the repo carries multiple binary-bearing manifests.
+///
+/// Taking `is_windows` as a parameter (rather than reading `cfg!` here) keeps
+/// the function pure so tests can assert both exact strings regardless of the
+/// host they run on.
+#[must_use]
+pub fn update_command(is_windows: bool) -> &'static str {
+  if is_windows {
+    "irm https://raw.githubusercontent.com/arvinduh/formality/main/install.ps1 | iex"
+  } else {
+    "curl -fsSL https://raw.githubusercontent.com/arvinduh/formality/main/install.sh | sh"
   }
 }
 
@@ -433,6 +454,38 @@ mod tests {
       "a failure older than the short backoff window must expire well \
        before the 24h success TTL would"
     );
+  }
+
+  #[test]
+  fn test_update_command_non_windows_is_the_shell_installer_one_liner() {
+    // Exact-string assertion on purpose: a future edit that reintroduces a
+    // broken command (e.g. the old `cargo install --git` that errors on this
+    // multi-binary repo, or a mistyped URL) must fail here loudly.
+    assert_eq!(
+      update_command(false),
+      "curl -fsSL https://raw.githubusercontent.com/arvinduh/formality/main/install.sh | sh"
+    );
+  }
+
+  #[test]
+  fn test_update_command_windows_is_the_powershell_installer_one_liner() {
+    assert_eq!(
+      update_command(true),
+      "irm https://raw.githubusercontent.com/arvinduh/formality/main/install.ps1 | iex"
+    );
+  }
+
+  #[test]
+  fn test_update_command_recommends_no_cargo_toolchain_path() {
+    // Neither variant may fall back to `cargo`/`rustc`: the install paths the
+    // notice points at (install.sh / install.ps1 / release assets) never
+    // needed a Rust toolchain.
+    for cmd in [update_command(true), update_command(false)] {
+      assert!(
+        !cmd.contains("cargo") && !cmd.contains("rustc"),
+        "update command must not require a Rust toolchain: {cmd}"
+      );
+    }
   }
 
   #[test]
