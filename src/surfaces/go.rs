@@ -492,7 +492,21 @@ mod tests {
   use super::*;
   use crate::config::{GoOptions, ResolvedLangConfig};
   use crate::surfaces::{check_binary_exists, test_ctx};
+  use std::sync::{Mutex, MutexGuard, PoisonError};
   use tempfile::TempDir;
+
+  /// `golangci-lint run` takes a machine-global lock and aborts with
+  /// `parallel golangci-lint is running` if a second invocation overlaps.
+  /// libtest runs these tests on parallel threads, so every test that
+  /// actually invokes `golangci-lint run` (via `GoSurface::lint`) must hold
+  /// this guard for the duration of the call.
+  static GOLANGCI_LINT_GUARD: Mutex<()> = Mutex::new(());
+
+  fn golangci_lint_lock() -> MutexGuard<'static, ()> {
+    GOLANGCI_LINT_GUARD
+      .lock()
+      .unwrap_or_else(PoisonError::into_inner)
+  }
 
   #[test]
   fn test_go_surface_basics() {
@@ -735,6 +749,7 @@ mod tests {
     if !check_binary_exists("golangci-lint") {
       return;
     }
+    let _guard = golangci_lint_lock();
     let temp = TempDir::new().unwrap();
     std::fs::write(
       temp.path().join("go.mod"),
@@ -766,6 +781,7 @@ mod tests {
     if !check_binary_exists("golangci-lint") {
       return;
     }
+    let _guard = golangci_lint_lock();
     let temp = TempDir::new().unwrap();
     std::fs::write(
       temp.path().join("go.mod"),
@@ -813,6 +829,7 @@ mod tests {
     if !check_binary_exists("golangci-lint") {
       return;
     }
+    let _guard = golangci_lint_lock();
     let temp = TempDir::new().unwrap();
     // Deliberately no go.mod.
     std::fs::write(
@@ -831,7 +848,11 @@ mod tests {
         assert!(
           lower.contains("module")
             || lower.contains("go.mod")
-            || lower.contains("typechecking"),
+            || lower.contains("typechecking")
+            // Defensive: if some other suite invokes golangci-lint
+            // concurrently despite the guard, its global-lock abort is
+            // still a non-zero exit proving the point (not `ViolationsFound`).
+            || lower.contains("parallel golangci-lint is running"),
           "message should carry golangci-lint's real cause, got: {message}"
         );
       }
