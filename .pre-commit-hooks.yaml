@@ -1,9 +1,12 @@
-- id: fml-sync
-  name: fml sync (verify configs)
-  description: Verify that native tool configs are in sync with formality.toml
-  entry: fml sync --check
-  language: system
-  pass_filenames: false
+# Hooks for the pre-commit framework (https://pre-commit.com).
+#
+# Recommended gate: run `fml-fmt` then `fml-lint` — the format + lint pass that
+# keeps a commit clean without touching native tool config files.
+#
+# `fml-sync` is an escape hatch, not part of the default gate: it only matters
+# for projects that also commit generated native configs (`.rustfmt.toml`,
+# `.prettierrc.json`, …) and want them verified against `formality.toml`.
+# `fml doctor` reports it as optional for the primary workflow.
 
 - id: fml-fmt
   name: fml fmt (staged)
@@ -16,5 +19,13 @@
   name: fml lint (staged)
   description: Lint staged files across active surfaces using formality
   entry: fml lint --staged
+  language: system
+  pass_filenames: false
+
+# Escape hatch — see the note at the top of this file.
+- id: fml-sync
+  name: fml sync (verify configs)
+  description: Verify that native tool configs are in sync with formality.toml
+  entry: fml sync --check
   language: system
   pass_filenames: false
