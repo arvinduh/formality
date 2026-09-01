@@ -244,22 +244,24 @@ pub fn print_update_notice(notifier: Option<UpdateNotifier>) {
 
 /// The OS-appropriate one-liner that re-runs the official installer in place.
 ///
+/// Points at the canonical cargo-dist installer **release assets**
+/// (`releases/latest/download/fml-installer.{sh,ps1}`), not the
+/// `raw.githubusercontent.com/.../main/install.*` shims — the dist installer
+/// resolves OS/arch, fetches the matching prebuilt archive from the latest
+/// release, verifies its checksum, and drops the binary on `PATH` with no Rust
+/// toolchain involved. Re-running it is a working in-place upgrade.
+///
 /// Selected at **compile time** by the caller via `cfg!(windows)`: the binary
 /// is built per target, so the host OS is already known and can't be wrong at
-/// runtime. Both installer scripts auto-detect OS/arch and are idempotent, so
-/// re-running one is a working in-place upgrade that needs no Rust toolchain —
-/// unlike the `cargo install --git` command this replaced, which also failed
-/// outright because the repo carries multiple binary-bearing manifests.
-///
-/// Taking `is_windows` as a parameter (rather than reading `cfg!` here) keeps
-/// the function pure so tests can assert both exact strings regardless of the
-/// host they run on.
+/// runtime. Taking `is_windows` as a parameter (rather than reading `cfg!`
+/// here) keeps the function pure so tests can assert both exact strings
+/// regardless of the host they run on.
 #[must_use]
 pub fn update_command(is_windows: bool) -> &'static str {
   if is_windows {
-    "irm https://raw.githubusercontent.com/arvinduh/formality/main/install.ps1 | iex"
+    "powershell -c \"irm https://github.com/arvinduh/formality/releases/latest/download/fml-installer.ps1 | iex\""
   } else {
-    "curl -fsSL https://raw.githubusercontent.com/arvinduh/formality/main/install.sh | sh"
+    "curl --proto '=https' --tlsv1.2 -LsSf https://github.com/arvinduh/formality/releases/latest/download/fml-installer.sh | sh"
   }
 }
 
@@ -460,10 +462,11 @@ mod tests {
   fn test_update_command_non_windows_is_the_shell_installer_one_liner() {
     // Exact-string assertion on purpose: a future edit that reintroduces a
     // broken command (e.g. the old `cargo install --git` that errors on this
-    // multi-binary repo, or a mistyped URL) must fail here loudly.
+    // multi-binary repo, or a mistyped URL) must fail here loudly. This is
+    // the canonical cargo-dist installer release asset (issue #134).
     assert_eq!(
       update_command(false),
-      "curl -fsSL https://raw.githubusercontent.com/arvinduh/formality/main/install.sh | sh"
+      "curl --proto '=https' --tlsv1.2 -LsSf https://github.com/arvinduh/formality/releases/latest/download/fml-installer.sh | sh"
     );
   }
 
@@ -471,15 +474,34 @@ mod tests {
   fn test_update_command_windows_is_the_powershell_installer_one_liner() {
     assert_eq!(
       update_command(true),
-      "irm https://raw.githubusercontent.com/arvinduh/formality/main/install.ps1 | iex"
+      "powershell -c \"irm https://github.com/arvinduh/formality/releases/latest/download/fml-installer.ps1 | iex\""
     );
   }
 
   #[test]
+  fn test_update_command_points_at_the_dist_installer_release_asset() {
+    // The notice must point at the cargo-dist installer assets attached to
+    // the latest release, never the `raw.githubusercontent.com/.../main`
+    // shims (which only exist for backwards compatibility) and never a
+    // versioned URL that would pin the upgrade to a stale release.
+    for cmd in [update_command(true), update_command(false)] {
+      assert!(
+        cmd.contains(
+          "github.com/arvinduh/formality/releases/latest/download/fml-installer."
+        ),
+        "update command must fetch the latest dist installer asset: {cmd}"
+      );
+      assert!(
+        !cmd.contains("raw.githubusercontent.com"),
+        "update command must not use the raw.githubusercontent shim: {cmd}"
+      );
+    }
+  }
+
+  #[test]
   fn test_update_command_recommends_no_cargo_toolchain_path() {
-    // Neither variant may fall back to `cargo`/`rustc`: the install paths the
-    // notice points at (install.sh / install.ps1 / release assets) never
-    // needed a Rust toolchain.
+    // Neither variant may fall back to `cargo`/`rustc`: the dist installer
+    // assets the notice points at never need a Rust toolchain.
     for cmd in [update_command(true), update_command(false)] {
       assert!(
         !cmd.contains("cargo") && !cmd.contains("rustc"),
