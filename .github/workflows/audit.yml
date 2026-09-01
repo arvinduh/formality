@@ -1,0 +1,38 @@
+name: Security Audit
+
+# Standing scheduled audit of main's locked dependency tree against the
+# RustSec advisory database. pr-check.yml and ci.yml already run the same
+# `cargo audit` on every PR and every push to main -- but a new advisory is
+# routinely published against a crate that is *already* in Cargo.lock, and
+# during a quiet stretch with no PR or push traffic nothing would surface it
+# until an unrelated change happened to trip CI days or weeks later. This
+# workflow closes that gap: it runs weekly (Sunday 00:00 UTC) regardless of
+# commit activity, and on demand via workflow_dispatch. It only audits what
+# is already on main, so it is deliberately not wired into branch protection
+# or any required status check -- a failure here is a "go look at main" ping
+# for maintainers, alongside Dependabot's automated bump PRs, not a merge
+# gate.
+on:
+  schedule:
+    - cron: "0 0 * * 0" # Weekly on Sundays at 00:00 UTC
+  workflow_dispatch:
+
+env:
+  CARGO_TERM_COLOR: always
+  CLICOLOR_FORCE: "1"
+  FORCE_COLOR: "1"
+
+jobs:
+  audit:
+    name: Scheduled Security Audit (cargo audit)
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v7
+
+      - name: Install prebuilt cargo-audit
+        uses: taiki-e/install-action@cargo-audit
+
+      - name: Run cargo audit
+        run: cargo audit
