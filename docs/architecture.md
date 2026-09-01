@@ -50,8 +50,10 @@ is `Runner::run`, the single dispatch point for every subcommand that acts
 across surfaces (`fmt`, `lint`, `sync`, `fix`): it builds one `ExecutionContext`
 per matched `LanguageSurface` and fans them out in parallel via
 `rayon::par_iter`. See [style-guide.md](style-guide.md) §4 for the
-`ExecutionContext` `Arc`-sharing rationale and the `Fix` two-stage dispatch
-pattern, and
+`ExecutionContext` `Arc`-sharing rationale and the `Fix` three-stage dispatch
+pattern (`lint(fix: true)` → `format()` → check-only re-lint of the surfaces
+that still reported violations, so the reported status and exit code reflect the
+post-format tree), and
 [docs/adr/0001-arc-shared-execution-context.md](adr/0001-arc-shared-execution-context.md)
 for the decision record. `engine/diff.rs` renders unified diffs for
 `fmt --check`/`fml lint` output. `engine/version/` (`mod.rs`, `mstv.rs`)

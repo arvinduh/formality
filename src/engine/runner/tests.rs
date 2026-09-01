@@ -16,7 +16,7 @@ fn test_combine_fix_results_passed_and_skipped() {
     duration: Duration::from_millis(20),
   };
 
-  let combined = combine_fix_results(lint_res, fmt_res);
+  let combined = combine_fix_results(lint_res, fmt_res, None);
   assert_eq!(combined.surface_name, "yaml");
   assert_eq!(combined.duration, Duration::from_millis(30));
   assert!(matches!(combined.status, SurfaceStatus::Passed));
@@ -35,10 +35,74 @@ fn test_combine_fix_results_both_passed() {
     duration: Duration::from_millis(25),
   };
 
-  let combined = combine_fix_results(lint_res, fmt_res);
+  let combined = combine_fix_results(lint_res, fmt_res, None);
   assert_eq!(combined.surface_name, "python");
   assert_eq!(combined.duration, Duration::from_millis(40));
   assert!(matches!(combined.status, SurfaceStatus::Passed));
+}
+
+#[test]
+fn test_combine_fix_results_recheck_clears_lint_violation() {
+  // Issue #116: the lint pass reported a violation, but the post-format
+  // re-check came back clean. The re-check supersedes the stale lint status,
+  // so the surface reports Passed and its duration folds in all three passes.
+  let lint_res = SurfaceResult {
+    surface_name: "markdown",
+    status: SurfaceStatus::ViolationsFound {
+      message: "MD013/line-length".to_string(),
+      diff: None,
+    },
+    duration: Duration::from_millis(40),
+  };
+  let fmt_res = SurfaceResult {
+    surface_name: "markdown",
+    status: SurfaceStatus::Passed,
+    duration: Duration::from_millis(30),
+  };
+  let recheck = SurfaceResult {
+    surface_name: "markdown",
+    status: SurfaceStatus::Passed,
+    duration: Duration::from_millis(20),
+  };
+
+  let combined = combine_fix_results(lint_res, fmt_res, Some(recheck));
+  assert!(matches!(combined.status, SurfaceStatus::Passed));
+  assert_eq!(combined.duration, Duration::from_millis(90));
+}
+
+#[test]
+fn test_combine_fix_results_recheck_preserves_surviving_violation() {
+  // Issue #116 inverse: the violation survived the format pass, so the
+  // re-check still reports it and the surface still fails.
+  let lint_res = SurfaceResult {
+    surface_name: "markdown",
+    status: SurfaceStatus::ViolationsFound {
+      message: "MD025/single-title".to_string(),
+      diff: None,
+    },
+    duration: Duration::from_millis(40),
+  };
+  let fmt_res = SurfaceResult {
+    surface_name: "markdown",
+    status: SurfaceStatus::Passed,
+    duration: Duration::from_millis(30),
+  };
+  let recheck = SurfaceResult {
+    surface_name: "markdown",
+    status: SurfaceStatus::ViolationsFound {
+      message: "MD025/single-title".to_string(),
+      diff: None,
+    },
+    duration: Duration::from_millis(20),
+  };
+
+  let combined = combine_fix_results(lint_res, fmt_res, Some(recheck));
+  assert!(matches!(
+    combined.status,
+    SurfaceStatus::ViolationsFound { message, .. }
+      if message.contains("MD025")
+  ));
+  assert_eq!(combined.duration, Duration::from_millis(90));
 }
 
 #[test]
@@ -57,7 +121,7 @@ fn test_combine_fix_results_violations_precedence() {
     duration: Duration::from_millis(30),
   };
 
-  let combined = combine_fix_results(lint_res, fmt_res);
+  let combined = combine_fix_results(lint_res, fmt_res, None);
   assert!(matches!(
     combined.status,
     SurfaceStatus::ViolationsFound { message, .. } if message.contains("warning: unused")
@@ -80,7 +144,7 @@ fn test_combine_fix_results_tool_missing_precedence() {
     duration: Duration::from_millis(5),
   };
 
-  let combined = combine_fix_results(lint_res, fmt_res);
+  let combined = combine_fix_results(lint_res, fmt_res, None);
   assert!(matches!(
     combined.status,
     SurfaceStatus::ToolMissing { binary, .. } if binary == "ruff"
@@ -102,7 +166,7 @@ fn test_combine_fix_results_execution_error_precedence() {
     duration: Duration::from_millis(10),
   };
 
-  let combined = combine_fix_results(lint_res, fmt_res);
+  let combined = combine_fix_results(lint_res, fmt_res, None);
   assert!(matches!(
     combined.status,
     SurfaceStatus::ExecutionError { message } if message.contains("clang-tidy crashed")

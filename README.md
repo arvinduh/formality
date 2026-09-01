@@ -209,9 +209,13 @@ fml lint --fix
 fml fix
 ```
 
-`fml fix` is a two-stage composite: it first runs `lint(fix: true)` (so semantic
-autofixes like unused-import removal land first), then runs `format()` (so the
-result is guaranteed to be in the canonical formatted state) — see
+`fml fix` is a three-stage composite: it first runs `lint(fix: true)` (so
+semantic autofixes like unused-import removal land first), then runs `format()`
+(so the result is guaranteed to be in the canonical formatted state), then
+re-lints (check-only) just the surfaces whose lint pass still reported
+violations — so the status it prints reflects the tree _after_ formatting, and a
+violation the format pass resolved (e.g. a long line prettier rewrapped) no
+longer reports `[FAIL]` or forces a non-zero exit. See
 [docs/language-surfaces.md](docs/language-surfaces.md) for which surfaces have a
 real lint auto-fix mode (`supports_lint_fix()`) versus which only reformat under
 `fml fix` because their linter is diagnostics-only (e.g. Java's `checkstyle`,
