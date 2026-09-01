@@ -4,9 +4,10 @@
 
 use super::{
   DeclaresFacets, ExecutionContext, Facet, FacetSupport, LanguageSurface,
-  NativeConfig, SurfaceResult, SurfaceStatus, ToolInfo, create_tool_command,
-  diff_check_via_tempcopy, find_files_with_ext, render_native_config,
-  run_tool_command, sync_native_config, tool_missing_guard,
+  NativeConfig, SurfaceResult, SurfaceStatus, ToolInfo,
+  classify_exit_one_as_violation, create_tool_command, diff_check_via_tempcopy,
+  find_files_with_ext, render_native_config, run_tool_command_classified,
+  sync_native_config, tool_missing_guard,
 };
 use serde::{Deserialize, Serialize};
 use std::path::PathBuf;
@@ -440,7 +441,16 @@ impl LanguageSurface for GoSurface {
     ));
     cmd.current_dir(ctx.root.as_path());
 
-    run_tool_command(self.name(), &mut cmd)
+    // golangci-lint exits `1` for "issues found" and non-`1` for "could not
+    // run" (`7` = typecheck/config error, `2`/`3`/`5`/`6` = other internal
+    // failures). Only `1` is a lint result; everything else is an
+    // `ExecutionError` so `fml lint` renders `[ERR]` with the real cause
+    // instead of a misleading `Violations found` (Fixes #107).
+    run_tool_command_classified(
+      self.name(),
+      &mut cmd,
+      classify_exit_one_as_violation,
+    )
   }
 
   // `fml lint` no longer goes through this path (Fixes #157): it passes the

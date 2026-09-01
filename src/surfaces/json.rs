@@ -4,9 +4,10 @@
 use super::{
   DeclaresFacets, ExecutionContext, Facet, FacetSupport, LanguageSurface,
   NativeConfig, PrettierConfig, SurfaceResult, ToolInfo,
-  build_prettier_inline_args, create_tool_command, diff_check_via_tempcopy,
-  find_files_with_ext, lint_fix_unsupported, run_tool_command,
-  sync_prettier_config, tool_missing_guard,
+  build_prettier_inline_args, classify_exit_one_as_violation,
+  create_tool_command, diff_check_via_tempcopy, find_files_with_ext,
+  lint_fix_unsupported, run_tool_command_classified, sync_prettier_config,
+  tool_missing_guard,
 };
 use std::path::{Path, PathBuf};
 use std::time::Instant;
@@ -132,7 +133,14 @@ impl LanguageSurface for JsonSurface {
     cmd.args(&ctx.lang_config.extra_args);
     cmd.current_dir(ctx.root.as_path());
 
-    run_tool_command(self.name(), &mut cmd)
+    // prettier exits `1` for "would reformat" (drift) and `2` for a parse
+    // error / bad config / internal failure — classify the latter as an
+    // `ExecutionError` instead of spurious formatting drift (Fixes #107).
+    run_tool_command_classified(
+      self.name(),
+      &mut cmd,
+      classify_exit_one_as_violation,
+    )
   }
 
   fn lint(&self, ctx: &ExecutionContext, fix: bool) -> SurfaceResult {
