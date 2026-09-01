@@ -7,9 +7,10 @@ use super::{
   AUTO_GENERATED_JSON_COMMENT, DeclaresFacets, ExecutionContext, Facet,
   FacetSupport, LanguageSurface, NativeConfig, PrettierConfig, SurfaceResult,
   SurfaceStatus, ToolInfo, build_prettier_inline_args, check_binary_exists,
-  create_tool_command, diff_check_via_tempcopy, find_files_with_ext,
-  render_native_config, run_tool_command, sync_native_config,
-  sync_prettier_config, tool_missing_guard,
+  classify_all_nonzero_as_error, classify_exit_one_as_violation,
+  create_tool_command, diff_check_via_tempcopy_classified, find_files_with_ext,
+  render_native_config, run_tool_command, run_tool_command_classified,
+  sync_native_config, sync_prettier_config, tool_missing_guard,
 };
 use crate::config::ResolvedLangConfig;
 use serde::{Deserialize, Serialize};
@@ -163,6 +164,35 @@ pub fn build_prettier_fmt_args(
   args
 }
 
+/// Whether a finished markdownlint-cli2 `--fix` invocation *failed to run*, as
+/// opposed to running fine and merely finding violations it has no autofix
+/// for. markdownlint-cli2 exits `0` when the file is clean or `--fix`
+/// resolved everything, `1` when unfixable violations remain (MD001
+/// heading-increment, MD041 first-line-heading, and the rest with no
+/// autofixer), and any other non-zero code — plus an outright failure to
+/// spawn the process at all — on an operational error (an unresolvable
+/// `--config` path exits `2`, an internal crash likewise). Only that last
+/// group is a problem `format()` must surface: exit `1` is expected and
+/// prettier still takes the next pass.
+///
+/// This is the classification issue #113 turns on. The `--fix` pass result
+/// used to be `let _ = …output()`-discarded in both `format()` branches, so a
+/// markdownlint half that silently did nothing was masked by prettier's own
+/// success and `fml fmt` reported `[PASS] Clean / Formatted`. The write
+/// branch reaches the same verdict through [`run_tool_command_classified`] +
+/// [`classify_exit_one_as_violation`]; this predicate is the form the
+/// `check_only` closure needs, where the raw [`std::process::Output`] is what
+/// flows on to [`diff_check_via_tempcopy_classified`].
+#[must_use]
+fn markdownlint_fix_pass_failed(
+  outcome: &std::io::Result<std::process::Output>,
+) -> bool {
+  match outcome {
+    Err(_) => true,
+    Ok(output) => !output.status.success() && output.status.code() != Some(1),
+  }
+}
+
 /// Markdown language surface implementation.
 #[derive(Debug, Default, Clone, Copy)]
 pub struct MarkdownSurface;
@@ -296,7 +326,7 @@ impl LanguageSurface for MarkdownSurface {
       md_temp_cfg.as_ref().map(tempfile::NamedTempFile::path);
 
     if ctx.check_only {
-      return diff_check_via_tempcopy(
+      return diff_check_via_tempcopy_classified(
         &files,
         |scratch| {
           if let Some(bin) = md_binary {
@@ -307,7 +337,23 @@ impl LanguageSurface for MarkdownSurface {
             }
             md_cmd.arg(scratch);
             md_cmd.current_dir(ctx.root.as_path());
-            let _ = md_cmd.output();
+
+            // Issue #113: a markdownlint-cli2 `--fix` pass that could not run
+            // must surface here, not be discarded — otherwise `fml fmt
+            // --check` reports a clean diff that a real `fml fmt` would not
+            // reproduce. Exit 1 just means unfixable violations remain
+            // (MD001, MD041, …); prettier still takes the next pass. Any
+            // other non-zero exit, or a spawn failure, is handed straight on
+            // to `diff_check_via_tempcopy_classified`, which renders it as an
+            // `ExecutionError` (`classify_all_nonzero_as_error` below —
+            // nothing that reaches that classifier is a formatting result:
+            // markdownlint's exit-1 outcomes are filtered out right here, and
+            // `prettier --write` only exits non-zero on an operational
+            // failure).
+            let md_outcome = md_cmd.output();
+            if markdownlint_fix_pass_failed(&md_outcome) {
+              return md_outcome;
+            }
           }
 
           let mut cmd = create_tool_command("prettier");
@@ -323,6 +369,7 @@ impl LanguageSurface for MarkdownSurface {
         },
         self.name(),
         start,
+        classify_all_nonzero_as_error,
       );
     }
 
@@ -336,7 +383,24 @@ impl LanguageSurface for MarkdownSurface {
         md_cmd.arg(f);
       }
       md_cmd.current_dir(ctx.root.as_path());
-      let _ = md_cmd.output();
+
+      // Issue #113: this pass used to be `let _ = md_cmd.output()`-discarded,
+      // so a markdownlint-cli2 that could not run (bad `--config`, internal
+      // crash, unresolvable binary) left prettier's later success as the
+      // surface's whole result and `fml fmt` reported `[PASS]` on a half-run
+      // pipeline. markdownlint-cli2 exits 1 when it merely found violations it
+      // can't autofix — prettier must still run and the format must not fail
+      // on that basis — so `classify_exit_one_as_violation` maps only a non-1
+      // non-zero exit (or a spawn failure) to `ExecutionError`, the one
+      // outcome surfaced here.
+      let md_res = run_tool_command_classified(
+        self.name(),
+        &mut md_cmd,
+        classify_exit_one_as_violation,
+      );
+      if matches!(md_res.status, SurfaceStatus::ExecutionError { .. }) {
+        return md_res;
+      }
     }
 
     let mut cmd = create_tool_command("prettier");
@@ -681,5 +745,114 @@ mod tests {
     let _ = surface.format(&ctx);
 
     assert!(!temp.path().join(".prettierrc.json").exists());
+  }
+
+  #[test]
+  fn test_markdownlint_fix_pass_failed_ok_on_clean_exit_zero() {
+    // A clean file: markdownlint-cli2 --fix exits 0, which is not a failed
+    // pass — format() proceeds to prettier as before.
+    if !check_binary_exists("markdownlint-cli2") {
+      return;
+    }
+    let temp = TempDir::new().unwrap();
+    let f = temp.path().join("clean.md");
+    std::fs::write(&f, "# Title\n\nA clean paragraph.\n").unwrap();
+
+    let mut cmd = create_tool_command("markdownlint-cli2");
+    cmd.arg("--fix").arg(&f);
+    assert!(!markdownlint_fix_pass_failed(&cmd.output()));
+  }
+
+  #[test]
+  fn test_markdownlint_fix_pass_failed_tolerates_unfixable_violations_exit_one()
+  {
+    // markdownlint-cli2 exits 1 when `--fix` can't resolve every violation
+    // (MD001 heading-increment has no autofixer). Per issue #113's acceptance
+    // criteria that is NOT a failed pass: format() must still hand off to
+    // prettier rather than failing the run.
+    if !check_binary_exists("markdownlint-cli2") {
+      return;
+    }
+    let temp = TempDir::new().unwrap();
+    let f = temp.path().join("unfixable.md");
+    std::fs::write(&f, "# Level one\n\n### Skipped level two\n").unwrap();
+
+    let mut cmd = create_tool_command("markdownlint-cli2");
+    cmd.arg("--fix").arg(&f);
+    let outcome = cmd.output();
+    assert_eq!(
+      outcome.as_ref().unwrap().status.code(),
+      Some(1),
+      "precondition: an unfixable violation makes markdownlint-cli2 exit 1"
+    );
+    assert!(
+      !markdownlint_fix_pass_failed(&outcome),
+      "exit 1 (unfixable violations remain) must not count as a failed pass"
+    );
+  }
+
+  #[test]
+  fn test_markdownlint_fix_pass_failed_flags_invalid_config_path() {
+    // Acceptance criterion for issue #113: a deliberately invalid `--config`
+    // path makes markdownlint-cli2 exit 2 (ENOENT) — a real failure to
+    // execute that must be surfaced, not discarded.
+    if !check_binary_exists("markdownlint-cli2") {
+      return;
+    }
+    let temp = TempDir::new().unwrap();
+    let f = temp.path().join("a.md");
+    std::fs::write(&f, "# Title\n\nHi.\n").unwrap();
+
+    let mut cmd = create_tool_command("markdownlint-cli2");
+    cmd
+      .arg("--fix")
+      .arg("--config")
+      .arg(temp.path().join("nonexistent-config.json"))
+      .arg(&f);
+    assert!(markdownlint_fix_pass_failed(&cmd.output()));
+  }
+
+  #[test]
+  fn test_markdownlint_fix_pass_failed_flags_unresolvable_binary() {
+    // Acceptance criterion for issue #113: an unresolvable markdownlint
+    // binary (the spawn itself fails) must count as a failed pass.
+    let mut cmd =
+      create_tool_command("markdownlint-cli2-does-not-exist-fml113");
+    cmd.arg("--fix");
+    assert!(markdownlint_fix_pass_failed(&cmd.output()));
+  }
+
+  #[test]
+  fn test_markdown_format_write_pass_reports_execution_error_on_bad_config() {
+    // End-to-end on the write branch's exact machinery: the markdownlint-cli2
+    // `--fix` pass, when it cannot run (invalid `--config` path -> exit 2),
+    // must classify as `ExecutionError` and therefore NOT let the surface
+    // report success. Before issue #113 this outcome was `let _ =`-discarded
+    // and prettier's later success became the surface's whole result.
+    if !check_binary_exists("markdownlint-cli2") {
+      return;
+    }
+    let temp = TempDir::new().unwrap();
+    let f = temp.path().join("a.md");
+    std::fs::write(&f, "# Title\n\nHi.\n").unwrap();
+
+    let mut md_cmd = create_tool_command("markdownlint-cli2");
+    md_cmd
+      .arg("--fix")
+      .arg("--config")
+      .arg(temp.path().join("nonexistent-config.json"))
+      .arg(&f);
+    let res = run_tool_command_classified(
+      "markdown",
+      &mut md_cmd,
+      classify_exit_one_as_violation,
+    );
+
+    assert!(
+      matches!(res.status, SurfaceStatus::ExecutionError { .. }),
+      "a bad --config path must classify as ExecutionError, got: {:?}",
+      res.status
+    );
+    assert!(!res.is_success());
   }
 }
