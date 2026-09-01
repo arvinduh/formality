@@ -193,6 +193,82 @@ fn markdownlint_fix_pass_failed(
   }
 }
 
+/// markdownlint-cli2 line prefixes that carry only progress chatter, never a
+/// per-violation finding. It has no `--quiet` flag and `noBanner: true`
+/// suppresses only the first of these (verified against v0.23.2), so `fml`
+/// filters them out itself. Anchored to the exact known prefixes — an
+/// unrecognized stdout line from a future markdownlint-cli2 must still reach
+/// the user rather than being swallowed. `Summary:` is deliberately *not*
+/// here: [`filter_markdownlint_noise`] keeps it as a tail count.
+const MARKDOWNLINT_NOISE_PREFIXES: &[&str] =
+  &["markdownlint-cli2 v", "Finding: ", "Linting: "];
+
+/// Strips markdownlint-cli2's banner/progress lines from a captured
+/// diagnostic `message` and rewrites run-root-absolute paths in the
+/// surviving violation lines to be root-relative, matching how every other
+/// surface's diagnostics read.
+///
+/// The real per-violation lines land on stderr (see #107's shared capture)
+/// and reach `message` after a blank line and a bare `stderr:` label courtesy
+/// of `merge_tool_streams`; the version banner, the `Finding:` echo of the
+/// absolute input paths `fml` itself just passed in, and the `Linting: N
+/// files` count all land on stdout. This drops those three (anchored to
+/// [`MARKDOWNLINT_NOISE_PREFIXES`]) plus the now-content-free `stderr:`
+/// label, moves the `Summary:` line to the tail as a bare count, and leaves
+/// any other line — including an unrecognized one from a newer
+/// markdownlint-cli2 — untouched.
+fn filter_markdownlint_noise(message: &str, root: &Path) -> String {
+  let mut kept: Vec<String> = Vec::new();
+  let mut summary: Option<String> = None;
+
+  for line in message.lines() {
+    let trimmed = line.trim();
+    if trimmed.is_empty() || trimmed == "stderr:" {
+      continue;
+    }
+    if MARKDOWNLINT_NOISE_PREFIXES
+      .iter()
+      .any(|p| trimmed.starts_with(p))
+    {
+      continue;
+    }
+    if let Some(rest) = trimmed.strip_prefix("Summary: ") {
+      summary = Some(rest.to_string());
+      continue;
+    }
+    kept.push(relativize_leading_path(trimmed, root));
+  }
+
+  if let Some(s) = summary {
+    kept.push(s);
+  }
+  kept.join("\n")
+}
+
+/// If `line` begins with `root` followed by a path separator, strips that
+/// prefix so the diagnostic reads relative to the run root. markdownlint-cli2
+/// already emits cwd-relative paths for files under its working directory, so
+/// this only bites when it falls back to an absolute path (a file outside the
+/// root, or on another drive); both the OS-native and forward-slash spellings
+/// of `root` are tried since markdownlint-cli2 prints `C:/...` on Windows.
+///
+/// A local shim until a shared path-relativizing helper lands (`ui::paths`,
+/// #122).
+fn relativize_leading_path(line: &str, root: &Path) -> String {
+  let root_str = root.to_string_lossy();
+  let prefixes = [
+    format!("{root_str}/"),
+    format!("{root_str}\\"),
+    format!("{}/", root_str.replace('\\', "/")),
+  ];
+  for p in &prefixes {
+    if let Some(rest) = line.strip_prefix(p.as_str()) {
+      return rest.to_string();
+    }
+  }
+  line.to_string()
+}
+
 /// Markdown language surface implementation.
 #[derive(Debug, Default, Clone, Copy)]
 pub struct MarkdownSurface;
@@ -462,7 +538,15 @@ impl LanguageSurface for MarkdownSurface {
     ));
     cmd.current_dir(ctx.root.as_path());
 
-    run_tool_command(self.name(), &mut cmd)
+    let mut res = run_tool_command(self.name(), &mut cmd);
+    match &mut res.status {
+      SurfaceStatus::ViolationsFound { message, .. }
+      | SurfaceStatus::ExecutionError { message } => {
+        *message = filter_markdownlint_noise(message, ctx.root.as_path());
+      }
+      _ => {}
+    }
+    res
   }
 
   // `fml fmt`'s prettier pass no longer goes through the `.prettierrc.json`
@@ -664,6 +748,101 @@ mod tests {
     );
     // Still no native config file was written as a side effect.
     assert!(!temp.path().join(".markdownlint.json").exists());
+  }
+
+  #[test]
+  fn test_filter_markdownlint_noise_drops_banner_keeps_violations() {
+    // The exact stream shape `merge_tool_streams` produces: banner + Finding
+    // + Linting + Summary from stdout, then a bare `stderr:` label, then the
+    // real per-violation lines.
+    let root = Path::new("/home/u/proj");
+    let raw = "\
+markdownlint-cli2 v0.23.2 (markdownlint v0.41.1)
+Finding: /home/u/proj/README.md /home/u/proj/docs/x.md
+Linting: 2 files
+Summary: 2 issues in 1 file
+
+stderr:
+/home/u/proj/README.md:7:3 error MD019/no-multiple-space-atx Multiple spaces after hash [Context: \"#  Bad\"]
+README.md:7 error MD025/single-title/single-h1 Multiple top-level headings";
+
+    let out = filter_markdownlint_noise(raw, root);
+
+    assert!(!out.contains("markdownlint-cli2 v"), "banner kept: {out}");
+    assert!(!out.contains("Finding:"), "Finding line kept: {out}");
+    assert!(!out.contains("Linting:"), "Linting line kept: {out}");
+    assert!(!out.contains("stderr:"), "stderr label kept: {out}");
+    assert!(
+      !out.contains("/home/u/proj/README.md"),
+      "abs path kept: {out}"
+    );
+    assert!(out.contains("MD019/no-multiple-space-atx"));
+    assert!(out.contains("MD025/single-title/single-h1"));
+    // Leading absolute path was relativized to the run root.
+    assert!(out.contains("README.md:7:3 error MD019"));
+    // Summary is kept, but as a bare tail count at the end.
+    assert_eq!(out.lines().last().unwrap(), "2 issues in 1 file");
+  }
+
+  #[test]
+  fn test_filter_markdownlint_noise_passes_unknown_lines_through() {
+    // Acceptance criterion: filtering is anchored to known prefixes, so an
+    // unrecognized stdout line from a future markdownlint-cli2 version must
+    // still reach the user.
+    let root = Path::new("/x");
+    let raw =
+      "Analyzing: something new\nfoo.md:1 error MD012/no-multiple-blanks";
+    let out = filter_markdownlint_noise(raw, root);
+    assert!(out.contains("Analyzing: something new"));
+    assert!(out.contains("MD012/no-multiple-blanks"));
+  }
+
+  #[test]
+  fn test_lint_diagnostic_shows_rule_id_without_banner_or_file_list() {
+    // End-to-end regression for issue #109: a fixture with a known MD-rule
+    // violation must produce a diagnostic that carries the rule id and
+    // carries neither the `Finding:` echo nor the input file list.
+    if !check_binary_exists("markdownlint-cli2")
+      && !check_binary_exists("markdownlint")
+    {
+      return;
+    }
+
+    let temp = TempDir::new().unwrap();
+    std::fs::write(
+      temp.path().join("bad.md"),
+      "#  Bad Heading\n\nsome text\n\n# Another Top Heading\n",
+    )
+    .unwrap();
+
+    let surface = MarkdownSurface;
+    let ctx = test_ctx(temp.path(), ResolvedLangConfig::new("markdown"));
+
+    let res = surface.lint(&ctx, false);
+    let SurfaceStatus::ViolationsFound { message, .. } = &res.status else {
+      panic!("expected ViolationsFound, got: {:?}", res.status);
+    };
+
+    assert!(
+      message.contains("MD019"),
+      "diagnostic must name the violated rule, got: {message}"
+    );
+    assert!(
+      !message.contains("Finding:"),
+      "the `Finding:` path echo must be filtered out, got: {message}"
+    );
+    assert!(
+      !message.contains("Linting:"),
+      "the `Linting: N files` line must be filtered out, got: {message}"
+    );
+    assert!(
+      !message.contains("markdownlint-cli2 v"),
+      "the version banner must be filtered out, got: {message}"
+    );
+    assert!(
+      !message.contains(&*temp.path().to_string_lossy()),
+      "no absolute input path may appear, got: {message}"
+    );
   }
 
   #[test]
