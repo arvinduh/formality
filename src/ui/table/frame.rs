@@ -4,7 +4,9 @@
 //! rule that command prints is the same width.
 
 use super::render::detect_terminal_width;
-use super::{Palette, Style, max_line_display_width, separator_line};
+use super::{
+  Palette, Style, max_line_display_width, separator_line, strip_ansi_escapes,
+};
 use unicode_width::UnicodeWidthChar;
 
 /// The 80-column output target from issue #122, honored unless the real
@@ -176,20 +178,63 @@ fn units(s: &str) -> Vec<Unit> {
   out
 }
 
-/// Wrap one already-styled line to `width`, preserving ANSI escapes and
-/// re-indenting continuations to the source line's own leading whitespace.
-/// Returns the line untouched when it already fits.
+/// The continuation ("hanging") indent for a wrapped prose line: its leading
+/// whitespace, plus any list bullet (`•`/`-`/`*`) and `[TAG]` label prefix, so
+/// a wrapped `  • [WARN]  message…` continues aligned under `message`, not back
+/// at column 0. Computed on the ANSI-stripped text; capped at `max` columns.
+fn hang_indent(line: &str, max: usize) -> String {
+  let plain = strip_ansi_escapes(line);
+  let bytes = plain.as_bytes();
+  let mut i = 0;
+  while i < bytes.len() && bytes[i] == b' ' {
+    i += 1;
+  }
+  for bullet in ["\u{2022} ", "- ", "* "] {
+    if plain[i..].starts_with(bullet) {
+      i += bullet.len();
+      break;
+    }
+  }
+  if let Some(after_bracket) = plain[i..].strip_prefix('[')
+    && let Some(close) = after_bracket.find(']')
+  {
+    let tag = &after_bracket[..close];
+    let tagish = !tag.is_empty()
+      && tag.len() <= 12
+      && tag
+        .chars()
+        .all(|c| c.is_ascii_uppercase() || c == ' ' || c == '/');
+    if tagish {
+      let mut j = i + 1 + close + 1;
+      while plain[j..].starts_with(' ') {
+        j += 1;
+      }
+      i = j;
+    }
+  }
+  let cols: usize = plain[..i]
+    .chars()
+    .map(|c| UnicodeWidthChar::width(c).unwrap_or(0))
+    .sum();
+  " ".repeat(cols.min(max))
+}
+
+/// Wrap one already-styled line to `width`, preserving ANSI escapes. The first
+/// line keeps the source line's own leading whitespace; every continuation
+/// line is hung under the text after any bullet / `[TAG]` prefix (see
+/// [`hang_indent`]). Returns the line untouched when it already fits.
 fn wrap_prose_line(line: &str, width: usize) -> String {
   let width = width.max(8);
   if max_line_display_width(line) <= width {
     return line.to_string();
   }
-  let indent_len = line.chars().take_while(|c| *c == ' ').count();
-  let indent = " ".repeat(indent_len.min(width / 2));
-  let rest: String = line.chars().skip(indent_len).collect();
+  let lead_len = line.chars().take_while(|c| *c == ' ').count();
+  let lead = " ".repeat(lead_len.min(width / 2));
+  let hang = hang_indent(line, width / 2);
+  let rest: String = line.chars().skip(lead_len).collect();
 
-  let mut lines: Vec<String> = vec![indent.clone()];
-  let mut cur_w = indent.chars().count();
+  let mut lines: Vec<String> = vec![lead];
+  let mut cur_w = lines[0].chars().count();
   for unit in units(&rest) {
     let at_line_start = lines.last().is_some_and(|l| l.trim().is_empty());
     if unit.is_space {
@@ -200,8 +245,8 @@ fn wrap_prose_line(line: &str, width: usize) -> String {
       continue;
     }
     if !at_line_start && cur_w + unit.width > width {
-      lines.push(indent.clone());
-      cur_w = indent.chars().count();
+      lines.push(hang.clone());
+      cur_w = hang.chars().count();
     }
     lines.last_mut().unwrap().push_str(&unit.text);
     cur_w += unit.width;
@@ -250,5 +295,32 @@ mod tests {
   fn for_body_sizes_to_content_when_under_cap() {
     let body = "a".repeat(40);
     assert_eq!(Frame::for_body(&body).width(), 40);
+  }
+
+  #[test]
+  fn wrap_body_hangs_continuations_under_bullet_and_tag() {
+    let frame = Frame { width: 40 };
+    let line = "  \u{2022} [WARN]  alpha beta gamma delta epsilon zeta eta \
+                theta iota";
+    let wrapped = frame.wrap_body(line);
+    let out: Vec<&str> = wrapped.lines().collect();
+    assert!(out.len() >= 2, "should have wrapped: {wrapped:?}");
+    assert!(out[0].starts_with("  \u{2022} [WARN]  "));
+    // Continuations hang under the text after the bullet + tag (12 columns:
+    // "  " + "• " + "[WARN]  "), not back at column 0 or column 2.
+    for cont in &out[1..] {
+      let lead = cont.len() - cont.trim_start().len();
+      assert_eq!(lead, 12, "continuation not hang-indented: {cont:?}");
+    }
+    for l in &out {
+      assert!(max_line_display_width(l) <= 40, "over width: {l:?}");
+    }
+  }
+
+  #[test]
+  fn wrap_body_leaves_short_lines_untouched() {
+    let frame = Frame { width: 40 };
+    let line = "  \u{2022} short enough";
+    assert_eq!(frame.wrap_body(line), line);
   }
 }

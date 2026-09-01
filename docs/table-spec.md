@@ -45,22 +45,22 @@ The Rust types backing this spec live in `src/ui/table/mod.rs` and
 
 `WidthPolicy` variants:
 
-| Variant        | JSON form            | Meaning                                                                                                                                                                                    |
-| :------------- | :------------------- | :----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| Auto (default) | `"auto"`             | Size to content, subject to clamping                                                                                                                                                       |
-| Fixed          | `{"fixed": 14}`      | Target width; **at least** this wide — a column is widened past `fixed` when its own content has a token that would otherwise be split, and shared table width forces the rest to give way |
-| Min            | `{"min": 8}`         | Never narrower than this                                                                                                                                                                   |
-| Max            | `{"max": 40}`        | Never wider than this                                                                                                                                                                      |
-| Range          | `{"range": [8, 40]}` | Clamp to `[min, max]`                                                                                                                                                                      |
-| Percent        | `{"pct": 25}`        | Percentage of total available table width                                                                                                                                                  |
+| Variant        | JSON form            | Meaning                                                                                                            |
+| :------------- | :------------------- | :----------------------------------------------------------------------------------------------------------------- |
+| Auto (default) | `"auto"`             | Size to content, subject to clamping                                                                               |
+| Fixed          | `{"fixed": 14}`      | **At least** this wide: honored as a target, but widened past `fixed` rather than split a token in its own content |
+| Min            | `{"min": 8}`         | Never narrower than this (nor than its own widest token)                                                           |
+| Max            | `{"max": 40}`        | **Hard cap** — never wider than this, even if a token must be hard-split to fit                                    |
+| Range          | `{"range": [8, 40]}` | Clamp to `[min, max]`; `max` is a hard cap (as `Max`)                                                              |
+| Percent        | `{"pct": 25}`        | Percentage of total available table width; a hard cap (as `Max`)                                                   |
 
 `Overflow` variants:
 
-| Variant        | JSON form                         | Meaning                                                                                                                                                                                                                                      |
-| :------------- | :-------------------------------- | :------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| Wrap (default) | `"wrap"`                          | Wrap onto additional lines, breaking only at spaces and after path separators (`/` `\`) and `,`/`;` — never mid-token. A token wider than the column widens the column (see `Fixed` above); it is hard-split only when even that cannot fit. |
-| Truncate       | `{"truncate": {"suffix": "..."}}` | Cut content and append `suffix` (default `"..."`)                                                                                                                                                                                            |
-| Clip           | `"clip"`                          | Hard-cut with no suffix                                                                                                                                                                                                                      |
+| Variant        | JSON form                         | Meaning                                                                                                                                                                                                                                                                                                                                                                                                          |
+| :------------- | :-------------------------------- | :--------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Wrap (default) | `"wrap"`                          | Wrap onto additional lines, breaking only at spaces and after path separators (`/` `\`) and `,`/`;` — never mid-token where the column can hold the token. A token wider than the column is kept whole by widening the column under `Fixed`/`Min`/`Auto`; under a hard cap (`Max`/`Range`/`Pct`), or when even widening cannot keep the table within its width budget, the token is hard-split as a last resort. |
+| Truncate       | `{"truncate": {"suffix": "..."}}` | Cut content and append `suffix` (default `"..."`)                                                                                                                                                                                                                                                                                                                                                                |
+| Clip           | `"clip"`                          | Hard-cut with no suffix                                                                                                                                                                                                                                                                                                                                                                                          |
 
 ## `Row`
 

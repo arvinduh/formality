@@ -163,6 +163,11 @@ fn render_cell_to_string(
 /// `v1.9.0-stable`, and `C:` stay glued and remain copy/double-click friendly.
 const BREAK_AFTER: [char; 4] = ['/', '\\', ',', ';'];
 
+/// The narrowest inner width `solve_column_widths` will shrink a column to as a
+/// last resort, once respecting every column's widest-token floor would push
+/// the table past its width budget. At this point one token is hard-split.
+const LAST_RESORT_MIN: usize = 3;
+
 /// Splits `text` into wrap tokens: maximal runs that must not be broken across
 /// lines. A trailing [`BREAK_AFTER`] char stays with its token; runs of spaces
 /// each become a single `" "` token so the caller can collapse them at a wrap.
@@ -199,9 +204,13 @@ fn token_display_width(text: &str) -> usize {
     .unwrap_or(0)
 }
 
-/// Last-resort hard split of a single token that is genuinely wider than the
-/// column (only reachable when a column's width cap is below its own longest
-/// token, e.g. a `Max`/`Pct` cap tighter than an unbreakable path segment).
+/// Last-resort hard split of a single token genuinely wider than the column.
+///
+/// Reached from [`wrap_spans`] whenever a column's resolved inner width is
+/// below the token's own display width — which happens for a hard-cap policy
+/// (`Max` / `Range` upper / `Pct`) tighter than the token, or for any column
+/// that `solve_column_widths` had to shrink past its widest-token floor to
+/// keep the whole table within its width budget (`LAST_RESORT_MIN`).
 fn hard_split(text: &str, width: usize) -> Vec<String> {
   let width = width.max(1);
   let mut out = Vec::new();
@@ -345,6 +354,10 @@ fn solve_column_widths(
   let mut want = vec![0usize; n];
   let mut can_shrink = vec![false; n];
   let mut can_grow = vec![false; n];
+  // The lower bound the *ordinary* shrink respects: never below a column's
+  // widest token (so nothing splits) — except where the policy is a hard cap
+  // (`Max` / `Range` upper / `Pct`), whose ceiling wins even over that.
+  let mut soft_floor = floor.clone();
   for (i, col) in spec.columns.iter().enumerate() {
     match col.width {
       WidthPolicy::Auto => {
@@ -353,59 +366,94 @@ fn solve_column_widths(
         can_grow[i] = true;
       }
       WidthPolicy::Fixed(w) => {
-        // "At least this wide": honor the request, but never so narrow a
-        // token would have to split.
+        // "At least this wide": honor the request, and widen past it before
+        // a token would have to split.
         want[i] = inner(w).max(floor[i]).max(1);
       }
       WidthPolicy::Min(w) => {
-        want[i] = natural[i].max(inner(w)).max(floor[i]).max(1);
+        let lo = inner(w).max(floor[i]).max(1);
+        want[i] = natural[i].max(lo);
+        soft_floor[i] = lo;
         can_grow[i] = true;
-        can_shrink[i] = natural[i] > inner(w);
+        can_shrink[i] = want[i] > lo;
       }
       WidthPolicy::Max(w) => {
-        want[i] = natural[i].min(inner(w)).max(floor[i]).max(1);
-        can_shrink[i] = true;
+        // Hard cap: never wider than `w`, even when a token must be split.
+        let cap = inner(w).max(1);
+        want[i] = natural[i].min(cap).max(1);
+        soft_floor[i] = floor[i].min(cap).max(1);
+        can_shrink[i] = want[i] > soft_floor[i];
       }
       WidthPolicy::Range(a, b) => {
-        want[i] = natural[i].clamp(inner(a), inner(b)).max(floor[i]).max(1);
-        can_shrink[i] = true;
-        can_grow[i] = want[i] < inner(b);
+        // Clamp content into `[a, b]`; `b` is a hard cap, so this column is
+        // never grown to fill spare table width past what its content needs.
+        let lo = inner(a).max(1);
+        let hi = inner(b).max(lo);
+        want[i] = natural[i].clamp(lo, hi);
+        soft_floor[i] = floor[i].clamp(lo, hi);
+        can_shrink[i] = want[i] > soft_floor[i];
       }
       WidthPolicy::Pct(p) => {
-        want[i] = ((table_width * p as usize) / 100)
+        // Hard cap at the requested fraction of the table.
+        let cap = ((table_width * p as usize) / 100)
           .saturating_sub(padding_w)
-          .max(floor[i])
           .max(1);
+        want[i] = cap;
+        soft_floor[i] = floor[i].min(cap).max(1);
       }
     }
   }
 
+  let shrink = |want: &mut [usize], bound: &[usize], over: &mut usize| {
+    let mut order: Vec<usize> =
+      (0..n).filter(|&i| want[i] > bound[i]).collect();
+    order.sort_by_key(|&i| std::cmp::Reverse(want[i]));
+    let mut progress = true;
+    while *over > 0 && progress {
+      progress = false;
+      for &i in &order {
+        if *over == 0 {
+          break;
+        }
+        if want[i] > bound[i] {
+          want[i] -= 1;
+          *over -= 1;
+          progress = true;
+        }
+      }
+    }
+  };
+
   let sum: usize = want.iter().sum();
   if sum > avail {
     let mut over = sum - avail;
-    for pass in 0..2 {
-      if over == 0 {
-        break;
-      }
-      let mut order: Vec<usize> = (0..n)
-        .filter(|&i| pass == 1 || can_shrink[i])
-        .filter(|&i| want[i] > floor[i])
+    // 1: token-safe shrink of the columns that opted in; 2: token-safe shrink
+    // of any column.
+    let shrinkable: Vec<usize> = soft_floor
+      .iter()
+      .enumerate()
+      .map(|(i, &f)| if can_shrink[i] { f } else { want[i] })
+      .collect();
+    shrink(&mut want, &shrinkable, &mut over);
+    if over > 0 {
+      shrink(&mut want, &soft_floor, &mut over);
+    }
+    // 3 (last resort): the table still overflows its budget. Let the
+    // shrinkable columns go below their widest token — `wrap_spans` then
+    // hard-splits it. This trades one chopped token in pathological input
+    // (a single unbreakable value wider than the whole table) for staying
+    // within the width budget. See #112 for capping diagnostics volume.
+    if over > 0 {
+      let emergency: Vec<usize> = (0..n)
+        .map(|i| {
+          if can_shrink[i] {
+            LAST_RESORT_MIN
+          } else {
+            want[i]
+          }
+        })
         .collect();
-      order.sort_by_key(|&i| std::cmp::Reverse(want[i]));
-      let mut progress = true;
-      while over > 0 && progress {
-        progress = false;
-        for &i in &order {
-          if over == 0 {
-            break;
-          }
-          if want[i] > floor[i] {
-            want[i] -= 1;
-            over -= 1;
-            progress = true;
-          }
-        }
-      }
+      shrink(&mut want, &emergency, &mut over);
     }
   } else if sum < avail {
     let growers: Vec<usize> = (0..n).filter(|&i| can_grow[i]).collect();
@@ -799,16 +847,16 @@ pub fn separator_line(width: usize) -> String {
   "\u{2500}".repeat(width)
 }
 
-/// Returns a horizontal rule line of `─` matching the maximum visual width of the provided content.
+/// Returns a horizontal rule of `─` matching the widest visible line in
+/// `content` (empty for empty content).
+///
+/// A convenience for external `ui::table` consumers who want a rule under a
+/// standalone rendered table. `fml`'s own multi-section output does **not**
+/// use this — it goes through [`crate::ui::table::Frame`], which decides one
+/// rule width for the whole command (see #122).
 #[must_use]
 pub fn separator_for_content(content: &str) -> String {
-  let w = max_line_display_width(content);
-  let final_w = if w > 0 {
-    w
-  } else {
-    detect_terminal_width() as usize
-  };
-  separator_line(final_w)
+  separator_line(max_line_display_width(content))
 }
 
 /// Render a JSON-encoded table specification directly into a formatted string.

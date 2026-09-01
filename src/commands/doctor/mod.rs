@@ -43,11 +43,20 @@ use std::path::Path;
 /// `false` if any tool could not be installed.
 #[must_use]
 pub fn install_missing_tools(missing: &[ToolInfo]) -> bool {
+  // Standalone entry point (`fml fmt/lint/fix --install` preflight): no scan
+  // table to size the frame against, so use the plain 80-col cap.
+  install_missing_tools_framed(missing, &Frame::capped())
+}
+
+/// [`install_missing_tools`] rendered inside `frame` so `fml doctor --install`
+/// brackets this block with the same rule width as every other section it
+/// prints (the "Installing…" progress block, then the Install Summary table).
+#[must_use]
+fn install_missing_tools_framed(missing: &[ToolInfo], frame: &Frame) -> bool {
   if missing.is_empty() {
     return true;
   }
 
-  let frame = Frame::capped();
   let palette = Palette::detect();
   println!(
     "\n{}",
@@ -246,7 +255,10 @@ pub fn install_missing_tools(missing: &[ToolInfo]) -> bool {
     }
   }
 
-  print_install_summary_table(&summary_rows);
+  // Close the live-progress block, then the Install Summary renders as its
+  // own framed section below it.
+  println!("{}", frame.dim_rule(&palette));
+  print_install_summary_table(&summary_rows, frame);
 
   all_ok
 }
@@ -278,12 +290,11 @@ enum InstallOutcome {
   NoInstaller,
 }
 
-/// Renders and prints the post-install recap table: one row per tool this
-/// `install_missing_tools` call attempted, its installer, and the outcome.
-/// A no-op if `rows` is empty (shouldn't happen -- `install_missing_tools`
-/// already returns early when `missing` is empty -- but keeps this function
-/// safe to call unconditionally regardless).
-fn print_install_summary_table(rows: &[InstallSummaryRow]) {
+/// Renders and prints the post-install recap table as a framed section, using
+/// the caller's `frame` so its rule matches the rest of the command's output:
+/// one row per tool this `install_missing_tools` call attempted, its
+/// installer, and the outcome. A no-op if `rows` is empty.
+fn print_install_summary_table(rows: &[InstallSummaryRow], frame: &Frame) {
   if rows.is_empty() {
     return;
   }
@@ -313,7 +324,6 @@ fn print_install_summary_table(rows: &[InstallSummaryRow]) {
 
   let palette = Palette::detect();
   let rendered = render(&table, &palette);
-  let frame = Frame::for_body(&rendered);
   println!(
     "\n{}",
     frame.section(
@@ -566,7 +576,10 @@ pub fn run_doctor(
   print_sync_notice(&frame, &palette);
 
   let mut install_failed = false;
-  if install && !to_install.is_empty() && !install_missing_tools(&to_install) {
+  if install
+    && !to_install.is_empty()
+    && !install_missing_tools_framed(&to_install, &frame)
+  {
     install_failed = true;
   }
 
@@ -754,10 +767,12 @@ fn scan_tools_and_build_table(
 
       if lookup.is_installed {
         if installed_unique_tools.insert(tool.binary) {
+          // A single path value — use the component-wise helper, not the
+          // free-text scanner.
           let path_rel = lookup
             .path
             .as_deref()
-            .map(|p| crate::ui::paths::relativize_text(root, p))
+            .map(|p| display_path(root, Path::new(p)))
             .unwrap_or_default();
           let path_str = path_rel.as_str();
           match &lookup.status {

@@ -167,8 +167,82 @@ fn golden_fml_doctor_process_output_is_framed_within_80() {
 }
 
 #[test]
+fn golden_unbreakable_token_wider_than_table_hard_splits_to_stay_within_80() {
+  // A pathological cell value with no break point (a linter can emit one --
+  // see #112 on capping diagnostics volume). It cannot be shown whole within
+  // 80 columns, so `render` hard-splits it as a last resort rather than let
+  // the table overflow its width budget. This pins that behavior.
+  let giant = "x".repeat(140);
+  let mut t = Table::new(vec![
+    Column::new(Cell::text("")).width(WidthPolicy::Fixed(8)),
+    Column::new(Cell::text("")).width(WidthPolicy::Auto),
+  ])
+  .layout(Layout::compact().indent(2).padding(0, 1).max_width(80));
+  t.add_row(Row::new(vec![
+    Cell::styled("[FAIL] ", Style::Error),
+    Cell::styled(giant.as_str(), Style::Dim),
+  ]));
+
+  let body = render(&t, &Palette::none());
+  for line in body.lines() {
+    assert!(
+      max_line_display_width(line) <= 80,
+      "table line exceeded 80 cols ({}): {line:?}",
+      max_line_display_width(line)
+    );
+  }
+  // Present in full, just spread across continuation lines.
+  let joined: String = body.lines().map(str::trim).collect::<Vec<_>>().join("");
+  assert!(joined.contains(&"x".repeat(80)));
+}
+
+#[test]
+fn golden_hard_cap_width_policies_are_not_softened_by_a_long_token() {
+  // `Max` / `Range` / `Pct` are hard caps: a token wider than the cap is
+  // hard-split, the column is NOT widened past the cap (issue #122 only asked
+  // for `Fixed` to grow).
+  let long_token = "supercalifragilisticexpialidocious".repeat(2); // 68, no breaks
+  for policy in [
+    WidthPolicy::Max(12),
+    WidthPolicy::Range(6, 12),
+    WidthPolicy::Pct(15),
+  ] {
+    let mut t = Table::new(vec![
+      Column::new(Cell::text("")).width(policy),
+      Column::new(Cell::text("")).width(WidthPolicy::Auto),
+    ])
+    .layout(Layout::compact().padding(0, 1).max_width(80));
+    t.add_row(Row::new(vec![
+      Cell::styled(long_token.as_str(), Style::Dim),
+      Cell::styled("ok", Style::Dim),
+    ]));
+    let body = render(&t, &Palette::none());
+    let capped_col_width = body
+      .lines()
+      .map(|l| l.split_whitespace().next().unwrap_or("").chars().count())
+      .max()
+      .unwrap_or(0);
+    assert!(
+      capped_col_width <= 14,
+      "{policy:?} column grew to {capped_col_width} for a long token:\n{body}"
+    );
+  }
+}
+
+#[test]
 fn golden_failing_fml_lint_process_output_is_framed_within_80() {
   let dir = tempfile::tempdir().expect("tempdir");
+  // Pass the canonicalized root so it matches what the linters echo back:
+  // on macOS a `TempDir` under `/var/...` is reported as `/private/var/...`
+  // (a symlink), which would otherwise defeat relative-path rendering and
+  // this test's leak check. (`canonicalize` adds a `\\?\` verbatim prefix on
+  // Windows, so skip it there.)
+  let root = if cfg!(windows) {
+    dir.path().to_path_buf()
+  } else {
+    std::fs::canonicalize(dir.path())
+      .unwrap_or_else(|_| dir.path().to_path_buf())
+  };
   // A JSON file that is not canonically formatted. Whether the JS/JSON tool is
   // installed or not, `fml lint` here produces a framed table plus a framed
   // diagnostics block (ViolationsFound or ToolMissing) and a non-zero exit.
@@ -183,7 +257,7 @@ fn golden_failing_fml_lint_process_output_is_framed_within_80() {
 
   let out = Command::new(env!("CARGO_BIN_EXE_fml"))
     .args(["lint", "--root"])
-    .arg(dir.path())
+    .arg(&root)
     .env("NO_COLOR", "1")
     .env_remove("FORCE_COLOR")
     .output()
@@ -203,8 +277,8 @@ fn golden_failing_fml_lint_process_output_is_framed_within_80() {
     "lint output should open with the framed title, got:\n{plain}"
   );
   assert_framed_within_80(&plain);
-  // Absolute paths from the temp dir must not leak into the framed output.
-  let tmp = dir.path().to_string_lossy().replace('\\', "/");
+  // Absolute paths from the run root must not leak into the framed output.
+  let tmp = root.to_string_lossy().replace('\\', "/");
   assert!(
     !plain.replace('\\', "/").contains(&tmp),
     "diagnostics leaked an absolute run-root path:\n{plain}"
