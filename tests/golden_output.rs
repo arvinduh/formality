@@ -277,10 +277,25 @@ fn golden_failing_fml_lint_process_output_is_framed_within_80() {
     "lint output should open with the framed title, got:\n{plain}"
   );
   assert_framed_within_80(&plain);
-  // Absolute paths from the run root must not leak into the framed output.
-  let tmp = root.to_string_lossy().replace('\\', "/");
-  assert!(
-    !plain.replace('\\', "/").contains(&tmp),
-    "diagnostics leaked an absolute run-root path:\n{plain}"
-  );
+
+  // `relativize_text` rewrites paths only on an allowlist of "payload is
+  // paths" line prefixes (unified-diff `---`/`+++` headers, markdownlint
+  // `Finding:`). Any such line that appears must come out relative; arbitrary
+  // linter prose (e.g. taplo's verbose tracing) is deliberately passed
+  // through untouched so file content embedding the root path is never
+  // corrupted. (Nothing to check when the tools are absent and every surface
+  // reports `ToolMissing` instead of a diff.)
+  let root_fwd = root.to_string_lossy().replace('\\', "/");
+  for line in plain.lines() {
+    let l = line.trim_start();
+    if l.starts_with("--- ")
+      || l.starts_with("+++ ")
+      || l.starts_with("Finding: ")
+    {
+      assert!(
+        !line.replace('\\', "/").contains(&root_fwd),
+        "an allowlisted diagnostics line kept an absolute run-root path:\n{line}"
+      );
+    }
+  }
 }

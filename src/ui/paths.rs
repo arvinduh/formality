@@ -3,6 +3,7 @@
 //! does not. Used by both the table cells and the diagnostics block so every
 //! path `fml` prints reads the same way.
 
+use crate::ui::table::strip_ansi_escapes;
 use std::path::{Path, PathBuf};
 
 /// Make `p` absolute against the current directory when it is not already
@@ -76,37 +77,37 @@ fn relativize_line(line: &str, prefixes: &[String]) -> String {
   out
 }
 
+/// Line prefixes — matched on the ANSI-stripped text, at column 0 — whose
+/// entire payload is filesystem paths and is therefore always safe to
+/// relativize: unified-diff file headers and markdownlint's `Finding:` list.
+const RELATIVIZE_LINE_PREFIXES: [&str; 4] =
+  ["--- ", "+++ ", "diff --git ", "Finding: "];
+
 /// Rewrite absolute paths that lie under `root` to their `root`-relative form,
 /// leaving every other path and all other text untouched.
 ///
-/// Conservative on two axes so it can never silently corrupt output:
-///
-/// * **Token-anchored.** Only a `root`-plus-separator prefix that starts at a
-///   real path boundary is stripped, so `/mnt/backup/home/u/proj/a` (root
-///   `/home/u/proj`) and a sibling dir `/home/u/project` are left alone.
-/// * **Diff-aware.** Unified-diff hunk bodies (lines after an `@@ … @@` marker
-///   that start with `+`, `-`, space, or `\`) are file *content* and may
-///   legitimately embed an absolute path; those lines are never rewritten. The
-///   `---` / `+++` hunk headers, which come before `@@`, still are.
+/// Deliberately **not** a general search-and-replace, and **not** a diff-state
+/// machine (color codes and the leading-space context marker both defeat that).
+/// A line is rewritten only when, after ANSI stripping, it begins with one of
+/// [`RELATIVIZE_LINE_PREFIXES`] — a line whose whole payload is paths. Every
+/// other line (unified-diff context and `+`/`-` hunk bodies, `@@` markers,
+/// prose) is passed through byte-for-byte, so file *content* that embeds the
+/// run-root path is never corrupted. On a rewritten line the path text is
+/// spliced out of the original, so any ANSI styling on that line is preserved.
+/// Within a rewritten line the strip is still token-anchored (see
+/// [`relativize_line`]) so a sibling dir or a longer superpath is left alone.
 #[must_use]
 pub fn relativize_text(root: &Path, text: &str) -> String {
   let prefixes = root_prefixes(root);
-  let mut in_hunk = false;
   text
     .split('\n')
     .map(|line| {
-      let content = line.trim_start();
-      if content.starts_with("@@ ") {
-        in_hunk = true;
-        return line.to_string();
+      let plain = strip_ansi_escapes(line);
+      if RELATIVIZE_LINE_PREFIXES.iter().any(|p| plain.starts_with(p)) {
+        relativize_line(line, &prefixes)
+      } else {
+        line.to_string()
       }
-      if in_hunk {
-        if content.is_empty() || content.starts_with(['+', '-', ' ', '\\']) {
-          return line.to_string();
-        }
-        in_hunk = false;
-      }
-      relativize_line(line, &prefixes)
     })
     .collect::<Vec<_>>()
     .join("\n")
@@ -190,5 +191,85 @@ mod tests {
     assert!(
       out.contains("+let cfg = \"/home/u/proj/config.toml\".to_string();")
     );
+  }
+
+  #[test]
+  fn relativize_text_two_file_plain_diff_relativizes_every_header() {
+    let root = Path::new("/home/u/proj");
+    let diff = "--- /home/u/proj/a/x.rs\n\
+                +++ /home/u/proj/a/x.rs (formatted)\n\
+                @@ -1 +1 @@\n-a\n+b\n\
+                --- /home/u/proj/b/y.rs\n\
+                +++ /home/u/proj/b/y.rs (formatted)\n\
+                @@ -1 +1 @@\n-c\n+d";
+    let out = relativize_text(root, diff);
+    assert!(out.contains("--- a/x.rs\n"));
+    assert!(out.contains("+++ a/x.rs (formatted)\n"));
+    assert!(out.contains("--- b/y.rs\n"));
+    assert!(out.contains("+++ b/y.rs (formatted)\n"));
+    assert!(!out.contains("/home/u/proj"));
+  }
+
+  /// The real regression: `engine::diff::render_diff` output, with color ON
+  /// (the default) and OFF. Only the `---` / `+++` headers may change; every
+  /// context / `+` / `-` / `@@` line — including one whose body literally
+  /// contains the absolute run-root path — must survive byte-for-byte.
+  #[test]
+  fn relativize_text_over_real_render_diff_never_touches_hunk_bodies() {
+    let root = Path::new("/home/u/proj");
+    let old = "use \"/home/u/proj/lib\";\n\
+               let p = \"/home/u/proj/x\";\n\
+               fn main() {}\n\
+               // end\n";
+    let new = "use \"/home/u/proj/lib\";\n\
+               let p = \"/home/u/proj/x\".into();\n\
+               fn main() {}\n\
+               // end\n";
+    let old_label = "/home/u/proj/src/main.rs";
+    let new_label = "/home/u/proj/src/main.rs (formatted)";
+
+    let check = |diff: &str| {
+      let out = relativize_text(root, diff);
+      assert_eq!(
+        diff.lines().count(),
+        out.lines().count(),
+        "line count changed"
+      );
+      let mut saw_header = false;
+      let mut saw_body_with_root_path = false;
+      for (a, b) in diff.lines().zip(out.lines()) {
+        let pa = strip_ansi_escapes(a);
+        if pa.starts_with("--- ") || pa.starts_with("+++ ") {
+          saw_header = true;
+          assert_ne!(a, b, "header not relativized: {a:?}");
+          assert!(
+            !strip_ansi_escapes(b).contains("/home/u/proj/src"),
+            "header still absolute: {b:?}"
+          );
+        } else {
+          if pa.contains("/home/u/proj/") {
+            saw_body_with_root_path = true;
+          }
+          assert_eq!(
+            a, b,
+            "a non-header line was modified — corruption risk: {a:?}"
+          );
+        }
+      }
+      assert!(saw_header, "test diff had no file headers");
+      assert!(
+        saw_body_with_root_path,
+        "test diff had no hunk line embedding the root path"
+      );
+      // Content path preserved; header path gone.
+      assert!(strip_ansi_escapes(&out).contains("/home/u/proj/x"));
+      assert!(!strip_ansi_escapes(&out).contains("/home/u/proj/src"));
+    };
+
+    colored::control::set_override(true);
+    check(&crate::engine::render_diff(old, new, old_label, new_label));
+    colored::control::set_override(false);
+    check(&crate::engine::render_diff(old, new, old_label, new_label));
+    colored::control::unset_override();
   }
 }
