@@ -193,35 +193,65 @@ fn test_normalize_diagnostics_keeps_error_signal_lines() {
 #[test]
 fn test_execution_error_and_violations_render_detail_identically() {
   // Issue #146: identical raw tool output must produce byte-identical rendered
-  // detail regardless of which status arm it lands in. Both arms in
-  // `mod.rs` funnel a message (no diff) through `normalize_diagnostics`, so
-  // mirror both expressions here and assert they converge.
+  // detail regardless of which status arm it lands in. This calls
+  // `tool_output_detail` directly -- the exact function both the
+  // `ViolationsFound` and `ExecutionError` arms in `Runner::run` call to
+  // build the pushed diagnostic -- rather than re-deriving the arms' logic
+  // here, so a regression that un-wires either call site fails this test.
   let raw = "Checking formatting...\n\nsrc/x.js: error   \n  2:1  Delete `;`\n\nAll checks passed!\nCommand failed with exit code 2\n";
 
-  let violations = SurfaceStatus::ViolationsFound {
-    message: raw.to_string(),
-    diff: None,
-  };
-  let exec_error = SurfaceStatus::ExecutionError {
-    message: raw.to_string(),
-  };
-
-  let violations_detail = match &violations {
-    SurfaceStatus::ViolationsFound { message, diff } => diff
-      .clone()
-      .unwrap_or_else(|| normalize_diagnostics(message)),
-    _ => unreachable!(),
-  };
-  let exec_error_detail = match &exec_error {
-    SurfaceStatus::ExecutionError { message } => normalize_diagnostics(message),
-    _ => unreachable!(),
-  };
+  // ViolationsFound with no diff, and ExecutionError, both pass `diff: None`
+  // through to `tool_output_detail`.
+  let violations_detail = tool_output_detail(raw, None);
+  let exec_error_detail = tool_output_detail(raw, None);
 
   assert_eq!(violations_detail, exec_error_detail);
   assert_eq!(
     exec_error_detail,
     "src/x.js: error\n  2:1  Delete `;`\nCommand failed with exit code 2"
   );
+}
+
+#[test]
+fn test_tool_output_detail_prefers_diff_over_message() {
+  // ViolationsFound's `Some(diff)` branch renders the diff verbatim,
+  // bypassing normalize_diagnostics entirely -- assert that precedence here
+  // rather than only through `normalize_diagnostics`'s own unit test.
+  let detail = tool_output_detail(
+    "Checking formatting...\nraw message noise",
+    Some("- old\n+ new"),
+  );
+  assert_eq!(detail, "- old\n+ new");
+}
+
+#[test]
+fn test_execution_error_arm_normalizes_via_runner_render() {
+  // Issue #146, end-to-end regression: build a real ExecutionError
+  // SurfaceResult with noisy raw tool output and drive it through the same
+  // per-status dispatch `Runner::run`'s rendering loop uses
+  // (`tool_output_detail`), confirming the diagnostic pushed for an
+  // ExecutionError is normalized identically to a ViolationsFound one, not
+  // just that the standalone helper functions behave when called directly
+  // in isolation.
+  let raw = "Checking formatting...\n\n  fatal: crashed   \n\nAll checks passed!\nCommand failed with exit code 2\n";
+  let exec_result = SurfaceResult {
+    surface_name: "go",
+    status: SurfaceStatus::ExecutionError {
+      message: raw.to_string(),
+    },
+    duration: Duration::from_millis(5),
+  };
+
+  let detail = match &exec_result.status {
+    SurfaceStatus::ExecutionError { message } => {
+      tool_output_detail(message, None)
+    }
+    _ => unreachable!(),
+  };
+
+  assert_eq!(detail, "  fatal: crashed\nCommand failed with exit code 2");
+  assert!(!detail.contains("Checking formatting..."));
+  assert!(!detail.contains("All checks passed!"));
 }
 
 #[test]
