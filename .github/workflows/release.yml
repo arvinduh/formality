@@ -42,7 +42,10 @@ on:
   pull_request:
   push:
     tags:
-      - '**[0-9]+.[0-9]+.[0-9]+*'
+      # LOCAL EDIT (issue #134): constrained to a leading `v` so schema tags
+      # (`s1.0`, `s2.0.0`, ...) owned by schema-release.yml can never trigger
+      # cargo-dist. dist's default is the prefix-less `**[0-9]+.[0-9]+.[0-9]+*`.
+      - 'v[0-9]+.[0-9]+.[0-9]+*'
 
 jobs:
   # Run 'dist plan' (or host) to determine what tasks we need to do
@@ -229,6 +232,9 @@ jobs:
         with:
           persist-credentials: false
           submodules: recursive
+          # LOCAL EDIT (issue #134): full history + tags so the release step
+          # can resolve the previous `v*` tag for --notes-start-tag.
+          fetch-depth: 0
       - name: Install cached dist
         uses: actions/download-artifact@v8
         with:
@@ -271,14 +277,29 @@ jobs:
           PRERELEASE_FLAG: "${{ fromJson(steps.host.outputs.manifest).announcement_is_prerelease && '--prerelease' || '' }}"
           ANNOUNCEMENT_TITLE: "${{ fromJson(steps.host.outputs.manifest).announcement_title }}"
           RELEASE_COMMIT: "${{ github.sha }}"
+          TAG: "${{ needs.plan.outputs.tag }}"
         # LOCAL EDIT (issue #134) - kept deliberately; `allow-dirty = ["ci"]`
-        # in Cargo.toml lets it survive. Uses GitHub's own `--generate-notes`
-        # for the release body instead of dist's generated changelog text:
-        # this repo has no committed CHANGELOG.md and dropped the git-cliff
-        # changelog job. After a dist version bump, re-run
-        # `dist generate --mode=ci --allow-dirty` and re-apply this one change.
+        # in Cargo.toml lets it survive `dist generate`. Two changes vs. the
+        # generated step:
+        #   1. `--generate-notes` (GitHub's own PR-based notes) instead of
+        #      dist's changelog body: this repo has no committed CHANGELOG.md
+        #      and dropped the git-cliff job.
+        #   2. `--notes-start-tag <prev v* tag>` so the notes range can't be
+        #      widened by an `s*` schema release published between two `v*`
+        #      tags. Needs the `fetch-depth: 0` checkout above.
+        # After a dist bump: re-run `dist generate --mode=ci --allow-dirty`
+        # and re-apply this step plus the tag-glob and fetch-depth edits.
         run: |
-          gh release create "${{ needs.plan.outputs.tag }}" --target "$RELEASE_COMMIT" $PRERELEASE_FLAG --title "$ANNOUNCEMENT_TITLE" --generate-notes artifacts/*
+          notes_start="$(git tag -l 'v[0-9]*' --sort=-version:refname --merged "$RELEASE_COMMIT" \
+            | grep -vFx "$TAG" | head -n1 || true)"
+          start_flag=""
+          if [ -n "$notes_start" ]; then
+            start_flag="--notes-start-tag $notes_start"
+            echo "Generating notes since $notes_start"
+          else
+            echo "No earlier v* tag found; letting GitHub pick the range"
+          fi
+          gh release create "$TAG" --target "$RELEASE_COMMIT" $PRERELEASE_FLAG --title "$ANNOUNCEMENT_TITLE" --generate-notes $start_flag artifacts/*
 
   announce:
     needs:
