@@ -103,20 +103,53 @@ pub fn resolve_binary_info(binary: &str) -> Option<(PathBuf, u64)> {
   Some((path, mtime))
 }
 
-/// First line of `text` that contains a digit, else the first non-blank line,
-/// trimmed; `None` when `text` is entirely blank. The crude "looks like it
-/// carries a version" pick the raw-banner scrape has always used.
+/// First line of `text` that carries a plausibly version-shaped token —
+/// judged by [`classify_token`], the same strict predicate the parse path
+/// uses (#137), not "contains an ASCII digit". A line that merely has a
+/// number in it (`gofmt`'s `-e  report all errors (not just the first 10 on
+/// different lines)` usage text) is not a version and must never be scraped
+/// as one. `None` when no line carries such a token.
 fn first_versionish_line(text: &str) -> Option<String> {
   text
     .lines()
-    .find(|l| l.chars().any(|c| c.is_ascii_digit()))
-    .or_else(|| text.lines().find(|l| !l.trim().is_empty()))
+    .find(|l| line_carries_version_token(l))
     .map(|l| l.trim().to_string())
+}
+
+/// Whether any whitespace-separated token on `line` is version-shaped under
+/// [`classify_token`]: a real `MAJOR.MINOR[.PATCH]` core (with an optional
+/// `v`/`go` marker and semver suffix), either parsed clean (`Ok`) or
+/// version-shaped-but-malformed (`Rejected`, e.g. a leading-zero core). A
+/// line with neither — help text, a bare option list — is not versionish.
+fn line_carries_version_token(line: &str) -> bool {
+  line.split_whitespace().any(|tok| {
+    matches!(classify_token(tok), TokenParse::Ok(_) | TokenParse::Rejected)
+  })
+}
+
+/// `gofmt` has no version flag of its own — it ships with the Go toolchain
+/// and carries that toolchain's version, which only `go version` reports
+/// (`go version go1.27.0 windows/amd64`). Probe that explicitly instead of
+/// letting a failed `gofmt --version` fall through to scraping its usage
+/// text. `None` when `go` is not on PATH or the call fails — the caller then
+/// reports `(version unprobeable)`, never scraped help text (Fixes #114).
+fn probe_gofmt_version_via_go_toolchain() -> Option<String> {
+  let output = create_tool_command("go").arg("version").output().ok()?;
+  if !output.status.success() {
+    return None;
+  }
+  first_versionish_line(&String::from_utf8_lossy(&output.stdout))
 }
 
 /// Executes the tool binary with `--version` or `-v` uncached and extracts the raw output line.
 #[must_use]
 pub fn probe_raw_tool_version_uncached(binary: &str) -> Option<String> {
+  // `gofmt` is sourced from the Go toolchain, not its own (nonexistent)
+  // `--version` flag — see [`probe_gofmt_version_via_go_toolchain`].
+  if binary == "gofmt" {
+    return probe_gofmt_version_via_go_toolchain();
+  }
+
   let output = if binary == "clippy" {
     if let Ok(out) = create_tool_command("clippy-driver")
       .arg("--version")
@@ -141,8 +174,7 @@ pub fn probe_raw_tool_version_uncached(binary: &str) -> Option<String> {
     create_tool_command(binary).args(args).output().ok()
   }?;
 
-  if output.status.success() || (binary == "gofmt" && !output.stderr.is_empty())
-  {
+  if output.status.success() {
     if let Some(v) =
       first_versionish_line(&String::from_utf8_lossy(&output.stdout))
     {
