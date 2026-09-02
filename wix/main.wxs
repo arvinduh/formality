@@ -62,7 +62,7 @@
         Id='*'
         Name='fml'
         UpgradeCode='16EA66A7-4E4F-4B2D-9EB3-BE52F4992BF8'
-        Manufacturer='Formality Authors'
+        Manufacturer='Arvin Duh'
         Language='1033'
         Codepage='1252'
         Version='$(var.Version)'>
@@ -70,7 +70,7 @@
         <Package Id='*'
             Keywords='Installer'
             Description='One CLI to format, lint, and sync configs across all languages'
-            Manufacturer='Formality Authors'
+            Manufacturer='Arvin Duh'
             InstallerVersion='450'
             Languages='1033'
             Compressed='yes'
