@@ -463,8 +463,12 @@ impl LanguageSurface for CppSurface {
         // (that is `--dry-run --Werror`, which this path never passes). A
         // non-zero exit means clang-format could not do its job — an
         // unreadable file, an invalid `-style`, an unknown flag from
-        // `extra_args` — so every non-zero exit is an `ExecutionError`,
-        // matching the non-`--check` write path (Fixes #151).
+        // `extra_args` — so every non-zero exit is an `ExecutionError`
+        // (Fixes #151). NOTE: this classifies the `--check` path only. The
+        // non-`--check` write branch below still runs through the
+        // unclassified `run_tool_command`, which maps the same operational
+        // failure to `[FAIL] Violations found`; closing that asymmetry is
+        // tracked in #155.
         classify_all_nonzero_as_error,
       );
     }

@@ -363,7 +363,11 @@ impl LanguageSurface for PythonSurface {
         // at exit 2, ruff itself erroring. `ruff format` (no `--check`) exits
         // 0 formatted-or-not and only exits 2 on a parse/IO/config error.
         // Every non-zero exit on this path is therefore an operational
-        // failure, not a lint result (Fixes #151).
+        // failure, not a lint result (Fixes #151). NOTE: this classifies the
+        // `--check` path only. The non-`--check` write branch below still
+        // runs through the unclassified `run_tool_command`, which maps the
+        // same operational failure to `[FAIL] Violations found`; closing that
+        // asymmetry is tracked in #155.
         classify_all_nonzero_as_error,
       );
     }

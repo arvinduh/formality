@@ -386,8 +386,11 @@ impl LanguageSurface for JavaScriptSurface {
         // parse error, an unreadable file, a bad `--config`. There is no
         // "found drift" exit code on this path (formatting drift is detected
         // by diffing the file), so every non-zero exit is an
-        // `ExecutionError`, matching the non-`--check` write path (Fixes
-        // #151).
+        // `ExecutionError` (Fixes #151). NOTE: this classifies the `--check`
+        // path only. The non-`--check` write branch below still runs through
+        // the unclassified `run_tool_command`, which maps the same
+        // operational failure to `[FAIL] Violations found`; closing that
+        // asymmetry is tracked in #155.
         classify_all_nonzero_as_error,
       );
     }

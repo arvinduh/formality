@@ -332,8 +332,12 @@ impl LanguageSurface for JavaSurface {
         // here). A non-zero exit means it could not format — a file that does
         // not parse, or the `NoClassDefFoundError` a too-old JVM raises
         // (which `explain_jvm_incompatibility` then annotates). Every
-        // non-zero exit is therefore an `ExecutionError`, matching the
-        // non-`--check` write path (Fixes #151).
+        // non-zero exit is therefore an `ExecutionError` (Fixes #151). NOTE:
+        // this classifies the `--check` path only. The non-`--check` write
+        // branch below still runs through the unclassified `run_tool_command`
+        // (wrapped in `explain_jvm_incompatibility`), which maps the same
+        // operational failure to `[FAIL] Violations found`; closing that
+        // asymmetry is tracked in #155.
         classify_all_nonzero_as_error,
       ));
     }
