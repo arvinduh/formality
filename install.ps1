@@ -13,4 +13,19 @@ $ErrorActionPreference = 'Stop'
 
 $distInstallerUrl = 'https://github.com/arvinduh/formality/releases/latest/download/fml-installer.ps1'
 
-Invoke-RestMethod -Uri $distInstallerUrl -UseBasicParsing | Invoke-Expression
+# Fetch the real installer first and fail loudly (non-zero exit, stderr) if the
+# download does not succeed, rather than piping a 404 body straight into iex.
+try {
+    $script = Invoke-RestMethod -Uri $distInstallerUrl -UseBasicParsing
+}
+catch {
+    Write-Error "Failed to download the formality installer from ${distInstallerUrl}: $_"
+    exit 1
+}
+
+if ([string]::IsNullOrWhiteSpace($script)) {
+    Write-Error "The downloaded installer is empty ($distInstallerUrl)"
+    exit 1
+}
+
+Invoke-Expression $script
