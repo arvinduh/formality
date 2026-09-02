@@ -434,7 +434,8 @@ impl Runner {
             )
             .align(crate::ui::table::Align::Right),
           ]));
-          diagnostics.push((res.surface_name.to_string(), message.clone()));
+          diagnostics
+            .push((res.surface_name.to_string(), normalize_diagnostics(message)));
         }
         SurfaceStatus::Skipped { reason } => {
           runner_table.add_row(crate::ui::table::Row::new(vec![
