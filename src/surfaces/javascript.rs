@@ -3,9 +3,10 @@
 
 use super::{
   DeclaresFacets, ExecutionContext, Facet, FacetSupport, LanguageSurface,
-  NativeConfig, SurfaceResult, ToolInfo, create_tool_command,
-  diff_check_via_tempcopy, find_files_with_ext, render_native_config,
-  run_tool_command, sync_native_config, tool_missing_guard,
+  NativeConfig, SurfaceResult, ToolInfo, classify_all_nonzero_as_error,
+  create_tool_command, diff_check_via_tempcopy_classified, find_files_with_ext,
+  render_native_config, run_tool_command, sync_native_config,
+  tool_missing_guard,
 };
 use serde::{Deserialize, Serialize};
 use std::path::{Path, PathBuf};
@@ -365,7 +366,7 @@ impl LanguageSurface for JavaScriptSurface {
       build_biome_inline_format_args(&BiomeConfig::from_context(ctx));
 
     if ctx.check_only {
-      return diff_check_via_tempcopy(
+      return diff_check_via_tempcopy_classified(
         &files,
         |scratch| {
           let mut cmd = create_tool_command("biome");
@@ -379,6 +380,18 @@ impl LanguageSurface for JavaScriptSurface {
         },
         self.name(),
         start,
+        // `biome check --write` (linter disabled) rewrites the scratch copy
+        // in place and exits 0 whether or not it reformatted anything; it
+        // only exits non-zero on an operational failure it cannot fix — a
+        // parse error, an unreadable file, a bad `--config`. There is no
+        // "found drift" exit code on this path (formatting drift is detected
+        // by diffing the file), so every non-zero exit is an
+        // `ExecutionError` (Fixes #151). NOTE: this classifies the `--check`
+        // path only. The non-`--check` write branch below still runs through
+        // the unclassified `run_tool_command`, which maps the same
+        // operational failure to `[FAIL] Violations found`; closing that
+        // asymmetry is tracked in #155.
+        classify_all_nonzero_as_error,
       );
     }
 
@@ -682,5 +695,35 @@ mod tests {
 
     assert!(!temp.path().join("biome.json").exists());
     assert!(!temp.path().join("biome.jsonc").exists());
+  }
+
+  #[test]
+  fn test_javascript_check_reports_execution_error_on_formatter_failure() {
+    // Fixes #151: when biome cannot format a file on the `fml fmt --check`
+    // path (here: a syntax error it has no way to parse or rewrite), the
+    // surface must classify that as `ExecutionError` (`[ERR]`), never as a
+    // lint-style `ViolationsFound` (`[FAIL]`). `biome check --write` has no
+    // "found drift" exit code, so a non-zero exit is always operational.
+    if !check_binary_exists("biome") {
+      return;
+    }
+    let temp = TempDir::new().unwrap();
+    std::fs::write(
+      temp.path().join("broken.ts"),
+      "const x: = = ;\nfunction (( {\n",
+    )
+    .unwrap();
+
+    let surface = JavaScriptSurface;
+    let mut ctx = test_ctx(temp.path(), ResolvedLangConfig::new("javascript"));
+    ctx.check_only = true;
+
+    let res = surface.format(&ctx);
+    assert!(
+      matches!(res.status, SurfaceStatus::ExecutionError { .. }),
+      "a formatter failure on --check must be ExecutionError, got: {:?}",
+      res.status
+    );
+    assert!(!res.is_success());
   }
 }

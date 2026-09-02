@@ -4,9 +4,9 @@
 
 use super::{
   DeclaresFacets, ExecutionContext, Facet, FacetSupport, LanguageSurface,
-  SurfaceResult, SurfaceStatus, ToolInfo, create_tool_command,
-  diff_check_via_tempcopy, find_files_with_ext, run_tool_command,
-  tool_missing_guard,
+  SurfaceResult, SurfaceStatus, ToolInfo, classify_exit_one_as_violation,
+  create_tool_command, diff_check_via_tempcopy_classified, find_files_with_ext,
+  run_tool_command, tool_missing_guard,
 };
 use std::path::Path;
 use std::time::Instant;
@@ -172,7 +172,7 @@ impl LanguageSurface for KotlinSurface {
     }
 
     if ctx.check_only {
-      return diff_check_via_tempcopy(
+      return diff_check_via_tempcopy_classified(
         &files,
         |scratch| {
           let mut cmd = create_tool_command("ktlint");
@@ -183,6 +183,21 @@ impl LanguageSurface for KotlinSurface {
         },
         self.name(),
         start,
+        // ktlint is the one prettier-adjacent formatter here whose fix mode
+        // (`-F`) *does* have a non-zero exit that is not purely operational:
+        // it exits `1` both when it auto-corrected some issues but others
+        // remain (e.g. a non-autofixable rule like `enum-entry-name-case`)
+        // *and* on a genuine failure (a `KotlinParseException`, a bad rule
+        // config, a JVM error) — there is no distinct exit `2` to tell them
+        // apart. So `classify_all_nonzero_as_error` would be wrong here: it
+        // would relabel a run that merely found an unfixable style nit as an
+        // `[ERR] Execution error`, and it would diverge from the unclassified
+        // write path, which still renders ktlint's exit `1` as `[FAIL]
+        // Violations found`. `classify_exit_one_as_violation` keeps that exit
+        // `1` behaviour identical to today while still routing any *other*
+        // non-zero exit (a signal kill, or a future ktlint that adopts a
+        // dedicated operational-error code) to `ExecutionError` (Fixes #151).
+        classify_exit_one_as_violation,
       );
     }
 
@@ -447,5 +462,36 @@ mod tests {
 
     let lint_res = surface.lint(&ctx_check, false);
     assert!(matches!(lint_res.status, SurfaceStatus::Passed));
+  }
+
+  #[test]
+  fn test_kotlin_check_exit_one_stays_violation_not_execution_error() {
+    // Issue #151: unlike the other prettier-adjacent surfaces, ktlint `-F`
+    // has no operational-failure exit code distinct from "found an unfixable
+    // violation" — both are exit `1`. This surface is therefore wired to
+    // `classify_exit_one_as_violation`, NOT `classify_all_nonzero_as_error`:
+    // a ktlint exit `1` on `fml fmt --check` must stay `ViolationsFound`
+    // (`[FAIL]`), matching the unclassified write path, and only a non-`1`
+    // non-zero exit (signal kill, or a hypothetical future operational code)
+    // becomes `ExecutionError`. An unparseable file drives ktlint to exit
+    // `1`, so it must not flip to `[ERR]`.
+    if !check_binary_exists("ktlint") {
+      return;
+    }
+    let temp = TempDir::new().unwrap();
+    std::fs::write(temp.path().join("Broken.kt"), "fun main( { val x = }\n")
+      .unwrap();
+
+    let surface = KotlinSurface;
+    let mut ctx = test_ctx(temp.path(), ResolvedLangConfig::new("kotlin"));
+    ctx.check_only = true;
+
+    let res = surface.format(&ctx);
+    assert!(
+      !matches!(res.status, SurfaceStatus::ExecutionError { .. }),
+      "ktlint exit 1 must not be reclassified as ExecutionError, got: {:?}",
+      res.status
+    );
+    assert!(matches!(res.status, SurfaceStatus::ViolationsFound { .. }));
   }
 }
