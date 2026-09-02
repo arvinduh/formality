@@ -7,7 +7,7 @@ use super::{
   NativeConfig, SurfaceResult, SurfaceStatus, ToolInfo,
   classify_all_nonzero_as_error, create_tool_command,
   diff_check_via_tempcopy_classified, find_files_with_ext,
-  render_native_config, run_tool_command, sync_native_config,
+  render_native_config, run_tool_command_classified, sync_native_config,
   tool_missing_guard,
 };
 use serde::{Deserialize, Serialize};
@@ -464,11 +464,8 @@ impl LanguageSurface for CppSurface {
         // non-zero exit means clang-format could not do its job — an
         // unreadable file, an invalid `-style`, an unknown flag from
         // `extra_args` — so every non-zero exit is an `ExecutionError`
-        // (Fixes #151). NOTE: this classifies the `--check` path only. The
-        // non-`--check` write branch below still runs through the
-        // unclassified `run_tool_command`, which maps the same operational
-        // failure to `[FAIL] Violations found`; closing that asymmetry is
-        // tracked in #155.
+        // (Fixes #151). Same reasoning applies verbatim to the non-`--check`
+        // write branch below (Fixes #155).
         classify_all_nonzero_as_error,
       );
     }
@@ -484,7 +481,11 @@ impl LanguageSurface for CppSurface {
     cmd.args(&ctx.lang_config.extra_args);
     cmd.current_dir(ctx.root.as_path());
 
-    run_tool_command(self.name(), &mut cmd)
+    run_tool_command_classified(
+      self.name(),
+      &mut cmd,
+      classify_all_nonzero_as_error,
+    )
   }
 
   fn lint(&self, ctx: &ExecutionContext, fix: bool) -> SurfaceResult {
@@ -1112,6 +1113,35 @@ mod tests {
     assert!(
       matches!(res.status, SurfaceStatus::ExecutionError { .. }),
       "a formatter failure on --check must be ExecutionError, got: {:?}",
+      res.status
+    );
+    assert!(!res.is_success());
+  }
+
+  #[test]
+  fn test_cpp_write_reports_execution_error_on_formatter_failure() {
+    // Fixes #155: the non-`--check` write path must classify the same
+    // operational clang-format failure as `ExecutionError`, not
+    // `ViolationsFound` — mirroring
+    // `test_cpp_check_reports_execution_error_on_formatter_failure` above.
+    if !check_binary_exists("clang-format") {
+      return;
+    }
+    let temp = tempdir().unwrap();
+    std::fs::write(temp.path().join("a.cpp"), "int main(){return 0;}\n")
+      .unwrap();
+
+    let cfg = FormalityConfig::default();
+    let mut lang = cfg.resolve_for_lang("cpp");
+    lang.extra_args = vec!["--this-flag-does-not-exist-fml151".to_string()];
+    let mut ctx = test_ctx(temp.path(), lang);
+    ctx.global_config = Arc::new(cfg.resolve_global());
+
+    let surface = CppSurface;
+    let res = surface.format(&ctx);
+    assert!(
+      matches!(res.status, SurfaceStatus::ExecutionError { .. }),
+      "a formatter failure on the write path must be ExecutionError, got: {:?}",
       res.status
     );
     assert!(!res.is_success());

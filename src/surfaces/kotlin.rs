@@ -6,7 +6,7 @@ use super::{
   DeclaresFacets, ExecutionContext, Facet, FacetSupport, LanguageSurface,
   SurfaceResult, SurfaceStatus, ToolInfo, classify_exit_one_as_violation,
   create_tool_command, diff_check_via_tempcopy_classified, find_files_with_ext,
-  run_tool_command, tool_missing_guard,
+  run_tool_command, run_tool_command_classified, tool_missing_guard,
 };
 use std::path::Path;
 use std::time::Instant;
@@ -197,6 +197,12 @@ impl LanguageSurface for KotlinSurface {
         // `1` behaviour identical to today while still routing any *other*
         // non-zero exit (a signal kill, or a future ktlint that adopts a
         // dedicated operational-error code) to `ExecutionError` (Fixes #151).
+        // The write branch below applies the identical classifier for the
+        // identical reason (Fixes #155): it is already the "unclassified
+        // write path" this comment refers to, made explicit rather than
+        // relying on `run_tool_command`'s default all-nonzero-is-violation
+        // behavior, which happened to agree on exit 1 but silently mapped
+        // any other non-zero exit to `ViolationsFound` too.
         classify_exit_one_as_violation,
       );
     }
@@ -210,7 +216,11 @@ impl LanguageSurface for KotlinSurface {
     ));
     cmd.current_dir(ctx.root.as_path());
 
-    run_tool_command(self.name(), &mut cmd)
+    run_tool_command_classified(
+      self.name(),
+      &mut cmd,
+      classify_exit_one_as_violation,
+    )
   }
 
   fn lint(&self, ctx: &ExecutionContext, fix: bool) -> SurfaceResult {
@@ -490,6 +500,36 @@ mod tests {
     assert!(
       !matches!(res.status, SurfaceStatus::ExecutionError { .. }),
       "ktlint exit 1 must not be reclassified as ExecutionError, got: {:?}",
+      res.status
+    );
+    assert!(matches!(res.status, SurfaceStatus::ViolationsFound { .. }));
+  }
+
+  #[test]
+  fn test_kotlin_write_exit_one_stays_violation_not_execution_error() {
+    // Fixes #155: the non-`--check` write path now explicitly runs through
+    // `classify_exit_one_as_violation` too (previously the unclassified
+    // `run_tool_command`, which happened to treat every non-zero exit as
+    // `ViolationsFound` and so agreed with this classifier only on exit 1).
+    // Same case as
+    // `test_kotlin_check_exit_one_stays_violation_not_execution_error`
+    // above: an unparseable file drives ktlint `-F` to exit `1`, which must
+    // stay `ViolationsFound` (`[FAIL]`), not flip to `ExecutionError`
+    // (`[ERR]`).
+    if !check_binary_exists("ktlint") {
+      return;
+    }
+    let temp = TempDir::new().unwrap();
+    std::fs::write(temp.path().join("Broken.kt"), "fun main( { val x = }\n")
+      .unwrap();
+
+    let surface = KotlinSurface;
+    let ctx = test_ctx(temp.path(), ResolvedLangConfig::new("kotlin"));
+
+    let res = surface.format(&ctx);
+    assert!(
+      !matches!(res.status, SurfaceStatus::ExecutionError { .. }),
+      "ktlint exit 1 on the write path must not be reclassified as ExecutionError, got: {:?}",
       res.status
     );
     assert!(matches!(res.status, SurfaceStatus::ViolationsFound { .. }));

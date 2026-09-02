@@ -5,8 +5,8 @@ use super::{
   DeclaresFacets, ExecutionContext, Facet, FacetSupport, LanguageSurface,
   NativeConfig, SurfaceResult, ToolInfo, classify_all_nonzero_as_error,
   create_tool_command, diff_check_via_tempcopy_classified, find_files_with_ext,
-  render_native_config, run_tool_command, sync_native_config,
-  tool_missing_guard,
+  render_native_config, run_tool_command, run_tool_command_classified,
+  sync_native_config, tool_missing_guard,
 };
 use serde::{Deserialize, Serialize};
 use std::path::{Path, PathBuf};
@@ -386,11 +386,10 @@ impl LanguageSurface for JavaScriptSurface {
         // parse error, an unreadable file, a bad `--config`. There is no
         // "found drift" exit code on this path (formatting drift is detected
         // by diffing the file), so every non-zero exit is an
-        // `ExecutionError` (Fixes #151). NOTE: this classifies the `--check`
-        // path only. The non-`--check` write branch below still runs through
-        // the unclassified `run_tool_command`, which maps the same
-        // operational failure to `[FAIL] Violations found`; closing that
-        // asymmetry is tracked in #155.
+        // `ExecutionError` (Fixes #151). Same reasoning applies verbatim to
+        // the non-`--check` write branch below (Fixes #155): `biome check
+        // --write` has no in-place-write variant of a "found drift" exit
+        // code either.
         classify_all_nonzero_as_error,
       );
     }
@@ -405,7 +404,11 @@ impl LanguageSurface for JavaScriptSurface {
     cmd.args(&inline_config);
     cmd.current_dir(ctx.root.as_path());
 
-    run_tool_command(self.name(), &mut cmd)
+    run_tool_command_classified(
+      self.name(),
+      &mut cmd,
+      classify_all_nonzero_as_error,
+    )
   }
 
   fn lint(&self, ctx: &ExecutionContext, fix: bool) -> SurfaceResult {
@@ -722,6 +725,34 @@ mod tests {
     assert!(
       matches!(res.status, SurfaceStatus::ExecutionError { .. }),
       "a formatter failure on --check must be ExecutionError, got: {:?}",
+      res.status
+    );
+    assert!(!res.is_success());
+  }
+
+  #[test]
+  fn test_javascript_write_reports_execution_error_on_formatter_failure() {
+    // Fixes #155: the non-`--check` write path must classify the same
+    // operational biome failure as `ExecutionError`, not `ViolationsFound`
+    // — mirroring `test_javascript_check_reports_execution_error_on_formatter_failure`
+    // above.
+    if !check_binary_exists("biome") {
+      return;
+    }
+    let temp = TempDir::new().unwrap();
+    std::fs::write(
+      temp.path().join("broken.ts"),
+      "const x: = = ;\nfunction (( {\n",
+    )
+    .unwrap();
+
+    let surface = JavaScriptSurface;
+    let ctx = test_ctx(temp.path(), ResolvedLangConfig::new("javascript"));
+
+    let res = surface.format(&ctx);
+    assert!(
+      matches!(res.status, SurfaceStatus::ExecutionError { .. }),
+      "a formatter failure on the write path must be ExecutionError, got: {:?}",
       res.status
     );
     assert!(!res.is_success());
