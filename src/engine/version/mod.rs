@@ -123,7 +123,10 @@ fn first_versionish_line(text: &str) -> Option<String> {
 /// line with neither — help text, a bare option list — is not versionish.
 fn line_carries_version_token(line: &str) -> bool {
   line.split_whitespace().any(|tok| {
-    matches!(classify_token(tok), TokenParse::Ok(_) | TokenParse::Rejected)
+    matches!(
+      classify_token(tok),
+      TokenParse::Ok(_) | TokenParse::Rejected
+    )
   })
 }
 
