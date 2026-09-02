@@ -587,11 +587,8 @@ fn tool(binary: &'static str) -> ToolInfo {
 #[test]
 fn test_reconcile_install_tally_all_installed_reports_zero_missing() {
   let mut installed: HashSet<&'static str> = HashSet::new();
-  let mut missing = vec![
-    tool("prettier"),
-    tool("markdownlint-cli2"),
-    tool("taplo"),
-  ];
+  let mut missing =
+    vec![tool("prettier"), tool("markdownlint-cli2"), tool("taplo")];
   let mut stale: Vec<ToolInfo> = Vec::new();
 
   reconcile_install_tally(
@@ -602,7 +599,10 @@ fn test_reconcile_install_tally_all_installed_reports_zero_missing() {
   );
 
   assert_eq!(installed.len(), 3);
-  assert!(missing.is_empty(), "every installed tool must leave `missing`");
+  assert!(
+    missing.is_empty(),
+    "every installed tool must leave `missing`"
+  );
 }
 
 /// #106: when one of N missing tools fails to install, only the N-1 that
@@ -611,11 +611,8 @@ fn test_reconcile_install_tally_all_installed_reports_zero_missing() {
 #[test]
 fn test_reconcile_install_tally_failed_tool_stays_missing() {
   let mut installed: HashSet<&'static str> = HashSet::new();
-  let mut missing = vec![
-    tool("prettier"),
-    tool("markdownlint-cli2"),
-    tool("taplo"),
-  ];
+  let mut missing =
+    vec![tool("prettier"), tool("markdownlint-cli2"), tool("taplo")];
   let mut stale: Vec<ToolInfo> = Vec::new();
 
   // `taplo` is absent from the `[OK]` set — it failed to install.
