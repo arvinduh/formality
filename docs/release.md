@@ -1,14 +1,11 @@
 # Release Procedure
 
-This document describes how a release of `fml` is cut once the project starts
-publishing versioned releases. It is not describing something that happens
-today: the crate is intentionally pinned at `0.1.0` pre-release for now (see
-`Cargo.toml` and `editors/vscode/package.json`, which are kept in lockstep by
-`tests/version_lockstep.rs`). The tooling that will eventually own bumping that
-version is tracked separately; this document only covers the mechanics that
-already exist — tagging, building, and publishing via
-[cargo-dist](https://opensource.axo.dev/cargo-dist/) — so they are ready to use
-once version bumps begin.
+This document describes how a release of `fml` is cut. `version` in `Cargo.toml`
+and `editors/vscode/package.json` is kept in lockstep by
+`tests/version_lockstep.rs`; the bump lands on `main` in its own
+`chore(release)` PR, and pushing a matching `vX.Y.Z` tag to `main` drives the
+build-and-publish pipeline
+([cargo-dist](https://opensource.axo.dev/cargo-dist/)).
 
 > The `#126` citation below predates the 2026-08-26 repo recreation and no
 > longer resolves — see
@@ -98,8 +95,9 @@ committed `CHANGELOG.md`.
      `sha256.sum`.
    - Creates the GitHub Release for the tag with
      `gh release create --generate-notes` (GitHub groups the merged PRs into the
-     body) and marks it the latest release, so `/releases/latest/download/...`
-     resolves here.
+     body, starting from the previous `v*` tag so an `s*` schema release
+     published in between can't widen the range) and marks it the latest
+     release, so `/releases/latest/download/...` resolves here.
 
    `.github/workflows/release-extras.yml`, which:
    - Builds the VS Code extension `.vsix` package.

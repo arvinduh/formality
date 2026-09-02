@@ -114,33 +114,35 @@ cargo install --git https://github.com/arvinduh/formality fml
 ### Direct Prebuilt Binaries
 
 Prebuilt standalone binaries are attached to every
-[GitHub Release](https://github.com/arvinduh/formality/releases/latest).
+[GitHub Release](https://github.com/arvinduh/formality/releases/latest). Each
+archive holds the `fml` binary plus `LICENSE` and `README.md`; the commands
+below pull out only the binary.
 
 #### macOS (Apple Silicon / ARM64)
 
 ```bash
-curl -fsSL https://github.com/arvinduh/formality/releases/latest/download/fml-aarch64-apple-darwin.tar.gz | tar -xz
+curl -fsSL https://github.com/arvinduh/formality/releases/latest/download/fml-aarch64-apple-darwin.tar.gz | tar -xz fml
 mkdir -p ~/.local/bin && mv fml ~/.local/bin/fml
 ```
 
 #### macOS (Intel / x86_64)
 
 ```bash
-curl -fsSL https://github.com/arvinduh/formality/releases/latest/download/fml-x86_64-apple-darwin.tar.gz | tar -xz
+curl -fsSL https://github.com/arvinduh/formality/releases/latest/download/fml-x86_64-apple-darwin.tar.gz | tar -xz fml
 mkdir -p ~/.local/bin && mv fml ~/.local/bin/fml
 ```
 
 #### Linux (x86_64)
 
 ```bash
-curl -fsSL https://github.com/arvinduh/formality/releases/latest/download/fml-x86_64-unknown-linux-gnu.tar.gz | tar -xz
+curl -fsSL https://github.com/arvinduh/formality/releases/latest/download/fml-x86_64-unknown-linux-gnu.tar.gz | tar -xz fml
 mkdir -p ~/.local/bin && mv fml ~/.local/bin/fml
 ```
 
 #### Linux (ARM64 / aarch64)
 
 ```bash
-curl -fsSL https://github.com/arvinduh/formality/releases/latest/download/fml-aarch64-unknown-linux-gnu.tar.gz | tar -xz
+curl -fsSL https://github.com/arvinduh/formality/releases/latest/download/fml-aarch64-unknown-linux-gnu.tar.gz | tar -xz fml
 mkdir -p ~/.local/bin && mv fml ~/.local/bin/fml
 ```
 
@@ -148,8 +150,9 @@ mkdir -p ~/.local/bin && mv fml ~/.local/bin/fml
 
 ```powershell
 Invoke-WebRequest -Uri https://github.com/arvinduh/formality/releases/latest/download/fml-x86_64-pc-windows-msvc.zip -OutFile fml.zip
-Expand-Archive fml.zip -DestinationPath $HOME\bin -Force
-Remove-Item fml.zip
+Expand-Archive fml.zip -DestinationPath fml-tmp -Force
+mkdir $HOME\bin -Force; Move-Item fml-tmp\fml.exe $HOME\bin\fml.exe -Force
+Remove-Item -Recurse fml.zip, fml-tmp
 ```
 
 ---
