@@ -26,11 +26,14 @@ use crate::surfaces::{
   LanguageSurface, ToolInfo, all_surfaces, check_binary_exists,
   create_tool_command, detect_surfaces_smart, pinned_version_for,
 };
+use crate::ui::paths::display_path;
 use crate::ui::table::{
-  Cell, Column, Layout, Palette, Row, Span, Style, Table, WidthPolicy, render,
+  Cell, Column, Frame, Layout, Palette, Row, Span, Style, Table, WidthPolicy,
+  render,
 };
 use colored::Colorize;
 use std::collections::{HashMap, HashSet};
+use std::fmt::Write as _;
 use std::path::Path;
 
 /// Install a deduplicated list of missing tools.
@@ -40,13 +43,26 @@ use std::path::Path;
 /// `false` if any tool could not be installed.
 #[must_use]
 pub fn install_missing_tools(missing: &[ToolInfo]) -> bool {
+  // Standalone entry point (`fml fmt/lint/fix --install` preflight): no scan
+  // table to size the frame against, so use the plain 80-col cap.
+  install_missing_tools_framed(missing, &Frame::capped())
+}
+
+/// [`install_missing_tools`] rendered inside `frame` so `fml doctor --install`
+/// brackets this block with the same rule width as every other section it
+/// prints (the "Installing…" progress block, then the Install Summary table).
+#[must_use]
+fn install_missing_tools_framed(missing: &[ToolInfo], frame: &Frame) -> bool {
   if missing.is_empty() {
     return true;
   }
 
-  let separator = crate::ui::table::separator_line(0);
-  println!("\n{}", separator.dimmed());
-  println!("{}", "Installing Missing / Stale Toolchains:".bold().cyan());
+  let palette = Palette::detect();
+  println!(
+    "\n{}",
+    "Installing Missing / Stale Toolchains:".bold().cyan()
+  );
+  println!("{}", frame.dim_rule(&palette));
 
   // Bootstrap cargo-binstall once, up front, if any tool here would prefer
   // it and it isn't on PATH yet. Tools like typstyle/tinymist have no real
@@ -239,7 +255,10 @@ pub fn install_missing_tools(missing: &[ToolInfo]) -> bool {
     }
   }
 
-  print_install_summary_table(&summary_rows);
+  // Close the live-progress block, then the Install Summary renders as its
+  // own framed section below it.
+  println!("{}", frame.dim_rule(&palette));
+  print_install_summary_table(&summary_rows, frame);
 
   all_ok
 }
@@ -271,17 +290,14 @@ enum InstallOutcome {
   NoInstaller,
 }
 
-/// Renders and prints the post-install recap table: one row per tool this
-/// `install_missing_tools` call attempted, its installer, and the outcome.
-/// A no-op if `rows` is empty (shouldn't happen -- `install_missing_tools`
-/// already returns early when `missing` is empty -- but keeps this function
-/// safe to call unconditionally regardless).
-fn print_install_summary_table(rows: &[InstallSummaryRow]) {
+/// Renders and prints the post-install recap table as a framed section, using
+/// the caller's `frame` so its rule matches the rest of the command's output:
+/// one row per tool this `install_missing_tools` call attempted, its
+/// installer, and the outcome. A no-op if `rows` is empty.
+fn print_install_summary_table(rows: &[InstallSummaryRow], frame: &Frame) {
   if rows.is_empty() {
     return;
   }
-
-  println!("\n{}", "Install Summary:".bold().cyan());
 
   let mut table = Table::new(vec![
     Column::new(Cell::text("")).width(WidthPolicy::Fixed(10)),
@@ -289,7 +305,7 @@ fn print_install_summary_table(rows: &[InstallSummaryRow]) {
     Column::new(Cell::text("")).width(WidthPolicy::Fixed(14)),
     Column::new(Cell::text("")).width(WidthPolicy::Auto),
   ])
-  .layout(Layout::compact().indent(2).padding(0, 1));
+  .layout(Layout::compact().indent(2).padding(0, 1).max_width(80));
 
   for row in rows {
     let (label, style) = match row.outcome {
@@ -308,9 +324,14 @@ fn print_install_summary_table(rows: &[InstallSummaryRow]) {
 
   let palette = Palette::detect();
   let rendered = render(&table, &palette);
-  if !rendered.is_empty() {
-    println!("{rendered}");
-  }
+  println!(
+    "\n{}",
+    frame.section(
+      &"Install Summary:".bold().cyan().to_string(),
+      &rendered,
+      &palette,
+    )
+  );
 }
 
 /// Collect the tools required by `surfaces` for the given actions (format and/or
@@ -495,13 +516,13 @@ pub fn run_doctor(
     }
   };
 
-  let scan = scan_tools_and_build_table(&surfaces, config);
+  let scan = scan_tools_and_build_table(root, &surfaces, config);
 
   let palette = Palette::detect();
   let rendered_table = render(&scan.table, &palette);
-  let separator = crate::ui::table::separator_for_content(&rendered_table);
+  let frame = Frame::for_body(&rendered_table);
 
-  println!(
+  let title = format!(
     "{} {}",
     "fml doctor".bold().cyan(),
     if show_all {
@@ -510,22 +531,19 @@ pub fn run_doctor(
       "(active surfaces)".dimmed()
     }
   );
-  println!("{}", separator.dimmed());
-  if !rendered_table.is_empty() {
-    println!("{rendered_table}");
-  }
+  println!("{}", frame.section(&title, &rendered_table, &palette));
 
   // Check for unconfigured surfaces if explicit `languages` is set
-  print_unconfigured_languages(root, config, &separator);
+  print_unconfigured_languages(root, config, &frame, &palette);
 
   // Virtual Environment status
-  print_virtualenv_status(root, &surfaces, show_all, &separator);
+  print_virtualenv_status(root, &surfaces, show_all, &frame, &palette);
 
   // .gitignore Cache Hygiene Check
-  print_gitignore_hygiene(root, &surfaces, &separator);
+  print_gitignore_hygiene(root, &surfaces, &frame, &palette);
 
   // Configuration Schema Version Check
-  print_schema_version_check(root, &separator);
+  print_schema_version_check(root, &frame, &palette);
 
   // Auto-install mode. Genuinely `[MISS]`ing tools and `[STALE]` tools whose
   // selected installer carries a matching pin are reinstalled. If a stale tool's
@@ -551,17 +569,20 @@ pub fn run_doctor(
   }
 
   // Stale tools with unpinnable installers notice
-  print_stale_unpinnable_warnings(&unpinnable_stale_tools, &separator);
+  print_stale_unpinnable_warnings(&unpinnable_stale_tools, &frame, &palette);
 
-  // `fml sync` optionality notice
-  print_sync_notice(&separator);
+  // `fml sync` optionality notice — always prints, so its closing rule is the
+  // divider above the summary line below.
+  print_sync_notice(&frame, &palette);
 
   let mut install_failed = false;
-  if install && !to_install.is_empty() && !install_missing_tools(&to_install) {
+  if install
+    && !to_install.is_empty()
+    && !install_missing_tools_framed(&to_install, &frame)
+  {
     install_failed = true;
   }
 
-  println!("{}", separator.dimmed());
   let outdated_str = if scan.outdated.is_empty() {
     String::new()
   } else {
@@ -710,6 +731,7 @@ struct DoctorScanResult {
 }
 
 fn scan_tools_and_build_table(
+  root: &Path,
   surfaces: &[Box<dyn LanguageSurface>],
   config: &FormalityConfig,
 ) -> DoctorScanResult {
@@ -732,7 +754,7 @@ fn scan_tools_and_build_table(
     Column::new(Cell::text("")).width(WidthPolicy::Fixed(10)),
     Column::new(Cell::text("")).width(WidthPolicy::Auto),
   ])
-  .layout(Layout::compact().indent(2).padding(0, 1));
+  .layout(Layout::compact().indent(2).padding(0, 1).max_width(80));
 
   for surface in surfaces {
     let resolved = config.resolve_for_lang_with_global(surface.name(), &global);
@@ -745,7 +767,14 @@ fn scan_tools_and_build_table(
 
       if lookup.is_installed {
         if installed_unique_tools.insert(tool.binary) {
-          let path_str = lookup.path.as_deref().unwrap_or("");
+          // A single path value — use the component-wise helper, not the
+          // free-text scanner.
+          let path_rel = lookup
+            .path
+            .as_deref()
+            .map(|p| display_path(root, Path::new(p)))
+            .unwrap_or_default();
+          let path_str = path_rel.as_str();
           match &lookup.status {
             Some(ToolStatus::Outdated { current, minimum }) => {
               outdated_unique_tools.insert(tool.binary);
@@ -856,44 +885,60 @@ fn scan_tools_and_build_table(
 fn print_unconfigured_languages(
   root: &Path,
   config: &FormalityConfig,
-  separator: &str,
+  frame: &Frame,
+  palette: &Palette,
 ) {
-  if let Some(ref explicit_langs) = config.resolve_global().languages {
-    let mut unconfigured = Vec::new();
-    for surface in all_surfaces() {
-      if !explicit_langs.iter().any(|l| {
-        l.eq_ignore_ascii_case(surface.name())
-          || surface.aliases().iter().any(|a| a.eq_ignore_ascii_case(l))
-      }) && surface.detect(root)
-      {
-        unconfigured.push(surface.name());
-      }
-    }
-
-    if !unconfigured.is_empty() {
-      println!("\n{}", separator.dimmed());
-      println!("{}", "Unconfigured Workspace Languages:".yellow().bold());
-      for name in unconfigured {
-        println!(
-          "  • Files for '{}' exist in workspace, but '{}' is not in global.languages",
-          name.bold(),
-          name
-        );
-      }
-      println!(
-        "    {} Add them to {} if you want formality to manage them.",
-        "Tip:".cyan().bold(),
-        "languages = [...]".bold()
-      );
+  let Some(ref explicit_langs) = config.resolve_global().languages else {
+    return;
+  };
+  let mut unconfigured = Vec::new();
+  for surface in all_surfaces() {
+    if !explicit_langs.iter().any(|l| {
+      l.eq_ignore_ascii_case(surface.name())
+        || surface.aliases().iter().any(|a| a.eq_ignore_ascii_case(l))
+    }) && surface.detect(root)
+    {
+      unconfigured.push(surface.name());
     }
   }
+  if unconfigured.is_empty() {
+    return;
+  }
+
+  let mut body = String::new();
+  for name in unconfigured {
+    let _ = writeln!(
+      body,
+      "  • Files for '{}' exist in workspace, but '{}' is not in global.languages",
+      name.bold(),
+      name
+    );
+  }
+  let _ = write!(
+    body,
+    "    {} Add them to {} if you want formality to manage them.",
+    "Tip:".cyan().bold(),
+    "languages = [...]".bold()
+  );
+  println!(
+    "{}",
+    frame.section(
+      &"Unconfigured Workspace Languages:"
+        .yellow()
+        .bold()
+        .to_string(),
+      &frame.wrap_body(&body),
+      palette,
+    )
+  );
 }
 
 fn print_virtualenv_status(
   root: &Path,
   surfaces: &[Box<dyn LanguageSurface>],
   show_all: bool,
-  separator: &str,
+  frame: &Frame,
+  palette: &Palette,
 ) {
   let has_python = surfaces
     .iter()
@@ -903,119 +948,155 @@ fn print_virtualenv_status(
     || root.join("setup.py").is_file()
     || root.join("Pipfile").is_file();
   let venv_info = detect_virtualenv(root);
-  if has_python || venv_info.venv_path.is_some() || show_all {
-    println!("\n{}", separator.dimmed());
-    println!("{}", "Python Virtual Environment:".bold().cyan());
-    match &venv_info.source {
-      VirtualEnvSource::EnvVar => {
-        let p = venv_info
-          .venv_path
-          .as_ref()
-          .map(|p| p.display().to_string())
-          .unwrap_or_default();
-        println!(
-          "  • {} Active virtualenv via VIRTUAL_ENV: {}",
-          "[ACTIVE]".green().bold(),
-          p.cyan()
-        );
-      }
-      VirtualEnvSource::Workspace(dir_name) => {
-        let p = venv_info
-          .venv_path
-          .as_ref()
-          .map(|p| p.display().to_string())
-          .unwrap_or_default();
-        println!(
-          "  • {} Detected workspace virtualenv ({}): {}",
-          "[FOUND] ".cyan().bold(),
-          dir_name.bold(),
-          p.dimmed()
-        );
-      }
-      VirtualEnvSource::None => {
-        println!(
-          "  • {} No virtual environment detected",
-          "[NONE]  ".dimmed()
-        );
-      }
-    }
+  if !(has_python || venv_info.venv_path.is_some() || show_all) {
+    return;
+  }
 
-    if let Some(ref interp) = venv_info.interpreter_path {
-      println!(
-        "  • Python interpreter: {}",
-        interp.display().to_string().cyan()
+  let venv_path_display = || {
+    venv_info
+      .venv_path
+      .as_ref()
+      .map(|p| display_path(root, p))
+      .unwrap_or_default()
+  };
+
+  let mut body = String::new();
+  match &venv_info.source {
+    VirtualEnvSource::EnvVar => {
+      let _ = writeln!(
+        body,
+        "  • {} Active virtualenv via VIRTUAL_ENV: {}",
+        "[ACTIVE]".green().bold(),
+        venv_path_display().cyan()
       );
-    } else {
-      println!(
-        "  • {} No Python interpreter found on PATH or in virtualenv",
-        "[WARN] ".yellow().bold()
+    }
+    VirtualEnvSource::Workspace(dir_name) => {
+      let _ = writeln!(
+        body,
+        "  • {} Detected workspace virtualenv ({}): {}",
+        "[FOUND] ".cyan().bold(),
+        dir_name.bold(),
+        venv_path_display().dimmed()
+      );
+    }
+    VirtualEnvSource::None => {
+      let _ = writeln!(
+        body,
+        "  • {} No virtual environment detected",
+        "[NONE]  ".dimmed()
       );
     }
   }
+
+  if let Some(ref interp) = venv_info.interpreter_path {
+    let _ = write!(
+      body,
+      "  • Python interpreter: {}",
+      display_path(root, interp).cyan()
+    );
+  } else {
+    let _ = write!(
+      body,
+      "  • {} No Python interpreter found on PATH or in virtualenv",
+      "[WARN] ".yellow().bold()
+    );
+  }
+
+  println!(
+    "{}",
+    frame.section(
+      &"Python Virtual Environment:".bold().cyan().to_string(),
+      &frame.wrap_body(&body),
+      palette,
+    )
+  );
 }
 
 fn print_gitignore_hygiene(
   root: &Path,
   surfaces: &[Box<dyn LanguageSurface>],
-  separator: &str,
+  frame: &Frame,
+  palette: &Palette,
 ) {
   let hygiene_report = check_gitignore_hygiene(root, surfaces);
-  if !hygiene_report.issues.is_empty() {
-    println!("\n{}", separator.dimmed());
-    println!("{}", "Gitignore Cache Hygiene:".yellow().bold());
-    if !hygiene_report.gitignore_exists {
-      println!(
-        "  • {} No {} file found in workspace root",
-        "[WARN] ".yellow().bold(),
-        ".gitignore".bold()
-      );
-    }
-    for issue in &hygiene_report.issues {
-      let missing_list = issue.missing_patterns.join(", ");
-      println!(
-        "  • {} {} cache/artifact entries missing from {}: {}",
-        "[WARN] ".yellow().bold(),
-        issue.category.bold(),
-        ".gitignore".bold(),
-        missing_list.yellow().bold()
-      );
-    }
-    println!(
-      "    {} Add missing patterns to {} to prevent committing artifacts.",
-      "Tip:".cyan().bold(),
+  if hygiene_report.issues.is_empty() {
+    return;
+  }
+
+  let mut body = String::new();
+  if !hygiene_report.gitignore_exists {
+    let _ = writeln!(
+      body,
+      "  • {} No {} file found in workspace root",
+      "[WARN] ".yellow().bold(),
       ".gitignore".bold()
     );
   }
+  for issue in &hygiene_report.issues {
+    let missing_list = issue.missing_patterns.join(", ");
+    let _ = writeln!(
+      body,
+      "  • {} {} cache/artifact entries missing from {}: {}",
+      "[WARN] ".yellow().bold(),
+      issue.category.bold(),
+      ".gitignore".bold(),
+      missing_list.yellow().bold()
+    );
+  }
+  let _ = write!(
+    body,
+    "    {} Add missing patterns to {} to prevent committing artifacts.",
+    "Tip:".cyan().bold(),
+    ".gitignore".bold()
+  );
+  println!(
+    "{}",
+    frame.section(
+      &"Gitignore Cache Hygiene:".yellow().bold().to_string(),
+      &frame.wrap_body(&body),
+      palette,
+    )
+  );
 }
 
-fn print_schema_version_check(root: &Path, separator: &str) {
-  if let Some(config_path) = crate::config::find_project_config(root) {
-    let status = crate::config::schema::check_schema_version_file(&config_path);
-    if let crate::config::schema::SchemaStatus::Stale { version, expected } =
-      status
-    {
-      let filename = config_path
-        .file_name()
-        .and_then(|n| n.to_str())
-        .unwrap_or("formality.toml");
+fn print_schema_version_check(root: &Path, frame: &Frame, palette: &Palette) {
+  let Some(config_path) = crate::config::find_project_config(root) else {
+    return;
+  };
+  let status = crate::config::schema::check_schema_version_file(&config_path);
+  let crate::config::schema::SchemaStatus::Stale { version, expected } = status
+  else {
+    return;
+  };
+  let filename = config_path
+    .file_name()
+    .and_then(|n| n.to_str())
+    .unwrap_or("formality.toml");
 
-      println!("\n{}", separator.dimmed());
-      println!("{}", "Configuration Schema Version:".yellow().bold());
-      println!(
-        "  • {} {} references outdated schema version 's{}' (current: 's{}')",
-        "[WARN] ".yellow().bold(),
-        filename.bold(),
-        version.to_string().yellow().bold(),
-        expected.to_string().green().bold()
-      );
-      println!(
-        "    {} Update #:schema directive in {} to pin 's{}'.",
-        "Tip:".cyan().bold(),
-        filename.bold(),
-        expected.to_string().bold()
-      );
-    }
-  }
+  let mut body = String::new();
+  let _ = writeln!(
+    body,
+    "  • {} {} references outdated schema version 's{}' (current: 's{}')",
+    "[WARN] ".yellow().bold(),
+    filename.bold(),
+    version.to_string().yellow().bold(),
+    expected.to_string().green().bold()
+  );
+  let _ = write!(
+    body,
+    "    {} Update #:schema directive in {} to pin 's{}'.",
+    "Tip:".cyan().bold(),
+    filename.bold(),
+    expected.to_string().bold()
+  );
+  println!(
+    "{}",
+    frame.section(
+      &"Configuration Schema Version:".yellow().bold().to_string(),
+      &frame.wrap_body(&body),
+      palette,
+    )
+  );
 }
 
 /// Builds the user-facing explanation for why a stale tool was not scheduled
@@ -1046,17 +1127,25 @@ pub fn stale_unpinnable_explanation(
 
 fn print_stale_unpinnable_warnings(
   unpinnable_stale: &[(ToolInfo, Version, Version)],
-  separator: &str,
+  frame: &Frame,
+  palette: &Palette,
 ) {
   if unpinnable_stale.is_empty() {
     return;
   }
-  println!("\n{}", separator.dimmed());
-  println!("{}", "Stale Toolchain Version Drift:".yellow().bold());
+  let mut body = String::new();
   for (tool, current, expected) in unpinnable_stale {
     let expl = stale_unpinnable_explanation(tool.binary, current, expected);
-    println!("  • {} {}", "[WARN] ".yellow().bold(), expl);
+    let _ = writeln!(body, "  • {} {}", "[WARN] ".yellow().bold(), expl);
   }
+  println!(
+    "{}",
+    frame.section(
+      &"Stale Toolchain Version Drift:".yellow().bold().to_string(),
+      &frame.wrap_body(&body),
+      palette,
+    )
+  );
 }
 
 /// The informational message printed by [`print_sync_notice`], exposed as a
@@ -1076,15 +1165,20 @@ real file on disk rather than talking to `fml lsp`).";
 /// passed inline and the VS Code extension talks to `fml lsp` directly. This
 /// does not change `fml sync`'s behavior in any way — it still works exactly
 /// as before for editor integrations that read native config files directly.
-fn print_sync_notice(separator: &str) {
-  println!("\n{}", separator.dimmed());
-  println!("{}", "fml sync:".bold().cyan());
-  println!(
-    "  {} {}",
+fn print_sync_notice(frame: &Frame, palette: &Palette) {
+  let body = format!(
+    "  {} {}\n    {SYNC_NOTICE_DETAIL}",
     "[INFO] ".cyan().bold(),
     SYNC_NOTICE_SUMMARY.dimmed()
   );
-  println!("    {SYNC_NOTICE_DETAIL}");
+  println!(
+    "{}",
+    frame.section(
+      &"fml sync:".bold().cyan().to_string(),
+      &frame.wrap_body(&body),
+      palette,
+    )
+  );
 }
 
 #[cfg(test)]

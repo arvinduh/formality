@@ -45,22 +45,22 @@ The Rust types backing this spec live in `src/ui/table/mod.rs` and
 
 `WidthPolicy` variants:
 
-| Variant        | JSON form            | Meaning                                   |
-| :------------- | :------------------- | :---------------------------------------- |
-| Auto (default) | `"auto"`             | Size to content, subject to clamping      |
-| Fixed          | `{"fixed": 14}`      | Always exactly this many columns wide     |
-| Min            | `{"min": 8}`         | Never narrower than this                  |
-| Max            | `{"max": 40}`        | Never wider than this                     |
-| Range          | `{"range": [8, 40]}` | Clamp to `[min, max]`                     |
-| Percent        | `{"pct": 25}`        | Percentage of total available table width |
+| Variant        | JSON form            | Meaning                                                                                                            |
+| :------------- | :------------------- | :----------------------------------------------------------------------------------------------------------------- |
+| Auto (default) | `"auto"`             | Size to content, subject to clamping                                                                               |
+| Fixed          | `{"fixed": 14}`      | **At least** this wide: honored as a target, but widened past `fixed` rather than split a token in its own content |
+| Min            | `{"min": 8}`         | Never narrower than this (nor than its own widest token)                                                           |
+| Max            | `{"max": 40}`        | **Hard cap** — never wider than this, even if a token must be hard-split to fit                                    |
+| Range          | `{"range": [8, 40]}` | Clamp to `[min, max]`; `max` is a hard cap (as `Max`)                                                              |
+| Percent        | `{"pct": 25}`        | Percentage of total available table width; a hard cap (as `Max`)                                                   |
 
 `Overflow` variants:
 
-| Variant        | JSON form                         | Meaning                                           |
-| :------------- | :-------------------------------- | :------------------------------------------------ |
-| Wrap (default) | `"wrap"`                          | Word-wrap content onto additional lines           |
-| Truncate       | `{"truncate": {"suffix": "..."}}` | Cut content and append `suffix` (default `"..."`) |
-| Clip           | `"clip"`                          | Hard-cut with no suffix                           |
+| Variant        | JSON form                         | Meaning                                                                                                                                                                                                                                                                                                                                                                                                          |
+| :------------- | :-------------------------------- | :--------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Wrap (default) | `"wrap"`                          | Wrap onto additional lines, breaking only at spaces and after path separators (`/` `\`) and `,`/`;` — never mid-token where the column can hold the token. A token wider than the column is kept whole by widening the column under `Fixed`/`Min`/`Auto`; under a hard cap (`Max`/`Range`/`Pct`), or when even widening cannot keep the table within its width budget, the token is hard-split as a last resort. |
+| Truncate       | `{"truncate": {"suffix": "..."}}` | Cut content and append `suffix` (default `"..."`)                                                                                                                                                                                                                                                                                                                                                                |
+| Clip           | `"clip"`                          | Hard-cut with no suffix                                                                                                                                                                                                                                                                                                                                                                                          |
 
 ## `Row`
 
@@ -159,3 +159,19 @@ fml table --json '{
 This is the same rendering path formality's own commands use internally — e.g.
 `fml list-surfaces` builds a `Table` value in `src/commands/surfaces.rs` and
 renders it exactly as `fml table` would from equivalent JSON.
+
+## Framing (`fml`'s own output)
+
+`fml doctor`, `fml fmt` / `fml lint` (the `Runner`), `fml install`, and
+`fml list-surfaces` never hand-assemble their own header/rule lines. Each
+command builds one `ui::table::Frame` (`src/ui/table/frame.rs`) from its primary
+rendered table and renders every block — the table, follow-up notice sections,
+the diagnostics block, the install summary — through `Frame::section`, which is
+the single definition of the `header → rule → body → rule` shape. One `Frame`
+per command means every rule that command prints is the same width: the table's
+content width, capped at 80 columns (or a genuinely narrower terminal).
+`Frame::wrap_body` wraps free-form notice/diagnostic prose to that same width on
+the same token boundaries as the table renderer. Run-root paths in both table
+cells and the diagnostics block are rendered relative via `ui::paths`
+(`display_path` / `relativize_text`); absolute only when the path genuinely lies
+outside the run root.
