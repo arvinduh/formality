@@ -45,16 +45,22 @@ use std::path::Path;
 pub fn install_missing_tools(missing: &[ToolInfo]) -> bool {
   // Standalone entry point (`fml fmt/lint/fix --install` preflight): no scan
   // table to size the frame against, so use the plain 80-col cap.
-  install_missing_tools_framed(missing, &Frame::capped())
+  install_missing_tools_framed(missing, &Frame::capped()).all_ok
 }
 
 /// [`install_missing_tools`] rendered inside `frame` so `fml doctor --install`
 /// brackets this block with the same rule width as every other section it
 /// prints (the "Installing…" progress block, then the Install Summary table).
 #[must_use]
-fn install_missing_tools_framed(missing: &[ToolInfo], frame: &Frame) -> bool {
+fn install_missing_tools_framed(
+  missing: &[ToolInfo],
+  frame: &Frame,
+) -> InstallRunReport {
   if missing.is_empty() {
-    return true;
+    return InstallRunReport {
+      all_ok: true,
+      installed: Vec::new(),
+    };
   }
 
   let palette = Palette::detect();
@@ -260,7 +266,32 @@ fn install_missing_tools_framed(missing: &[ToolInfo], frame: &Frame) -> bool {
   println!("{}", frame.dim_rule(&palette));
   print_install_summary_table(&summary_rows, frame);
 
-  all_ok
+  // The binaries whose Install Summary row is `[OK]` -- genuinely on PATH and
+  // (where a pin exists) confirmed at the expected version. A caller
+  // reconciling a pre-install scan against post-install state (`fml doctor
+  // --install`'s tally footer, #106) moves exactly these out of
+  // `missing`/`stale` and into `installed`; anything that failed, warned, or
+  // had no installer is deliberately absent, so it stays counted as missing.
+  let installed = summary_rows
+    .iter()
+    .filter(|row| matches!(row.outcome, InstallOutcome::Ok))
+    .map(|row| row.binary)
+    .collect();
+
+  InstallRunReport { all_ok, installed }
+}
+
+/// What an [`install_missing_tools_framed`] run did, for a caller that needs
+/// more than the pass/fail bit -- specifically `fml doctor --install`, which
+/// reconciles its pre-install scan tally against this rather than re-probing
+/// every tool a second time (#106).
+struct InstallRunReport {
+  /// `true` iff every attempted tool installed cleanly -- the value the
+  /// pass/fail-only [`install_missing_tools`] entry point still returns.
+  all_ok: bool,
+  /// Binaries that installed successfully this run: the `[OK]` rows of the
+  /// Install Summary table.
+  installed: Vec<&'static str>,
 }
 
 /// One row of the recap table [`print_install_summary_table`] renders after
@@ -516,7 +547,7 @@ pub fn run_doctor(
     }
   };
 
-  let scan = scan_tools_and_build_table(root, &surfaces, config);
+  let mut scan = scan_tools_and_build_table(root, &surfaces, config);
 
   let palette = Palette::detect();
   let rendered_table = render(&scan.table, &palette);
@@ -576,11 +607,20 @@ pub fn run_doctor(
   print_sync_notice(&frame, &palette);
 
   let mut install_failed = false;
-  if install
-    && !to_install.is_empty()
-    && !install_missing_tools_framed(&to_install, &frame)
-  {
-    install_failed = true;
+  if install && !to_install.is_empty() {
+    let report = install_missing_tools_framed(&to_install, &frame);
+    install_failed = !report.all_ok;
+    // Reconcile the pre-install scan with what actually installed, so the
+    // tally footer below agrees with the Install Summary table just printed
+    // instead of replaying the pre-install snapshot (#106). Driven by the
+    // per-tool `[OK]` outcomes that table already computed -- no second
+    // round of version probes.
+    reconcile_install_tally(
+      &mut scan.installed,
+      &mut scan.missing,
+      &mut scan.stale,
+      &report.installed,
+    );
   }
 
   let outdated_str = if scan.outdated.is_empty() {
@@ -879,6 +919,30 @@ fn scan_tools_and_build_table(
     outdated: outdated_unique_tools,
     stale: stale_unique_tools,
     unknown: unknown_unique_tools,
+  }
+}
+
+/// Move every binary in `newly_installed` out of the `missing`/`stale` tally
+/// buckets and into `installed`, so a post-`--install` summary line reflects
+/// what the install run actually did instead of the pre-install scan (#106).
+///
+/// `newly_installed` is exactly the set the Install Summary table marked
+/// `[OK]` (see [`InstallRunReport::installed`]): a tool that failed to
+/// install is not in it and therefore stays counted as missing. A stale tool
+/// that reinstalled cleanly is already in `installed`, so dropping it from
+/// `stale` alone is enough -- the `insert` is idempotent and never
+/// double-counts. Split out from [`run_doctor`] so the tally arithmetic is
+/// unit-testable without spawning a real install (see `tests.rs`).
+fn reconcile_install_tally(
+  installed: &mut HashSet<&'static str>,
+  missing: &mut Vec<ToolInfo>,
+  stale: &mut Vec<ToolInfo>,
+  newly_installed: &[&'static str],
+) {
+  for &binary in newly_installed {
+    missing.retain(|tool| tool.binary != binary);
+    stale.retain(|tool| tool.binary != binary);
+    installed.insert(binary);
   }
 }
 

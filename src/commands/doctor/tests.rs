@@ -569,6 +569,88 @@ fn test_preflight_install_empty_surfaces() {
   assert!(preflight_install(&[], &config, false, false));
 }
 
+/// Builds a throwaway [`ToolInfo`] for the tally-reconciliation tests below —
+/// only `binary` matters to [`reconcile_install_tally`].
+fn tool(binary: &'static str) -> ToolInfo {
+  ToolInfo {
+    binary,
+    description: "",
+    install_hint: "",
+    is_required_for_fmt: true,
+    is_required_for_lint: false,
+  }
+}
+
+/// #106: N genuinely-missing tools that all install successfully must leave
+/// the tally footer reading "N installed, 0 missing" — matching the Install
+/// Summary table printed directly above it, not the pre-install scan.
+#[test]
+fn test_reconcile_install_tally_all_installed_reports_zero_missing() {
+  let mut installed: HashSet<&'static str> = HashSet::new();
+  let mut missing = vec![
+    tool("prettier"),
+    tool("markdownlint-cli2"),
+    tool("taplo"),
+  ];
+  let mut stale: Vec<ToolInfo> = Vec::new();
+
+  reconcile_install_tally(
+    &mut installed,
+    &mut missing,
+    &mut stale,
+    &["prettier", "markdownlint-cli2", "taplo"],
+  );
+
+  assert_eq!(installed.len(), 3);
+  assert!(missing.is_empty(), "every installed tool must leave `missing`");
+}
+
+/// #106: when one of N missing tools fails to install, only the N-1 that
+/// succeeded move — the failed tool stays counted as missing, so the footer
+/// reads "N-1 installed, 1 missing".
+#[test]
+fn test_reconcile_install_tally_failed_tool_stays_missing() {
+  let mut installed: HashSet<&'static str> = HashSet::new();
+  let mut missing = vec![
+    tool("prettier"),
+    tool("markdownlint-cli2"),
+    tool("taplo"),
+  ];
+  let mut stale: Vec<ToolInfo> = Vec::new();
+
+  // `taplo` is absent from the `[OK]` set — it failed to install.
+  reconcile_install_tally(
+    &mut installed,
+    &mut missing,
+    &mut stale,
+    &["prettier", "markdownlint-cli2"],
+  );
+
+  assert_eq!(installed.len(), 2);
+  assert_eq!(missing.len(), 1);
+  assert_eq!(missing[0].binary, "taplo");
+}
+
+/// A `[STALE]` tool that reinstalls cleanly must stop being counted as stale
+/// without inflating the installed count — it was already present on PATH, so
+/// it was already in `installed`.
+#[test]
+fn test_reconcile_install_tally_reinstalled_stale_tool_drops_from_stale() {
+  let mut installed: HashSet<&'static str> = HashSet::from(["rustfmt"]);
+  let mut missing: Vec<ToolInfo> = Vec::new();
+  let mut stale = vec![tool("rustfmt")];
+
+  reconcile_install_tally(
+    &mut installed,
+    &mut missing,
+    &mut stale,
+    &["rustfmt"],
+  );
+
+  assert!(stale.is_empty());
+  assert_eq!(installed.len(), 1);
+}
+
 #[test]
 fn test_find_system_python() {
   let found = find_system_python();
