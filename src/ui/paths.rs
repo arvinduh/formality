@@ -103,7 +103,10 @@ pub fn relativize_text(root: &Path, text: &str) -> String {
     .split('\n')
     .map(|line| {
       let plain = strip_ansi_escapes(line);
-      if RELATIVIZE_LINE_PREFIXES.iter().any(|p| plain.starts_with(p)) {
+      if RELATIVIZE_LINE_PREFIXES
+        .iter()
+        .any(|p| plain.starts_with(p))
+      {
         relativize_line(line, &prefixes)
       } else {
         line.to_string()
