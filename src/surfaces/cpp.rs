@@ -4,9 +4,11 @@
 
 use super::{
   DeclaresFacets, ExecutionContext, Facet, FacetSupport, LanguageSurface,
-  NativeConfig, SurfaceResult, SurfaceStatus, ToolInfo, create_tool_command,
-  diff_check_via_tempcopy, find_files_with_ext, render_native_config,
-  run_tool_command, sync_native_config, tool_missing_guard,
+  NativeConfig, SurfaceResult, SurfaceStatus, ToolInfo,
+  classify_all_nonzero_as_error, create_tool_command,
+  diff_check_via_tempcopy_classified, find_files_with_ext,
+  render_native_config, run_tool_command, sync_native_config,
+  tool_missing_guard,
 };
 use serde::{Deserialize, Serialize};
 use std::collections::HashSet;
@@ -444,7 +446,7 @@ impl LanguageSurface for CppSurface {
       build_clang_format_inline_style(&ClangFormatConfig::from_context(ctx));
 
     if ctx.check_only {
-      return diff_check_via_tempcopy(
+      return diff_check_via_tempcopy_classified(
         &files,
         |scratch| {
           let mut cmd = create_tool_command("clang-format");
@@ -456,6 +458,18 @@ impl LanguageSurface for CppSurface {
         },
         self.name(),
         start,
+        // `clang-format -i` rewrites the scratch copy and exits 0 whether or
+        // not it changed anything; it has no "differences found" exit code
+        // (that is `--dry-run --Werror`, which this path never passes). A
+        // non-zero exit means clang-format could not do its job — an
+        // unreadable file, an invalid `-style`, an unknown flag from
+        // `extra_args` — so every non-zero exit is an `ExecutionError`
+        // (Fixes #151). NOTE: this classifies the `--check` path only. The
+        // non-`--check` write branch below still runs through the
+        // unclassified `run_tool_command`, which maps the same operational
+        // failure to `[FAIL] Violations found`; closing that asymmetry is
+        // tracked in #155.
+        classify_all_nonzero_as_error,
       );
     }
 
@@ -1070,5 +1084,36 @@ mod tests {
       !temp.path().join(".clang-tidy").exists(),
       "fml lint must not write .clang-tidy"
     );
+  }
+
+  #[test]
+  fn test_cpp_check_reports_execution_error_on_formatter_failure() {
+    // Fixes #151: when clang-format cannot run on the `fml fmt --check` path
+    // (here: an unknown flag forced in via `extra_args`), the surface must
+    // classify that as `ExecutionError` (`[ERR]`), not a lint-style
+    // `ViolationsFound` (`[FAIL]`). `clang-format -i` has no
+    // "differences found" exit code, so any non-zero exit is operational.
+    if !check_binary_exists("clang-format") {
+      return;
+    }
+    let temp = tempdir().unwrap();
+    std::fs::write(temp.path().join("a.cpp"), "int main(){return 0;}\n")
+      .unwrap();
+
+    let cfg = FormalityConfig::default();
+    let mut lang = cfg.resolve_for_lang("cpp");
+    lang.extra_args = vec!["--this-flag-does-not-exist-fml151".to_string()];
+    let mut ctx = test_ctx(temp.path(), lang);
+    ctx.global_config = Arc::new(cfg.resolve_global());
+    ctx.check_only = true;
+
+    let surface = CppSurface;
+    let res = surface.format(&ctx);
+    assert!(
+      matches!(res.status, SurfaceStatus::ExecutionError { .. }),
+      "a formatter failure on --check must be ExecutionError, got: {:?}",
+      res.status
+    );
+    assert!(!res.is_success());
   }
 }
