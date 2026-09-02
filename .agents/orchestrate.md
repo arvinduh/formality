@@ -152,18 +152,25 @@ sign-off, always — an "ask first" item per `AGENTS.md`.
 ## 4.5. When the orchestrator merges, and how it handles conflicts
 
 **Checked directly (`gh api repos/.../branches/main/protection`):** this repo
-requires the `Library Tests` status check and conversation resolution, but
-`required_approving_review_count` is **0** — an approving review is not actually
-gate-enforced by GitHub here, only the QA process above requires one. That means
-the same-account self-approval block doesn't prevent merging; it only prevents
-the QA step from being a formal GitHub "Approve." Don't conflate the two, and
-don't let "GitHub didn't require it" become an excuse to skip the debate in §4 —
-that's a process rule stronger than what branch protection enforces, kept as
-insurance regardless of what GitHub demands.
+requires the `Library Tests` **and `Formality Dogfooding`** status checks and
+conversation resolution, but `required_approving_review_count` is **0** — an
+approving review is not actually gate-enforced by GitHub here, only the QA
+process above requires one. That means the same-account self-approval block
+doesn't prevent merging; it only prevents the QA step from being a formal GitHub
+"Approve." Don't conflate the two, and don't let "GitHub didn't require it"
+become an excuse to skip the debate in §4 — that's a process rule stronger than
+what branch protection enforces, kept as insurance regardless of what GitHub
+demands.
 
 **The orchestrator merges a PR once, in order:**
 
-1. Required status checks are green (`Library Tests`, currently).
+1. Required status checks are green (`Library Tests` and `Formality Dogfooding`,
+   currently). This list said only `Library Tests` until 2026-09-02, when two
+   independent QA reviews of PR #156 each re-checked live branch protection and
+   found `Formality Dogfooding` required too. Re-read it from the API rather
+   than from this sentence — a hardcoded list of check names is exactly the
+   thing that goes stale silently, and §3 explains why guessing wrong here is
+   expensive.
 2. All review conversations are resolved.
 3. Either: the change was trivial enough to skip §4's ceremony entirely, or §4's
    QA debate concluded with the reviewer's written sign-off as a PR comment (not
@@ -236,6 +243,51 @@ loop, only to open it. Every merge, immediately, no exceptions:
    files outside version control) is safe to delete once that issue is closed —
    its content is now either implemented or superseded by real committed docs.
    Don't let local-only files outlive the work they were scratch for.
+
+## 4.7. Interrupted sessions — push WIP, hand off by remote SHA
+
+Sessions die mid-flight: rate limits, session caps, a closed laptop. That is
+normal and survivable, but only if the work leaves the machine it was made on.
+
+**Push every worktree branch before a session ends, verified or not.** An
+unpushed branch does not exist to anyone else — not to the next orchestrator,
+not to a session on another machine, not to you tomorrow in a fresh container.
+Presubmit may not have run; push anyway. An unverified branch that someone can
+read is worth strictly more than a perfect one nobody can reach.
+
+Mark the state in the commit message so the next reader cannot mistake a draft
+for finished work:
+
+```text
+wip(<issue>): unverified handoff snapshot — <why it stopped>
+```
+
+**A handoff names the remote branch and SHA. Never a local worktree path.** A
+`C:/Users/.../formality-wt/foo` in a handoff is unusable to every session that
+is not on that machine, and worse, it reads as _"this work is local-only"_ even
+when the branch was in fact pushed. That exact confusion happened on 2026-09-02:
+three branches (`fix/issue-106`, `fix/issue-114`, `fix/issue-146`) were pushed
+correctly, the handoff described them by local path with a "not pushed"
+annotation, and the next orchestrator concluded the work was stranded. Give a
+table of issue → branch → SHA → diffstat, and let the paths go.
+
+Corollary for whoever picks it up: **verify before trusting `git branch -r`.** A
+fetch is a snapshot, and a branch pushed after it will not appear. Use
+`git ls-remote origin` before concluding anything is missing, and never report
+"it isn't on the remote" as settled fact off a single stale fetch.
+
+**Received WIP is an untrusted draft, not a reviewed diff.** It never passed
+presubmit — that is what "unverified" means. Before it merges, someone runs the
+full §2 suite on it _and_ proves any tests it carries are non-vacuous: stash the
+fix, confirm the new tests fail, restore it, confirm they pass. A test that
+would also pass on unfixed `main` is worthless, and an interrupted worker is
+exactly the situation that produces one. Resuming WIP does not skip §4's QA
+gate; if anything it needs it more, because no one has yet read that diff
+critically.
+
+The issue keeps `status:in-progress` throughout — it is claimed work that
+paused, not work released back to the pool. Anyone re-dispatching it from
+scratch is discarding a colleague's finished thinking; check the branch first.
 
 ## 5. Smart Format principle
 
