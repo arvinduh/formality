@@ -248,8 +248,10 @@ pub fn print_update_notice(notifier: Option<UpdateNotifier>) {
 /// (`releases/latest/download/fml-installer.{sh,ps1}`), not the
 /// `raw.githubusercontent.com/.../main/install.*` shims — the dist installer
 /// resolves OS/arch, fetches the matching prebuilt archive from the latest
-/// release, verifies its checksum, and drops the binary on `PATH` with no Rust
-/// toolchain involved. Re-running it is a working in-place upgrade.
+/// release, and drops the binary on `PATH` with no Rust toolchain involved.
+/// The shell installer (Linux & macOS) also verifies the download's checksum;
+/// the PowerShell installer (Windows) does not. Re-running it is a working
+/// in-place upgrade.
 ///
 /// Selected at **compile time** by the caller via `cfg!(windows)`: the binary
 /// is built per target, so the host OS is already known and can't be wrong at

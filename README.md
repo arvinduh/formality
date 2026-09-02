@@ -74,9 +74,10 @@ surface? See [docs/new-surface-guide.md](docs/new-surface-guide.md).
 ### 1-Line Quick Install
 
 These download the matching prebuilt binary from the latest
-[GitHub Release](https://github.com/arvinduh/formality/releases/latest), verify
-its checksum, and put `fml` on your `PATH`. No Rust toolchain required. The
-installer scripts are generated and published by
+[GitHub Release](https://github.com/arvinduh/formality/releases/latest) and put
+`fml` on your `PATH`. No Rust toolchain required. The shell installer (Linux &
+macOS) also verifies the download's checksum; the PowerShell installer (Windows)
+does not. The installer scripts are generated and published by
 [cargo-dist](https://opensource.axo.dev/cargo-dist/).
 
 #### Linux & macOS
@@ -404,9 +405,10 @@ handles every downstream tool (`ruff`, `prettier`, `markdownlint-cli2`, `taplo`,
 
 ```yaml
 - name: Install fml
-  run: |
-    curl --proto '=https' --tlsv1.2 -LsSf https://github.com/arvinduh/formality/releases/latest/download/fml-installer.sh | sh
-    echo "$HOME/.cargo/bin" >> "$GITHUB_PATH"
+  run:
+    curl --proto '=https' --tlsv1.2 -LsSf
+    https://github.com/arvinduh/formality/releases/latest/download/fml-installer.sh
+    | sh
 
 - name: Install tool dependencies
   run: fml install
