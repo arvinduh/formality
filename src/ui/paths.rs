@@ -6,6 +6,19 @@
 use crate::ui::table::strip_ansi_escapes;
 use std::path::{Path, PathBuf};
 
+/// Whether `s` already names an absolute location, judged **host-independently**
+/// — a Windows-style root (`C:\…`, `C:/…`, `\\server\…`) counts even when this
+/// code runs on Linux, and a POSIX `/…` counts on Windows. Diagnostic and diff
+/// text carries whatever separators the machine that produced it used, which is
+/// not necessarily the machine now running `fml`.
+#[must_use]
+fn looks_absolute(s: &str) -> bool {
+  let b = s.as_bytes();
+  s.starts_with('/')
+    || s.starts_with('\\')
+    || (b.len() >= 2 && b[0].is_ascii_alphabetic() && b[1] == b':')
+}
+
 /// Make `p` absolute against the current directory when it is not already
 /// rooted. No filesystem access and no lexical `.`/`..` collapsing — run roots
 /// and tool-reported paths are effectively always already clean, and rebuilding
@@ -20,15 +33,42 @@ fn absolutize(p: &Path) -> PathBuf {
   }
 }
 
-/// The set of textual prefixes that mean "under `root`" — the root rendered
-/// with both separator styles, each followed by a separator. Longest first, so
-/// the most specific match wins.
+/// The textual prefixes that mean "under `root`": the root string, trimmed of a
+/// trailing separator, in every plausible spelling — as given, all-forward-
+/// slash, and all-backslash — each with a trailing `/` and a trailing `\`.
+/// Longest first so the most specific spelling wins.
+///
+/// Deliberately does **not** route through [`absolutize`] / [`Path`] joins:
+/// on Linux a `C:\…` or `C:/…` root has no `Path` root, so joining it onto the
+/// cwd would yield `/cwd/C:/…` and match nothing. `looks_absolute` classifies
+/// it host-independently instead; only a genuinely relative root is anchored to
+/// the cwd (as a raw string, keeping its separators).
 fn root_prefixes(root: &Path) -> Vec<String> {
-  let raw = absolutize(root).to_string_lossy().into_owned();
-  let trimmed = raw.trim_end_matches(['/', '\\']);
-  let fwd = trimmed.replace('\\', "/");
-  let back = trimmed.replace('/', "\\");
-  let mut variants = vec![format!("{fwd}/"), format!("{back}\\")];
+  let raw = root.to_string_lossy();
+  let base: String = if looks_absolute(&raw) {
+    raw.into_owned()
+  } else {
+    std::env::current_dir()
+      .unwrap_or_default()
+      .join(root)
+      .to_string_lossy()
+      .into_owned()
+  };
+  let trimmed = base.trim_end_matches(['/', '\\']);
+  let spellings = [
+    trimmed.to_string(),
+    trimmed.replace('\\', "/"),
+    trimmed.replace('/', "\\"),
+  ];
+
+  let mut variants: Vec<String> = Vec::new();
+  for s in &spellings {
+    variants.push(format!("{s}/"));
+    variants.push(format!("{s}\\"));
+  }
+  // A bare separator prefix would strip a leading `/`/`\` off every allowlisted
+  // line — never emit one (happens only for a `/` or empty root).
+  variants.retain(|v| v.len() > 1);
   variants.sort_by_key(|v| std::cmp::Reverse(v.len()));
   variants.dedup();
   variants
@@ -158,6 +198,49 @@ mod tests {
       relativize_text(root, text),
       "--- poly\\data.json (formatted)"
     );
+  }
+
+  #[test]
+  fn root_prefixes_emits_both_separator_spellings_host_independently() {
+    // A Windows-style root: on Linux it has no `Path` root, so this must not
+    // route through a cwd join (which was the CI regression).
+    let v = root_prefixes(Path::new("C:\\work\\repo"));
+    assert!(v.contains(&"C:/work/repo/".to_string()), "{v:?}");
+    assert!(v.contains(&"C:\\work\\repo\\".to_string()), "{v:?}");
+    // A POSIX root, likewise both spellings.
+    let v = root_prefixes(Path::new("/home/u/proj"));
+    assert!(v.contains(&"/home/u/proj/".to_string()), "{v:?}");
+    assert!(v.contains(&"\\home\\u\\proj\\".to_string()), "{v:?}");
+  }
+
+  #[test]
+  fn relativize_text_separator_mismatch_between_root_and_text() {
+    // backslash root, forward-slash text
+    assert_eq!(
+      relativize_text(
+        Path::new("C:\\work\\repo"),
+        "--- C:/work/repo/poly/data.json (formatted)"
+      ),
+      "--- poly/data.json (formatted)"
+    );
+    // forward-slash root, backslash text
+    assert_eq!(
+      relativize_text(
+        Path::new("C:/work/repo"),
+        "+++ C:\\work\\repo\\poly\\data.json"
+      ),
+      "+++ poly\\data.json"
+    );
+  }
+
+  #[test]
+  fn looks_absolute_is_host_independent() {
+    assert!(looks_absolute("/home/u"));
+    assert!(looks_absolute("C:\\x"));
+    assert!(looks_absolute("C:/x"));
+    assert!(looks_absolute("\\\\server\\share"));
+    assert!(!looks_absolute("subdir/file"));
+    assert!(!looks_absolute("./rel"));
   }
 
   #[test]
