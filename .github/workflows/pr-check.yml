@@ -262,7 +262,7 @@ jobs:
         # stop reading it. (fml itself now explains that failure instead of
         # dumping the raw stack trace; see `explain_jvm_incompatibility` in
         # surfaces/java.rs.)
-        uses: actions/setup-java@v5
+        uses: actions/setup-java@v6
         with:
           distribution: temurin
           java-version: "21"
