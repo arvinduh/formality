@@ -373,11 +373,7 @@ impl Runner {
             )
             .align(crate::ui::table::Align::Right),
           ]));
-          let detail = if let Some(d) = diff {
-            d.clone()
-          } else {
-            normalize_diagnostics(message)
-          };
+          let detail = tool_output_detail(message, diff.as_deref());
           diagnostics.push((res.surface_name.to_string(), detail));
         }
         SurfaceStatus::ToolMissing {
@@ -434,7 +430,10 @@ impl Runner {
             )
             .align(crate::ui::table::Align::Right),
           ]));
-          diagnostics.push((res.surface_name.to_string(), message.clone()));
+          diagnostics.push((
+            res.surface_name.to_string(),
+            tool_output_detail(message, None),
+          ));
         }
         SurfaceStatus::Skipped { reason } => {
           runner_table.add_row(crate::ui::table::Row::new(vec![
@@ -712,6 +711,31 @@ fn normalize_diagnostics(raw: &str) -> String {
     .collect();
 
   cleaned_lines.join("\n")
+}
+
+/// Shared diagnostic-detail computation for the two `SurfaceStatus` arms that
+/// carry raw tool output (`ViolationsFound` and `ExecutionError`, per #146):
+/// a rendered diff is shown verbatim, otherwise the raw message is run
+/// through [`normalize_diagnostics`]. Called from both arms in `Runner::run`
+/// so identical raw tool output renders identically regardless of which
+/// status it landed in.
+///
+/// A diff deliberately bypasses [`normalize_diagnostics`]: that function
+/// trims line ends and drops blank lines, which in a diff body are file
+/// *contents* — exactly the drift a whitespace diff exists to show. Path
+/// relativization is not lost by the bypass; it runs over every detail at
+/// the diagnostics-render step, after this function.
+///
+/// Coverage caveat: the tests pin this function's behavior only. Nothing
+/// currently asserts that either arm in `Runner::run` still calls it, so
+/// un-wiring a call site — i.e. reintroducing #146 — does not fail any
+/// test. Real call-site coverage needs a testable seam in the rendering
+/// loop; see the follow-up spun off from #146.
+fn tool_output_detail(message: &str, diff: Option<&str>) -> String {
+  match diff {
+    Some(d) => d.to_string(),
+    None => normalize_diagnostics(message),
+  }
 }
 
 #[cfg(test)]
