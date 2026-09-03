@@ -44,7 +44,7 @@ jobs:
       - name: Set up Rust toolchain
         # Pinned to match rust-toolchain.toml; this action does not read
         # that file itself, so bump both together (see pr-check.yml).
-        uses: dtolnay/rust-toolchain@1.97.1
+        uses: dtolnay/rust-toolchain@1.99.0
         with:
           components: rustfmt, clippy
 
