@@ -76,11 +76,13 @@ fn test_version_extraction_from_tool_banners() {
   let clang_fmt = "clang-format version 18.1.8";
   assert_eq!(Version::extract(clang_fmt), Some(Version::new(18, 1, 8)));
 
+  // #149: `-1ubuntu1` is a Debian/Ubuntu packaging *revision*, not a
+  // prerelease -- it must salvage to the bare core, same verdict as the
+  // `~`-mangled Ubuntu suffix below, not sort below `14.0.0` as a
+  // prerelease would. This is a deliberate verdict change from #145, which
+  // took the `semver`-valid-prerelease parse at face value here.
   let clang_tidy = "clang-tidy version 14.0.0-1ubuntu1";
-  assert_eq!(
-    Version::extract(clang_tidy),
-    Some(Version::with_prerelease(14, 0, 0, "1ubuntu1"))
-  );
+  assert_eq!(Version::extract(clang_tidy), Some(Version::new(14, 0, 0)));
 
   // Ubuntu distro revision: `~` and a leading-zero identifier make the suffix
   // invalid semver, so it is salvaged to the bare core (Compatible, not
@@ -155,6 +157,103 @@ fn test_version_extraction_from_tool_banners() {
 
   let golangci = "golangci-lint has version 1.55.2 built with go1.21.5 from 39c1b3f on 2023-12-04T12:00:00Z";
   assert_eq!(Version::extract(golangci), Some(Version::new(1, 55, 2)));
+}
+
+#[test]
+fn test_distro_revision_vs_genuine_prerelease() {
+  // #149: table-driven coverage of the extraction-layer heuristic that
+  // distinguishes a packaging/distro revision suffix (sorts *with* its base
+  // release, never below it) from a genuine prerelease (sorts below).
+  //
+  // (input, expected parse, is a prerelease?)
+  let cases: &[(&str, Version, bool)] = &[
+    // Plain releases: nothing to distinguish.
+    ("1.2.3", Version::new(1, 2, 3), false),
+    // Debian/Ubuntu packaging revisions: numeric-leading identifier with no
+    // recognised prerelease keyword -> distro revision, bare core kept.
+    ("1.2.3-1ubuntu2", Version::new(1, 2, 3), false),
+    ("1.2.3-0ubuntu1", Version::new(1, 2, 3), false),
+    // `~` makes the suffix invalid semver outright; already salvaged to the
+    // bare core before the prerelease-keyword check even runs.
+    ("1.2.3-0ubuntu1~22.04.1", Version::new(1, 2, 3), false),
+    // RPM/Fedora revisions (`-<rev>.<dist-tag>`): first identifier is a bare
+    // digit, same bucket as the Debian revisions above.
+    ("1.2.3-4.fc39", Version::new(1, 2, 3), false),
+    // Arch's single-integer package-revision suffix. Ambiguous in the
+    // abstract (SemVer alone would read `-1` as a prerelease numeric
+    // identifier), but Arch is the only convention that emits a bare
+    // numeral here, and a real prerelease is never spelled as a plain
+    // integer with no keyword -- tie-break: distro revision.
+    ("1.2.3-1", Version::new(1, 2, 3), false),
+    // Homebrew-style single-integer bottle/formula revision -- same bucket
+    // and same tie-break as the Arch case.
+    ("1.2.3-2", Version::new(1, 2, 3), false),
+    // A distro-style tag with a non-numeric but non-keyword leading
+    // identifier (a raw distro/codename prefix, not `alpha`/`beta`/etc.)
+    // is still a revision, not a prerelease.
+    ("1.2.3-ubuntu1", Version::new(1, 2, 3), false),
+    // Genuine prereleases: recognised keyword leads the first identifier,
+    // kept and must sort *below* the bare release.
+    ("1.2.3-rc1", Version::with_prerelease(1, 2, 3, "rc1"), true),
+    (
+      "1.2.3-rc.1",
+      Version::with_prerelease(1, 2, 3, "rc.1"),
+      true,
+    ),
+    (
+      "1.2.3-beta.2",
+      Version::with_prerelease(1, 2, 3, "beta.2"),
+      true,
+    ),
+    (
+      "1.2.3-alpha",
+      Version::with_prerelease(1, 2, 3, "alpha"),
+      true,
+    ),
+    ("1.2.3-pre", Version::with_prerelease(1, 2, 3, "pre"), true),
+    (
+      "1.2.3-nightly",
+      Version::with_prerelease(1, 2, 3, "nightly"),
+      true,
+    ),
+    // Build metadata is dropped from ordering entirely (semver rule), not a
+    // prerelease either way -- parses to the bare core with no prerelease.
+    ("1.2.3+build.5", Version::new(1, 2, 3), false),
+    // A genuine prerelease combined with build metadata: prerelease kept,
+    // build metadata still dropped.
+    (
+      "1.2.3-rc1+build.5",
+      Version::with_prerelease(1, 2, 3, "rc1"),
+      true,
+    ),
+  ];
+
+  for (input, expected, is_prerelease) in cases {
+    let parsed = Version::parse(input);
+    assert_eq!(parsed, Some(expected.clone()), "parsing {input:?}");
+    assert_eq!(
+      parsed.as_ref().unwrap().prerelease.is_some(),
+      *is_prerelease,
+      "prerelease-ness of {input:?}"
+    );
+
+    // MSTV outcome: a distro revision must compare >= its own bare release
+    // (never Outdated against an MSTV equal to that release); a genuine
+    // prerelease must compare < it (Outdated against that same floor).
+    let base = Version::new(1, 2, 3);
+    let status = evaluate_tool_status(parsed, None, Some(&base), None);
+    if *is_prerelease {
+      assert!(
+        status.is_outdated(),
+        "{input:?} (genuine prerelease) must be Outdated vs MSTV {base}, got {status:?}"
+      );
+    } else {
+      assert!(
+        status.is_compatible(),
+        "{input:?} (distro revision or plain release) must be Compatible vs MSTV {base}, got {status:?}"
+      );
+    }
+  }
 }
 
 #[test]

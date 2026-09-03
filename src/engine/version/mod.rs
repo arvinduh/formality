@@ -343,11 +343,12 @@ enum TokenParse {
 }
 
 /// Read a version out of one token. Strips surrounding punctuation and a
-/// leading `v`/`go` marker, then tries, in order: the 3-part core plus any
-/// real `-pre`/`+build` suffix (keeps `1.7.0-nightly`, `14.0.0-1ubuntu1`);
-/// then the bare core alone, dropping a `-`/`+` suffix or a clean 4th component
-/// `semver` rejects (`18.1.8-0ubuntu1~22.04.1`, `1.35.1.post1`, `0.9.6.dev0` —
-/// which the pre-`semver` parser also ignored). A non-numeric 3rd component
+/// leading `v`/`go` marker, then tries, in order: the 3-part core plus a
+/// genuine `-pre`/`+build` suffix (keeps `1.7.0-nightly`); then the bare core
+/// alone, dropping a packaging-revision suffix (`14.0.0-1ubuntu1`), a `-`/`+`
+/// suffix, or a clean 4th component `semver` rejects
+/// (`18.1.8-0ubuntu1~22.04.1`, `1.35.1.post1`, `0.9.6.dev0` — which the
+/// pre-`semver` parser also ignored). A non-numeric 3rd component
 /// (`0.9.6rc1`, `1.2.x`) is rejected, never zeroed.
 fn classify_token(token: &str) -> TokenParse {
   let cleaned = token.trim_matches(|c: char| "()[]{}<>\"',:;".contains(c));
@@ -384,6 +385,21 @@ fn classify_token(token: &str) -> TokenParse {
   let parsed = semver::Version::parse(&format!("{core}{suffix}"))
     .or_else(|_| semver::Version::parse(&core));
   match parsed {
+    // A `-`-suffix that parses as valid semver but isn't a *recognised*
+    // prerelease keyword is a packaging/distro revision (`-1ubuntu1`,
+    // `-4.fc39`, a bare `-1`), not a genuine prerelease: drop it and keep the
+    // bare core, same salvage the invalid-semver suffixes above already get.
+    Ok(sv) if !sv.pre.is_empty() && !is_genuine_prerelease(sv.pre.as_str()) => {
+      match semver::Version::parse(&core) {
+        Ok(bare) => TokenParse::Ok(Version {
+          major: bare.major,
+          minor: bare.minor,
+          patch: bare.patch,
+          prerelease: None,
+        }),
+        Err(_) => TokenParse::Rejected,
+      }
+    }
     Ok(sv) => TokenParse::Ok(Version {
       major: sv.major,
       minor: sv.minor,
@@ -392,6 +408,43 @@ fn classify_token(token: &str) -> TokenParse {
     }),
     Err(_) => TokenParse::Rejected,
   }
+}
+
+/// Recognised prerelease keywords (case-insensitive), matched against the
+/// leading alphabetic run of a semver prerelease's *first* dot-separated
+/// identifier (`"rc.1"` -> `"rc"`, `"beta2"` -> `"beta"`, `"1ubuntu1"` -> `""`
+/// since it starts with a digit). Anything that doesn't produce a leading
+/// alphabetic run matching this list is treated as a packaging/distro
+/// revision instead of a genuine prerelease — see `classify_token`.
+const PRERELEASE_KEYWORDS: &[&str] = &[
+  "alpha", "beta", "rc", "pre", "dev", "nightly", "snapshot", "preview",
+  "canary",
+];
+
+/// Whether a semver prerelease string (e.g. `sv.pre.as_str()`) reads as a
+/// genuine prerelease rather than a distro/packaging revision suffix.
+///
+/// Tie-break, deliberately conservative: only the *first* dot-separated
+/// identifier is inspected, and only its leading alphabetic run. A purely
+/// numeric leading identifier (`-1`, Arch-style; `-1ubuntu1`'s `1ubuntu1`,
+/// Debian/Ubuntu-style; `-4.fc39`'s `4`, Fedora-style) has no leading
+/// alphabetic run at all and is therefore never a genuine prerelease — real
+/// prerelease conventions (`alpha`, `beta.2`, `rc1`, `nightly`) always lead
+/// with a keyword, never a bare digit.
+#[must_use]
+fn is_genuine_prerelease(pre: &str) -> bool {
+  let Some(first) = pre.split('.').next() else {
+    return false;
+  };
+  let leading_alpha: String = first
+    .chars()
+    .take_while(|c| c.is_ascii_alphabetic())
+    .collect();
+  if leading_alpha.is_empty() {
+    return false;
+  }
+  let lower = leading_alpha.to_ascii_lowercase();
+  PRERELEASE_KEYWORDS.contains(&lower.as_str())
 }
 
 // === Comparison layer (delegated wholesale to the `semver` crate) ===========
