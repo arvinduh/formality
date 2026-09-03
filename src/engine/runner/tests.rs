@@ -197,15 +197,16 @@ fn test_execution_error_and_violations_render_detail_identically() {
   // `tool_output_detail` directly -- the exact function both the
   // `ViolationsFound` and `ExecutionError` arms in `Runner::run` call to
   // build the pushed diagnostic -- rather than re-deriving the arms' logic
-  // here, so a regression that un-wires either call site fails this test.
+  // here.
+  //
+  // This pins the helper's behavior, NOT the call-site wiring: un-wiring
+  // either arm still passes. See the helper's doc comment.
   let raw = "Checking formatting...\n\nsrc/x.js: error   \n  2:1  Delete `;`\n\nAll checks passed!\nCommand failed with exit code 2\n";
 
   // ViolationsFound with no diff, and ExecutionError, both pass `diff: None`
-  // through to `tool_output_detail`.
-  let violations_detail = tool_output_detail(raw, None);
+  // through to `tool_output_detail`, so one call covers both arms' input.
   let exec_error_detail = tool_output_detail(raw, None);
 
-  assert_eq!(violations_detail, exec_error_detail);
   assert_eq!(
     exec_error_detail,
     "src/x.js: error\n  2:1  Delete `;`\nCommand failed with exit code 2"
@@ -226,13 +227,13 @@ fn test_tool_output_detail_prefers_diff_over_message() {
 
 #[test]
 fn test_execution_error_arm_normalizes_via_runner_render() {
-  // Issue #146, end-to-end regression: build a real ExecutionError
-  // SurfaceResult with noisy raw tool output and drive it through the same
-  // per-status dispatch `Runner::run`'s rendering loop uses
-  // (`tool_output_detail`), confirming the diagnostic pushed for an
-  // ExecutionError is normalized identically to a ViolationsFound one, not
-  // just that the standalone helper functions behave when called directly
-  // in isolation.
+  // Issue #146: build a real ExecutionError SurfaceResult with noisy raw
+  // tool output and check the detail `tool_output_detail` computes for it,
+  // confirming an ExecutionError is normalized identically to a
+  // ViolationsFound one.
+  //
+  // This calls the helper directly; it does NOT enter `Runner::run`, whose
+  // rendering loop prints to stdout and is not observable from a test.
   let raw = "Checking formatting...\n\n  fatal: crashed   \n\nAll checks passed!\nCommand failed with exit code 2\n";
   let exec_result = SurfaceResult {
     surface_name: "go",
