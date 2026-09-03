@@ -6,8 +6,8 @@ use super::{
   NativeConfig, SurfaceResult, SurfaceStatus, ToolInfo,
   classify_all_nonzero_as_error, create_tool_command,
   diff_check_via_tempcopy_classified, find_files_with_ext,
-  render_native_config, run_tool_command, sync_native_config,
-  tool_missing_guard,
+  render_native_config, run_tool_command, run_tool_command_classified,
+  sync_native_config, tool_missing_guard,
 };
 use serde::{Deserialize, Serialize};
 use std::path::{Path, PathBuf};
@@ -363,11 +363,8 @@ impl LanguageSurface for PythonSurface {
         // at exit 2, ruff itself erroring. `ruff format` (no `--check`) exits
         // 0 formatted-or-not and only exits 2 on a parse/IO/config error.
         // Every non-zero exit on this path is therefore an operational
-        // failure, not a lint result (Fixes #151). NOTE: this classifies the
-        // `--check` path only. The non-`--check` write branch below still
-        // runs through the unclassified `run_tool_command`, which maps the
-        // same operational failure to `[FAIL] Violations found`; closing that
-        // asymmetry is tracked in #155.
+        // failure, not a lint result (Fixes #151). Same reasoning applies
+        // verbatim to the non-`--check` write branch below (Fixes #155).
         classify_all_nonzero_as_error,
       );
     }
@@ -395,12 +392,15 @@ impl LanguageSurface for PythonSurface {
             "Import sorting issues found in Python files".to_string()
           };
 
+          // `ruff check --select I --fix` fixes any import-sort drift in
+          // place and only exits non-zero on a violation it could not fix
+          // (in practice an `E999` syntax error) or ruff itself erroring
+          // (exit 2) — never to report drift it already corrected. Same
+          // reasoning as the `--check` path's classifier above: an
+          // operational failure, not a lint result (Fixes #155).
           return SurfaceResult {
             surface_name: self.name(),
-            status: SurfaceStatus::ViolationsFound {
-              message: msg,
-              diff: None,
-            },
+            status: SurfaceStatus::ExecutionError { message: msg },
             duration: start.elapsed(),
           };
         }
@@ -431,7 +431,14 @@ impl LanguageSurface for PythonSurface {
     cmd.args(&ctx.lang_config.extra_args);
     cmd.current_dir(ctx.root.as_path());
 
-    run_tool_command(self.name(), &mut cmd)
+    // `ruff format` (no `--check`) exits 0 formatted-or-not and only exits 2
+    // on a parse/IO/config error, so every non-zero exit here is operational
+    // too (Fixes #155).
+    run_tool_command_classified(
+      self.name(),
+      &mut cmd,
+      classify_all_nonzero_as_error,
+    )
   }
 
   fn lint(&self, ctx: &ExecutionContext, fix: bool) -> SurfaceResult {
@@ -791,6 +798,31 @@ mod tests {
     assert!(
       matches!(res.status, SurfaceStatus::ExecutionError { .. }),
       "a formatter failure on --check must be ExecutionError, got: {:?}",
+      res.status
+    );
+    assert!(!res.is_success());
+  }
+
+  #[test]
+  fn test_python_write_reports_execution_error_on_formatter_failure() {
+    // Fixes #155: the non-`--check` write path must classify the same
+    // operational ruff failure as `ExecutionError`, not `ViolationsFound` —
+    // mirroring `test_python_check_reports_execution_error_on_formatter_failure`
+    // above.
+    if !check_binary_exists("ruff") {
+      return;
+    }
+    let temp = TempDir::new().unwrap();
+    std::fs::write(temp.path().join("broken.py"), "def (:\n    return\n")
+      .unwrap();
+
+    let surface = PythonSurface;
+    let ctx = test_ctx(temp.path(), ResolvedLangConfig::new("python"));
+
+    let res = surface.format(&ctx);
+    assert!(
+      matches!(res.status, SurfaceStatus::ExecutionError { .. }),
+      "a formatter failure on the write path must be ExecutionError, got: {:?}",
       res.status
     );
     assert!(!res.is_success());

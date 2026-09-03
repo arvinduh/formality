@@ -484,7 +484,16 @@ impl LanguageSurface for MarkdownSurface {
     cmd.args(&inline_config);
     cmd.current_dir(ctx.root.as_path());
 
-    run_tool_command(self.name(), &mut cmd)
+    // `prettier --write` exits 0 whether or not it reformatted anything and
+    // only exits non-zero on an operational failure (parse error, bad
+    // `--config`, unreadable file) — no "found drift" exit code, same as the
+    // `--check` path above. Every non-zero exit here is therefore an
+    // `ExecutionError`, not a lint-style `ViolationsFound` (Fixes #155).
+    run_tool_command_classified(
+      self.name(),
+      &mut cmd,
+      classify_all_nonzero_as_error,
+    )
   }
 
   fn lint(&self, ctx: &ExecutionContext, fix: bool) -> SurfaceResult {
@@ -1030,6 +1039,40 @@ README.md:7 error MD025/single-title/single-h1 Multiple top-level headings";
     assert!(
       matches!(res.status, SurfaceStatus::ExecutionError { .. }),
       "a bad --config path must classify as ExecutionError, got: {:?}",
+      res.status
+    );
+    assert!(!res.is_success());
+  }
+
+  #[test]
+  fn test_markdown_write_reports_execution_error_on_prettier_failure() {
+    // Fixes #155: the write path's own prettier pass (the tail end of
+    // `format()`, reached once no markdownlint binary is configured or its
+    // pass already succeeded) must classify an operational prettier failure
+    // as `ExecutionError`, not `ViolationsFound` — `prettier --write` has no
+    // "found drift" exit code, same reasoning as the `--check` path.
+    if !check_binary_exists("prettier") {
+      return;
+    }
+    let temp = TempDir::new().unwrap();
+    std::fs::write(temp.path().join("a.md"), "# hi\n").unwrap();
+
+    let mut lang = ResolvedLangConfig::new("markdown");
+    lang.extra_args = vec![
+      "--config".to_string(),
+      temp
+        .path()
+        .join("nonexistent-prettier-config-fml155.json")
+        .to_string_lossy()
+        .into_owned(),
+    ];
+    let ctx = test_ctx(temp.path(), lang);
+
+    let surface = MarkdownSurface;
+    let res = surface.format(&ctx);
+    assert!(
+      matches!(res.status, SurfaceStatus::ExecutionError { .. }),
+      "a prettier failure on the write path must be ExecutionError, got: {:?}",
       res.status
     );
     assert!(!res.is_success());
