@@ -103,20 +103,56 @@ pub fn resolve_binary_info(binary: &str) -> Option<(PathBuf, u64)> {
   Some((path, mtime))
 }
 
-/// First line of `text` that contains a digit, else the first non-blank line,
-/// trimmed; `None` when `text` is entirely blank. The crude "looks like it
-/// carries a version" pick the raw-banner scrape has always used.
+/// First line of `text` that carries a plausibly version-shaped token —
+/// judged by [`classify_token`], the same strict predicate the parse path
+/// uses (#137), not "contains an ASCII digit". A line that merely has a
+/// number in it (`gofmt`'s `-e  report all errors (not just the first 10 on
+/// different lines)` usage text) is not a version and must never be scraped
+/// as one. `None` when no line carries such a token.
 fn first_versionish_line(text: &str) -> Option<String> {
   text
     .lines()
-    .find(|l| l.chars().any(|c| c.is_ascii_digit()))
-    .or_else(|| text.lines().find(|l| !l.trim().is_empty()))
+    .find(|l| line_carries_version_token(l))
     .map(|l| l.trim().to_string())
+}
+
+/// Whether any whitespace-separated token on `line` is version-shaped under
+/// [`classify_token`]: a real `MAJOR.MINOR[.PATCH]` core (with an optional
+/// `v`/`go` marker and semver suffix), either parsed clean (`Ok`) or
+/// version-shaped-but-malformed (`Rejected`, e.g. a leading-zero core). A
+/// line with neither — help text, a bare option list — is not versionish.
+fn line_carries_version_token(line: &str) -> bool {
+  line.split_whitespace().any(|tok| {
+    matches!(
+      classify_token(tok),
+      TokenParse::Ok(_) | TokenParse::Rejected
+    )
+  })
+}
+
+/// `gofmt` has no version flag of its own — it ships with the Go toolchain
+/// and carries that toolchain's version, which only `go version` reports
+/// (`go version go1.27.0 windows/amd64`). Probe that explicitly instead of
+/// letting a failed `gofmt --version` fall through to scraping its usage
+/// text. `None` when `go` is not on PATH or the call fails — the caller then
+/// reports `(version unprobeable)`, never scraped help text (Fixes #114).
+fn probe_gofmt_version_via_go_toolchain() -> Option<String> {
+  let output = create_tool_command("go").arg("version").output().ok()?;
+  if !output.status.success() {
+    return None;
+  }
+  first_versionish_line(&String::from_utf8_lossy(&output.stdout))
 }
 
 /// Executes the tool binary with `--version` or `-v` uncached and extracts the raw output line.
 #[must_use]
 pub fn probe_raw_tool_version_uncached(binary: &str) -> Option<String> {
+  // `gofmt` is sourced from the Go toolchain, not its own (nonexistent)
+  // `--version` flag — see [`probe_gofmt_version_via_go_toolchain`].
+  if binary == "gofmt" {
+    return probe_gofmt_version_via_go_toolchain();
+  }
+
   let output = if binary == "clippy" {
     if let Ok(out) = create_tool_command("clippy-driver")
       .arg("--version")
@@ -141,8 +177,7 @@ pub fn probe_raw_tool_version_uncached(binary: &str) -> Option<String> {
     create_tool_command(binary).args(args).output().ok()
   }?;
 
-  if output.status.success() || (binary == "gofmt" && !output.stderr.is_empty())
-  {
+  if output.status.success() {
     if let Some(v) =
       first_versionish_line(&String::from_utf8_lossy(&output.stdout))
     {
@@ -343,11 +378,12 @@ enum TokenParse {
 }
 
 /// Read a version out of one token. Strips surrounding punctuation and a
-/// leading `v`/`go` marker, then tries, in order: the 3-part core plus any
-/// real `-pre`/`+build` suffix (keeps `1.7.0-nightly`, `14.0.0-1ubuntu1`);
-/// then the bare core alone, dropping a `-`/`+` suffix or a clean 4th component
-/// `semver` rejects (`18.1.8-0ubuntu1~22.04.1`, `1.35.1.post1`, `0.9.6.dev0` —
-/// which the pre-`semver` parser also ignored). A non-numeric 3rd component
+/// leading `v`/`go` marker, then tries, in order: the 3-part core plus a
+/// genuine `-pre`/`+build` suffix (keeps `1.7.0-nightly`); then the bare core
+/// alone, dropping a packaging-revision suffix (`14.0.0-1ubuntu1`), a `-`/`+`
+/// suffix, or a clean 4th component `semver` rejects
+/// (`18.1.8-0ubuntu1~22.04.1`, `1.35.1.post1`, `0.9.6.dev0` — which the
+/// pre-`semver` parser also ignored). A non-numeric 3rd component
 /// (`0.9.6rc1`, `1.2.x`) is rejected, never zeroed.
 fn classify_token(token: &str) -> TokenParse {
   let cleaned = token.trim_matches(|c: char| "()[]{}<>\"',:;".contains(c));
@@ -384,6 +420,21 @@ fn classify_token(token: &str) -> TokenParse {
   let parsed = semver::Version::parse(&format!("{core}{suffix}"))
     .or_else(|_| semver::Version::parse(&core));
   match parsed {
+    // A `-`-suffix that parses as valid semver but isn't a *recognised*
+    // prerelease keyword is a packaging/distro revision (`-1ubuntu1`,
+    // `-4.fc39`, a bare `-1`), not a genuine prerelease: drop it and keep the
+    // bare core, same salvage the invalid-semver suffixes above already get.
+    Ok(sv) if !sv.pre.is_empty() && !is_genuine_prerelease(sv.pre.as_str()) => {
+      match semver::Version::parse(&core) {
+        Ok(bare) => TokenParse::Ok(Version {
+          major: bare.major,
+          minor: bare.minor,
+          patch: bare.patch,
+          prerelease: None,
+        }),
+        Err(_) => TokenParse::Rejected,
+      }
+    }
     Ok(sv) => TokenParse::Ok(Version {
       major: sv.major,
       minor: sv.minor,
@@ -392,6 +443,43 @@ fn classify_token(token: &str) -> TokenParse {
     }),
     Err(_) => TokenParse::Rejected,
   }
+}
+
+/// Recognised prerelease keywords (case-insensitive), matched against the
+/// leading alphabetic run of a semver prerelease's *first* dot-separated
+/// identifier (`"rc.1"` -> `"rc"`, `"beta2"` -> `"beta"`, `"1ubuntu1"` -> `""`
+/// since it starts with a digit). Anything that doesn't produce a leading
+/// alphabetic run matching this list is treated as a packaging/distro
+/// revision instead of a genuine prerelease — see `classify_token`.
+const PRERELEASE_KEYWORDS: &[&str] = &[
+  "alpha", "beta", "rc", "pre", "dev", "nightly", "snapshot", "preview",
+  "canary",
+];
+
+/// Whether a semver prerelease string (e.g. `sv.pre.as_str()`) reads as a
+/// genuine prerelease rather than a distro/packaging revision suffix.
+///
+/// Tie-break, deliberately conservative: only the *first* dot-separated
+/// identifier is inspected, and only its leading alphabetic run. A purely
+/// numeric leading identifier (`-1`, Arch-style; `-1ubuntu1`'s `1ubuntu1`,
+/// Debian/Ubuntu-style; `-4.fc39`'s `4`, Fedora-style) has no leading
+/// alphabetic run at all and is therefore never a genuine prerelease — real
+/// prerelease conventions (`alpha`, `beta.2`, `rc1`, `nightly`) always lead
+/// with a keyword, never a bare digit.
+#[must_use]
+fn is_genuine_prerelease(pre: &str) -> bool {
+  let Some(first) = pre.split('.').next() else {
+    return false;
+  };
+  let leading_alpha: String = first
+    .chars()
+    .take_while(|c| c.is_ascii_alphabetic())
+    .collect();
+  if leading_alpha.is_empty() {
+    return false;
+  }
+  let lower = leading_alpha.to_ascii_lowercase();
+  PRERELEASE_KEYWORDS.contains(&lower.as_str())
 }
 
 // === Comparison layer (delegated wholesale to the `semver` crate) ===========

@@ -76,11 +76,13 @@ fn test_version_extraction_from_tool_banners() {
   let clang_fmt = "clang-format version 18.1.8";
   assert_eq!(Version::extract(clang_fmt), Some(Version::new(18, 1, 8)));
 
+  // #149: `-1ubuntu1` is a Debian/Ubuntu packaging *revision*, not a
+  // prerelease -- it must salvage to the bare core, same verdict as the
+  // `~`-mangled Ubuntu suffix below, not sort below `14.0.0` as a
+  // prerelease would. This is a deliberate verdict change from #145, which
+  // took the `semver`-valid-prerelease parse at face value here.
   let clang_tidy = "clang-tidy version 14.0.0-1ubuntu1";
-  assert_eq!(
-    Version::extract(clang_tidy),
-    Some(Version::with_prerelease(14, 0, 0, "1ubuntu1"))
-  );
+  assert_eq!(Version::extract(clang_tidy), Some(Version::new(14, 0, 0)));
 
   // Ubuntu distro revision: `~` and a leading-zero identifier make the suffix
   // invalid semver, so it is salvaged to the bare core (Compatible, not
@@ -155,6 +157,103 @@ fn test_version_extraction_from_tool_banners() {
 
   let golangci = "golangci-lint has version 1.55.2 built with go1.21.5 from 39c1b3f on 2023-12-04T12:00:00Z";
   assert_eq!(Version::extract(golangci), Some(Version::new(1, 55, 2)));
+}
+
+#[test]
+fn test_distro_revision_vs_genuine_prerelease() {
+  // #149: table-driven coverage of the extraction-layer heuristic that
+  // distinguishes a packaging/distro revision suffix (sorts *with* its base
+  // release, never below it) from a genuine prerelease (sorts below).
+  //
+  // (input, expected parse, is a prerelease?)
+  let cases: &[(&str, Version, bool)] = &[
+    // Plain releases: nothing to distinguish.
+    ("1.2.3", Version::new(1, 2, 3), false),
+    // Debian/Ubuntu packaging revisions: numeric-leading identifier with no
+    // recognised prerelease keyword -> distro revision, bare core kept.
+    ("1.2.3-1ubuntu2", Version::new(1, 2, 3), false),
+    ("1.2.3-0ubuntu1", Version::new(1, 2, 3), false),
+    // `~` makes the suffix invalid semver outright; already salvaged to the
+    // bare core before the prerelease-keyword check even runs.
+    ("1.2.3-0ubuntu1~22.04.1", Version::new(1, 2, 3), false),
+    // RPM/Fedora revisions (`-<rev>.<dist-tag>`): first identifier is a bare
+    // digit, same bucket as the Debian revisions above.
+    ("1.2.3-4.fc39", Version::new(1, 2, 3), false),
+    // Arch's single-integer package-revision suffix. Ambiguous in the
+    // abstract (SemVer alone would read `-1` as a prerelease numeric
+    // identifier), but Arch is the only convention that emits a bare
+    // numeral here, and a real prerelease is never spelled as a plain
+    // integer with no keyword -- tie-break: distro revision.
+    ("1.2.3-1", Version::new(1, 2, 3), false),
+    // Homebrew-style single-integer bottle/formula revision -- same bucket
+    // and same tie-break as the Arch case.
+    ("1.2.3-2", Version::new(1, 2, 3), false),
+    // A distro-style tag with a non-numeric but non-keyword leading
+    // identifier (a raw distro/codename prefix, not `alpha`/`beta`/etc.)
+    // is still a revision, not a prerelease.
+    ("1.2.3-ubuntu1", Version::new(1, 2, 3), false),
+    // Genuine prereleases: recognised keyword leads the first identifier,
+    // kept and must sort *below* the bare release.
+    ("1.2.3-rc1", Version::with_prerelease(1, 2, 3, "rc1"), true),
+    (
+      "1.2.3-rc.1",
+      Version::with_prerelease(1, 2, 3, "rc.1"),
+      true,
+    ),
+    (
+      "1.2.3-beta.2",
+      Version::with_prerelease(1, 2, 3, "beta.2"),
+      true,
+    ),
+    (
+      "1.2.3-alpha",
+      Version::with_prerelease(1, 2, 3, "alpha"),
+      true,
+    ),
+    ("1.2.3-pre", Version::with_prerelease(1, 2, 3, "pre"), true),
+    (
+      "1.2.3-nightly",
+      Version::with_prerelease(1, 2, 3, "nightly"),
+      true,
+    ),
+    // Build metadata is dropped from ordering entirely (semver rule), not a
+    // prerelease either way -- parses to the bare core with no prerelease.
+    ("1.2.3+build.5", Version::new(1, 2, 3), false),
+    // A genuine prerelease combined with build metadata: prerelease kept,
+    // build metadata still dropped.
+    (
+      "1.2.3-rc1+build.5",
+      Version::with_prerelease(1, 2, 3, "rc1"),
+      true,
+    ),
+  ];
+
+  for (input, expected, is_prerelease) in cases {
+    let parsed = Version::parse(input);
+    assert_eq!(parsed, Some(expected.clone()), "parsing {input:?}");
+    assert_eq!(
+      parsed.as_ref().unwrap().prerelease.is_some(),
+      *is_prerelease,
+      "prerelease-ness of {input:?}"
+    );
+
+    // MSTV outcome: a distro revision must compare >= its own bare release
+    // (never Outdated against an MSTV equal to that release); a genuine
+    // prerelease must compare < it (Outdated against that same floor).
+    let base = Version::new(1, 2, 3);
+    let status = evaluate_tool_status(parsed, None, Some(&base), None);
+    if *is_prerelease {
+      assert!(
+        status.is_outdated(),
+        "{input:?} (genuine prerelease) must be Outdated vs MSTV {base}, got {status:?}"
+      );
+    } else {
+      assert!(
+        status.is_compatible(),
+        "{input:?} (distro revision or plain release) must be Compatible vs MSTV {base}, got {status:?}"
+      );
+    }
+  }
 }
 
 #[test]
@@ -850,5 +949,82 @@ fn test_tool_version_cache_corrupted_json_resilience() {
     let updated = read_tool_version_cache_at(&cache_path)
       .expect("corrupted cache should be cleanly overwritten with valid JSON");
     assert!(updated.tools.contains_key("rustfmt"));
+  }
+}
+
+/// The literal usage text `gofmt` prints on a failed `--version` — one line of
+/// which contains "10" in `-e`'s description. The digit-scan predicate (#137's
+/// `classify_token`) must reject every line: none carries a version token, so
+/// no help-text line is ever scraped as a version (Fixes #114).
+#[test]
+fn test_gofmt_usage_text_is_never_scraped_as_a_version() {
+  const GOFMT_USAGE: &str = "flag provided but not defined: -version\n\
+usage: gofmt [flags] [path ...]\n  \
+-cpuprofile string\n    \twrite cpu profile to this file\n  \
+-d\tdisplay diffs instead of rewriting files\n  \
+-e\treport all errors (not just the first 10 on different lines)\n  \
+-l\tlist files whose formatting differs from gofmt's\n  \
+-r string\n    \trewrite rule (e.g., 'a[b:len(a)] -> a[b:]')\n  \
+-s\tsimplify code\n  \
+-w\twrite result to (source) file instead of stdout";
+
+  assert_eq!(
+    first_versionish_line(GOFMT_USAGE),
+    None,
+    "a gofmt usage line was picked as version-shaped"
+  );
+  for line in GOFMT_USAGE.lines() {
+    assert_eq!(
+      Version::extract(line),
+      None,
+      "usage line parsed as a version: {line:?}"
+    );
+  }
+}
+
+/// gofmt's version is the Go toolchain's, read from `go version`
+/// (`go version goX.Y.Z <os>/<arch>` on stdout). The version-bearing line is
+/// picked and normalizes to the bare `MAJOR.MINOR.PATCH` (Fixes #114).
+#[test]
+fn test_gofmt_version_comes_from_go_version_output() {
+  let line = first_versionish_line("go version go1.27.0 windows/amd64\n")
+    .expect("the `go version` line is version-shaped");
+  assert_eq!(line, "go version go1.27.0 windows/amd64");
+  assert_eq!(
+    normalize_probed_version("gofmt", &line),
+    Some(Version::new(1, 27, 0))
+  );
+  assert_eq!(
+    normalize_probed_version("gofmt", "go version go1.21.5 darwin/arm64"),
+    Some(Version::new(1, 21, 5))
+  );
+}
+
+/// End to end through the uncached probe: with `go` on PATH, gofmt reports a
+/// real, parseable toolchain version sourced from `go version`; with `go`
+/// absent it returns `None` (doctor renders `(version unprobeable)`), never a
+/// scraped usage line (Fixes #114).
+#[test]
+fn test_probe_raw_gofmt_sources_go_toolchain_or_reports_nothing() {
+  let raw = probe_raw_tool_version_uncached("gofmt");
+  if which::which("go").is_ok() {
+    let raw = raw.expect("go on PATH: gofmt version should probe");
+    assert!(
+      raw.starts_with("go version") || raw.starts_with("go1"),
+      "gofmt version should come from `go version`, got: {raw:?}"
+    );
+    assert!(
+      !raw.contains("report all errors"),
+      "gofmt usage text leaked into the version: {raw:?}"
+    );
+    assert!(
+      normalize_probed_version("gofmt", &raw).is_some(),
+      "probed gofmt version should parse, got: {raw:?}"
+    );
+  } else {
+    assert_eq!(
+      raw, None,
+      "go absent: gofmt must be unprobeable, not scraped help text"
+    );
   }
 }

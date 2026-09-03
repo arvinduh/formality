@@ -2,6 +2,7 @@
 name = "fml"
 version = "0.2.1"
 edition = "2024"
+authors = ["Arvin Duh"]
 description = "One CLI to format, lint, and sync configs across all languages"
 license = "MIT"
 readme = "README.md"
@@ -57,3 +58,48 @@ pkg-fmt = "tgz"
 [package.metadata.binstall.overrides.x86_64-pc-windows-msvc]
 pkg-url = "{ repo }/releases/download/v{ version }/{ name }-{ target }.zip"
 pkg-fmt = "zip"
+
+# Windows MSI installer metadata (consumed by cargo-dist via `cargo wix`).
+# GUIDs are unique to this project - freshly generated, never copied.
+[package.metadata.wix]
+upgrade-guid = "16EA66A7-4E4F-4B2D-9EB3-BE52F4992BF8"
+path-guid = "0ADA61F5-692E-40C7-8519-594697CBB30A"
+license = false
+eula = false
+
+# Config for 'dist' (cargo-dist): GitHub Releases are the only channel - no
+# crates.io publish. See docs/release.md and issue #134.
+[workspace.metadata.dist]
+# The preferred dist version to use in CI (Cargo.toml SemVer syntax)
+cargo-dist-version = "0.32.0"
+# CI backends to support
+ci = "github"
+# The installers to generate for each app
+installers = ["shell", "powershell", "msi"]
+# Target platforms to build apps for (Rust target-triple syntax)
+targets = [
+  "x86_64-unknown-linux-gnu",
+  "aarch64-unknown-linux-gnu",
+  "x86_64-apple-darwin",
+  "aarch64-apple-darwin",
+  "x86_64-pc-windows-msvc",
+]
+# Path(s) installers place binaries in, tried in order. `~/.local/bin` first
+# because the old install.sh and every README recipe put `fml` there - keep
+# upgrading that copy instead of dropping a second one elsewhere and letting
+# PATH order decide which wins. (dist rejects the `CARGO_HOME` keyword when
+# combined with other paths, so the cargo bin dir is spelled out literally.)
+install-path = ["$HOME/.local/bin", "$HOME/.cargo/bin"]
+# Whether to install an updater program (kept out of scope - see issue #121)
+install-updater = false
+# Skip checking whether the specified configuration files are up to date
+allow-dirty = ["ci"]
+# Keep archive names as `fml-<target>.tar.gz` / `.zip` so existing
+# `releases/latest/download/fml-<target>...` URLs and the
+# `[package.metadata.binstall]` block above stay valid.
+unix-archive = ".tar.gz"
+windows-archive = ".zip"
+
+[profile.dist]
+inherits = "release"
+lto = "thin"

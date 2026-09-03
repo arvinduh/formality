@@ -329,12 +329,13 @@ impl LanguageSurface for GoSurface {
             "Formatting issues found in Go files".to_string()
           };
 
+          // `gofmt -w` rewrites files in place and exits non-zero only on a
+          // parse failure — never to signal reformatting — so this is an
+          // operational failure, not a lint result (Fixes #155), matching
+          // the `--check` path's `classify_all_nonzero_as_error` above.
           return SurfaceResult {
             surface_name: self.name(),
-            status: SurfaceStatus::ViolationsFound {
-              message: msg,
-              diff: None,
-            },
+            status: SurfaceStatus::ExecutionError { message: msg },
             duration: start.elapsed(),
           };
         }
@@ -380,12 +381,12 @@ impl LanguageSurface for GoSurface {
             "Import organization issues found in Go files".to_string()
           };
 
+          // Same reasoning as the `gofmt` branch above: `goimports -w`
+          // rewrites in place and exits non-zero only on a parse failure,
+          // never to report reformatting (Fixes #155).
           SurfaceResult {
             surface_name: self.name(),
-            status: SurfaceStatus::ViolationsFound {
-              message: msg,
-              diff: None,
-            },
+            status: SurfaceStatus::ExecutionError { message: msg },
             duration: start.elapsed(),
           }
         }
@@ -709,6 +710,36 @@ mod tests {
 
     let check_clean = surface.format(&ctx_check);
     assert!(matches!(check_clean.status, SurfaceStatus::Passed));
+  }
+
+  #[test]
+  fn test_go_write_reports_execution_error_on_gofmt_failure() {
+    // Fixes #155: `gofmt -w` exits non-zero only on a parse failure, never
+    // to signal reformatting (there is no in-place-write "found drift" exit
+    // code), so a failure on the non-`--check` write path must classify as
+    // `ExecutionError` (`[ERR]`), not a lint-style `ViolationsFound`
+    // (`[FAIL]`) — matching the `--check` path's
+    // `classify_all_nonzero_as_error`.
+    if !check_binary_exists("gofmt") || !check_binary_exists("goimports") {
+      return;
+    }
+    let temp = TempDir::new().unwrap();
+    std::fs::write(
+      temp.path().join("broken.go"),
+      "package main\n\nfunc main( {\n",
+    )
+    .unwrap();
+
+    let surface = GoSurface;
+    let ctx = test_ctx(temp.path(), ResolvedLangConfig::new("go"));
+
+    let res = surface.format(&ctx);
+    assert!(
+      matches!(res.status, SurfaceStatus::ExecutionError { .. }),
+      "a gofmt failure on the write path must be ExecutionError, got: {:?}",
+      res.status
+    );
+    assert!(!res.is_success());
   }
 
   #[test]
