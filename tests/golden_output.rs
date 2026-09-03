@@ -281,9 +281,9 @@ fn golden_failing_fml_lint_process_output_is_framed_within_80() {
   );
   assert_framed_within_80(&plain);
 
-  // `relativize_text` rewrites paths only on an allowlist of "payload is
-  // paths" line prefixes (unified-diff `---`/`+++` headers, markdownlint
-  // `Finding:`). Any such line that appears must come out relative; arbitrary
+  // `relativize_text` rewrites paths on unified-diff `---`/`+++` headers,
+  // and on any line whose leading token is an absolute path under the run
+  // root. Any such line that appears must come out relative; arbitrary
   // linter prose (e.g. taplo's verbose tracing) is deliberately passed
   // through untouched so file content embedding the root path is never
   // corrupted. (Nothing to check when the tools are absent and every surface
@@ -291,10 +291,7 @@ fn golden_failing_fml_lint_process_output_is_framed_within_80() {
   let root_fwd = root.to_string_lossy().replace('\\', "/");
   for line in plain.lines() {
     let l = line.trim_start();
-    if l.starts_with("--- ")
-      || l.starts_with("+++ ")
-      || l.starts_with("Finding: ")
-    {
+    if l.starts_with("--- ") || l.starts_with("+++ ") {
       assert!(
         !line.replace('\\', "/").contains(&root_fwd),
         "an allowlisted diagnostics line kept an absolute run-root path:\n{line}"

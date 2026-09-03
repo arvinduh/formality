@@ -141,8 +141,10 @@ const RELATIVIZE_LINE_PREFIXES: [&str; 3] = ["--- ", "+++ ", "diff --git "];
 /// - begins with `root` itself (any [`root_prefixes`] spelling) — a line
 ///   whose *leading token* is an absolute path under `root`, the shape
 ///   compiler- and linter-style tools use for `<path>:<line>:<col> message`
-///   diagnostics (e.g. markdownlint-cli2 falling back to an absolute path for
-///   a file outside its working directory). Column 0 makes this safe: prose
+///   diagnostics. Observed live from yamllint, clang-format, clang-tidy and
+///   `gofmt -l` when invoked with absolute file arguments; markdownlint-cli2
+///   is *not* a live case, since it emits cwd-relative paths and fml always
+///   runs it with `current_dir(root)`. Column 0 makes this safe: prose
 ///   or diff-hunk body content that happens to *mention* the root path
 ///   elsewhere on the line is never touched, only a line that opens with it.
 ///
@@ -200,8 +202,9 @@ mod tests {
   fn relativize_text_rewrites_all_occurrences_on_a_leading_path_line() {
     // A line whose leading token is the absolute root path — the shape
     // compiler/linter tools use for `<path>:<line>:<col> message` diagnostics
-    // (markdownlint-cli2 among them) — is eligible even without one of the
-    // fixed marker prefixes, and every in-bounds occurrence on it is rewritten.
+    // (yamllint, clang-format, clang-tidy, `gofmt -l`) — is eligible even
+    // without one of the fixed marker prefixes, and every in-bounds
+    // occurrence on it is rewritten.
     let root = Path::new("/home/u/proj");
     let text = "/home/u/proj/README.md /home/u/proj/docs/a.md \
                 and /usr/share/x";
