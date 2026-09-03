@@ -108,20 +108,20 @@
     "package": "esbuild ./src/extension.ts --bundle --outfile=out/extension.js --external:vscode --format=cjs --platform=node --minify"
   },
   "dependencies": {
-    "vscode-languageclient": "^10.1.0"
+    "vscode-languageclient": "^10.1.1"
   },
   "devDependencies": {
     "@eslint/js": "^10.0.1",
-    "@types/glob": "^8.1.0",
+    "@types/glob": "^9.0.0",
     "@types/mocha": "^10.0.10",
-    "@types/node": "^26.2.0",
-    "@types/vscode": "^1.85.0",
+    "@types/node": "^26.4.0",
+    "@types/vscode": "^1.134.0",
     "@vscode/test-electron": "^3.1.0",
     "esbuild": "^0.28.2",
     "eslint": "^10.9.1",
     "glob": "^13.0.6",
     "mocha": "^11.8.0",
-    "typescript": "~5.8.2",
+    "typescript": "~7.0.2",
     "typescript-eslint": "^8.68.0"
   }
 }
