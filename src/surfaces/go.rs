@@ -184,6 +184,15 @@ pub fn golangci_lint_supports_enable_only() -> bool {
   })
 }
 
+/// Walks `start` and each of its ancestor directories looking for a `go.mod`
+/// manifest, mirroring how the Go toolchain itself resolves a module root.
+/// Backs `GoSurface::lint`'s preflight guard (Fixes #108) so a subdirectory
+/// of a real Go module isn't mistaken for a directory with no module at all.
+#[must_use]
+pub fn find_go_mod_upwards(start: &std::path::Path) -> bool {
+  start.ancestors().any(|dir| dir.join("go.mod").is_file())
+}
+
 impl LanguageSurface for GoSurface {
   fn name(&self) -> &'static str {
     "go"
@@ -403,6 +412,33 @@ impl LanguageSurface for GoSurface {
 
   fn lint(&self, ctx: &ExecutionContext, fix: bool) -> SurfaceResult {
     let start = Instant::now();
+
+    // golangci-lint requires a go.mod to resolve a module graph against;
+    // without one it fails immediately with a typecheck error ("directory
+    // prefix . does not contain main module or its selected dependencies")
+    // on exit 7, while printing "0 issues." to stdout — which, left to the
+    // exit-code classifier alone, renders as the self-contradictory `[FAIL]
+    // Violations found — 0 issues.` (Fixes #108). Preflight it here instead,
+    // mirroring the Cargo.toml guard in `RustSurface::lint`, so the message
+    // is actionable and doesn't depend on golangci-lint being installed at
+    // all — hence this check runs before `tool_missing_guard` below, not
+    // after (unlike the Rust surface, where cargo is always present in a
+    // Rust dev environment and so ordering doesn't matter there).
+    if !find_go_mod_upwards(&ctx.root) {
+      return SurfaceResult {
+        surface_name: self.name(),
+        status: SurfaceStatus::ExecutionError {
+          message: format!(
+            "No go.mod found in {} (or any parent directory). \
+             `golangci-lint` needs a Go module to resolve a package graph \
+             against — run `go mod init <module>` here, or point --root at \
+             the module root.",
+            ctx.root.display()
+          ),
+        },
+        duration: start.elapsed(),
+      };
+    }
 
     if let Some(res) = tool_missing_guard(
       self.name(),
@@ -890,6 +926,80 @@ mod tests {
       other => panic!(
         "no-go.mod golangci-lint failure must be ExecutionError, got {other:?}"
       ),
+    }
+  }
+
+  #[test]
+  fn test_go_lint_no_go_mod_anywhere_is_execution_error_without_running_tool() {
+    // Unlike `test_go_lint_without_go_mod_is_execution_error_not_violation`
+    // above (which drives the real golangci-lint binary and skips if it's
+    // absent), this exercises the preflight guard itself (Fixes #108) and
+    // must hold even when golangci-lint isn't installed at all — the guard
+    // runs before `tool_missing_guard`, so it never touches the binary.
+    let temp = TempDir::new().unwrap();
+    // Deliberately no go.mod anywhere under `temp`, and `temp` itself is a
+    // fresh tempdir so no ancestor of it carries one either in practice.
+    std::fs::write(
+      temp.path().join("main.go"),
+      "package main\n\nfunc main() {}\n",
+    )
+    .unwrap();
+
+    let surface = GoSurface;
+    let ctx = test_ctx(temp.path(), ResolvedLangConfig::new("go"));
+    let res = surface.lint(&ctx, false);
+
+    match res.status {
+      SurfaceStatus::ExecutionError { message } => {
+        assert!(
+          message.contains("go.mod"),
+          "message should name the missing manifest, got: {message}"
+        );
+        assert!(
+          message.contains("go mod init"),
+          "message should give the fix-in-place path, got: {message}"
+        );
+        assert!(
+          message.contains("--root"),
+          "message should give the point-at-root path, got: {message}"
+        );
+      }
+      other => {
+        panic!("no-go.mod-anywhere lint must be ExecutionError, got {other:?}")
+      }
+    }
+  }
+
+  #[test]
+  fn test_go_lint_go_mod_in_parent_directory_is_not_guarded() {
+    // A subdirectory of a real Go module (go.mod lives one level up from
+    // `ctx.root`) must NOT trip the preflight guard — it should walk parent
+    // directories exactly like the Go toolchain itself does.
+    if !check_binary_exists("golangci-lint") {
+      return;
+    }
+    let _guard = golangci_lint_lock();
+    let temp = TempDir::new().unwrap();
+    std::fs::write(
+      temp.path().join("go.mod"),
+      "module example.com/testproj\n\ngo 1.21\n",
+    )
+    .unwrap();
+    let sub_dir = temp.path().join("pkg");
+    std::fs::create_dir(&sub_dir).unwrap();
+    std::fs::write(sub_dir.join("main.go"), "package main\n\nfunc main() {}\n")
+      .unwrap();
+
+    let surface = GoSurface;
+    let ctx = test_ctx(&sub_dir, ResolvedLangConfig::new("go"));
+    let res = surface.lint(&ctx, false);
+
+    if let SurfaceStatus::ExecutionError { message } = &res.status {
+      assert!(
+        !message.contains("No go.mod found"),
+        "go.mod in a parent directory must not trip the missing-manifest \
+         guard, got: {message}"
+      );
     }
   }
 }
