@@ -277,16 +277,16 @@ fetch is a snapshot, and a branch pushed after it will not appear. Use
 "it isn't on the remote" as settled fact off a single stale fetch.
 
 **A mutation test must restore the tree — especially if you die mid-run.**
-Reverting a fix to prove a test actually fails is the single most valuable
-check in this process (§4.7 requires it for received WIP, and it has caught
-two vacuous test suites). But it leaves the worktree in a deliberately broken
-state, and an agent that hits a rate limit mid-mutation leaves that state
-behind. On 2026-09-03 a reviewer inherited a `qa-` worktree whose production
-fix was still reverted from a previous agent's interrupted mutation run, and
-nearly filed "this PR doesn't fix the bug at all" off it. Restore with
-`git checkout -- <path>` the moment the observation is recorded, never batch
-the restores to the end, and confirm `git status` is clean before reporting.
-A reviewer picking up any worktree checks `git status` **first** and treats a
+Reverting a fix to prove a test actually fails is the single most valuable check
+in this process (§4.7 requires it for received WIP, and it has caught two
+vacuous test suites). But it leaves the worktree in a deliberately broken state,
+and an agent that hits a rate limit mid-mutation leaves that state behind. On
+2026-09-03 a reviewer inherited a `qa-` worktree whose production fix was still
+reverted from a previous agent's interrupted mutation run, and nearly filed
+"this PR doesn't fix the bug at all" off it. Restore with
+`git checkout -- <path>` the moment the observation is recorded, never batch the
+restores to the end, and confirm `git status` is clean before reporting. A
+reviewer picking up any worktree checks `git status` **first** and treats a
 dirty tree as contamination to be explained, not as the branch's real content.
 
 **Received WIP is an untrusted draft, not a reviewed diff.** It never passed
