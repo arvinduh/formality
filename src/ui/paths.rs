@@ -119,22 +119,38 @@ fn relativize_line(line: &str, prefixes: &[String]) -> String {
 
 /// Line prefixes — matched on the ANSI-stripped text, at column 0 — whose
 /// entire payload is filesystem paths and is therefore always safe to
-/// relativize: unified-diff file headers and markdownlint's `Finding:` list.
-const RELATIVIZE_LINE_PREFIXES: [&str; 4] =
-  ["--- ", "+++ ", "diff --git ", "Finding: "];
+/// relativize: unified-diff file headers.
+///
+/// `"Finding: "` (markdownlint-cli2's echo of its absolute input-file list)
+/// used to live here too, but markdown's own noise filter
+/// (`filter_markdownlint_noise`) now drops that line before diagnostics ever
+/// reach this helper, and markdownlint was the only producer of it — so an
+/// entry for it here would never match. Don't re-add it speculatively; if a
+/// future surface starts a diagnostic line with `"Finding: "` and needs it
+/// relativized, add it back then, with a test that exercises it.
+const RELATIVIZE_LINE_PREFIXES: [&str; 3] = ["--- ", "+++ ", "diff --git "];
 
 /// Rewrite absolute paths that lie under `root` to their `root`-relative form,
 /// leaving every other path and all other text untouched.
 ///
 /// Deliberately **not** a general search-and-replace, and **not** a diff-state
 /// machine (color codes and the leading-space context marker both defeat that).
-/// A line is rewritten only when, after ANSI stripping, it begins with one of
-/// [`RELATIVIZE_LINE_PREFIXES`] — a line whose whole payload is paths. Every
-/// other line (unified-diff context and `+`/`-` hunk bodies, `@@` markers,
-/// prose) is passed through byte-for-byte, so file *content* that embeds the
-/// run-root path is never corrupted. On a rewritten line the path text is
-/// spliced out of the original, so any ANSI styling on that line is preserved.
-/// Within a rewritten line the strip is still token-anchored (see
+/// A line is rewritten only when, after ANSI stripping, it either:
+/// - begins with one of [`RELATIVIZE_LINE_PREFIXES`] — a line whose whole
+///   payload is paths (unified-diff file headers), or
+/// - begins with `root` itself (any [`root_prefixes`] spelling) — a line
+///   whose *leading token* is an absolute path under `root`, the shape
+///   compiler- and linter-style tools use for `<path>:<line>:<col> message`
+///   diagnostics (e.g. markdownlint-cli2 falling back to an absolute path for
+///   a file outside its working directory). Column 0 makes this safe: prose
+///   or diff-hunk body content that happens to *mention* the root path
+///   elsewhere on the line is never touched, only a line that opens with it.
+///
+/// Every other line (unified-diff context and `+`/`-` hunk bodies, `@@`
+/// markers, prose) is passed through byte-for-byte, so file *content* that
+/// embeds the run-root path is never corrupted. On a rewritten line the path
+/// text is spliced out of the original, so any ANSI styling on that line is
+/// preserved. Within a rewritten line the strip is still token-anchored (see
 /// [`relativize_line`]) so a sibling dir or a longer superpath is left alone.
 #[must_use]
 pub fn relativize_text(root: &Path, text: &str) -> String {
@@ -143,10 +159,11 @@ pub fn relativize_text(root: &Path, text: &str) -> String {
     .split('\n')
     .map(|line| {
       let plain = strip_ansi_escapes(line);
-      if RELATIVIZE_LINE_PREFIXES
+      let eligible = RELATIVIZE_LINE_PREFIXES
         .iter()
         .any(|p| plain.starts_with(p))
-      {
+        || prefixes.iter().any(|p| plain.starts_with(p.as_str()));
+      if eligible {
         relativize_line(line, &prefixes)
       } else {
         line.to_string()
@@ -180,13 +197,17 @@ mod tests {
   }
 
   #[test]
-  fn relativize_text_rewrites_all_occurrences() {
+  fn relativize_text_rewrites_all_occurrences_on_a_leading_path_line() {
+    // A line whose leading token is the absolute root path — the shape
+    // compiler/linter tools use for `<path>:<line>:<col> message` diagnostics
+    // (markdownlint-cli2 among them) — is eligible even without one of the
+    // fixed marker prefixes, and every in-bounds occurrence on it is rewritten.
     let root = Path::new("/home/u/proj");
-    let text = "Finding: /home/u/proj/README.md /home/u/proj/docs/a.md \
+    let text = "/home/u/proj/README.md /home/u/proj/docs/a.md \
                 and /usr/share/x";
     assert_eq!(
       relativize_text(root, text),
-      "Finding: README.md docs/a.md and /usr/share/x"
+      "README.md docs/a.md and /usr/share/x"
     );
   }
 
@@ -251,13 +272,37 @@ mod tests {
   }
 
   #[test]
+  fn relativize_text_rewrites_leading_path_diagnostic_lines() {
+    // The exact shape markdownlint-cli2 (and compiler-style tools generally)
+    // emit when it falls back to an absolute path: `<path>:<line>:<col>
+    // message`, no fixed marker prefix. This is what let #157 fold
+    // markdown's bespoke shim into this shared helper instead of keeping a
+    // second, surface-local relativization pass.
+    let root = Path::new("/home/u/proj");
+    let text = "/home/u/proj/README.md:7:3 error MD019/no-multiple-space-atx \
+                Multiple spaces after hash";
+    assert_eq!(
+      relativize_text(root, text),
+      "README.md:7:3 error MD019/no-multiple-space-atx Multiple spaces \
+       after hash"
+    );
+  }
+
+  #[test]
   fn relativize_text_does_not_mangle_a_path_that_merely_contains_the_root() {
     let root = Path::new("/home/u/proj");
-    // (a) an unrelated absolute path that has the root string mid-way through,
-    // and a sibling directory sharing a name prefix — neither starts at a
-    // token boundary, so neither is touched.
-    let text = "Finding: /mnt/backup/home/u/proj/a.md /home/u/project/b.md";
-    assert_eq!(relativize_text(root, text), text);
+    // The line is eligible (it opens with the literal root path), but the
+    // other two occurrences are not touched: one has the root string
+    // mid-way through an unrelated absolute path (no token boundary before
+    // it), the other is a sibling directory sharing a name prefix (the
+    // literal substring doesn't even occur).
+    let text = "/home/u/proj/a.md refers to /mnt/backup/home/u/proj/b.md \
+                and sibling /home/u/project/c.md";
+    assert_eq!(
+      relativize_text(root, text),
+      "a.md refers to /mnt/backup/home/u/proj/b.md and sibling \
+       /home/u/project/c.md"
+    );
   }
 
   #[test]
@@ -352,10 +397,29 @@ mod tests {
       assert!(!strip_ansi_escapes(&out).contains("/home/u/proj/src"));
     };
 
+    // `colored`'s override is a process-global — `cargo test` runs this
+    // binary's tests in one process, multiple threads. Nothing else in this
+    // crate currently touches the override in a test, so there's no
+    // concurrent-mutation race today, but a plain `set_override` /
+    // `unset_override` pair leaves the global forced-on if an assertion
+    // inside `check` panics before the reset runs, which would silently
+    // color-force every test that happens to run afterward in this process.
+    // `_guard` closes that window: its `Drop` resets the override on the way
+    // out whether this test returns normally or unwinds. If a second test
+    // ever needs this same override, promote this to a shared
+    // `Mutex`-guarded helper so the two can't interleave either — one test
+    // doing the mutation doesn't justify that machinery yet.
+    struct ColorOverrideGuard;
+    impl Drop for ColorOverrideGuard {
+      fn drop(&mut self) {
+        colored::control::unset_override();
+      }
+    }
+    let _guard = ColorOverrideGuard;
+
     colored::control::set_override(true);
     check(&crate::engine::render_diff(old, new, old_label, new_label));
     colored::control::set_override(false);
     check(&crate::engine::render_diff(old, new, old_label, new_label));
-    colored::control::unset_override();
   }
 }

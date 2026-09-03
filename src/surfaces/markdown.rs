@@ -204,9 +204,19 @@ const MARKDOWNLINT_NOISE_PREFIXES: &[&str] =
   &["markdownlint-cli2 v", "Finding: ", "Linting: "];
 
 /// Strips markdownlint-cli2's banner/progress lines from a captured
-/// diagnostic `message` and rewrites run-root-absolute paths in the
-/// surviving violation lines to be root-relative, matching how every other
-/// surface's diagnostics read.
+/// diagnostic `message`, leaving the surviving violation lines untouched
+/// (including whatever absolute paths markdownlint-cli2 chose to print).
+///
+/// Path relativization is deliberately **not** done here any more (#157):
+/// it used to be, via a local shim, but the runner already relativizes every
+/// surface's diagnostics once, centrally, via
+/// [`crate::ui::paths::relativize_text`] before printing them — doing it here
+/// too meant markdown's diagnostics were relativized twice on their way to
+/// the screen. `relativize_text` recognizes a line whose leading token is an
+/// absolute path under the run root (the exact shape a markdownlint-cli2
+/// violation line has when it falls back to one), so the single downstream
+/// pass covers this surface's output correctly without a second, surface-
+/// local pass.
 ///
 /// The real per-violation lines land on stderr (see #107's shared capture)
 /// and reach `message` after a blank line and a bare `stderr:` label courtesy
@@ -217,7 +227,7 @@ const MARKDOWNLINT_NOISE_PREFIXES: &[&str] =
 /// label, moves the `Summary:` line to the tail as a bare count, and leaves
 /// any other line — including an unrecognized one from a newer
 /// markdownlint-cli2 — untouched.
-fn filter_markdownlint_noise(message: &str, root: &Path) -> String {
+fn filter_markdownlint_noise(message: &str) -> String {
   let mut kept: Vec<String> = Vec::new();
   let mut summary: Option<String> = None;
 
@@ -236,37 +246,13 @@ fn filter_markdownlint_noise(message: &str, root: &Path) -> String {
       summary = Some(rest.to_string());
       continue;
     }
-    kept.push(relativize_leading_path(trimmed, root));
+    kept.push(trimmed.to_string());
   }
 
   if let Some(s) = summary {
     kept.push(s);
   }
   kept.join("\n")
-}
-
-/// If `line` begins with `root` followed by a path separator, strips that
-/// prefix so the diagnostic reads relative to the run root. markdownlint-cli2
-/// already emits cwd-relative paths for files under its working directory, so
-/// this only bites when it falls back to an absolute path (a file outside the
-/// root, or on another drive); both the OS-native and forward-slash spellings
-/// of `root` are tried since markdownlint-cli2 prints `C:/...` on Windows.
-///
-/// A local shim until a shared path-relativizing helper lands (`ui::paths`,
-/// #122).
-fn relativize_leading_path(line: &str, root: &Path) -> String {
-  let root_str = root.to_string_lossy();
-  let prefixes = [
-    format!("{root_str}/"),
-    format!("{root_str}\\"),
-    format!("{}/", root_str.replace('\\', "/")),
-  ];
-  for p in &prefixes {
-    if let Some(rest) = line.strip_prefix(p.as_str()) {
-      return rest.to_string();
-    }
-  }
-  line.to_string()
 }
 
 /// Markdown language surface implementation.
@@ -551,7 +537,7 @@ impl LanguageSurface for MarkdownSurface {
     match &mut res.status {
       SurfaceStatus::ViolationsFound { message, .. }
       | SurfaceStatus::ExecutionError { message } => {
-        *message = filter_markdownlint_noise(message, ctx.root.as_path());
+        *message = filter_markdownlint_noise(message);
       }
       _ => {}
     }
@@ -764,7 +750,6 @@ mod tests {
     // The exact stream shape `merge_tool_streams` produces: banner + Finding
     // + Linting + Summary from stdout, then a bare `stderr:` label, then the
     // real per-violation lines.
-    let root = Path::new("/home/u/proj");
     let raw = "\
 markdownlint-cli2 v0.23.2 (markdownlint v0.41.1)
 Finding: /home/u/proj/README.md /home/u/proj/docs/x.md
@@ -775,20 +760,34 @@ stderr:
 /home/u/proj/README.md:7:3 error MD019/no-multiple-space-atx Multiple spaces after hash [Context: \"#  Bad\"]
 README.md:7 error MD025/single-title/single-h1 Multiple top-level headings";
 
-    let out = filter_markdownlint_noise(raw, root);
+    let out = filter_markdownlint_noise(raw);
 
     assert!(!out.contains("markdownlint-cli2 v"), "banner kept: {out}");
     assert!(!out.contains("Finding:"), "Finding line kept: {out}");
     assert!(!out.contains("Linting:"), "Linting line kept: {out}");
     assert!(!out.contains("stderr:"), "stderr label kept: {out}");
-    assert!(
-      !out.contains("/home/u/proj/README.md"),
-      "abs path kept: {out}"
-    );
     assert!(out.contains("MD019/no-multiple-space-atx"));
     assert!(out.contains("MD025/single-title/single-h1"));
-    // Leading absolute path was relativized to the run root.
-    assert!(out.contains("README.md:7:3 error MD019"));
+    // filter_markdownlint_noise no longer relativizes paths itself (#157) —
+    // that absolute leading path survives this function untouched...
+    assert!(
+      out.contains("/home/u/proj/README.md:7:3 error MD019"),
+      "leading path should still be absolute here, got: {out}"
+    );
+    // ...and is relativized exactly once downstream, by the same shared
+    // helper the runner calls on every surface's diagnostics.
+    let relativized =
+      crate::ui::paths::relativize_text(Path::new("/home/u/proj"), &out);
+    assert!(
+      relativized.contains("README.md:7:3 error MD019"),
+      "downstream relativize_text should strip the leading root path, got: \
+       {relativized}"
+    );
+    assert!(
+      !relativized.contains("/home/u/proj"),
+      "no run-root-absolute path should survive the full pipeline, got: \
+       {relativized}"
+    );
     // Summary is kept, but as a bare tail count at the end.
     assert_eq!(out.lines().last().unwrap(), "2 issues in 1 file");
   }
@@ -798,10 +797,9 @@ README.md:7 error MD025/single-title/single-h1 Multiple top-level headings";
     // Acceptance criterion: filtering is anchored to known prefixes, so an
     // unrecognized stdout line from a future markdownlint-cli2 version must
     // still reach the user.
-    let root = Path::new("/x");
     let raw =
       "Analyzing: something new\nfoo.md:1 error MD012/no-multiple-blanks";
-    let out = filter_markdownlint_noise(raw, root);
+    let out = filter_markdownlint_noise(raw);
     assert!(out.contains("Analyzing: something new"));
     assert!(out.contains("MD012/no-multiple-blanks"));
   }
