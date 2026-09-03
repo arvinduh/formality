@@ -343,11 +343,12 @@ enum TokenParse {
 }
 
 /// Read a version out of one token. Strips surrounding punctuation and a
-/// leading `v`/`go` marker, then tries, in order: the 3-part core plus any
-/// real `-pre`/`+build` suffix (keeps `1.7.0-nightly`, `14.0.0-1ubuntu1`);
-/// then the bare core alone, dropping a `-`/`+` suffix or a clean 4th component
-/// `semver` rejects (`18.1.8-0ubuntu1~22.04.1`, `1.35.1.post1`, `0.9.6.dev0` —
-/// which the pre-`semver` parser also ignored). A non-numeric 3rd component
+/// leading `v`/`go` marker, then tries, in order: the 3-part core plus a
+/// genuine `-pre`/`+build` suffix (keeps `1.7.0-nightly`); then the bare core
+/// alone, dropping a packaging-revision suffix (`14.0.0-1ubuntu1`), a `-`/`+`
+/// suffix, or a clean 4th component `semver` rejects
+/// (`18.1.8-0ubuntu1~22.04.1`, `1.35.1.post1`, `0.9.6.dev0` — which the
+/// pre-`semver` parser also ignored). A non-numeric 3rd component
 /// (`0.9.6rc1`, `1.2.x`) is rejected, never zeroed.
 fn classify_token(token: &str) -> TokenParse {
   let cleaned = token.trim_matches(|c: char| "()[]{}<>\"',:;".contains(c));
