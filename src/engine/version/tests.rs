@@ -951,3 +951,80 @@ fn test_tool_version_cache_corrupted_json_resilience() {
     assert!(updated.tools.contains_key("rustfmt"));
   }
 }
+
+/// The literal usage text `gofmt` prints on a failed `--version` — one line of
+/// which contains "10" in `-e`'s description. The digit-scan predicate (#137's
+/// `classify_token`) must reject every line: none carries a version token, so
+/// no help-text line is ever scraped as a version (Fixes #114).
+#[test]
+fn test_gofmt_usage_text_is_never_scraped_as_a_version() {
+  const GOFMT_USAGE: &str = "flag provided but not defined: -version\n\
+usage: gofmt [flags] [path ...]\n  \
+-cpuprofile string\n    \twrite cpu profile to this file\n  \
+-d\tdisplay diffs instead of rewriting files\n  \
+-e\treport all errors (not just the first 10 on different lines)\n  \
+-l\tlist files whose formatting differs from gofmt's\n  \
+-r string\n    \trewrite rule (e.g., 'a[b:len(a)] -> a[b:]')\n  \
+-s\tsimplify code\n  \
+-w\twrite result to (source) file instead of stdout";
+
+  assert_eq!(
+    first_versionish_line(GOFMT_USAGE),
+    None,
+    "a gofmt usage line was picked as version-shaped"
+  );
+  for line in GOFMT_USAGE.lines() {
+    assert_eq!(
+      Version::extract(line),
+      None,
+      "usage line parsed as a version: {line:?}"
+    );
+  }
+}
+
+/// gofmt's version is the Go toolchain's, read from `go version`
+/// (`go version goX.Y.Z <os>/<arch>` on stdout). The version-bearing line is
+/// picked and normalizes to the bare `MAJOR.MINOR.PATCH` (Fixes #114).
+#[test]
+fn test_gofmt_version_comes_from_go_version_output() {
+  let line = first_versionish_line("go version go1.27.0 windows/amd64\n")
+    .expect("the `go version` line is version-shaped");
+  assert_eq!(line, "go version go1.27.0 windows/amd64");
+  assert_eq!(
+    normalize_probed_version("gofmt", &line),
+    Some(Version::new(1, 27, 0))
+  );
+  assert_eq!(
+    normalize_probed_version("gofmt", "go version go1.21.5 darwin/arm64"),
+    Some(Version::new(1, 21, 5))
+  );
+}
+
+/// End to end through the uncached probe: with `go` on PATH, gofmt reports a
+/// real, parseable toolchain version sourced from `go version`; with `go`
+/// absent it returns `None` (doctor renders `(version unprobeable)`), never a
+/// scraped usage line (Fixes #114).
+#[test]
+fn test_probe_raw_gofmt_sources_go_toolchain_or_reports_nothing() {
+  let raw = probe_raw_tool_version_uncached("gofmt");
+  if which::which("go").is_ok() {
+    let raw = raw.expect("go on PATH: gofmt version should probe");
+    assert!(
+      raw.starts_with("go version") || raw.starts_with("go1"),
+      "gofmt version should come from `go version`, got: {raw:?}"
+    );
+    assert!(
+      !raw.contains("report all errors"),
+      "gofmt usage text leaked into the version: {raw:?}"
+    );
+    assert!(
+      normalize_probed_version("gofmt", &raw).is_some(),
+      "probed gofmt version should parse, got: {raw:?}"
+    );
+  } else {
+    assert_eq!(
+      raw, None,
+      "go absent: gofmt must be unprobeable, not scraped help text"
+    );
+  }
+}

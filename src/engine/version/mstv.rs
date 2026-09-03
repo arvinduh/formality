@@ -139,6 +139,10 @@ pub const TOOL_MSTV_REGISTRY: &[ToolMstvEntry] = &[
   ToolMstvEntry {
     binary: "gofmt",
     min_version: MSTV_GOFMT,
+    // `gofmt` has no version flag; its version is the Go toolchain's, probed
+    // via `go version` in `probe_raw_tool_version_uncached` (Fixes #114).
+    // This arg list is unused for gofmt as a result, but the field is
+    // non-optional — `--help` is the least-surprising inert placeholder.
     version_args: &["--help"],
     advice: "Update Go toolchain via https://go.dev/dl/",
   },
