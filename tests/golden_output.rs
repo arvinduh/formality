@@ -106,16 +106,19 @@ fn golden_doctor_table_framing_and_wrapping() {
 #[test]
 fn golden_runner_diagnostics_render_paths_relative() {
   // A failing-lint diagnostics block: absolute paths under the run root must
-  // come out relative, via the same helper the table cells use.
+  // come out relative, via the same helper the table cells use. The first
+  // line is the shape a linter's own `<path>:<line>:<col> message` diagnostic
+  // takes (leading path, no fixed marker) — the case #157 folded markdown's
+  // bespoke shim into this shared helper to cover.
   let root = std::path::Path::new("C:/work/demo");
-  let raw = "Finding: C:/work/demo/README.md C:/work/demo/docs/architecture.md\n\
+  let raw = "C:/work/demo/README.md:7:3 error MD019 Multiple spaces\n\
              --- C:\\work\\demo\\src\\main.rs\n\
              +++ C:\\work\\demo\\src\\main.rs (formatted)";
   let relativized = relativize_text(root, raw);
 
   assert!(!relativized.contains("C:/work/demo"));
   assert!(!relativized.contains("C:\\work\\demo"));
-  assert!(relativized.contains("Finding: README.md docs/architecture.md"));
+  assert!(relativized.contains("README.md:7:3 error MD019 Multiple spaces"));
   assert!(relativized.contains("--- src\\main.rs"));
   assert!(relativized.contains("+++ src\\main.rs (formatted)"));
 
@@ -278,9 +281,9 @@ fn golden_failing_fml_lint_process_output_is_framed_within_80() {
   );
   assert_framed_within_80(&plain);
 
-  // `relativize_text` rewrites paths only on an allowlist of "payload is
-  // paths" line prefixes (unified-diff `---`/`+++` headers, markdownlint
-  // `Finding:`). Any such line that appears must come out relative; arbitrary
+  // `relativize_text` rewrites paths on unified-diff `---`/`+++` headers,
+  // and on any line whose leading token is an absolute path under the run
+  // root. Any such line that appears must come out relative; arbitrary
   // linter prose (e.g. taplo's verbose tracing) is deliberately passed
   // through untouched so file content embedding the root path is never
   // corrupted. (Nothing to check when the tools are absent and every surface
@@ -288,10 +291,7 @@ fn golden_failing_fml_lint_process_output_is_framed_within_80() {
   let root_fwd = root.to_string_lossy().replace('\\', "/");
   for line in plain.lines() {
     let l = line.trim_start();
-    if l.starts_with("--- ")
-      || l.starts_with("+++ ")
-      || l.starts_with("Finding: ")
-    {
+    if l.starts_with("--- ") || l.starts_with("+++ ") {
       assert!(
         !line.replace('\\', "/").contains(&root_fwd),
         "an allowlisted diagnostics line kept an absolute run-root path:\n{line}"
