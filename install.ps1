@@ -1,102 +1,31 @@
 # formality (fml) installer for Windows
 # https://github.com/arvinduh/formality
+#
+# Thin compatibility shim. The real installer is generated and published by
+# cargo-dist as a release asset (issue #134). This file stays at
+# https://raw.githubusercontent.com/arvinduh/formality/main/install.ps1 only so
+# the one-liner already printed by older `fml` binaries and copied into
+# third-party docs keeps working. New docs point straight at the release asset:
+#
+#   powershell -c "irm https://github.com/arvinduh/formality/releases/latest/download/fml-installer.ps1 | iex"
 
 $ErrorActionPreference = 'Stop'
 
-function Write-Info {
-    param([string]$Message)
-    Write-Host "info: " -ForegroundColor Cyan -NoNewline
-    Write-Host $Message
-}
+$distInstallerUrl = 'https://github.com/arvinduh/formality/releases/latest/download/fml-installer.ps1'
 
-function Write-Success {
-    param([string]$Message)
-    Write-Host "success: " -ForegroundColor Green -NoNewline
-    Write-Host $Message
+# Fetch the real installer first and fail loudly (non-zero exit, stderr) if the
+# download does not succeed, rather than piping a 404 body straight into iex.
+try {
+    $script = Invoke-RestMethod -Uri $distInstallerUrl -UseBasicParsing
 }
-
-function Write-Warn {
-    param([string]$Message)
-    Write-Host "warning: " -ForegroundColor Yellow -NoNewline
-    Write-Host $Message
-}
-
-function Write-Err {
-    param([string]$Message)
-    Write-Host "error: " -ForegroundColor Red -NoNewline
-    Write-Host $Message
+catch {
+    Write-Error "Failed to download the formality installer from ${distInstallerUrl}: $_"
     exit 1
 }
 
-$target = "x86_64-pc-windows-msvc"
-$assetName = "fml-$target.zip"
-$downloadUrl = "https://github.com/arvinduh/formality/releases/latest/download/$assetName"
-
-$installDir = if ($env:FML_INSTALL_DIR) {
-    $env:FML_INSTALL_DIR
-} else {
-    Join-Path $HOME "bin"
+if ([string]::IsNullOrWhiteSpace($script)) {
+    Write-Error "The downloaded installer is empty ($distInstallerUrl)"
+    exit 1
 }
 
-Write-Info "Detected platform: $target"
-Write-Info "Installing formality into $installDir..."
-
-if (-not (Test-Path -Path $installDir)) {
-    New-Item -ItemType Directory -Path $installDir -Force | Out-Null
-}
-
-$tempDir = Join-Path ([System.IO.Path]::GetTempPath()) ([System.Guid]::NewGuid().ToString())
-New-Item -ItemType Directory -Path $tempDir -Force | Out-Null
-$zipPath = Join-Path $tempDir $assetName
-
-try {
-    Write-Info "Downloading $downloadUrl..."
-    Invoke-WebRequest -Uri $downloadUrl -OutFile $zipPath -UseBasicParsing
-
-    Expand-Archive -Path $zipPath -DestinationPath $tempDir -Force
-    $exeSource = Join-Path $tempDir "fml.exe"
-    if (-not (Test-Path -Path $exeSource)) {
-        Write-Err "Extracted archive did not contain 'fml.exe'."
-    }
-
-    $destExe = Join-Path $installDir "fml.exe"
-    Copy-Item -Path $exeSource -Destination $destExe -Force
-}
-finally {
-    if (Test-Path -Path $tempDir) {
-        Remove-Item -Recurse -Force -Path $tempDir -ErrorAction SilentlyContinue
-    }
-}
-
-# Verify execution
-$destExe = Join-Path $installDir "fml.exe"
-try {
-    $versionOutput = & $destExe --version 2>&1
-    Write-Success "Successfully installed $versionOutput to $destExe"
-}
-catch {
-    Write-Err "Installed binary at $destExe failed to execute: $_"
-}
-
-# Check if installDir is in PATH
-$pathEntries = $env:PATH -split [System.IO.Path]::PathSeparator
-$inPath = $false
-foreach ($entry in $pathEntries) {
-    if ($entry.TrimEnd('\/') -eq $installDir.TrimEnd('\/')) {
-        $inPath = $true
-        break
-    }
-}
-
-if (-not $inPath) {
-    Write-Host ""
-    Write-Warn "$installDir is not in your PATH."
-    Write-Host "To make 'fml' accessible from PowerShell, add $installDir to your PATH."
-    Write-Host ""
-    Write-Host "For current session:" -ForegroundColor Gray
-    Write-Host "  `$env:PATH = `"`$env:PATH;$installDir`"" -ForegroundColor Cyan
-    Write-Host ""
-    Write-Host "Permanently for current user:" -ForegroundColor Gray
-    Write-Host "  [Environment]::SetEnvironmentVariable('Path', [Environment]::GetEnvironmentVariable('Path', 'User') + ';$installDir', 'User')" -ForegroundColor Cyan
-    Write-Host ""
-}
+Invoke-Expression $script

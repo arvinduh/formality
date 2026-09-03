@@ -1,0 +1,92 @@
+# Release extras: the VS Code extension (.vsix) and the JSON schema file,
+# attached as assets to the same binary release that `.github/workflows/
+# release.yml` (cargo-dist) creates for a `v*` tag.
+#
+# dist owns release CREATION (and `--generate-notes`) in release.yml's `host`
+# job. This workflow only ever APPENDS assets: it waits for that release to
+# exist, then uploads. Users depend on both asset URLs staying stable:
+#   - editors/vscode/*.vsix  ->  "Install from VSIX" downloads
+#   - formality.schema.json  ->  `#:schema .../releases/latest/download/
+#     formality.schema.json` and `releases/download/v<x>/...` directives
+#
+# The independent schema-only releases under `s*` tags are unchanged and live
+# in schema-release.yml.
+
+name: Release Extras
+
+on:
+  push:
+    tags:
+      - "v*"
+
+permissions:
+  contents: write
+
+jobs:
+  package-vscode-and-schema:
+    name: Package VS Code Extension & Schema
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v7
+
+      - name: Set up Rust toolchain
+        # Pinned to match rust-toolchain.toml; bump both together.
+        uses: dtolnay/rust-toolchain@1.97.1
+
+      - name: Set up Rust cache
+        uses: Swatinem/rust-cache@v2
+
+      - name: Build fml (needed to generate schema)
+        run: cargo build --release
+
+      # The schema is embedded in the binary; generate the file from it so it
+      # can be attached to the release. Users reference this release-asset URL
+      # in their formality.toml #:schema directives, never the raw git URL.
+      - name: Generate schema file
+        run: |
+          mkdir -p schema
+          ./target/release/fml schema --output schema/formality.schema.json
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v7
+        with:
+          node-version: 22
+
+      - name: Package VS Code Extension (.vsix)
+        run: |
+          cd editors/vscode
+          npm install
+          npx @vscode/vsce package --no-git-tag-version --allow-missing-repository
+          cd ../..
+
+      # dist's `host` job creates the GitHub Release for this tag (with
+      # `--generate-notes`). It runs only after every target build finishes,
+      # so it usually lands after this job - wait for it, then append assets.
+      # Never create the release here: that would race dist's `gh release
+      # create` and make it fail.
+      - name: Wait for the binary release to exist
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          TAG: ${{ github.ref_name }}
+        run: |
+          for i in $(seq 1 60); do
+            if gh release view "$TAG" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
+              echo "Release $TAG exists."
+              exit 0
+            fi
+            echo "Release $TAG not published yet; retry $i/60 in 30s..."
+            sleep 30
+          done
+          echo "::error::Release $TAG never appeared after 30 minutes - did release.yml (dist) fail?"
+          exit 1
+
+      - name: Upload VS Code Extension and Schema to the release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          TAG: ${{ github.ref_name }}
+        run: |
+          gh release upload "$TAG" \
+            editors/vscode/*.vsix \
+            schema/formality.schema.json \
+            --repo "$GITHUB_REPOSITORY" --clobber

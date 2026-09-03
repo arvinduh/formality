@@ -26,9 +26,9 @@ re-derive is already written down.
   conventions, `ExecutionContext` Arc-sharing, error-handling patterns)? Read
   this before writing new code, and cite it by section number in review.
 - **[release.md](release.md)** — How is a release actually cut — binary (`v*`)
-  tags, schema (`s*`) tags, changelog generation via `git-cliff`? Read this
-  before cutting a release, or when you need to know what a given tag prefix
-  means.
+  tags via cargo-dist, schema (`s*`) tags, GitHub `--generate-notes` release
+  notes? Read this before cutting a release, or when you need to know what a
+  given tag prefix means.
 - **[compatibility.md](compatibility.md)** — Which binary versions support which
   schema (`s*`) versions? Read this before cutting a release, or when a user
   reports a version mismatch between their installed `fml` and a project's
