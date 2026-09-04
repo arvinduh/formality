@@ -2,10 +2,11 @@ use std::fs;
 use std::path::PathBuf;
 
 /// Ensures `Cargo.toml`'s package version stays in lockstep with the
-/// VS Code extension's `package.json` version. The two are versioned
-/// together even though the repo is currently pinned at a pre-release
-/// `0.1.0` with no per-merge bump cadence yet — this test only asserts
-/// the two files agree with each other, not any particular value.
+/// VS Code extension's `package.json` version. The binary and the
+/// extension ship together under a single `v{semver}` tag rather than on
+/// independent cadences (see `docs/adr/0003-two-tag-release-versioning.md`),
+/// so the two files must never drift — this test only asserts they agree
+/// with each other, not any particular value.
 #[test]
 fn test_cargo_and_vscode_extension_versions_match() {
   let root = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
