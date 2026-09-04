@@ -61,7 +61,7 @@ mind:
 ### Prerequisites
 
 - **Rust toolchain**: Version pinned in `rust-toolchain.toml` (e.g., Rust
-  1.97.1). Install via `rustup`:
+  1.98.1). Install via `rustup`:
 
   ```bash
   rustup show
