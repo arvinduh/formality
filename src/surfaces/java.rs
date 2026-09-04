@@ -327,9 +327,15 @@ impl LanguageSurface for JavaSurface {
         self.name(),
         start,
         // `google-java-format --replace` rewrites the scratch copy and exits
-        // 0 whether or not it changed anything; it has no "would reformat"
-        // exit code (that is `--dry-run --set-exit-if-changed`, never passed
-        // here). A non-zero exit means it could not format — a file that does
+        // 0 whether or not it changed anything; `--set-exit-if-changed` is
+        // what turns "I changed something" into exit 1, and `fml` never
+        // passes it. (Verified on the pinned `google-java-format@2.3.0` /
+        // upstream 1.35.0: the flag is *not* confined to `--dry-run` — with
+        // `--replace` it still rewrites the file and then exits 1. A user
+        // adding it via `extra_args` therefore gets a successful reformat
+        // reported as an `ExecutionError`; see ADR 0005, which records that
+        // case as documented-but-unguarded.) A non-zero exit means it could
+        // not format — a file that does
         // not parse, or the `NoClassDefFoundError` a too-old JVM raises
         // (which `explain_jvm_incompatibility` then annotates). Every
         // non-zero exit is therefore an `ExecutionError` (Fixes #151). Same
