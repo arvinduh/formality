@@ -198,7 +198,11 @@ pub struct LangConfig {
   /// Whether this language surface is enabled.
   #[serde(skip_serializing_if = "Option::is_none")]
   pub enabled: Option<bool>,
-  /// Additional command-line arguments to pass to the underlying tool.
+  /// Additional command-line arguments to pass to the underlying tool. A
+  /// surface that drives more than one binary (e.g. markdown's
+  /// markdownlint + prettier, Python's isort + ruff format) forwards this
+  /// same list to every tool invocation it makes — there is no per-tool
+  /// split, so set only flags valid across all of them (Fixes #150).
   #[serde(skip_serializing_if = "Option::is_none")]
   pub extra_args: Option<Vec<String>>,
   /// Explicit file pattern inclusions for this surface.
@@ -416,7 +420,10 @@ pub struct ResolvedLangConfig {
   pub layout: LayoutFacet,
   /// Whether this language surface is active/enabled.
   pub enabled: bool,
-  /// Extra CLI arguments for tools.
+  /// Extra CLI arguments for tools. Forwarded verbatim to every tool
+  /// invocation a surface's `format()`/`lint()` makes, including each pass
+  /// of a multi-tool surface — see the doc comment on
+  /// `LangConfig::extra_args` (Fixes #150).
   pub extra_args: Vec<String>,
   /// Targeted file path inclusions.
   pub files: Vec<PathBuf>,

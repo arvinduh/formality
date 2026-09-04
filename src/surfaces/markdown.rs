@@ -398,6 +398,15 @@ impl LanguageSurface for MarkdownSurface {
               md_cmd.arg("--config").arg(cfg_path);
             }
             md_cmd.arg(scratch);
+            // Fixes #150: `extra_args` used to reach only the prettier pass
+            // below, so a markdownlint-only flag (e.g. `--no-globs`) applied
+            // during `fml lint` but silently vanished during `fml fmt`. This
+            // surface has no per-tool `extra_args` split (see the doc comment
+            // on `ResolvedLangConfig::extra_args`) — the one list is
+            // forwarded to every tool the surface drives, same convention
+            // `PythonSurface::format()` already uses for its own two-tool
+            // (isort + ruff format) pass.
+            md_cmd.args(&ctx.lang_config.extra_args);
             md_cmd.current_dir(ctx.root.as_path());
 
             // Issue #113: a markdownlint-cli2 `--fix` pass that could not run
@@ -444,6 +453,10 @@ impl LanguageSurface for MarkdownSurface {
       for f in &files {
         md_cmd.arg(f);
       }
+      // Fixes #150: see the matching comment in the `check_only` branch
+      // above — `extra_args` is forwarded to every tool this surface's
+      // `format()` drives, not just prettier.
+      md_cmd.args(&ctx.lang_config.extra_args);
       md_cmd.current_dir(ctx.root.as_path());
 
       // Issue #113: this pass used to be `let _ = md_cmd.output()`-discarded,
@@ -1071,6 +1084,80 @@ README.md:7 error MD025/single-title/single-h1 Multiple top-level headings";
     assert!(
       matches!(res.status, SurfaceStatus::ExecutionError { .. }),
       "a prettier failure on the write path must be ExecutionError, got: {:?}",
+      res.status
+    );
+    assert!(!res.is_success());
+  }
+
+  #[test]
+  fn test_markdown_write_forwards_extra_args_to_markdownlint_fix() {
+    // Fixes #150: `extra_args` used to reach only the prettier pass of
+    // `format()`'s write branch, not the markdownlint-cli2 `--fix` pass.
+    // `build_markdownlint_args` appends `extra_args` *after* the injected
+    // temp-config `--config` (see
+    // `test_build_markdownlint_args_extra_args_config_wins_last`), and
+    // markdownlint-cli2 honours the *last* `--config` flag it sees — so an
+    // `extra_args`-supplied `--config <bad path>` overriding the valid
+    // injected one is a clean end-to-end signal that `extra_args` actually
+    // reached this pass: it must fail the whole surface (`ExecutionError`),
+    // not silently be ignored (which would let the pass succeed on the
+    // injected config and mask the bug).
+    if !check_binary_exists("markdownlint-cli2") {
+      return;
+    }
+    let temp = TempDir::new().unwrap();
+    std::fs::write(temp.path().join("a.md"), "# hi\n").unwrap();
+
+    let mut lang = ResolvedLangConfig::new("markdown");
+    lang.extra_args = vec![
+      "--config".to_string(),
+      temp
+        .path()
+        .join("nonexistent-markdownlint-config-fml150.json")
+        .to_string_lossy()
+        .into_owned(),
+    ];
+    let ctx = test_ctx(temp.path(), lang);
+
+    let surface = MarkdownSurface;
+    let res = surface.format(&ctx);
+    assert!(
+      matches!(res.status, SurfaceStatus::ExecutionError { .. }),
+      "extra_args must reach the markdownlint --fix pass on the write path, got: {:?}",
+      res.status
+    );
+    assert!(!res.is_success());
+  }
+
+  #[test]
+  fn test_markdown_check_only_forwards_extra_args_to_markdownlint_fix() {
+    // Fixes #150: same as
+    // `test_markdown_write_forwards_extra_args_to_markdownlint_fix`, but for
+    // the `check_only` branch's own markdownlint-cli2 `--fix` invocation
+    // (previously it also omitted `extra_args` entirely).
+    if !check_binary_exists("markdownlint-cli2") {
+      return;
+    }
+    let temp = TempDir::new().unwrap();
+    std::fs::write(temp.path().join("a.md"), "# hi\n").unwrap();
+
+    let mut lang = ResolvedLangConfig::new("markdown");
+    lang.extra_args = vec![
+      "--config".to_string(),
+      temp
+        .path()
+        .join("nonexistent-markdownlint-config-fml150.json")
+        .to_string_lossy()
+        .into_owned(),
+    ];
+    let mut ctx = test_ctx(temp.path(), lang);
+    ctx.check_only = true;
+
+    let surface = MarkdownSurface;
+    let res = surface.format(&ctx);
+    assert!(
+      matches!(res.status, SurfaceStatus::ExecutionError { .. }),
+      "extra_args must reach the markdownlint --fix pass on the check-only path, got: {:?}",
       res.status
     );
     assert!(!res.is_success());
