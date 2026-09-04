@@ -3,5 +3,5 @@
 # explicitly since the dtolnay/rust-toolchain action does not read this
 # file). Bump deliberately, in the same change as the CI pin below.
 [toolchain]
-channel = "1.97.1"
+channel = "1.98.1"
 components = ["rustfmt", "clippy"]

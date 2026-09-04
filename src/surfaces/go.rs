@@ -7,8 +7,8 @@ use super::{
   NativeConfig, SurfaceResult, SurfaceStatus, ToolInfo,
   classify_all_nonzero_as_error, classify_exit_one_as_violation,
   create_tool_command, diff_check_via_tempcopy_classified, find_files_with_ext,
-  render_native_config, run_tool_command_classified, sync_native_config,
-  tool_missing_guard,
+  find_manifest_upwards, render_native_config, run_tool_command_classified,
+  sync_native_config, tool_missing_guard,
 };
 use serde::{Deserialize, Serialize};
 use std::path::PathBuf;
@@ -182,15 +182,6 @@ pub fn golangci_lint_supports_enable_only() -> bool {
           || String::from_utf8_lossy(&out.stderr).contains("--enable-only")
       })
   })
-}
-
-/// Walks `start` and each of its ancestor directories looking for a `go.mod`
-/// manifest, mirroring how the Go toolchain itself resolves a module root.
-/// Backs `GoSurface::lint`'s preflight guard (Fixes #108) so a subdirectory
-/// of a real Go module isn't mistaken for a directory with no module at all.
-#[must_use]
-pub fn find_go_mod_upwards(start: &std::path::Path) -> bool {
-  start.ancestors().any(|dir| dir.join("go.mod").is_file())
 }
 
 impl LanguageSurface for GoSurface {
@@ -424,7 +415,7 @@ impl LanguageSurface for GoSurface {
     // all — hence this check runs before `tool_missing_guard` below, not
     // after (unlike the Rust surface, where cargo is always present in a
     // Rust dev environment and so ordering doesn't matter there).
-    if !find_go_mod_upwards(&ctx.root) {
+    if !find_manifest_upwards(&ctx.root, "go.mod") {
       return SurfaceResult {
         surface_name: self.name(),
         status: SurfaceStatus::ExecutionError {
