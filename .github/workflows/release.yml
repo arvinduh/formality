@@ -289,6 +289,9 @@ jobs:
         #      tags. Needs the `fetch-depth: 0` checkout above.
         # After a dist bump: re-run `dist generate --mode=ci --allow-dirty`
         # and re-apply this step plus the tag-glob and fetch-depth edits.
+        # tests/release_workflow_local_edits.rs asserts all three of those
+        # edits survive, and runs in the `Library Tests` job (issue #164), so
+        # a regeneration that drops one fails the PR, not the next release.
         run: |
           notes_start="$(git tag -l 'v[0-9]*' --sort=-version:refname --merged "$RELEASE_COMMIT" \
             | grep -vFx "$TAG" | head -n1 || true)"
