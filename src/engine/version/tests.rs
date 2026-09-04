@@ -1028,3 +1028,132 @@ fn test_probe_raw_gofmt_sources_go_toolchain_or_reports_nothing() {
     );
   }
 }
+
+/// Every registry entry's declared probe matches what that tool actually
+/// supports: the three tools that do not answer a plain `--version` declare
+/// why, and every other entry uses the conventional flag. A new entry that
+/// silently disagrees with its tool fails here rather than at a user's
+/// `fml doctor` (Fixes #177).
+#[test]
+fn test_registry_probe_strategies_match_what_each_tool_supports() {
+  let probe_of = |binary: &str| {
+    get_tool_mstv_entry(binary)
+      .unwrap_or_else(|| panic!("{binary} should be in the MSTV registry"))
+      .probe
+  };
+
+  // `gofmt` ships with the Go toolchain and has no version flag of its own.
+  assert_eq!(
+    probe_of("gofmt"),
+    VersionProbe::ViaBinary {
+      bin: "go",
+      args: &[ProbeArg::Literal("version")],
+    }
+  );
+  // `golangci-lint` uses a bare `version` subcommand, not `--version`.
+  assert_eq!(
+    probe_of("golangci-lint"),
+    VersionProbe::OwnFlags(&["version"])
+  );
+  // Rustup ships no `clippy` binary — the component answers as
+  // `clippy-driver`, or through `cargo clippy`.
+  assert_eq!(
+    probe_of("clippy"),
+    VersionProbe::FirstOf(&[
+      VersionProbe::ViaBinary {
+        bin: "clippy-driver",
+        args: &[ProbeArg::Literal("--version")],
+      },
+      VersionProbe::ViaBinary {
+        bin: "cargo",
+        args: &[ProbeArg::Literal("clippy"), ProbeArg::Literal("--version")],
+      },
+    ])
+  );
+
+  for entry in all_mstv_entries() {
+    if matches!(entry.binary, "gofmt" | "golangci-lint" | "clippy") {
+      continue;
+    }
+    assert_eq!(
+      entry.probe, DEFAULT_VERSION_PROBE,
+      "{} declares a non-default probe with no comment explaining why",
+      entry.binary
+    );
+  }
+}
+
+/// A binary with no registry entry falls back to the conventional
+/// `--version`, and clippy's aliases resolve to clippy's own chain rather
+/// than to that default (Fixes #177).
+#[test]
+fn test_version_probe_for_defaults_and_resolves_aliases() {
+  assert_eq!(
+    version_probe_for("some-tool-not-in-the-registry"),
+    DEFAULT_VERSION_PROBE
+  );
+  assert_eq!(version_probe_for("rustfmt"), DEFAULT_VERSION_PROBE);
+  for alias in ["clippy", "clippy-driver", "cargo-clippy"] {
+    assert!(
+      matches!(version_probe_for(alias), VersionProbe::FirstOf(_)),
+      "{alias} should resolve to clippy's probe chain"
+    );
+  }
+}
+
+/// [`ProbeArg::ToolPath`] renders as the probed tool's resolved path, so a
+/// via-another-binary probe can name the binary it is asking about (the shape
+/// `go version -m <path>` needs). An unresolvable tool yields no arguments at
+/// all, so the probe is skipped rather than run against a bogus path.
+#[test]
+fn test_render_probe_args_substitutes_the_resolved_tool_path() {
+  let args = &[ProbeArg::Literal("version"), ProbeArg::ToolPath];
+
+  if let Some((path, _)) = resolve_binary_info("cargo") {
+    let rendered = render_probe_args("cargo", args)
+      .expect("cargo resolves, so ToolPath renders");
+    assert_eq!(rendered.len(), 2);
+    assert_eq!(rendered[0], OsString::from("version"));
+    assert_eq!(rendered[1], path.into_os_string());
+  }
+
+  assert_eq!(
+    render_probe_args("formality-no-such-binary-exists", args),
+    None,
+    "an unresolvable tool cannot render a ToolPath argument"
+  );
+  assert_eq!(
+    render_probe_args(
+      "formality-no-such-binary-exists",
+      &[ProbeArg::Literal("version")]
+    ),
+    Some(vec![OsString::from("version")]),
+    "a literal-only probe needs no resolution"
+  );
+}
+
+/// `FirstOf` skips a probe whose binary does not exist and takes the next
+/// one that yields a version — the property clippy's two distribution shapes
+/// depend on (Fixes #177).
+#[test]
+fn test_first_of_falls_through_to_the_next_working_probe() {
+  if which::which("cargo").is_err() {
+    return;
+  }
+  let probe = VersionProbe::FirstOf(&[
+    VersionProbe::ViaBinary {
+      bin: "formality-no-such-binary-exists",
+      args: &[ProbeArg::Literal("--version")],
+    },
+    VersionProbe::ViaBinary {
+      bin: "cargo",
+      args: &[ProbeArg::Literal("--version")],
+    },
+  ]);
+  let raw = run_probe("cargo", &probe)
+    .expect("the second probe in the chain should report cargo's version");
+  assert!(
+    raw.contains("cargo"),
+    "expected cargo's version banner, got: {raw:?}"
+  );
+}
