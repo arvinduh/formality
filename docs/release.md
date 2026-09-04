@@ -7,19 +7,16 @@ and `editors/vscode/package.json` is kept in lockstep by
 build-and-publish pipeline
 ([cargo-dist](https://opensource.axo.dev/cargo-dist/)).
 
-> The `#126` citation below predates the 2026-08-26 repo recreation and no
-> longer resolves — see
-> [`docs/INDEX.md`](INDEX.md#note-on-pre-recreation-issuepr-numbers).
-
 ## Overview
 
 Releases are cut from `main` and are driven by
 [Conventional Commits](https://www.conventionalcommits.org/). Every commit
 merged to `main` should follow the `<type>(<scope>): <description>` format
 already used throughout this repository's history (see `git log`). GitHub's
-`--generate-notes` groups the merged PRs into the release body, and a future
-automated version-bump tool can infer the correct semver bump (`feat` -> minor,
-`fix` -> patch, `!`/`BREAKING CHANGE` -> major).
+`--generate-notes` groups the merged PRs into the release body, and the commit
+types are what the semver bump in step 2 is read off (`feat` -> minor, `fix` ->
+patch, `!`/`BREAKING CHANGE` -> major). That bump is a hand-edit in its own
+`chore(release)` PR — there is no automated version-bump tool.
 
 The binary release pipeline is
 [cargo-dist](https://opensource.axo.dev/cargo-dist/):
@@ -130,8 +127,9 @@ additive/compatible one. This is deliberately independent of the binary's
 `v{semver}` tag — the two change at different rates, and forcing them to track
 each other (e.g. `s0.1.0` mirroring `v0.1.0`) would either churn the schema tag
 on every binary release or let it silently drift out of a parity it never really
-had. See [`SchemaVersion`](../src/config/schema.rs) and #126 for the original
-design rationale.
+had. See [`SchemaVersion`](../src/config/schema.rs) and
+[ADR 0003](adr/0003-two-tag-release-versioning.md) for the original design
+rationale.
 
 Schema releases publish `schema/formality.schema.json` as an independent GitHub
 Release asset under the corresponding `s{major}.{minor}` tag so users can pin
@@ -202,10 +200,13 @@ Releases space, workflow configuration enforces a strict invariant:
 Release notes are produced by GitHub's own `gh release create --generate-notes`
 in `.github/workflows/release.yml` (the cargo-dist `host` job). GitHub lists the
 pull requests merged since the previous release and links each contributor.
-There is no committed `CHANGELOG.md` and no `git-cliff` step.
+There is no committed `CHANGELOG.md` and no `git-cliff` step: the generated
+release body _is_ the changelog. Its absence from the repo root is deliberate,
+not an oversight — nothing writes or reads a checked-in changelog file, so there
+is no file to keep current between releases.
 
 Keeping PR titles in Conventional Commits form
-(`<type>(<scope>): <description>`) is still what makes the generated notes
-readable, and lets a future version-bump tool infer the semver bump.
-`.github/release.yml` (if added later) can group those PRs into labelled
-sections; nothing at the repo root controls this today.
+(`<type>(<scope>): <description>`) is what makes the generated notes readable,
+and is what the manual semver decision in step 2 is based on. Adding a
+`.github/release.yml` would let GitHub group those PRs into labelled sections;
+no such file exists today, so the notes use GitHub's default grouping.
