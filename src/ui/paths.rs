@@ -98,14 +98,30 @@ fn is_path_char(c: char) -> bool {
 
 /// Strip a leading `root/` from every occurrence in `line` that begins at a
 /// real token boundary (start of line, or a non-path char before it).
+///
+/// The boundary check ignores ANSI escape sequences immediately preceding
+/// `idx`: `line` is the *raw*, still-colored text (splicing it, not the
+/// stripped copy, is what keeps styling intact — see [`relativize_text`]),
+/// so the byte right before a colored path's first character is typically
+/// the `m` that ends an SGR sequence (`\x1b[31m`), not a real path char.
+/// Judging the boundary against `out[..idx]` verbatim would treat that `m`
+/// as alphanumeric and refuse the boundary — an eligible colored line would
+/// be classified as a match by [`relativize_text`] and then silently left
+/// unrewritten here. Stripping ANSI from the prefix before inspecting its
+/// last character finds the real preceding char (or none, if the line's
+/// content before `idx` is escape codes only), matching how eligibility
+/// itself is judged.
 fn relativize_line(line: &str, prefixes: &[String]) -> String {
   let mut out = line.to_string();
   for prefix in prefixes {
     let mut from = 0;
     while let Some(rel) = out[from..].find(prefix.as_str()) {
       let idx = from + rel;
-      let boundary_ok =
-        idx == 0 || !out[..idx].chars().next_back().is_some_and(is_path_char);
+      let boundary_ok = idx == 0
+        || !strip_ansi_escapes(&out[..idx])
+          .chars()
+          .next_back()
+          .is_some_and(is_path_char);
       if boundary_ok {
         out.replace_range(idx..idx + prefix.len(), "");
         from = idx;
@@ -212,6 +228,46 @@ mod tests {
       relativize_text(root, text),
       "README.md docs/a.md and /usr/share/x"
     );
+  }
+
+  /// Regression for #182: a colored leading-path diagnostic line used to be
+  /// classified eligible (on the ANSI-stripped text) but then spliced
+  /// against the raw, still-colored text, where the `m` terminating the SGR
+  /// sequence right before the path reads as an `is_path_char` and blocks
+  /// the boundary — so the line was silently left unrewritten, defeating the
+  /// module's promise that ANSI styling on a rewritten line is preserved
+  /// (there'd have been no rewrite at all). Uses the exact shape from the
+  /// issue.
+  #[test]
+  fn relativize_text_rewrites_a_colored_leading_path_line() {
+    let root = Path::new("/home/u/project");
+    let text = "\x1b[31m/home/u/project/x.rs:1:1 error\x1b[0m";
+    assert_eq!(relativize_text(root, text), "\x1b[31mx.rs:1:1 error\x1b[0m");
+  }
+
+  /// Same shape as above but with the color applied only to the path token
+  /// itself (SGR reset right after it), and a second, later occurrence of
+  /// the root path further into the line that should be rewritten too.
+  #[test]
+  fn relativize_text_rewrites_all_occurrences_on_a_colored_leading_path_line() {
+    let root = Path::new("/home/u/project");
+    let text = "\x1b[31m/home/u/project/x.rs\x1b[0m:1:1 error in \
+                /home/u/project/y.rs";
+    assert_eq!(
+      relativize_text(root, text),
+      "\x1b[31mx.rs\x1b[0m:1:1 error in y.rs"
+    );
+  }
+
+  /// The pre-existing `--- ` / `+++ ` diff-header arms stay unaffected by the
+  /// ANSI-aware boundary check: a colored header still rewrites correctly,
+  /// and the fixed boundary logic doesn't change behavior for the
+  /// uncolored/plain cases already covered elsewhere in this module.
+  #[test]
+  fn relativize_text_rewrites_colored_diff_headers() {
+    let root = Path::new("/home/u/proj");
+    let text = "\x1b[1m--- /home/u/proj/src/main.rs\x1b[0m";
+    assert_eq!(relativize_text(root, text), "\x1b[1m--- src/main.rs\x1b[0m");
   }
 
   #[test]
