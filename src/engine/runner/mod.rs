@@ -467,12 +467,7 @@ impl Runner {
       "{} {} {}",
       "fml".bold().cyan(),
       action_verb.bold(),
-      format!(
-        "({} surface{})",
-        surfaces.len(),
-        if surfaces.len() == 1 { "" } else { "s" }
-      )
-      .dimmed()
+      format!("({})", header_count_label(results.len())).dimmed()
     );
     println!("{}", frame.section(&title, &rendered_table, &palette));
 
@@ -544,6 +539,23 @@ impl Runner {
 
     ExitStatus::try_from(exit_code).unwrap_or(ExitStatus::Error)
   }
+}
+
+/// Renders the parenthesised count in the run header.
+///
+/// The count is the number of rows the table actually rendered, **not** the
+/// number of matched surfaces (#130). The two diverge for `fml sync`, which
+/// appends shared-config rows (`.editorconfig`, `.prettierrc.json`) after the
+/// per-surface fan-out: counting matched surfaces produced a deterministic
+/// off-by-one on every `fml sync` — the header said `1 surface` while two
+/// rows printed and the footer said `2 passed`. Every row still names one
+/// surface in its second column (the shared passes render as `editorconfig`
+/// and `prettier`), so the noun is unchanged.
+fn header_count_label(row_count: usize) -> String {
+  format!(
+    "{row_count} surface{}",
+    if row_count == 1 { "" } else { "s" }
+  )
 }
 
 fn build_ctx(
