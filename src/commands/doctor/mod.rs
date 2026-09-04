@@ -44,17 +44,28 @@ use std::path::Path;
 #[must_use]
 pub fn install_missing_tools(missing: &[ToolInfo]) -> bool {
   // Standalone entry point (`fml fmt/lint/fix --install` preflight): no scan
-  // table to size the frame against, so use the plain 80-col cap.
-  install_missing_tools_framed(missing, &Frame::capped())
+  // table to size the frame against, so use the plain 80-col cap. This caller
+  // prints no tally of its own, so it keeps the pass/fail bit only.
+  install_missing_tools_framed(missing, &Frame::capped()).all_ok
 }
 
 /// [`install_missing_tools`] rendered inside `frame` so `fml doctor --install`
 /// brackets this block with the same rule width as every other section it
 /// prints (the "Installing…" progress block, then the Install Summary table).
+///
+/// Returns the whole per-tool outcome set rather than just a pass/fail bit,
+/// because `fml doctor --install`'s closing tally has to be reconciled
+/// against what this run actually did (#106).
 #[must_use]
-fn install_missing_tools_framed(missing: &[ToolInfo], frame: &Frame) -> bool {
+fn install_missing_tools_framed(
+  missing: &[ToolInfo],
+  frame: &Frame,
+) -> InstallRunReport {
   if missing.is_empty() {
-    return true;
+    return InstallRunReport {
+      all_ok: true,
+      rows: Vec::new(),
+    };
   }
 
   let palette = Palette::detect();
@@ -260,7 +271,24 @@ fn install_missing_tools_framed(missing: &[ToolInfo], frame: &Frame) -> bool {
   println!("{}", frame.dim_rule(&palette));
   print_install_summary_table(&summary_rows, frame);
 
-  all_ok
+  InstallRunReport {
+    all_ok,
+    rows: summary_rows,
+  }
+}
+
+/// What one [`install_missing_tools_framed`] run did, for a caller that needs
+/// more than the pass/fail bit — specifically `fml doctor --install`, whose
+/// closing tally is reconciled against these per-tool outcomes rather than by
+/// re-probing every tool a second time (#106). Carries the very rows the
+/// Install Summary table was rendered from, so the tally and that table can
+/// never disagree: there is only one source of truth for both.
+struct InstallRunReport {
+  /// `true` iff every attempted tool installed cleanly — the value the
+  /// pass/fail-only [`install_missing_tools`] entry point still returns.
+  all_ok: bool,
+  /// One entry per tool this run attempted, in attempt order.
+  rows: Vec<InstallSummaryRow>,
 }
 
 /// One row of the recap table [`print_install_summary_table`] renders after
@@ -575,56 +603,25 @@ pub fn run_doctor(
   // divider above the summary line below.
   print_sync_notice(&frame, &palette);
 
+  // The closing tally is a value derived from the scan *and then* updated by
+  // the install run below — never read back off `scan` again. Keeping it in
+  // its own binding is what makes the ordering structural rather than a
+  // comment: an install that happens after this point still has somewhere to
+  // record itself, whereas the previous code rendered straight from the
+  // pre-install snapshot and could only ever contradict the Install Summary
+  // table printed a few lines above it (#106).
+  let mut tally = ToolTally::from_scan(&scan);
+
   let mut install_failed = false;
-  if install
-    && !to_install.is_empty()
-    && !install_missing_tools_framed(&to_install, &frame)
-  {
-    install_failed = true;
+  if install && !to_install.is_empty() {
+    let report = install_missing_tools_framed(&to_install, &frame);
+    install_failed = !report.all_ok;
+    tally.apply_install_run(&report);
   }
 
-  let outdated_str = if scan.outdated.is_empty() {
-    String::new()
-  } else {
-    format!(" ({} outdated)", scan.outdated.len())
-      .yellow()
-      .to_string()
-  };
-  let stale_str = if scan.stale.is_empty() {
-    String::new()
-  } else {
-    format!(" ({} stale)", scan.stale.len())
-      .yellow()
-      .to_string()
-  };
-  let unknown_str = if scan.unknown.is_empty() {
-    String::new()
-  } else {
-    format!(" ({} unknown)", scan.unknown.len())
-      .yellow()
-      .to_string()
-  };
-  println!(
-    "  {} installed{}{}{}, {} missing{}\n",
-    scan.installed.len().to_string().green().bold(),
-    outdated_str,
-    stale_str,
-    unknown_str,
-    if scan.missing.is_empty() {
-      "0".green().bold().to_string()
-    } else {
-      scan.missing.len().to_string().yellow().bold().to_string()
-    },
-    if !to_install.is_empty() && !install {
-      " (run 'fml install' to install missing/stale tools)"
-        .dimmed()
-        .to_string()
-    } else {
-      String::new()
-    }
-  );
+  println!("{}\n", tally.render(!to_install.is_empty() && !install));
 
-  if (scan.missing.is_empty() || install) && !install_failed {
+  if (tally.missing.is_empty() || install) && !install_failed {
     ExitStatus::Clean
   } else {
     ExitStatus::Error
@@ -728,6 +725,109 @@ struct DoctorScanResult {
   outdated: HashSet<&'static str>,
   stale: Vec<ToolInfo>,
   unknown: HashSet<&'static str>,
+}
+
+/// The counts `fml doctor` closes with ("`8 installed (1 unknown), 0
+/// missing`"), held apart from [`DoctorScanResult`] on purpose.
+///
+/// The scan is a snapshot of the world *before* `--install` runs; this is the
+/// running tally the footer is actually rendered from, so a successful
+/// install has a place to land. Rendering the footer directly off the scan is
+/// what made `fml install` report tools as missing in the same breath as the
+/// Install Summary table listing them `[OK]` (#106) — the counts were
+/// structurally the pre-install snapshot and could not have been anything
+/// else.
+///
+/// Buckets an install cannot change (`outdated`, `unknown` — a tool has to be
+/// present to land in either, and neither is what `--install` fixes) collapse
+/// to their counts here; the three an install *does* move tools between stay
+/// as name sets so reconciliation can be idempotent.
+struct ToolTally {
+  installed: HashSet<&'static str>,
+  outdated: usize,
+  stale: HashSet<&'static str>,
+  unknown: usize,
+  missing: HashSet<&'static str>,
+}
+
+impl ToolTally {
+  /// The pre-install tally, straight off the scan.
+  fn from_scan(scan: &DoctorScanResult) -> Self {
+    Self {
+      installed: scan.installed.clone(),
+      outdated: scan.outdated.len(),
+      stale: scan.stale.iter().map(|tool| tool.binary).collect(),
+      unknown: scan.unknown.len(),
+      missing: scan.missing.iter().map(|tool| tool.binary).collect(),
+    }
+  }
+
+  /// Fold one install run's per-tool outcomes into the tally, so the footer
+  /// agrees with the Install Summary table rendered from those same rows
+  /// (#106). Driven by the outcomes that table already computed — no second
+  /// round of version probes.
+  ///
+  /// Only the tools that actually landed on `PATH` move: a `[FAIL]` or
+  /// `[MISS]` row leaves the tally alone, so a tool that could not be
+  /// installed stays counted as missing. A reinstalled `[STALE]` tool was
+  /// already present and therefore already in `installed`, so dropping it
+  /// from `stale` is the whole change — the `insert` is idempotent and never
+  /// double-counts.
+  fn apply_install_run(&mut self, report: &InstallRunReport) {
+    for row in &report.rows {
+      match row.outcome {
+        InstallOutcome::Ok => {
+          self.missing.remove(row.binary);
+          self.stale.remove(row.binary);
+          self.installed.insert(row.binary);
+        }
+        // Installed, but the convergence guard found it reporting a version
+        // that doesn't match the pin. It *is* on `PATH` now, so it stops
+        // being missing — but "present at the wrong version" is exactly what
+        // `[STALE]` means, so it lands there rather than being quietly
+        // counted as a clean install.
+        InstallOutcome::Warn => {
+          self.missing.remove(row.binary);
+          self.installed.insert(row.binary);
+          self.stale.insert(row.binary);
+        }
+        InstallOutcome::Fail | InstallOutcome::NoInstaller => {}
+      }
+    }
+  }
+
+  /// The footer line itself. `offer_install_hint` appends the "run
+  /// 'fml install'" nudge, which only makes sense on a run that found work to
+  /// do and wasn't already `--install`.
+  fn render(&self, offer_install_hint: bool) -> String {
+    let qualifier = |count: usize, label: &str| {
+      if count == 0 {
+        String::new()
+      } else {
+        format!(" ({count} {label})").yellow().to_string()
+      }
+    };
+
+    format!(
+      "  {} installed{}{}{}, {} missing{}",
+      self.installed.len().to_string().green().bold(),
+      qualifier(self.outdated, "outdated"),
+      qualifier(self.stale.len(), "stale"),
+      qualifier(self.unknown, "unknown"),
+      if self.missing.is_empty() {
+        "0".green().bold().to_string()
+      } else {
+        self.missing.len().to_string().yellow().bold().to_string()
+      },
+      if offer_install_hint {
+        " (run 'fml install' to install missing/stale tools)"
+          .dimmed()
+          .to_string()
+      } else {
+        String::new()
+      }
+    )
+  }
 }
 
 fn scan_tools_and_build_table(

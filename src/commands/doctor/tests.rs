@@ -1,4 +1,5 @@
 use super::*;
+use crate::ui::table::strip_ansi_escapes;
 use std::path::Path;
 use tempfile::tempdir;
 
@@ -567,6 +568,323 @@ fn test_preflight_install_empty_surfaces() {
   assert!(preflight_install(&[], &config, true, false));
   assert!(preflight_install(&[], &config, false, true));
   assert!(preflight_install(&[], &config, false, false));
+}
+
+/// Builds a [`ToolTally`] in the shape a pre-install scan would leave it —
+/// the starting point every #106 reconciliation test works from.
+fn pre_install_tally(
+  installed: &[&'static str],
+  stale: &[&'static str],
+  missing: &[&'static str],
+  unknown: usize,
+) -> ToolTally {
+  ToolTally {
+    installed: installed.iter().copied().collect(),
+    outdated: 0,
+    stale: stale.iter().copied().collect(),
+    unknown,
+    missing: missing.iter().copied().collect(),
+  }
+}
+
+/// One Install Summary row, as [`install_missing_tools_framed`] would have
+/// pushed it. Only `binary` and `outcome` matter to the tally.
+fn install_row(
+  binary: &'static str,
+  outcome: InstallOutcome,
+) -> InstallSummaryRow {
+  InstallSummaryRow {
+    binary,
+    installer: "npm".to_string(),
+    outcome,
+    detail: String::new(),
+  }
+}
+
+/// Throwaway [`ToolInfo`] for the tally tests — only `binary` is read.
+fn doctor_tool_info(binary: &'static str) -> ToolInfo {
+  ToolInfo {
+    binary,
+    description: "",
+    install_hint: "",
+    is_required_for_fmt: true,
+    is_required_for_lint: false,
+  }
+}
+
+/// #106's exact repro: 8 tools, one of them (`prettier`) genuinely missing,
+/// installed successfully. The footer must read `8 installed (1 unknown), 0
+/// missing` — agreeing with the Install Summary table printed directly above
+/// it — not replay the pre-install scan's `7 installed (1 unknown), 1
+/// missing`.
+///
+/// This tests the *ordering*, not just the arithmetic: it asserts on the same
+/// rendered footer string the old code produced, and pins that the install
+/// run is folded in before that string is built. The pre-install assertion
+/// below is the old, contradictory output, kept verbatim so a regression back
+/// to snapshot-rendering fails here loudly instead of silently printing a
+/// plausible-looking number.
+#[test]
+fn test_tool_tally_footer_reflects_post_install_state() {
+  let mut tally = pre_install_tally(
+    &[
+      "rustfmt",
+      "clippy-driver",
+      "ruff",
+      "taplo",
+      "yamlfmt",
+      "gofmt",
+      "markdownlint-cli2",
+    ],
+    &[],
+    &["prettier"],
+    1,
+  );
+
+  // What the pre-install snapshot says — the bug, verbatim.
+  let before = strip_ansi_escapes(&tally.render(false));
+  assert_eq!(before.trim(), "7 installed (1 unknown), 1 missing");
+
+  tally.apply_install_run(&InstallRunReport {
+    all_ok: true,
+    rows: vec![install_row("prettier", InstallOutcome::Ok)],
+  });
+
+  let after = strip_ansi_escapes(&tally.render(false));
+  assert_eq!(
+    after.trim(),
+    "8 installed (1 unknown), 0 missing",
+    "the footer must count a tool the Install Summary marked [OK] as \
+     installed, not missing"
+  );
+}
+
+/// #106 was fundamentally an *ordering* bug — the footer was rendered from a
+/// binding taken before `--install` ran, so it could not reflect anything the
+/// install changed. The semantic tests around this one pin what
+/// reconciliation does; this one pins that `run_doctor` actually performs it
+/// before rendering, which is the half that regressed.
+///
+/// Tier-2 source scan, the mechanism `docs/style-guide.md` §2/§3 establish
+/// for a rule a type signature can't carry. It fails against the old
+/// ordering in both directions: the pre-fix `run_doctor` has no
+/// `apply_install_run` call at all (the `expect` below fires), and a
+/// re-introduced stale read trips the `scan.`-free assertion.
+#[test]
+fn test_run_doctor_folds_install_into_tally_before_rendering_footer() {
+  let source = include_str!("mod.rs");
+  let start = source
+    .find("pub fn run_doctor(")
+    .expect("run_doctor must exist");
+
+  // Blank out `//` comment lines before scanning. Without this the check is
+  // vacuous: `run_doctor`'s own prose names the very call this looks for, so
+  // a commented-out call would satisfy the scan as well as a real one --
+  // confirmed by commenting the real call out and watching an earlier draft
+  // of this test still pass.
+  let stripped: String = source[start..]
+    .lines()
+    .map(|line| {
+      if line.trim_start().starts_with("//") {
+        ""
+      } else {
+        line
+      }
+    })
+    .collect::<Vec<_>>()
+    .join("\n");
+  let body = stripped.as_str();
+
+  let apply = body
+    .find("tally.apply_install_run(")
+    .expect("run_doctor must fold the install run into the tally (#106)");
+  let render = body
+    .find("tally.render(")
+    .expect("run_doctor must render the footer from the tally (#106)");
+
+  assert!(
+    apply < render,
+    "the install run must be folded into the tally before the footer is \
+     rendered, or the footer replays the pre-install scan (#106)"
+  );
+
+  // ...and the footer must not be built from the pre-install snapshot at
+  // all: no scan bucket may be read between the install and the render.
+  let between = &body[apply..render];
+  assert!(
+    !between.contains("scan."),
+    "the footer must be rendered from the reconciled tally, not the \
+     pre-install scan (#106); found a `scan.` read at: {between}"
+  );
+}
+
+/// The CI-runner shape from #106: three missing tools, all three install.
+#[test]
+fn test_tool_tally_footer_after_multiple_successful_installs() {
+  let mut tally = pre_install_tally(
+    &["rustfmt", "clippy-driver", "ruff", "yamlfmt", "gofmt"],
+    &[],
+    &["prettier", "markdownlint-cli2", "taplo"],
+    0,
+  );
+
+  tally.apply_install_run(&InstallRunReport {
+    all_ok: true,
+    rows: vec![
+      install_row("prettier", InstallOutcome::Ok),
+      install_row("markdownlint-cli2", InstallOutcome::Ok),
+      install_row("taplo", InstallOutcome::Ok),
+    ],
+  });
+
+  assert_eq!(
+    strip_ansi_escapes(&tally.render(false)).trim(),
+    "8 installed, 0 missing"
+  );
+}
+
+/// A tool that could not be installed stays counted as missing — the tally
+/// follows each per-tool outcome, it does not blanket-assume every attempted
+/// tool succeeded.
+#[test]
+fn test_tool_tally_failed_install_stays_missing() {
+  let mut tally =
+    pre_install_tally(&["rustfmt"], &[], &["prettier", "taplo"], 0);
+
+  tally.apply_install_run(&InstallRunReport {
+    all_ok: false,
+    rows: vec![
+      install_row("prettier", InstallOutcome::Ok),
+      install_row("taplo", InstallOutcome::Fail),
+    ],
+  });
+
+  assert_eq!(
+    strip_ansi_escapes(&tally.render(false)).trim(),
+    "2 installed, 1 missing"
+  );
+  assert!(tally.missing.contains("taplo"));
+}
+
+/// Same for a tool with no installer chain at all: `[MISS]` in the Install
+/// Summary means still missing in the tally.
+#[test]
+fn test_tool_tally_uninstallable_tool_stays_missing() {
+  let mut tally = pre_install_tally(&["rustfmt"], &[], &["clang-format"], 0);
+
+  tally.apply_install_run(&InstallRunReport {
+    all_ok: false,
+    rows: vec![install_row("clang-format", InstallOutcome::NoInstaller)],
+  });
+
+  assert_eq!(
+    strip_ansi_escapes(&tally.render(false)).trim(),
+    "1 installed, 1 missing"
+  );
+}
+
+/// A `[STALE]` tool that reinstalls cleanly stops being counted as stale
+/// without inflating the installed count — it was already on `PATH`, so it
+/// was already counted as installed.
+#[test]
+fn test_tool_tally_reinstalled_stale_tool_drops_from_stale() {
+  let mut tally = pre_install_tally(&["rustfmt", "taplo"], &["taplo"], &[], 0);
+  assert_eq!(
+    strip_ansi_escapes(&tally.render(false)).trim(),
+    "2 installed (1 stale), 0 missing"
+  );
+
+  tally.apply_install_run(&InstallRunReport {
+    all_ok: true,
+    rows: vec![install_row("taplo", InstallOutcome::Ok)],
+  });
+
+  assert_eq!(
+    strip_ansi_escapes(&tally.render(false)).trim(),
+    "2 installed, 0 missing"
+  );
+}
+
+/// The convergence guard's `[WARN]` case: the binary landed on `PATH` but
+/// reports a version that doesn't match the pin. It stops being missing (it
+/// is genuinely there now) and is counted stale (present at the wrong
+/// version), rather than being passed off as a clean install.
+#[test]
+fn test_tool_tally_version_mismatched_install_counts_as_stale() {
+  let mut tally = pre_install_tally(&["rustfmt"], &[], &["typstyle"], 0);
+
+  tally.apply_install_run(&InstallRunReport {
+    all_ok: false,
+    rows: vec![install_row("typstyle", InstallOutcome::Warn)],
+  });
+
+  assert_eq!(
+    strip_ansi_escapes(&tally.render(false)).trim(),
+    "2 installed (1 stale), 0 missing"
+  );
+}
+
+/// Applying the same run twice must not double-count — the buckets are name
+/// sets precisely so reconciliation is idempotent.
+#[test]
+fn test_tool_tally_apply_install_run_is_idempotent() {
+  let mut tally = pre_install_tally(&["rustfmt"], &[], &["prettier"], 0);
+  let report = InstallRunReport {
+    all_ok: true,
+    rows: vec![install_row("prettier", InstallOutcome::Ok)],
+  };
+
+  tally.apply_install_run(&report);
+  let once = strip_ansi_escapes(&tally.render(false));
+  tally.apply_install_run(&report);
+
+  assert_eq!(strip_ansi_escapes(&tally.render(false)), once);
+}
+
+/// An empty install run (nothing left to install) leaves the tally untouched,
+/// so a second `fml install` still reports the scan's own numbers.
+#[test]
+fn test_tool_tally_empty_install_run_leaves_tally_untouched() {
+  let mut tally = pre_install_tally(&["rustfmt", "ruff"], &[], &[], 1);
+  let before = strip_ansi_escapes(&tally.render(false));
+
+  tally.apply_install_run(&InstallRunReport {
+    all_ok: true,
+    rows: Vec::new(),
+  });
+
+  assert_eq!(strip_ansi_escapes(&tally.render(false)), before);
+}
+
+/// `ToolTally::from_scan` carries every scan bucket across.
+#[test]
+fn test_tool_tally_from_scan_carries_every_bucket() {
+  let scan = DoctorScanResult {
+    table: Table::new(vec![Column::new(Cell::text(""))]),
+    missing: vec![doctor_tool_info("prettier")],
+    installed: HashSet::from(["rustfmt", "taplo"]),
+    outdated: HashSet::from(["rustfmt"]),
+    stale: vec![doctor_tool_info("taplo")],
+    unknown: HashSet::from(["taplo"]),
+  };
+
+  let tally = ToolTally::from_scan(&scan);
+
+  assert_eq!(
+    strip_ansi_escapes(&tally.render(false)).trim(),
+    "2 installed (1 outdated) (1 stale) (1 unknown), 1 missing"
+  );
+}
+
+/// The install hint only renders when asked for.
+#[test]
+fn test_tool_tally_render_install_hint() {
+  let tally = pre_install_tally(&["rustfmt"], &[], &["prettier"], 0);
+
+  assert_eq!(
+    strip_ansi_escapes(&tally.render(true)).trim(),
+    "1 installed, 1 missing (run 'fml install' to install missing/stale tools)"
+  );
 }
 
 #[test]
