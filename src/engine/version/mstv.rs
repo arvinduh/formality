@@ -37,21 +37,6 @@ pub const MSTV_GOFMT: Version = Version::new(1, 18, 0);
 /// MSTV for golangci-lint.
 pub const MSTV_GOLANGCI_LINT: Version = Version::new(1, 50, 0);
 
-/// One argument in a probe command line.
-///
-/// Most arguments are fixed flags, but a probe that runs a different binary
-/// may need to name the tool it is asking about: `go version -m <path>`
-/// reports the module a Go binary was built from, and only works when handed
-/// that binary's resolved path.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum ProbeArg {
-  /// A fixed argument, passed through verbatim.
-  Literal(&'static str),
-  /// The resolved filesystem path of the tool being probed. A probe using it
-  /// yields no version when the tool cannot be resolved on `PATH`.
-  ToolPath,
-}
-
 /// How a tool's version string is obtained.
 ///
 /// This is registry *data*, not a special case inside the probing function: a
@@ -63,8 +48,9 @@ pub enum ProbeArg {
 /// [`probe_raw_tool_version_uncached`]: super::probe_raw_tool_version_uncached
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum VersionProbe {
-  /// Run the tool itself with these flags, falling back to `-v` for tools
-  /// that answer only to the short form.
+  /// Run the tool itself with exactly these flags — nothing more. A tool that
+  /// also needs a second attempt declares it with [`VersionProbe::FirstOf`],
+  /// so what runs is always what the entry says runs.
   OwnFlags(&'static [&'static str]),
   /// Run a *different* binary to learn this tool's version — for a tool that
   /// ships inside a toolchain and carries the toolchain's version rather than
@@ -73,17 +59,21 @@ pub enum VersionProbe {
     /// The binary to execute in the tool's place.
     bin: &'static str,
     /// Arguments passed to `bin`.
-    args: &'static [ProbeArg],
+    args: &'static [&'static str],
   },
   /// Try each probe in order, taking the first that yields a version — for a
-  /// tool reachable under more than one distribution shape.
+  /// tool reachable under more than one distribution shape, or answering to
+  /// more than one flag.
   FirstOf(&'static [VersionProbe]),
 }
 
 /// The probe shared by every tool that reports its own version conventionally,
-/// and the assumption made for a binary with no registry entry at all.
-pub const DEFAULT_VERSION_PROBE: VersionProbe =
-  VersionProbe::OwnFlags(&["--version"]);
+/// and the assumption made for a binary with no registry entry at all: the
+/// long flag, then the short one for tools that only answer to that.
+pub const DEFAULT_VERSION_PROBE: VersionProbe = VersionProbe::FirstOf(&[
+  VersionProbe::OwnFlags(&["--version"]),
+  VersionProbe::OwnFlags(&["-v"]),
+]);
 
 /// Minimum Supported Tool Version entry with metadata, version-probing
 /// strategy, and upgrade advice.
@@ -116,11 +106,11 @@ pub const TOOL_MSTV_REGISTRY: &[ToolMstvEntry] = &[
     probe: VersionProbe::FirstOf(&[
       VersionProbe::ViaBinary {
         bin: "clippy-driver",
-        args: &[ProbeArg::Literal("--version")],
+        args: &["--version"],
       },
       VersionProbe::ViaBinary {
         bin: "cargo",
-        args: &[ProbeArg::Literal("clippy"), ProbeArg::Literal("--version")],
+        args: &["clippy", "--version"],
       },
     ]),
     advice: "Run 'rustup component add clippy' or 'rustup update'",
@@ -206,11 +196,14 @@ pub const TOOL_MSTV_REGISTRY: &[ToolMstvEntry] = &[
     // reports `(version unprobeable)` — never scraped `gofmt` usage text.
     probe: VersionProbe::ViaBinary {
       bin: "go",
-      args: &[ProbeArg::Literal("version")],
+      args: &["version"],
     },
     advice: "Update Go toolchain via https://go.dev/dl/",
   },
   ToolMstvEntry {
+    // A bare `version` subcommand, not a flag: `golangci-lint --version` is
+    // not recognised. This is the whole probe — no `-v` behind it, because
+    // the entry is what runs.
     binary: "golangci-lint",
     min_version: MSTV_GOLANGCI_LINT,
     probe: VersionProbe::OwnFlags(&["version"]),

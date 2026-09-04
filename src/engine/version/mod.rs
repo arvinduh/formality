@@ -19,15 +19,14 @@ pub use mstv::{
   DEFAULT_VERSION_PROBE, MSTV_BIOME, MSTV_CHECKSTYLE, MSTV_CLANG_FORMAT,
   MSTV_CLANG_TIDY, MSTV_CLIPPY, MSTV_GOFMT, MSTV_GOLANGCI_LINT, MSTV_KTFMT,
   MSTV_KTLINT, MSTV_MARKDOWNLINT_CLI2, MSTV_PRETTIER, MSTV_RUFF, MSTV_RUSTFMT,
-  MSTV_TAPLO, MSTV_TYPSTYLE, MSTV_YAMLLINT, ProbeArg, TOOL_MSTV_REGISTRY,
-  ToolMstvEntry, VersionProbe, all_mstv_entries, get_tool_mstv_entry,
+  MSTV_TAPLO, MSTV_TYPSTYLE, MSTV_YAMLLINT, TOOL_MSTV_REGISTRY, ToolMstvEntry,
+  VersionProbe, all_mstv_entries, get_tool_mstv_entry,
 };
 
 use crate::surfaces::create_tool_command;
 use serde::{Deserialize, Serialize};
 use std::cmp::Ordering;
 use std::collections::BTreeMap;
-use std::ffi::{OsStr, OsString};
 use std::fmt;
 use std::path::{Path, PathBuf};
 use std::str::FromStr;
@@ -138,26 +137,10 @@ pub fn version_probe_for(binary: &str) -> VersionProbe {
   get_tool_mstv_entry(binary).map_or(DEFAULT_VERSION_PROBE, |entry| entry.probe)
 }
 
-/// Renders a probe's declared arguments into concrete command-line arguments,
-/// resolving [`ProbeArg::ToolPath`] against the tool being probed. `None` when
-/// a probe names the tool's path and the tool is not resolvable on `PATH` —
-/// there is nothing to ask about, so the probe cannot run.
-fn render_probe_args(binary: &str, args: &[ProbeArg]) -> Option<Vec<OsString>> {
-  args
-    .iter()
-    .map(|arg| match arg {
-      ProbeArg::Literal(literal) => Some(OsString::from(*literal)),
-      ProbeArg::ToolPath => {
-        resolve_binary_info(binary).map(|(path, _)| path.into_os_string())
-      }
-    })
-    .collect()
-}
-
 /// Runs one probe command and extracts the first version-shaped line from its
 /// output. `None` when the command cannot be spawned, exits non-zero, or
 /// prints nothing [`first_versionish_line`] accepts.
-fn run_probe_command<S: AsRef<OsStr>>(bin: &str, args: &[S]) -> Option<String> {
+fn run_probe_command(bin: &str, args: &[&str]) -> Option<String> {
   let output = create_tool_command(bin).args(args).output().ok()?;
   if !output.status.success() {
     return None;
@@ -168,18 +151,15 @@ fn run_probe_command<S: AsRef<OsStr>>(bin: &str, args: &[S]) -> Option<String> {
 
 /// Executes `probe` against `binary` and extracts the raw version line.
 ///
-/// The function is deliberately ignorant of *which* tool it is probing: every
-/// per-tool difference is carried by the [`VersionProbe`] the registry
-/// declares, so a tool that reports its version unusually is a registry entry
-/// rather than a branch here (Fixes #177).
+/// The function carries no policy of its own: it is ignorant of *which* tool
+/// it is probing, and runs exactly the commands the [`VersionProbe`] names —
+/// no implicit second attempt, so a registry entry always describes what
+/// actually runs. A tool that reports its version unusually is an entry here,
+/// not a branch (Fixes #177).
 fn run_probe(binary: &str, probe: &VersionProbe) -> Option<String> {
   match probe {
-    VersionProbe::OwnFlags(flags) => run_probe_command(binary, flags)
-      // Fallback for tools expecting `-v` rather than the declared flags.
-      .or_else(|| run_probe_command(binary, &["-v"])),
-    VersionProbe::ViaBinary { bin, args } => {
-      run_probe_command(bin, &render_probe_args(binary, args)?)
-    }
+    VersionProbe::OwnFlags(flags) => run_probe_command(binary, flags),
+    VersionProbe::ViaBinary { bin, args } => run_probe_command(bin, args),
     VersionProbe::FirstOf(probes) => {
       probes.iter().find_map(|probe| run_probe(binary, probe))
     }
@@ -193,8 +173,8 @@ pub fn probe_raw_tool_version_uncached(binary: &str) -> Option<String> {
   run_probe(binary, &version_probe_for(binary))
 }
 
-/// Retrieve the raw output line from executing the tool with `--version` or `-v`,
-/// checking the on-disk cache at `cache_path` first.
+/// Retrieve the raw output line from executing the tool's registry-declared
+/// [`VersionProbe`], checking the on-disk cache at `cache_path` first.
 /// If cached version is fresh (TTL valid) and binary modification time matches,
 /// returns the cached version string without spawning a subprocess.
 /// Otherwise, invokes the tool CLI, updates the cache, and returns the result.

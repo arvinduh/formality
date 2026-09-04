@@ -1029,11 +1029,20 @@ fn test_probe_raw_gofmt_sources_go_toolchain_or_reports_nothing() {
   }
 }
 
-/// Every registry entry's declared probe matches what that tool actually
-/// supports: the three tools that do not answer a plain `--version` declare
-/// why, and every other entry uses the conventional flag. A new entry that
-/// silently disagrees with its tool fails here rather than at a user's
-/// `fml doctor` (Fixes #177).
+/// Pins the shape of the registry: the three tools that do not answer a plain
+/// `--version` declare exactly why, and every other entry uses the
+/// conventional flag (Fixes #177).
+///
+/// This is a change-detector, and one-directional by construction. It catches
+/// an entry that acquires an *unexpected* probe, and the loop below forces a
+/// new non-default entry to be named here — which is where the "why" comment
+/// gets written. It cannot catch the converse: an entry wrongly declaring the
+/// default for a tool that has no `--version`, which is #114's own bug.
+/// Proving that needs the tools themselves executed, and a fleet-wide "every
+/// installed tool probes" assertion would fail today for a reason that is not
+/// a declaration bug — taplo's npm build prints a real version and then exits
+/// non-zero. That sweep belongs with #176, whose own acceptance criteria
+/// already call for it.
 #[test]
 fn test_registry_probe_strategies_match_what_each_tool_supports() {
   let probe_of = |binary: &str| {
@@ -1047,10 +1056,11 @@ fn test_registry_probe_strategies_match_what_each_tool_supports() {
     probe_of("gofmt"),
     VersionProbe::ViaBinary {
       bin: "go",
-      args: &[ProbeArg::Literal("version")],
+      args: &["version"],
     }
   );
-  // `golangci-lint` uses a bare `version` subcommand, not `--version`.
+  // `golangci-lint` uses a bare `version` subcommand, not `--version` — and
+  // declares only that, with no implicit `-v` second attempt behind it.
   assert_eq!(
     probe_of("golangci-lint"),
     VersionProbe::OwnFlags(&["version"])
@@ -1062,11 +1072,11 @@ fn test_registry_probe_strategies_match_what_each_tool_supports() {
     VersionProbe::FirstOf(&[
       VersionProbe::ViaBinary {
         bin: "clippy-driver",
-        args: &[ProbeArg::Literal("--version")],
+        args: &["--version"],
       },
       VersionProbe::ViaBinary {
         bin: "cargo",
-        args: &[ProbeArg::Literal("clippy"), ProbeArg::Literal("--version")],
+        args: &["clippy", "--version"],
       },
     ])
   );
@@ -1081,6 +1091,61 @@ fn test_registry_probe_strategies_match_what_each_tool_supports() {
       entry.binary
     );
   }
+}
+
+/// Structural invariants every declaration must hold, whatever tool it is
+/// for: a probe that runs no command, or a `ViaBinary` that just re-runs the
+/// tool itself (which is `OwnFlags`), is a malformed entry.
+#[test]
+fn test_every_declared_probe_is_structurally_well_formed() {
+  fn check(binary: &str, probe: &VersionProbe) {
+    match probe {
+      VersionProbe::OwnFlags(flags) => assert!(
+        !flags.is_empty(),
+        "{binary} declares OwnFlags with no flags, which would run the tool bare"
+      ),
+      VersionProbe::ViaBinary { bin, args } => {
+        assert_ne!(
+          *bin, binary,
+          "{binary} declares ViaBinary against itself; that is OwnFlags"
+        );
+        assert!(!args.is_empty(), "{binary} declares ViaBinary with no args");
+      }
+      VersionProbe::FirstOf(probes) => {
+        assert!(
+          probes.len() > 1,
+          "{binary} declares FirstOf with fewer than two alternatives"
+        );
+        for inner in *probes {
+          assert!(
+            !matches!(inner, VersionProbe::FirstOf(_)),
+            "{binary} nests FirstOf inside FirstOf; flatten it"
+          );
+          check(binary, inner);
+        }
+      }
+    }
+  }
+
+  for entry in all_mstv_entries() {
+    check(entry.binary, &entry.probe);
+  }
+  check("<default>", &DEFAULT_VERSION_PROBE);
+}
+
+/// The default probe is the only place the `--version` then `-v` sequence is
+/// declared, and it is declared as data: `run_probe` adds no second attempt
+/// of its own, so `OwnFlags` runs exactly one command (Fixes #177).
+#[test]
+fn test_default_probe_declares_its_short_flag_fallback_as_data() {
+  assert_eq!(
+    DEFAULT_VERSION_PROBE,
+    VersionProbe::FirstOf(&[
+      VersionProbe::OwnFlags(&["--version"]),
+      VersionProbe::OwnFlags(&["-v"]),
+    ]),
+    "the -v fallback must be visible in the declaration, not hidden in run_probe"
+  );
 }
 
 /// A binary with no registry entry falls back to the conventional
@@ -1101,40 +1166,9 @@ fn test_version_probe_for_defaults_and_resolves_aliases() {
   }
 }
 
-/// [`ProbeArg::ToolPath`] renders as the probed tool's resolved path, so a
-/// via-another-binary probe can name the binary it is asking about (the shape
-/// `go version -m <path>` needs). An unresolvable tool yields no arguments at
-/// all, so the probe is skipped rather than run against a bogus path.
-#[test]
-fn test_render_probe_args_substitutes_the_resolved_tool_path() {
-  let args = &[ProbeArg::Literal("version"), ProbeArg::ToolPath];
-
-  if let Some((path, _)) = resolve_binary_info("cargo") {
-    let rendered = render_probe_args("cargo", args)
-      .expect("cargo resolves, so ToolPath renders");
-    assert_eq!(rendered.len(), 2);
-    assert_eq!(rendered[0], OsString::from("version"));
-    assert_eq!(rendered[1], path.into_os_string());
-  }
-
-  assert_eq!(
-    render_probe_args("formality-no-such-binary-exists", args),
-    None,
-    "an unresolvable tool cannot render a ToolPath argument"
-  );
-  assert_eq!(
-    render_probe_args(
-      "formality-no-such-binary-exists",
-      &[ProbeArg::Literal("version")]
-    ),
-    Some(vec![OsString::from("version")]),
-    "a literal-only probe needs no resolution"
-  );
-}
-
 /// `FirstOf` skips a probe whose binary does not exist and takes the next
 /// one that yields a version — the property clippy's two distribution shapes
-/// depend on (Fixes #177).
+/// and the default probe's `-v` fallback both depend on (Fixes #177).
 #[test]
 fn test_first_of_falls_through_to_the_next_working_probe() {
   if which::which("cargo").is_err() {
@@ -1143,11 +1177,11 @@ fn test_first_of_falls_through_to_the_next_working_probe() {
   let probe = VersionProbe::FirstOf(&[
     VersionProbe::ViaBinary {
       bin: "formality-no-such-binary-exists",
-      args: &[ProbeArg::Literal("--version")],
+      args: &["--version"],
     },
     VersionProbe::ViaBinary {
       bin: "cargo",
-      args: &[ProbeArg::Literal("--version")],
+      args: &["--version"],
     },
   ]);
   let raw = run_probe("cargo", &probe)
