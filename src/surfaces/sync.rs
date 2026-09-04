@@ -1191,8 +1191,10 @@ mod tests {
     // Fixes #130: a surface that syncs two files used to return only the
     // second result, so the first file was created on disk and named
     // nowhere in the output.
-    let merged =
-      merge_sync_results(vec![synced(".markdownlint.json", true, 3), synced(".prettierrc.json", false, 4)]);
+    let merged = merge_sync_results(vec![
+      synced(".markdownlint.json", true, 3),
+      synced(".prettierrc.json", false, 4),
+    ]);
 
     assert_eq!(
       merged.status.synced_file_names(),
@@ -1227,7 +1229,8 @@ mod tests {
         file: ".clang-tidy".to_string(),
         diff: "--- a
 +++ b
-".to_string(),
+"
+        .to_string(),
       },
       duration: std::time::Duration::from_millis(5),
     };

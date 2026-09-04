@@ -151,3 +151,30 @@ fn sync_names_every_file_it_writes() {
     );
   }
 }
+
+#[test]
+fn sync_no_op_reads_as_already_in_sync() {
+  // Issue #130: a second `fml sync` over an already-synced tree rewrites
+  // nothing, and `SurfaceStatus::Passed` rendered `Clean / Formatted` — the
+  // vocabulary of the format pass. Nothing was formatted; the config files
+  // simply already matched formality.toml.
+  let dir = polyglot_repo();
+  let first = run_sync(dir.path(), &[]);
+  assert!(
+    first.contains("Created "),
+    "first sync should have created files:
+{first}"
+  );
+
+  let second = run_sync(dir.path(), &[]);
+  assert!(
+    second.contains("Already in sync"),
+    "a sync no-op should read as already-in-sync:
+{second}"
+  );
+  assert!(
+    !second.contains("Clean / Formatted"),
+    "`fml sync` must not borrow the format pass's vocabulary:
+{second}"
+  );
+}

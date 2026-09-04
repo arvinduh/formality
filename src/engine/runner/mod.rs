@@ -255,7 +255,7 @@ impl Runner {
               crate::ui::table::Style::Strong,
             ),
             crate::ui::table::Cell::styled(
-              "Clean / Formatted",
+              passed_detail(action),
               crate::ui::table::Style::Dim,
             ),
             crate::ui::table::Cell::styled(
@@ -538,6 +538,21 @@ impl Runner {
     println!("  {} in {:.2?}\n", summary_text, start_time.elapsed());
 
     ExitStatus::try_from(exit_code).unwrap_or(ExitStatus::Error)
+  }
+}
+
+/// Detail text for a `[PASS]` row.
+///
+/// `SurfaceStatus::Passed` means "there was nothing to do", which for `fml
+/// sync` is "this native config file already matches formality.toml" — not
+/// "Clean / Formatted" (#130). Nothing was formatted during a sync, and a
+/// user reading `Clean / Formatted` next to a config filename has to guess
+/// whether the file was rewritten.
+fn passed_detail(action: RunnerAction) -> &'static str {
+  if matches!(action, RunnerAction::Sync { .. }) {
+    "Already in sync"
+  } else {
+    "Clean / Formatted"
   }
 }
 

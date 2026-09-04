@@ -6,8 +6,7 @@ use super::{
   DeclaresFacets, ExecutionContext, Facet, FacetSupport, LanguageSurface,
   NativeConfig, SurfaceResult, SurfaceStatus, ToolInfo,
   classify_all_nonzero_as_error, create_tool_command,
-  diff_check_via_tempcopy_classified, find_files_with_ext,
-  merge_sync_results,
+  diff_check_via_tempcopy_classified, find_files_with_ext, merge_sync_results,
   render_native_config, run_tool_command_classified, sync_native_config,
   tool_missing_guard,
 };
