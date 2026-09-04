@@ -207,6 +207,17 @@ impl Runner {
     };
 
     if let RunnerAction::Sync { check } = action {
+      // Shared-config passes: one file claimed by several surfaces is
+      // written here, once, *after* the parallel fan-out above — never from
+      // inside it. `.prettierrc.json` used to be synced by the json,
+      // markdown and yaml surfaces concurrently, three threads racing on one
+      // path (#130); it now follows `.editorconfig`, which was already
+      // modelled this way. Each reports itself as its own row.
+      if let Some(prettier_res) = crate::surfaces::sync_shared_prettier_config(
+        root, config, &surfaces, check,
+      ) {
+        results.push(prettier_res);
+      }
       let editorconfig_res = crate::surfaces::editorconfig::sync_editorconfig(
         root, config, &surfaces, check,
       );
@@ -255,7 +266,7 @@ impl Runner {
               crate::ui::table::Style::Strong,
             ),
             crate::ui::table::Cell::styled(
-              "Clean / Formatted",
+              passed_detail(action),
               crate::ui::table::Style::Dim,
             ),
             crate::ui::table::Cell::styled(
@@ -265,13 +276,13 @@ impl Runner {
             .align(crate::ui::table::Align::Right),
           ]));
         }
-        SurfaceStatus::ConfigSynced { file, created } => {
+        SurfaceStatus::ConfigSynced { files } => {
           pass_count += 1;
-          let detail = if *created {
-            format!("Created {file}")
-          } else {
-            format!("Synced {file}")
-          };
+          // Every file the surface wrote is named, not just the last one
+          // (#130) — a config created on disk but absent from this row is
+          // the worst failure available to a command whose whole job is
+          // writing config files.
+          let detail = synced_files_detail(files);
           runner_table.add_row(crate::ui::table::Row::new(vec![
             crate::ui::table::Cell::styled(
               "[SYNC] ",
@@ -467,12 +478,7 @@ impl Runner {
       "{} {} {}",
       "fml".bold().cyan(),
       action_verb.bold(),
-      format!(
-        "({} surface{})",
-        surfaces.len(),
-        if surfaces.len() == 1 { "" } else { "s" }
-      )
-      .dimmed()
+      format!("({})", header_count_label(results.len())).dimmed()
     );
     println!("{}", frame.section(&title, &rendered_table, &palette));
 
@@ -544,6 +550,56 @@ impl Runner {
 
     ExitStatus::try_from(exit_code).unwrap_or(ExitStatus::Error)
   }
+}
+
+/// Detail text for a `[PASS]` row.
+///
+/// `SurfaceStatus::Passed` means "there was nothing to do", which for `fml
+/// sync` is "this native config file already matches formality.toml" — not
+/// "Clean / Formatted" (#130). Nothing was formatted during a sync, and a
+/// user reading `Clean / Formatted` next to a config filename has to guess
+/// whether the file was rewritten.
+fn passed_detail(action: RunnerAction) -> &'static str {
+  if matches!(action, RunnerAction::Sync { .. }) {
+    "Already in sync"
+  } else {
+    "Clean / Formatted"
+  }
+}
+
+/// Renders the parenthesised count in the run header.
+///
+/// The count is the number of rows the table actually rendered, **not** the
+/// number of matched surfaces (#130). The two diverge for `fml sync`, which
+/// appends shared-config rows (`.editorconfig`, `.prettierrc.json`) after the
+/// per-surface fan-out: counting matched surfaces produced a deterministic
+/// off-by-one on every `fml sync` — the header said `1 surface` while two
+/// rows printed and the footer said `2 passed`. Every row still names one
+/// surface in its second column (the shared passes render as `editorconfig`
+/// and `prettier`), so the noun is unchanged.
+fn header_count_label(row_count: usize) -> String {
+  format!(
+    "{row_count} surface{}",
+    if row_count == 1 { "" } else { "s" }
+  )
+}
+
+/// Renders the detail cell of a `[SYNC]` row: every native config file the
+/// surface wrote, each labelled by whether it was created or updated in
+/// place — `Created .markdownlint.json, Synced .prettierrc.json`.
+///
+/// A surface may sync several files (#130), so this is a list rather than
+/// one filename. Ordering follows the surface's own write order, which is
+/// deterministic, so repeated runs render identically.
+fn synced_files_detail(files: &[crate::surfaces::SyncedConfigFile]) -> String {
+  files
+    .iter()
+    .map(|f| {
+      let verb = if f.created { "Created" } else { "Synced" };
+      format!("{verb} {}", f.file)
+    })
+    .collect::<Vec<_>>()
+    .join(", ")
 }
 
 fn build_ctx(
@@ -676,9 +732,9 @@ fn combine_fix_results(
     }
 
     // 6. ConfigSynced
-    (SurfaceStatus::ConfigSynced { file, created }, _)
-    | (_, SurfaceStatus::ConfigSynced { file, created }) => {
-      SurfaceStatus::ConfigSynced { file, created }
+    (SurfaceStatus::ConfigSynced { files }, _)
+    | (_, SurfaceStatus::ConfigSynced { files }) => {
+      SurfaceStatus::ConfigSynced { files }
     }
 
     // 7. Both skipped

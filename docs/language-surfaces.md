@@ -114,7 +114,8 @@ machine-generated shape.
   keeps `fml lint`'s markdownlint pass from immediately failing on cosmetic
   issues `fml fmt` could have fixed.
 - **Lint**: `markdownlint-cli2`.
-- **Managed config**: `.markdownlint.json`, `.prettierrc.json`.
+- **Managed config**: `.markdownlint.json`, plus the shared `.prettierrc.json`
+  (see below).
 - **`[lang.markdown]` options**: `prose_wrap` (`"always"` / `"never"` /
   `"preserve"`).
 - **Facets**: `indent_tabs`/`indent_width`/`line_length`/`prose_wrap`
@@ -126,8 +127,8 @@ machine-generated shape.
 
 - **Format**: `prettier`.
 - **Lint**: `yamllint`.
-- **Managed config**: `.prettierrc.json` (shared with JSON/Markdown) plus a
-  generated `yamllint` config.
+- **Managed config**: a generated `yamllint` config, plus the shared
+  `.prettierrc.json` (see below).
 - **`[lang.yaml]` options**: `indent_sequence` (whether sequence items are
   indented under their parent key), `document_start` (require the `---` document
   marker), `truthy` (restrict truthy-value spellings, e.g. forbid bare
@@ -141,7 +142,8 @@ machine-generated shape.
 - **Format**: `prettier`.
 - **Lint**: prettier itself acts as the check (`prettier --check`); no dedicated
   JSON linter is wired in.
-- **Managed config**: `.prettierrc.json`.
+- **Managed config**: the shared `.prettierrc.json` only (see below); JSON has
+  no native config of its own.
 - **`[lang.json]` options**: none currently (reserved for future knobs).
 - **Facets**: `indent_tabs`/`indent_width` configurable; `quote_style` **fixed**
   to `double` and `trailing_comma` **fixed** to `none` — both are JSON-spec
@@ -208,6 +210,32 @@ machine-generated shape.
   `indent_width`/`line_length`/`trailing_comma`/`import_sort` configurable;
   `prose_wrap`, `edition`, `standard` unsupported.
 - **`supports_lint_fix`**: `true`.
+
+---
+
+## Shared config files
+
+Two managed files are not owned by any one surface, because more than one
+surface needs them:
+
+- **`.editorconfig`** — aggregates every active surface's layout facets.
+- **`.prettierrc.json`** — used by the Markdown, YAML and JSON surfaces, which
+  all format via `prettier`.
+
+`fml sync` writes each of them **once**, in a pass that runs after the
+per-surface fan-out and reports itself under its own name (`editorconfig`,
+`prettier`). A surface declares that it consumes the prettier config via
+`LanguageSurface::uses_prettier`; it must never sync that file from its own
+`sync_config`. Three surfaces doing exactly that raced on one path under
+`surfaces.par_iter()`, which made the report nondeterministic and risked a
+sharing violation on Windows (#130).
+
+Because there is one file, all of its surfaces must resolve it the same way.
+Conflicting `[lang.<name>]` overrides — say `[lang.markdown] line_length = 100`
+against a global `80` — are reported as an explicit error naming the surfaces
+and the settings they disagree on, and nothing is written. `fml fmt` is
+unaffected either way: it passes each surface's own settings to `prettier`
+inline and never reads the file.
 
 ---
 

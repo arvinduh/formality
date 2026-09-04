@@ -670,10 +670,7 @@ mod tests {
     let ctx = test_ctx(temp.path(), lang_cfg);
 
     let res = surface.sync_config(&ctx, false);
-    assert!(matches!(
-      res.status,
-      SurfaceStatus::ConfigSynced { created: true, .. }
-    ));
+    assert_eq!(res.status.created_file_names(), ["biome.json"]);
 
     let config_path = temp.path().join("biome.json");
     assert!(config_path.is_file());

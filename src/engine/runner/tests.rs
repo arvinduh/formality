@@ -361,3 +361,52 @@ fn test_execution_context_candidate_files_filtering() {
   assert!(!matched.contains(&PathBuf::from("/ws/src/ignored.rs")));
   assert!(!matched.contains(&PathBuf::from("/ws/script.py")));
 }
+
+#[test]
+fn test_passed_detail_reads_as_already_in_sync_for_sync() {
+  // Issue #130: a `fml sync` no-op rendered `Clean / Formatted`, which is the
+  // wrong vocabulary — nothing was formatted, the config file simply already
+  // matched formality.toml.
+  assert_eq!(
+    passed_detail(RunnerAction::Sync { check: false }),
+    "Already in sync"
+  );
+  assert_eq!(
+    passed_detail(RunnerAction::Sync { check: true }),
+    "Already in sync"
+  );
+  assert_eq!(
+    passed_detail(RunnerAction::Format { check: false }),
+    "Clean / Formatted"
+  );
+  assert_eq!(
+    passed_detail(RunnerAction::Lint { fix: false }),
+    "Clean / Formatted"
+  );
+  assert_eq!(passed_detail(RunnerAction::Fix), "Clean / Formatted");
+}
+
+#[test]
+fn test_header_count_label_pluralizes_on_the_row_count() {
+  // Issue #130: the count is the number of rendered rows, not the number of
+  // matched surfaces — `fml sync` appends shared-config rows after the fan-out.
+  assert_eq!(header_count_label(1), "1 surface");
+  assert_eq!(header_count_label(2), "2 surfaces");
+  assert_eq!(header_count_label(0), "0 surfaces");
+}
+
+#[test]
+fn test_synced_files_detail_names_every_file() {
+  use crate::surfaces::SyncedConfigFile;
+  assert_eq!(
+    synced_files_detail(&[
+      SyncedConfigFile::new(".clang-format", true),
+      SyncedConfigFile::new(".clang-tidy", false),
+    ]),
+    "Created .clang-format, Synced .clang-tidy"
+  );
+  assert_eq!(
+    synced_files_detail(&[SyncedConfigFile::new(".rustfmt.toml", true)]),
+    "Created .rustfmt.toml"
+  );
+}
