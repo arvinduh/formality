@@ -321,6 +321,18 @@ If the tool has no native config file (driven entirely by CLI flags or
 `.editorconfig`), `sync_config()` can return `SurfaceStatus::Passed` or
 `SurfaceStatus::Skipped`.
 
+If the surface syncs **more than one** file, run each through `sync_file_helper`
+with its own `Instant::now()` and fold the results with `merge_sync_results` —
+returning just one of them hides the others from `fml sync`'s output, which is
+what #130 fixed.
+
+**Never sync a file another surface also claims.** A shared file gets one
+writer, in a pass that runs after the parallel fan-out (`sync_editorconfig`,
+`sync_shared_prettier_config`); the surface only _declares_ that it consumes it.
+If your tool is `prettier`, override `uses_prettier()` to return `true` and sync
+nothing for that file. See "Shared config files" in
+[`language-surfaces.md`](language-surfaces.md).
+
 ---
 
 ## 6. Soft / Optional Integrations

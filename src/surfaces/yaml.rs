@@ -6,9 +6,8 @@ use super::{
   NativeConfig, PrettierConfig, SurfaceResult, ToolInfo,
   build_prettier_inline_args, classify_all_nonzero_as_error,
   create_tool_command, diff_check_via_tempcopy_classified, find_files_with_ext,
-  lint_fix_unsupported, merge_sync_results, render_native_config,
-  run_tool_command, run_tool_command_classified, sync_native_config,
-  sync_prettier_config, tool_missing_guard,
+  lint_fix_unsupported, render_native_config, run_tool_command,
+  run_tool_command_classified, sync_native_config, tool_missing_guard,
 };
 use serde::{Deserialize, Serialize};
 use std::path::Path;
@@ -314,33 +313,30 @@ impl LanguageSurface for YamlSurface {
     run_tool_command(self.name(), &mut cmd)
   }
 
+  fn uses_prettier(&self) -> bool {
+    true
+  }
+
   // `fml fmt`/`fml lint` no longer go through this path (Fixes #151): they
   // pass the resolved config to prettier/yamllint inline (see
   // `build_prettier_inline_args` and `build_yamllint_inline_config`, used in
   // `format()`/`lint()` above). This method is now reached only by `fml
-  // sync`, for users who explicitly want `.yamllint.yaml` and
-  // `.prettierrc.json` materialized on disk (Fixes #158: previously this
-  // never called `sync_native_config::<YamllintConfig>`, so `.yamllint.yaml`
-  // was never actually written by `fml sync`).
+  // sync`, for users who explicitly want `.yamllint.yaml` materialized on
+  // disk (Fixes #158: previously this never called
+  // `sync_native_config::<YamllintConfig>`, so `.yamllint.yaml` was never
+  // actually written by `fml sync`).
+  //
+  // `.prettierrc.json` is deliberately not written here — it is shared with
+  // the JSON and Markdown surfaces and has exactly one writer, the shared
+  // pass `sync_shared_prettier_config` (#130). `uses_prettier` above is this
+  // surface's declaration that it consumes that file.
   fn sync_config(&self, ctx: &ExecutionContext, check: bool) -> SurfaceResult {
-    // Each file is timed from its own `Instant`; `merge_sync_results` sums
-    // the durations it is handed.
-    let yamllint_res = sync_native_config::<YamllintConfig>(
+    sync_native_config::<YamllintConfig>(
       ctx,
       check,
       Instant::now(),
       self.name(),
-    );
-    if !yamllint_res.is_success() {
-      return yamllint_res;
-    }
-
-    // Also sync .prettierrc.json. Both filenames are reported (#130):
-    // returning only the prettier result hid `.yamllint.yaml` from the
-    // output.
-    let prettier_res =
-      sync_prettier_config(ctx, check, Instant::now(), self.name());
-    merge_sync_results(vec![yamllint_res, prettier_res])
+    )
   }
 }
 
@@ -428,7 +424,7 @@ mod tests {
   }
 
   #[test]
-  fn test_yaml_sync_config_writes_prettier_and_yamllint() {
+  fn test_yaml_sync_config_writes_yamllint_config() {
     let temp = TempDir::new().unwrap();
     let surface = YamlSurface;
     let mut lang_cfg = ResolvedLangConfig::new("yaml");
@@ -443,12 +439,11 @@ mod tests {
     let ctx = test_ctx(temp.path(), lang_cfg);
 
     let res = surface.sync_config(&ctx, false);
-    // Fixes #130: both files this surface writes are named in its result.
-    assert_eq!(
-      res.status.created_file_names(),
-      [".yamllint.yaml", ".prettierrc.json"]
-    );
-    assert!(temp.path().join(".prettierrc.json").is_file());
+    // Fixes #130: the file this surface writes is named in its result, and
+    // the shared `.prettierrc.json` is not written from inside the fan-out.
+    assert_eq!(res.status.created_file_names(), [".yamllint.yaml"]);
+    assert!(surface.uses_prettier());
+    assert!(!temp.path().join(".prettierrc.json").exists());
 
     // Fixes #158: `fml sync` must also materialize `.yamllint.yaml`.
     let yamllint_path = temp.path().join(".yamllint.yaml");

@@ -48,7 +48,8 @@ pub use native::{
   serialize_yaml_with_header, sync_editorconfig, sync_native_config,
 };
 pub use prettier::{
-  PrettierConfig, build_prettier_inline_args, sync_prettier_config,
+  PRETTIER_PASS_NAME, PrettierConfig, build_prettier_inline_args,
+  sync_prettier_config, sync_shared_prettier_config,
 };
 
 pub use crate::config::facets::{DeclaresFacets, Facet, FacetSupport};
@@ -429,7 +430,23 @@ pub trait LanguageSurface: DeclaresFacets + Send + Sync {
     false
   }
   /// Synchronizes native tool configuration file.
+  ///
+  /// A surface must **not** sync `.prettierrc.json` here even if it formats
+  /// via prettier — that file is shared by several surfaces and is written
+  /// once by [`prettier::sync_shared_prettier_config`], outside the runner's
+  /// parallel fan-out. Declare [`LanguageSurface::uses_prettier`] instead.
   fn sync_config(&self, ctx: &ExecutionContext, check: bool) -> SurfaceResult;
+  /// Whether this surface formats via `prettier` and therefore shares the
+  /// single root `.prettierrc.json` with every other prettier surface.
+  ///
+  /// Declaring this — rather than each surface syncing the file itself — is
+  /// what gives that file exactly one writer (#130). Three surfaces calling
+  /// `sync_prettier_config` from their own `sync_config` raced on one path
+  /// under `surfaces.par_iter()`, making the report nondeterministic and
+  /// risking a sharing violation on Windows.
+  fn uses_prettier(&self) -> bool {
+    false
+  }
   /// Clones the surface into a boxed trait object.
   fn clone_box(&self) -> Box<dyn LanguageSurface>;
 }

@@ -3,11 +3,10 @@
 
 use super::{
   DeclaresFacets, ExecutionContext, Facet, FacetSupport, LanguageSurface,
-  NativeConfig, PrettierConfig, SurfaceResult, ToolInfo,
+  NativeConfig, PrettierConfig, SurfaceResult, SurfaceStatus, ToolInfo,
   build_prettier_inline_args, classify_all_nonzero_as_error,
   create_tool_command, diff_check_via_tempcopy_classified, find_files_with_ext,
-  lint_fix_unsupported, run_tool_command_classified, sync_prettier_config,
-  tool_missing_guard,
+  lint_fix_unsupported, run_tool_command_classified, tool_missing_guard,
 };
 use std::path::{Path, PathBuf};
 use std::time::Instant;
@@ -159,17 +158,32 @@ impl LanguageSurface for JsonSurface {
     self.format(&check_ctx)
   }
 
-  // `fml fmt` no longer goes through this path (Fixes #151): it passes the
-  // resolved config to prettier inline (see `build_prettier_inline_args`,
-  // used in `format()` above). This method is now reached only by `fml
-  // sync`, for users who explicitly want `.prettierrc.json` materialized on
-  // disk.
-  fn sync_config(&self, ctx: &ExecutionContext, check: bool) -> SurfaceResult {
-    // JSON formatting uses Prettier; its layout configuration is shared and
-    // emitted via `PrettierConfig` (.prettierrc.json), so there is no standalone
-    // native JSON formatter config struct to maintain.
-    let start = Instant::now();
-    sync_prettier_config(ctx, check, start, self.name())
+  fn uses_prettier(&self) -> bool {
+    true
+  }
+
+  // JSON formats via prettier and has no native config of its own: its only
+  // managed file is `.prettierrc.json`, which is shared with the Markdown
+  // and YAML surfaces. That file is written once by the shared pass
+  // (`sync_shared_prettier_config`), outside this parallel fan-out, because
+  // three surfaces racing to write one path made the report
+  // nondeterministic — see #130 and `uses_prettier` above. There is
+  // therefore nothing left for this surface to sync on its own.
+  fn sync_config(
+    &self,
+    _ctx: &ExecutionContext,
+    _check: bool,
+  ) -> SurfaceResult {
+    SurfaceResult {
+      surface_name: self.name(),
+      status: SurfaceStatus::Skipped {
+        reason: format!(
+          "No config of its own (shares {})",
+          PrettierConfig::FILE_NAME
+        ),
+      },
+      duration: std::time::Duration::default(),
+    }
   }
 }
 
@@ -286,13 +300,24 @@ mod tests {
   }
 
   #[test]
-  fn test_json_sync_config_delegates_to_prettier() {
+  fn test_json_sync_config_does_not_claim_the_shared_prettierrc() {
+    // Fixes #130: `.prettierrc.json` is shared with the markdown and yaml
+    // surfaces, and all three used to sync it from their own `sync_config`,
+    // which the runner calls under `par_iter()`. The file now has exactly
+    // one writer — `sync_shared_prettier_config`, outside the fan-out — so
+    // this surface writes nothing and says so.
     let temp = TempDir::new().unwrap();
     let surface = JsonSurface;
+    assert!(surface.uses_prettier());
+
     let ctx = test_ctx(temp.path(), ResolvedLangConfig::new("json"));
     let res = surface.sync_config(&ctx, false);
-    assert_eq!(res.status.created_file_names(), [".prettierrc.json"]);
-    assert!(temp.path().join(".prettierrc.json").is_file());
+
+    assert!(matches!(res.status, SurfaceStatus::Skipped { .. }));
+    assert!(
+      !temp.path().join(".prettierrc.json").exists(),
+      "the shared config must not be written from inside the fan-out"
+    );
   }
 
   #[test]

@@ -9,9 +9,8 @@ use super::{
   SurfaceStatus, ToolInfo, build_prettier_inline_args, check_binary_exists,
   classify_all_nonzero_as_error, classify_exit_one_as_violation,
   create_tool_command, diff_check_via_tempcopy_classified, find_files_with_ext,
-  merge_sync_results, render_native_config, run_tool_command,
-  run_tool_command_classified, sync_native_config, sync_prettier_config,
-  tool_missing_guard,
+  render_native_config, run_tool_command, run_tool_command_classified,
+  sync_native_config, tool_missing_guard,
 };
 use crate::config::ResolvedLangConfig;
 use serde::{Deserialize, Serialize};
@@ -545,33 +544,28 @@ impl LanguageSurface for MarkdownSurface {
     res
   }
 
-  // `fml fmt`'s prettier pass no longer goes through the `.prettierrc.json`
-  // half of this path (Fixes #151): it passes those settings to prettier
-  // inline (see `build_prettier_inline_args`, used in `format()` above).
-  // `.markdownlint.json` is still written here because `fml fmt`'s
+  fn uses_prettier(&self) -> bool {
+    true
+  }
+
+  // `.markdownlint.json` is written here because `fml fmt`'s
   // markdownlint-cli2 pass and `fml lint` both still consume it — see the
   // comment in `format()` for why that tool can't take its settings inline.
-  // This method (both halves) is otherwise reached only by `fml sync`, for
-  // users who explicitly want the native files materialized on disk.
+  //
+  // `.prettierrc.json` is deliberately *not* written here even though this
+  // surface formats via prettier: it is shared with the JSON and YAML
+  // surfaces, and syncing it from all three under `surfaces.par_iter()` put
+  // three threads on one path (#130). The shared pass
+  // (`sync_shared_prettier_config`) owns it; `uses_prettier` above is this
+  // surface's declaration that it consumes it. `fml fmt` is unaffected — it
+  // passes prettier's settings inline (Fixes #151).
   fn sync_config(&self, ctx: &ExecutionContext, check: bool) -> SurfaceResult {
-    // Each file is timed from its own `Instant`; `merge_sync_results` sums
-    // the durations it is handed.
-    let md_res = sync_native_config::<MarkdownlintConfig>(
+    sync_native_config::<MarkdownlintConfig>(
       ctx,
       check,
       Instant::now(),
       self.name(),
-    );
-    if !md_res.is_success() {
-      return md_res;
-    }
-
-    // Also sync .prettierrc.json. Both filenames are reported (#130):
-    // returning only the prettier result meant `.markdownlint.json` was
-    // created on disk and named nowhere in the output.
-    let prettier_res =
-      sync_prettier_config(ctx, check, Instant::now(), self.name());
-    merge_sync_results(vec![md_res, prettier_res])
+    )
   }
 }
 
@@ -889,25 +883,22 @@ README.md:7 error MD025/single-title/single-h1 Multiple top-level headings";
     let ctx = test_ctx(temp.path(), lang_cfg);
 
     let res = surface.sync_config(&ctx, false);
-    // Fixes #130: both files this surface writes are named in its
-    // result. Returning only the prettier half left `.markdownlint.json`
+    // Fixes #130: the file this surface writes is named in its result. It
+    // used to return only the prettier half, leaving `.markdownlint.json`
     // created on disk and reported nowhere.
-    assert_eq!(
-      res.status.created_file_names(),
-      [".markdownlint.json", ".prettierrc.json"]
-    );
+    assert_eq!(res.status.created_file_names(), [".markdownlint.json"]);
 
     let md_path = temp.path().join(".markdownlint.json");
-    let prettier_path = temp.path().join(".prettierrc.json");
     assert!(md_path.is_file());
-    assert!(prettier_path.is_file());
 
     let md_content = std::fs::read_to_string(&md_path).unwrap();
-    let prettier_content = std::fs::read_to_string(&prettier_path).unwrap();
-
     assert!(md_content.contains("\"line_length\": 100"));
-    assert!(prettier_content.contains("\"printWidth\": 100"));
-    assert!(prettier_content.contains("\"$comment\""));
+
+    // `.prettierrc.json` is shared with the json and yaml surfaces and is
+    // written once by `sync_shared_prettier_config`, outside the runner's
+    // parallel fan-out — never from here (#130).
+    assert!(surface.uses_prettier());
+    assert!(!temp.path().join(".prettierrc.json").exists());
   }
 
   #[test]

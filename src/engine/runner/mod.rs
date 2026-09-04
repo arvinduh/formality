@@ -207,6 +207,17 @@ impl Runner {
     };
 
     if let RunnerAction::Sync { check } = action {
+      // Shared-config passes: one file claimed by several surfaces is
+      // written here, once, *after* the parallel fan-out above — never from
+      // inside it. `.prettierrc.json` used to be synced by the json,
+      // markdown and yaml surfaces concurrently, three threads racing on one
+      // path (#130); it now follows `.editorconfig`, which was already
+      // modelled this way. Each reports itself as its own row.
+      if let Some(prettier_res) = crate::surfaces::sync_shared_prettier_config(
+        root, config, &surfaces, check,
+      ) {
+        results.push(prettier_res);
+      }
       let editorconfig_res = crate::surfaces::editorconfig::sync_editorconfig(
         root, config, &surfaces, check,
       );
