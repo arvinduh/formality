@@ -3,8 +3,9 @@
 
 use super::{
   DeclaresFacets, ExecutionContext, Facet, FacetSupport, LanguageSurface,
-  NativeConfig, SurfaceResult, ToolInfo, classify_all_nonzero_as_error,
-  create_tool_command, diff_check_via_tempcopy_classified, find_files_with_ext,
+  NativeConfig, SurfaceResult, SurfaceStatus, ToolInfo,
+  classify_all_nonzero_as_error, create_tool_command,
+  diff_check_via_tempcopy_classified, extra_args_set_flag, find_files_with_ext,
   render_native_config, run_tool_command, run_tool_command_classified,
   sync_native_config, tool_missing_guard,
 };
@@ -237,6 +238,39 @@ pub fn build_biome_inline_format_args(cfg: &BiomeConfig) -> Vec<String> {
   ]
 }
 
+/// The biome flag `fml fmt` passes to keep the linter out of the Smart Format
+/// pass, and the value it passes it with. Named because the format path both
+/// passes it and refuses an `extra_args` override of it (see
+/// [`linter_enabled_override_message`]).
+const BIOME_LINTER_ENABLED_FLAG: &str = "--linter-enabled";
+/// The value [`BIOME_LINTER_ENABLED_FLAG`] is passed with on the format path.
+const BIOME_LINTER_ENABLED_VALUE: &str = "false";
+
+/// Builds the message for an `extra_args` entry that sets biome's
+/// `--linter-enabled` on the format path, quoting the offending argument back
+/// at the user.
+///
+/// Fixes #173: `--linter-enabled=false` is load-bearing for this path's
+/// exit-code contract, not a stylistic preference — with the linter on,
+/// `biome check --write` exits `1` for an unfixable lint diagnostic, which is
+/// a violation, while this path's `classify_all_nonzero_as_error` (correct for
+/// the flag `fml` actually passes) would report it as `[ERR] Execution error`.
+/// Restating `=false` is refused too, because biome rejects the flag given
+/// twice — see [`extra_args_set_flag`].
+fn linter_enabled_override_message(offending: &str) -> String {
+  format!(
+    "`[lang.javascript] extra_args` contains `{offending}`, but `fml fmt` \
+     already passes `{BIOME_LINTER_ENABLED_FLAG}={BIOME_LINTER_ENABLED_VALUE}` \
+     to `biome check --write` — and biome rejects that flag given twice.\n\n\
+     The flag is not a style preference here: it pins biome's exit-code \
+     contract for the format pass. With the linter re-enabled, an unfixable \
+     lint diagnostic exits non-zero, and `fml` would report that lint result \
+     as an execution error rather than as violations found.\n\nRemove \
+     `{BIOME_LINTER_ENABLED_FLAG}` from `extra_args` and run linting through \
+     `fml lint` (which is where biome's linter belongs) instead."
+  )
+}
+
 /// Builds the argument list for the "Smart Format" pass: `biome check --write`
 /// with the linter disabled so this step only applies formatting and (per
 /// `biome.json`'s `organizeImports.enabled`) import sorting — never lint fixes.
@@ -249,7 +283,7 @@ pub fn build_biome_format_args(
   let mut args = vec![
     "check".to_string(),
     "--write".to_string(),
-    "--linter-enabled=false".to_string(),
+    format!("{BIOME_LINTER_ENABLED_FLAG}={BIOME_LINTER_ENABLED_VALUE}"),
   ];
   if files.is_empty() {
     args.push(".".to_string());
@@ -357,6 +391,24 @@ impl LanguageSurface for JavaScriptSurface {
     let files = ctx.matched_files(JS_TS_EXTENSIONS);
     if let Some(res) = ctx.early_out_if_empty(&files, self.name(), start) {
       return res;
+    }
+
+    // Fixes #173: refuse, with an explanation, rather than run a command
+    // whose exit code no longer means what this path's classifier assumes.
+    // Only checked here, not in `lint()`: `--linter-enabled` is a flag the
+    // format path passes itself, and biome's linter is exactly what `fml
+    // lint` is supposed to run.
+    if let Some(offending) = extra_args_set_flag(
+      BIOME_LINTER_ENABLED_FLAG,
+      &ctx.lang_config.extra_args,
+    ) {
+      return SurfaceResult {
+        surface_name: self.name(),
+        status: SurfaceStatus::ExecutionError {
+          message: linter_enabled_override_message(&offending),
+        },
+        duration: start.elapsed(),
+      };
     }
 
     // Inline `--indent-style`/`--line-width`/etc. instead of writing
@@ -756,5 +808,100 @@ mod tests {
       res.status
     );
     assert!(!res.is_success());
+  }
+
+  /// Builds a context over a lone clean `.ts` file whose `extra_args` carry
+  /// `extra`, for the `--linter-enabled` guard tests below.
+  fn ctx_with_extra_args(temp: &TempDir, extra: &[&str]) -> ExecutionContext {
+    std::fs::write(temp.path().join("a.ts"), "const x = 1;\n").unwrap();
+    let mut lang = ResolvedLangConfig::new("javascript");
+    lang.extra_args = extra.iter().map(|s| (*s).to_string()).collect();
+    test_ctx(temp.path(), lang)
+  }
+
+  /// Asserts `res` is the `--linter-enabled` override refusal, not some other
+  /// `ExecutionError` (a real biome failure would also be `ExecutionError`,
+  /// so matching on the variant alone would be a vacuous assertion).
+  fn assert_linter_override_refusal(res: &SurfaceResult) {
+    match &res.status {
+      SurfaceStatus::ExecutionError { message } => {
+        assert!(
+          message.contains("--linter-enabled")
+            && message.contains("extra_args")
+            && message.contains("fml lint"),
+          "diagnostic must name the flag, where it came from, and the way \
+           out; got: {message}"
+        );
+      }
+      other => panic!("expected ExecutionError, got {other:?}"),
+    }
+    assert!(!res.is_success());
+  }
+
+  #[test]
+  fn test_javascript_format_refuses_extra_args_linter_enabled_override() {
+    // Fixes #173: `--linter-enabled=true` in `extra_args` undoes the
+    // `--linter-enabled=false` the format path passes, re-enabling an exit
+    // code that means "found an unfixable lint violation". The format path's
+    // `classify_all_nonzero_as_error` would report that lint result as
+    // `[ERR] Execution error`; the surface refuses with an actionable
+    // diagnostic instead of running a command it would mislabel. Asserted on
+    // both the `--check` and write branches, which pass the flag alike.
+    if !check_binary_exists("biome") {
+      return;
+    }
+    let temp = TempDir::new().unwrap();
+    let ctx = ctx_with_extra_args(&temp, &["--linter-enabled=true"]);
+    assert_linter_override_refusal(&JavaScriptSurface.format(&ctx));
+
+    let mut check_ctx = ctx_with_extra_args(&temp, &["--linter-enabled=true"]);
+    check_ctx.check_only = true;
+    assert_linter_override_refusal(&JavaScriptSurface.format(&check_ctx));
+  }
+
+  #[test]
+  fn test_javascript_format_refuses_redundant_linter_enabled_restatement() {
+    // Fixes #173: `--linter-enabled=false` restates what `fml fmt` already
+    // passes, so it does not change the exit-code contract — but biome
+    // rejects the duplicate flag outright ("argument `--linter-enabled`
+    // cannot be used multiple times in this context"), which the classifier
+    // reports as a bare `[ERR]`. The guard's message explains the actual
+    // cause, so it covers this spelling too rather than letting it through.
+    if !check_binary_exists("biome") {
+      return;
+    }
+    let temp = TempDir::new().unwrap();
+    let ctx = ctx_with_extra_args(&temp, &["--linter-enabled=false"]);
+    assert_linter_override_refusal(&JavaScriptSurface.format(&ctx));
+  }
+
+  #[test]
+  fn test_javascript_format_allows_unrelated_extra_args() {
+    // The #173 guard is narrow: only the one flag `fml` passes itself is
+    // refused. An unrelated `extra_args` entry must still format normally, or
+    // the guard would be a regression for every other user.
+    if !check_binary_exists("biome") {
+      return;
+    }
+    let temp = TempDir::new().unwrap();
+    let ctx = ctx_with_extra_args(&temp, &["--no-errors-on-unmatched"]);
+    let res = JavaScriptSurface.format(&ctx);
+    assert!(
+      res.is_success(),
+      "an unrelated extra_args entry must still format, got: {:?}",
+      res.status
+    );
+  }
+
+  #[test]
+  fn test_linter_enabled_override_message_quotes_the_offending_argument() {
+    // Hermetic (no biome needed): the diagnostic echoes the argument as the
+    // user wrote it, so it is greppable in their own `formality.toml`.
+    let message = linter_enabled_override_message("--linter-enabled true");
+    assert!(
+      message.contains("`--linter-enabled true`"),
+      "got: {message}"
+    );
+    assert!(message.contains("--linter-enabled=false"), "got: {message}");
   }
 }

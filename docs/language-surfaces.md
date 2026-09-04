@@ -180,6 +180,9 @@ machine-generated shape.
   `trailing_comma`/`import_sort` all configurable; `prose_wrap`, `edition`,
   `standard` unsupported.
 - **`supports_lint_fix`**: `true`.
+- **`extra_args` caveat**: `--linter-enabled` is refused — `fml fmt` passes it
+  itself, see
+  [`extra_args` and exit-code contracts](#extra_args-and-exit-code-contracts).
 
 ## Kotlin
 
@@ -198,6 +201,42 @@ machine-generated shape.
   `indent_width`/`line_length`/`trailing_comma`/`import_sort` configurable;
   `prose_wrap`, `edition`, `standard` unsupported.
 - **`supports_lint_fix`**: `true`.
+
+---
+
+## `extra_args` and exit-code contracts
+
+`[lang.<name>] extra_args` is appended **after** `fml`'s own flags, so a
+user-supplied value wins. For nearly every flag that is the intent. A few flags
+are different: they change what a non-zero exit code _means_.
+
+Each surface decides whether a non-zero exit is "ran, found violations"
+(`[FAIL]`) or "could not run" (`[ERR]`, process exit 2) from the tool's
+exit-code contract _as `fml` invokes it_. An `extra_args` entry that
+reintroduces a "ran fine, and found/changed something" exit code makes that
+decision wrong, and a lint finding gets reported as an execution error.
+
+The flags known to do this:
+
+| Surface        | Flag                     | What you'll see                                                                                                                              |
+| -------------- | ------------------------ | -------------------------------------------------------------------------------------------------------------------------------------------- |
+| **javascript** | `--linter-enabled`       | **Refused** with an explanatory `[ERR]` — see below.                                                                                         |
+| **python**     | `--extend-select <rule>` | On the `ruff check --select I --fix` import pass, an unfixable violation exits 1 and is reported as `[ERR] Execution error`, not `[FAIL]`.   |
+| **java**       | `--set-exit-if-changed`  | `google-java-format --replace` exits non-zero for "reformatted a file", reported as `[ERR] Execution error` rather than a successful format. |
+
+Only the javascript case is guarded, because it is the only one where the flag
+directly contradicts a flag `fml` itself passes (`fml fmt` runs
+`biome check --write --linter-enabled=false`), which makes the user's intent
+unambiguous. `fml fmt` refuses to run that surface and explains why, rather than
+running a command whose result it would mislabel — configure biome's linter
+under `fml lint` instead, where it belongs. This applies to
+`--linter-enabled=false` as well: biome rejects the flag given twice.
+
+The other two are documented rather than guarded. Blocking flags `fml` does not
+pass would mean maintaining an enumeration of each tool's flag vocabulary, which
+goes stale every time a tool adds one. See
+[ADR 0005](adr/0005-extra-args-exit-code-contracts.md) for the full reasoning
+and the rejected alternatives.
 
 ---
 

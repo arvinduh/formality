@@ -72,8 +72,8 @@ pub use sync::{
 pub use tooling::{
   ExitClass, InstallMethod, chain_wants_cargo_binstall, check_binary_exists,
   classify_all_nonzero_as_error, classify_exit_one_as_violation,
-  create_tool_command, ensure_cargo_binstall, forget_binary,
-  has_cargo_binstall, install_chain_for, lint_fix_unsupported,
+  create_tool_command, ensure_cargo_binstall, extra_args_set_flag,
+  forget_binary, has_cargo_binstall, install_chain_for, lint_fix_unsupported,
   pinned_installer_for, pinned_version_for, refresh_go_install_path,
   refresh_path_after_install, refresh_windows_path_from_registry,
   resolve_binary_path, run_tool_command, run_tool_command_classified,
