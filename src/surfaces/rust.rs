@@ -4,9 +4,9 @@
 use super::{
   DeclaresFacets, ExecutionContext, Facet, FacetSupport, LanguageSurface,
   NativeConfig, SurfaceResult, SurfaceStatus, ToolInfo, check_binary_exists,
-  create_tool_command, find_files_with_ext, render_native_config,
-  run_tool_command, sync_native_config, tool_missing_guard,
-  tool_missing_result,
+  create_tool_command, find_files_with_ext, find_manifest_upwards,
+  render_native_config, run_tool_command, sync_native_config,
+  tool_missing_guard, tool_missing_result,
 };
 use serde::{Deserialize, Serialize};
 use std::path::{Path, PathBuf};
@@ -309,7 +309,12 @@ impl LanguageSurface for RustSurface {
     // fails immediately with "could not find `Cargo.toml`" which is an
     // environment/setup problem, not a lint violation in the code. Surface
     // it as an actionable execution error instead of `Violations found`.
-    if !ctx.root.join("Cargo.toml").exists() {
+    // `cargo` itself resolves the manifest by walking upward from the
+    // working directory (`ctx.root`) through every ancestor, so this guard
+    // must do the same via `find_manifest_upwards` (Fixes #185) — checking
+    // only `ctx.root` produced false errors for any subdirectory of a real
+    // crate, despite the message below already claiming to check parents.
+    if !find_manifest_upwards(&ctx.root, "Cargo.toml") {
       return SurfaceResult {
         surface_name: self.name(),
         status: SurfaceStatus::ExecutionError {
@@ -366,6 +371,64 @@ mod tests {
       other => {
         panic!("expected ExecutionError for missing Cargo.toml, got {other:?}")
       }
+    }
+  }
+
+  #[test]
+  fn test_lint_cargo_toml_in_ancestor_directory_is_not_guarded() {
+    // A subdirectory of a real crate (Cargo.toml lives above `ctx.root`,
+    // mirroring a nested workspace-member layout, e.g. `src/deep`) must not
+    // trip the preflight guard (Fixes #185) — `cargo clippy` itself
+    // resolves a manifest by walking upward from the working directory
+    // exactly the same way, so the guard must mirror that instead of
+    // checking only `ctx.root`.
+    if !check_binary_exists("cargo") {
+      return;
+    }
+    let temp = TempDir::new().unwrap();
+    std::fs::write(
+      temp.path().join("Cargo.toml"),
+      "[package]\nname = \"testcrate\"\nversion = \"0.1.0\"\nedition = \"2021\"\n",
+    )
+    .unwrap();
+    let nested = temp.path().join("src").join("deep");
+    std::fs::create_dir_all(&nested).unwrap();
+    std::fs::write(temp.path().join("src").join("lib.rs"), "pub mod deep;\n")
+      .unwrap();
+    std::fs::write(nested.join("mod.rs"), "pub fn f() {}\n").unwrap();
+
+    let surface = RustSurface;
+    let ctx = test_ctx(&nested, ResolvedLangConfig::new("rust"));
+    let res = surface.lint(&ctx, false);
+
+    if let SurfaceStatus::ExecutionError { message } = &res.status {
+      assert!(
+        !message.contains("No Cargo.toml found"),
+        "Cargo.toml in an ancestor directory must not trip the \
+         missing-manifest guard, got: {message}"
+      );
+    }
+  }
+
+  #[test]
+  fn test_lint_directory_named_cargo_toml_is_not_treated_as_manifest() {
+    // `.is_file()`, not `.exists()` (Fixes #185): a directory that happens
+    // to be named `Cargo.toml` must not be mistaken for the manifest.
+    let temp = TempDir::new().unwrap();
+    std::fs::create_dir(temp.path().join("Cargo.toml")).unwrap();
+
+    let surface = RustSurface;
+    let ctx = test_ctx(temp.path(), ResolvedLangConfig::new("rust"));
+    let res = surface.lint(&ctx, false);
+
+    match res.status {
+      SurfaceStatus::ExecutionError { message } => {
+        assert!(message.contains("No Cargo.toml found"));
+      }
+      other => panic!(
+        "a directory named Cargo.toml must not be treated as a manifest, \
+         got {other:?}"
+      ),
     }
   }
 
