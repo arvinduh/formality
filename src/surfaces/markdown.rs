@@ -9,7 +9,7 @@ use super::{
   SurfaceStatus, ToolInfo, build_prettier_inline_args, check_binary_exists,
   classify_all_nonzero_as_error, classify_exit_one_as_violation,
   create_tool_command, diff_check_via_tempcopy_classified, find_files_with_ext,
-  render_native_config, run_tool_command, run_tool_command_classified,
+  merge_sync_results, render_native_config, run_tool_command, run_tool_command_classified,
   sync_native_config, sync_prettier_config, tool_missing_guard,
 };
 use crate::config::ResolvedLangConfig;
@@ -553,15 +553,24 @@ impl LanguageSurface for MarkdownSurface {
   // This method (both halves) is otherwise reached only by `fml sync`, for
   // users who explicitly want the native files materialized on disk.
   fn sync_config(&self, ctx: &ExecutionContext, check: bool) -> SurfaceResult {
-    let start = Instant::now();
-    let md_res =
-      sync_native_config::<MarkdownlintConfig>(ctx, check, start, self.name());
+    // Each file is timed from its own `Instant`; `merge_sync_results` sums
+    // the durations it is handed.
+    let md_res = sync_native_config::<MarkdownlintConfig>(
+      ctx,
+      check,
+      Instant::now(),
+      self.name(),
+    );
     if !md_res.is_success() {
       return md_res;
     }
 
-    // Also sync .prettierrc.json
-    sync_prettier_config(ctx, check, start, self.name())
+    // Also sync .prettierrc.json. Both filenames are reported (#130):
+    // returning only the prettier result meant `.markdownlint.json` was
+    // created on disk and named nowhere in the output.
+    let prettier_res =
+      sync_prettier_config(ctx, check, Instant::now(), self.name());
+    merge_sync_results(vec![md_res, prettier_res])
   }
 }
 
@@ -879,10 +888,10 @@ README.md:7 error MD025/single-title/single-h1 Multiple top-level headings";
     let ctx = test_ctx(temp.path(), lang_cfg);
 
     let res = surface.sync_config(&ctx, false);
-    assert!(matches!(
-      res.status,
-      SurfaceStatus::ConfigSynced { created: true, .. }
-    ));
+    // Fixes #130: both files this surface writes are named in its
+    // result. Returning only the prettier half left `.markdownlint.json`
+    // created on disk and reported nowhere.
+    assert_eq!(res.status.created_file_names(), [".markdownlint.json", ".prettierrc.json"]);
 
     let md_path = temp.path().join(".markdownlint.json");
     let prettier_path = temp.path().join(".prettierrc.json");

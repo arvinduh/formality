@@ -265,13 +265,13 @@ impl Runner {
             .align(crate::ui::table::Align::Right),
           ]));
         }
-        SurfaceStatus::ConfigSynced { file, created } => {
+        SurfaceStatus::ConfigSynced { files } => {
           pass_count += 1;
-          let detail = if *created {
-            format!("Created {file}")
-          } else {
-            format!("Synced {file}")
-          };
+          // Every file the surface wrote is named, not just the last one
+          // (#130) — a config created on disk but absent from this row is
+          // the worst failure available to a command whose whole job is
+          // writing config files.
+          let detail = synced_files_detail(files);
           runner_table.add_row(crate::ui::table::Row::new(vec![
             crate::ui::table::Cell::styled(
               "[SYNC] ",
@@ -558,6 +558,24 @@ fn header_count_label(row_count: usize) -> String {
   )
 }
 
+/// Renders the detail cell of a `[SYNC]` row: every native config file the
+/// surface wrote, each labelled by whether it was created or updated in
+/// place — `Created .markdownlint.json, Synced .prettierrc.json`.
+///
+/// A surface may sync several files (#130), so this is a list rather than
+/// one filename. Ordering follows the surface's own write order, which is
+/// deterministic, so repeated runs render identically.
+fn synced_files_detail(files: &[crate::surfaces::SyncedConfigFile]) -> String {
+  files
+    .iter()
+    .map(|f| {
+      let verb = if f.created { "Created" } else { "Synced" };
+      format!("{verb} {}", f.file)
+    })
+    .collect::<Vec<_>>()
+    .join(", ")
+}
+
 fn build_ctx(
   surface: &dyn LanguageSurface,
   config: &FormalityConfig,
@@ -688,9 +706,9 @@ fn combine_fix_results(
     }
 
     // 6. ConfigSynced
-    (SurfaceStatus::ConfigSynced { file, created }, _)
-    | (_, SurfaceStatus::ConfigSynced { file, created }) => {
-      SurfaceStatus::ConfigSynced { file, created }
+    (SurfaceStatus::ConfigSynced { files }, _)
+    | (_, SurfaceStatus::ConfigSynced { files }) => {
+      SurfaceStatus::ConfigSynced { files }
     }
 
     // 7. Both skipped

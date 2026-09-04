@@ -354,10 +354,7 @@ mod tests {
     let ctx = test_ctx(temp.path(), lang_cfg);
 
     let res = surface.sync_config(&ctx, false);
-    assert!(matches!(
-      res.status,
-      SurfaceStatus::ConfigSynced { created: true, .. }
-    ));
+    assert_eq!(res.status.created_file_names(), ["taplo.toml"]);
 
     let config_path = temp.path().join("taplo.toml");
     assert!(config_path.is_file());
@@ -539,10 +536,7 @@ mod tests {
     let ctx = test_ctx(temp.path(), lang_cfg);
 
     let res = surface.sync_config(&ctx, false);
-    assert!(matches!(
-      res.status,
-      SurfaceStatus::ConfigSynced { created: true, .. }
-    ));
+    assert_eq!(res.status.created_file_names(), ["taplo.toml"]);
 
     let config_path = temp.path().join("taplo.toml");
     assert!(config_path.is_file());

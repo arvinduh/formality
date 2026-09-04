@@ -9,6 +9,7 @@
 //! they pass whether or not prettier/markdownlint/yamllint are installed.
 
 use fml::ui::table::strip_ansi_escapes;
+use std::collections::BTreeSet;
 use std::path::Path;
 use std::process::Command;
 
@@ -66,10 +67,12 @@ fn status_rows(plain: &str) -> Vec<&str> {
     .lines()
     .map(str::trim_start)
     .filter(|l| {
-      ["[PASS]", "[SYNC]", "[DRIFT]", "[MANUAL]", "[FAIL]", "[MISS]", "[ERR]",
-       "[SKIP]"]
-        .iter()
-        .any(|tag| l.starts_with(tag))
+      [
+        "[PASS]", "[SYNC]", "[DRIFT]", "[MANUAL]", "[FAIL]", "[MISS]", "[ERR]",
+        "[SKIP]",
+      ]
+      .iter()
+      .any(|tag| l.starts_with(tag))
     })
     .collect()
 }
@@ -101,4 +104,50 @@ fn sync_header_count_matches_the_rows_it_renders_on_a_polyglot_tree() {
     status_rows(&plain).len(),
     "header count disagrees with rendered rows:\n{plain}"
   );
+}
+
+/// Every file `fml sync` left in `root`, excluding the fixture sources it
+/// was pointed at.
+fn generated_config_files(root: &Path) -> BTreeSet<String> {
+  let fixtures: BTreeSet<&str> = [
+    "formality.toml",
+    "README.md",
+    "data.json",
+    "config.yaml",
+    "main.cpp",
+  ]
+  .into_iter()
+  .collect();
+  std::fs::read_dir(root)
+    .expect("read_dir")
+    .filter_map(Result::ok)
+    .filter(|e| e.file_type().map(|t| t.is_file()).unwrap_or(false))
+    .map(|e| e.file_name().to_string_lossy().into_owned())
+    .filter(|n| !fixtures.contains(n.as_str()))
+    .collect()
+}
+
+#[test]
+fn sync_names_every_file_it_writes() {
+  // Defect 2 of #130: `MarkdownSurface::sync_config` synced
+  // `.markdownlint.json` and then `.prettierrc.json` but returned only the
+  // second result, so `.markdownlint.json` appeared on disk having never been
+  // named in the output. A user auditing what `fml` put in their repo could
+  // not find it. This is the single regression test the issue asked for: it
+  // compares the report against the directory listing, so any future silently
+  // written config file fails here too.
+  let dir = polyglot_repo();
+  let plain = run_sync(dir.path(), &[]);
+
+  let on_disk = generated_config_files(dir.path());
+  assert!(
+    !on_disk.is_empty(),
+    "fixture produced no config files at all:\n{plain}"
+  );
+  for file in &on_disk {
+    assert!(
+      plain.contains(file.as_str()),
+      "`{file}` was written to disk but never named in the output:\n{plain}"
+    );
+  }
 }

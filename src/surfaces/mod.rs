@@ -67,7 +67,7 @@ pub use registry::{
 };
 pub use sync::{
   diff_check_via_tempcopy, diff_check_via_tempcopy_classified,
-  is_auto_generated, sync_file_helper,
+  is_auto_generated, merge_sync_results, sync_file_helper,
 };
 pub use tooling::{
   ExitClass, InstallMethod, chain_wants_cargo_binstall, check_binary_exists,
@@ -241,6 +241,27 @@ impl ToolInfo {
   }
 }
 
+/// One native config file written by a surface's `fml sync` pass.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct SyncedConfigFile {
+  /// Name of the config file, relative to the workspace root.
+  pub file: String,
+  /// Whether the file did not exist before this run.
+  pub created: bool,
+}
+
+impl SyncedConfigFile {
+  /// Builds a record for a file that was newly created (`created == true`)
+  /// or overwritten in place (`created == false`).
+  #[must_use]
+  pub fn new(file: impl Into<String>, created: bool) -> Self {
+    Self {
+      file: file.into(),
+      created,
+    }
+  }
+}
+
 /// Outcome status resulting from running a tool operation on a surface.
 #[derive(Debug, Clone)]
 pub enum SurfaceStatus {
@@ -271,11 +292,18 @@ pub enum SurfaceStatus {
     reason: String,
   },
   /// Native tool configuration was updated or created in sync.
+  ///
+  /// Carries **every** file the surface wrote, not just the last one. A
+  /// surface that syncs more than one native config (markdown writes
+  /// `.markdownlint.json` as well as `.prettierrc.json`; cpp writes
+  /// `.clang-format` as well as `.clang-tidy`) used to discard all but the
+  /// final result, so a file could appear on disk having never been named in
+  /// the output — #130. Fold per-file results together with
+  /// [`merge_sync_results`].
   ConfigSynced {
-    /// Synced configuration filename.
-    file: String,
-    /// Whether the file was newly created.
-    created: bool,
+    /// Every native config file this surface created or updated, in the
+    /// order it wrote them. Never empty.
+    files: Vec<SyncedConfigFile>,
   },
   /// Native tool configuration is out of sync with canonical formality settings.
   ConfigDrifted {
@@ -292,6 +320,40 @@ pub enum SurfaceStatus {
     /// User suggestion hint message.
     suggestion: String,
   },
+}
+
+impl SurfaceStatus {
+  /// Every config file named by a [`SurfaceStatus::ConfigSynced`], in write
+  /// order; empty for every other status.
+  #[must_use]
+  pub fn synced_files(&self) -> &[SyncedConfigFile] {
+    match self {
+      Self::ConfigSynced { files } => files,
+      _ => &[],
+    }
+  }
+
+  /// The names of the config files this status reports as *newly created*.
+  /// Convenience for tests and callers that only care about creations.
+  #[must_use]
+  pub fn created_file_names(&self) -> Vec<&str> {
+    self
+      .synced_files()
+      .iter()
+      .filter(|f| f.created)
+      .map(|f| f.file.as_str())
+      .collect()
+  }
+
+  /// The names of every config file this status reports, created or updated.
+  #[must_use]
+  pub fn synced_file_names(&self) -> Vec<&str> {
+    self
+      .synced_files()
+      .iter()
+      .map(|f| f.file.as_str())
+      .collect()
+  }
 }
 
 /// Result returned from a surface action (format, lint, sync).
@@ -426,8 +488,7 @@ mod tests {
     assert!(!skipped.is_error());
 
     let synced = result_for(SurfaceStatus::ConfigSynced {
-      file: "x".to_string(),
-      created: true,
+      files: vec![SyncedConfigFile::new("x", true)],
     });
     assert!(synced.is_success());
     assert!(!synced.is_violation());

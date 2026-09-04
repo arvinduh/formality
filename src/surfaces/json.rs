@@ -291,10 +291,7 @@ mod tests {
     let surface = JsonSurface;
     let ctx = test_ctx(temp.path(), ResolvedLangConfig::new("json"));
     let res = surface.sync_config(&ctx, false);
-    assert!(matches!(
-      res.status,
-      SurfaceStatus::ConfigSynced { created: true, .. }
-    ));
+    assert_eq!(res.status.created_file_names(), [".prettierrc.json"]);
     assert!(temp.path().join(".prettierrc.json").is_file());
   }
 

@@ -6,7 +6,8 @@ use super::{
   NativeConfig, PrettierConfig, SurfaceResult, ToolInfo,
   build_prettier_inline_args, classify_all_nonzero_as_error,
   create_tool_command, diff_check_via_tempcopy_classified, find_files_with_ext,
-  lint_fix_unsupported, render_native_config, run_tool_command,
+  lint_fix_unsupported, merge_sync_results, render_native_config,
+  run_tool_command,
   run_tool_command_classified, sync_native_config, sync_prettier_config,
   tool_missing_guard,
 };
@@ -323,15 +324,24 @@ impl LanguageSurface for YamlSurface {
   // never called `sync_native_config::<YamllintConfig>`, so `.yamllint.yaml`
   // was never actually written by `fml sync`).
   fn sync_config(&self, ctx: &ExecutionContext, check: bool) -> SurfaceResult {
-    let start = Instant::now();
-    let yamllint_res =
-      sync_native_config::<YamllintConfig>(ctx, check, start, self.name());
+    // Each file is timed from its own `Instant`; `merge_sync_results` sums
+    // the durations it is handed.
+    let yamllint_res = sync_native_config::<YamllintConfig>(
+      ctx,
+      check,
+      Instant::now(),
+      self.name(),
+    );
     if !yamllint_res.is_success() {
       return yamllint_res;
     }
 
-    // Also sync .prettierrc.json
-    sync_prettier_config(ctx, check, start, self.name())
+    // Also sync .prettierrc.json. Both filenames are reported (#130):
+    // returning only the prettier result hid `.yamllint.yaml` from the
+    // output.
+    let prettier_res =
+      sync_prettier_config(ctx, check, Instant::now(), self.name());
+    merge_sync_results(vec![yamllint_res, prettier_res])
   }
 }
 
@@ -340,7 +350,7 @@ impl LanguageSurface for YamlSurface {
 mod tests {
   use super::*;
   use crate::config::ResolvedLangConfig;
-  use crate::surfaces::{SurfaceStatus, check_binary_exists, test_ctx};
+  use crate::surfaces::{check_binary_exists, test_ctx};
   use tempfile::TempDir;
 
   #[test]
@@ -434,10 +444,8 @@ mod tests {
     let ctx = test_ctx(temp.path(), lang_cfg);
 
     let res = surface.sync_config(&ctx, false);
-    assert!(matches!(
-      res.status,
-      SurfaceStatus::ConfigSynced { created: true, .. }
-    ));
+    // Fixes #130: both files this surface writes are named in its result.
+    assert_eq!(res.status.created_file_names(), [".yamllint.yaml", ".prettierrc.json"]);
     assert!(temp.path().join(".prettierrc.json").is_file());
 
     // Fixes #158: `fml sync` must also materialize `.yamllint.yaml`.

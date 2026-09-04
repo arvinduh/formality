@@ -409,10 +409,7 @@ mod tests {
     let ctx = test_ctx(temp.path(), ResolvedLangConfig::new("rust"));
 
     let res = surface.sync_config(&ctx, false);
-    assert!(matches!(
-      res.status,
-      SurfaceStatus::ConfigSynced { created: true, .. }
-    ));
+    assert_eq!(res.status.created_file_names(), [".rustfmt.toml"]);
 
     let config_path = temp.path().join(".rustfmt.toml");
     assert!(config_path.is_file());
