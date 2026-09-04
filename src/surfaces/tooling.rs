@@ -257,7 +257,7 @@ impl InstallMethod {
 // resolved 3.9.6).
 //
 // The fix is the same idea `rust-toolchain.toml` already applies to the Rust
-// toolchain and `dtolnay/rust-toolchain@1.97.1` applies to the GitHub Action
+// toolchain and `dtolnay/rust-toolchain@1.98.1` applies to the GitHub Action
 // itself: pin to an exact version instead of floating on "latest". Below,
 // every package-manager-resolved entry (npm/pnpm/yarn/bun, uv/pipx/pip,
 // cargo/cargo-binstall, `go install`) embeds an explicit version directly in
