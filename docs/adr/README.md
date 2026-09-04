@@ -14,10 +14,10 @@ mechanism in depth (e.g. [style-guide.md](../style-guide.md)).
 
 ## Index
 
-| #                                                         | Title                                                                         | Status   |
-| --------------------------------------------------------- | ----------------------------------------------------------------------------- | -------- |
-| [0001](0001-arc-shared-execution-context.md)              | Arc-shared `ExecutionContext` fields                                          | Accepted |
-| [0002](0002-tokei-as-library-not-subprocess.md)           | `tokei` as a library dependency, not a subprocess, for a future `fml stat`    | Proposed |
-| [0003](0003-two-tag-release-versioning.md)                | Independent `v*`/`s*` release tags instead of a single unified tag            | Accepted |
-| [0004](0004-status-label-tracking-not-shared-document.md) | Per-issue `status:*` labels instead of a shared hand-edited tracking document | Accepted |
-| [0005](0005-extra-args-exit-code-contracts.md)            | Document `extra_args` exit-code hazards; guard only flags `fml` passes itself | Accepted |
+| #                                                         | Title                                                                          | Status   |
+| --------------------------------------------------------- | ------------------------------------------------------------------------------ | -------- |
+| [0001](0001-arc-shared-execution-context.md)              | Arc-shared `ExecutionContext` fields                                           | Accepted |
+| [0002](0002-tokei-as-library-not-subprocess.md)           | `tokei` as a library dependency, not a subprocess, for a future `fml stat`     | Proposed |
+| [0003](0003-two-tag-release-versioning.md)                | Independent `v*`/`s*` release tags instead of a single unified tag             | Accepted |
+| [0004](0004-status-label-tracking-not-shared-document.md) | Per-issue `status:*` labels instead of a shared hand-edited tracking document  | Accepted |
+| [0005](0005-extra-args-exit-code-contracts.md)            | Static per-call-site exit-code classifiers, not re-derived from the final argv | Accepted |

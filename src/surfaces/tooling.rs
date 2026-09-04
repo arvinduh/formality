@@ -797,25 +797,34 @@ pub fn tool_missing_guard(
 /// `None` when `extra_args` leaves the flag alone.
 ///
 /// Why this exists (Fixes #173): `extra_args` is appended *after* `fml`'s own
-/// flags, so a user value wins. For most flags that is exactly the intent. For
-/// the narrow set of flags `fml` passes precisely to keep a tool's exit code
-/// meaning "could not run" rather than "ran, found something", an override
-/// silently re-enables a violation-signalling exit code that the surface's
-/// classifier then reports as `[ERR] Execution error`. Rather than mislabel
-/// it, the surface refuses with an actionable message. See
-/// `docs/adr/0005-extra-args-exit-code-contracts.md` for why only flags `fml`
-/// passes explicitly are guarded, and everything else is documented instead.
+/// flags, so a user value wins. For most flags that is exactly the intent. A
+/// few flags are different — they change what a non-zero exit code *means*,
+/// and the surface's classifier was chosen for the contract `fml` invokes.
+/// Guarding is restricted to flags the surface passes in that same argv, which
+/// makes "the user is overriding us" unambiguous without knowing the tool's
+/// full flag vocabulary. See
+/// `docs/adr/0005-extra-args-exit-code-contracts.md` for that decision, for
+/// the rejected alternatives, and for why the *documented* cases
+/// (`--extend-select`, `--set-exit-if-changed`) are deliberately not guarded.
 ///
-/// The value is deliberately *not* compared against the one `fml` passes:
-/// restating it is not harmless either. Biome rejects `--linter-enabled` given
-/// twice outright (`argument \`--linter-enabled\` cannot be used multiple
-/// times in this context`), so a redundant restatement breaks the format pass
-/// just as thoroughly as a contradicting one — with an error message that
-/// explains far less.
+/// The value is deliberately *not* compared against the one `fml` passes.
+/// Today's only caller is biome's `--linter-enabled`, and biome rejects that
+/// flag given twice outright (`argument \`--linter-enabled\` cannot be used
+/// multiple times in this context`) — before parsing either value. So a
+/// restatement is exactly as broken as a contradiction, and matching on the
+/// value would let half the broken spellings through.
 ///
 /// Both spellings such CLIs accept are recognized: `--flag=value` and `--flag
 /// value`. Scanning stops at a bare `--`, after which arguments are positional
 /// rather than flags.
+///
+/// The scan is deliberately *value-unaware*: it does not know which flags take
+/// a value, so a token equal to `flag` is matched even when it sits in the
+/// value position of some unrelated preceding flag (`["--config-path",
+/// "--linter-enabled"]`). That is a false positive, but a contrived one — it
+/// needs a config path literally named like the guarded flag — and erring
+/// toward detection is the safe direction for a guard whose failure mode is
+/// otherwise an unexplained tool error.
 #[must_use]
 pub fn extra_args_set_flag(
   flag: &str,
