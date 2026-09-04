@@ -400,12 +400,18 @@ impl LanguageSurface for MarkdownSurface {
             md_cmd.arg(scratch);
             // Fixes #150: `extra_args` used to reach only the prettier pass
             // below, so a markdownlint-only flag (e.g. `--no-globs`) applied
-            // during `fml lint` but silently vanished during `fml fmt`. This
-            // surface has no per-tool `extra_args` split (see the doc comment
-            // on `ResolvedLangConfig::extra_args`) — the one list is
-            // forwarded to every tool the surface drives, same convention
-            // `PythonSurface::format()` already uses for its own two-tool
-            // (isort + ruff format) pass.
+            // during `fml lint` (which forwards it via
+            // `build_markdownlint_args`) but silently vanished during
+            // `fml fmt`. `ResolvedLangConfig::extra_args` is one flat
+            // per-surface list with no per-tool split, so this follows the
+            // convention `PythonSurface::format()` already sets for its own
+            // two-pass pipeline (`ruff check --select I --fix`, then
+            // `ruff format`): forward the same list to every invocation the
+            // pass makes. A flag valid for only one of markdown's two tools
+            // therefore fails that tool loudly (`ExecutionError`, via the
+            // #113 guard below) instead of being silently dropped. A
+            // per-tool `extra_args` split is new config surface and is
+            // tracked separately, not here.
             md_cmd.args(&ctx.lang_config.extra_args);
             md_cmd.current_dir(ctx.root.as_path());
 
