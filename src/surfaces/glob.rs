@@ -387,6 +387,20 @@ pub fn is_excluded(path: &Path, root: &Path, exclude: &[PathBuf]) -> bool {
   is_excluded_normalized(path, root, &normalized)
 }
 
+/// Walks `start` and each of its ancestor directories looking for a manifest
+/// file named `filename`, mirroring how build tools (`cargo`, `go`) resolve a
+/// project root from a subdirectory. Shared by [`crate::surfaces::rust`]'s
+/// `Cargo.toml` guard and [`crate::surfaces::go`]'s `go.mod` guard (Fixes
+/// #185) so a subdirectory of a real project isn't mistaken for one with no
+/// manifest at all.
+///
+/// Uses `.is_file()`, not `.exists()`, so a directory that happens to share
+/// the manifest's name isn't mistaken for one.
+#[must_use]
+pub fn find_manifest_upwards(start: &Path, filename: &str) -> bool {
+  start.ancestors().any(|dir| dir.join(filename).is_file())
+}
+
 fn walk_dir_ext(dir: &Path, extensions: &[&str]) -> Vec<PathBuf> {
   walk_candidate_files(dir, &[])
     .into_iter()
@@ -408,6 +422,33 @@ fn walk_dir_ext(dir: &Path, extensions: &[&str]) -> Vec<PathBuf> {
 mod tests {
   use super::*;
   use std::path::PathBuf;
+
+  #[test]
+  fn test_find_manifest_upwards_walks_parent_directories() {
+    let temp = tempfile::TempDir::new().unwrap();
+    std::fs::write(temp.path().join("Cargo.toml"), "[package]\n").unwrap();
+    let nested = temp.path().join("src").join("deep");
+    std::fs::create_dir_all(&nested).unwrap();
+
+    assert!(find_manifest_upwards(&nested, "Cargo.toml"));
+  }
+
+  #[test]
+  fn test_find_manifest_upwards_no_manifest_anywhere() {
+    let temp = tempfile::TempDir::new().unwrap();
+    let nested = temp.path().join("src");
+    std::fs::create_dir_all(&nested).unwrap();
+
+    assert!(!find_manifest_upwards(&nested, "Cargo.toml"));
+  }
+
+  #[test]
+  fn test_find_manifest_upwards_directory_named_like_manifest_is_ignored() {
+    let temp = tempfile::TempDir::new().unwrap();
+    std::fs::create_dir(temp.path().join("Cargo.toml")).unwrap();
+
+    assert!(!find_manifest_upwards(temp.path(), "Cargo.toml"));
+  }
 
   #[test]
   fn test_find_files_with_ext_files_override() {

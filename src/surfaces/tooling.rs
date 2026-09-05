@@ -257,7 +257,7 @@ impl InstallMethod {
 // resolved 3.9.6).
 //
 // The fix is the same idea `rust-toolchain.toml` already applies to the Rust
-// toolchain and `dtolnay/rust-toolchain@1.97.1` applies to the GitHub Action
+// toolchain and `dtolnay/rust-toolchain@1.98.1` applies to the GitHub Action
 // itself: pin to an exact version instead of floating on "latest". Below,
 // every package-manager-resolved entry (npm/pnpm/yarn/bun, uv/pipx/pip,
 // cargo/cargo-binstall, `go install`) embeds an explicit version directly in
@@ -789,6 +789,66 @@ pub fn tool_missing_guard(
   } else {
     None
   }
+}
+
+/// Detects a user-supplied `extra_args` entry that sets `flag` — a flag the
+/// surface passes itself to pin down its tool's exit-code contract. Returns
+/// the offending argument as written (so a diagnostic can quote it back), or
+/// `None` when `extra_args` leaves the flag alone.
+///
+/// Why this exists (Fixes #173): `extra_args` is appended *after* `fml`'s own
+/// flags, so a user value wins. For most flags that is exactly the intent. A
+/// few flags are different — they change what a non-zero exit code *means*,
+/// and the surface's classifier was chosen for the contract `fml` invokes.
+/// Guarding is restricted to flags the surface passes in that same argv, which
+/// makes "the user is overriding us" unambiguous without knowing the tool's
+/// full flag vocabulary. See
+/// `docs/adr/0005-extra-args-exit-code-contracts.md` for that decision, for
+/// the rejected alternatives, and for why the *documented* cases
+/// (`--extend-select`, `--set-exit-if-changed`) are deliberately not guarded.
+///
+/// The value is deliberately *not* compared against the one `fml` passes.
+/// Today's only caller is biome's `--linter-enabled`, and biome rejects that
+/// flag given twice outright (`argument \`--linter-enabled\` cannot be used
+/// multiple times in this context`) — before parsing either value. So a
+/// restatement is exactly as broken as a contradiction, and matching on the
+/// value would let half the broken spellings through.
+///
+/// Both spellings such CLIs accept are recognized: `--flag=value` and `--flag
+/// value`. Scanning stops at a bare `--`, after which arguments are positional
+/// rather than flags.
+///
+/// The scan is deliberately *value-unaware*: it does not know which flags take
+/// a value, so a token equal to `flag` is matched even when it sits in the
+/// value position of some unrelated preceding flag (`["--config-path",
+/// "--linter-enabled"]`). That is a false positive, but a contrived one — it
+/// needs a config path literally named like the guarded flag — and erring
+/// toward detection is the safe direction for a guard whose failure mode is
+/// otherwise an unexplained tool error.
+#[must_use]
+pub fn extra_args_set_flag(
+  flag: &str,
+  extra_args: &[String],
+) -> Option<String> {
+  let mut args = extra_args.iter();
+  while let Some(arg) = args.next() {
+    if arg == "--" {
+      return None;
+    }
+    if arg
+      .strip_prefix(flag)
+      .and_then(|rest| rest.strip_prefix('='))
+      .is_some()
+    {
+      return Some(arg.clone());
+    }
+    if arg == flag {
+      return args
+        .next()
+        .map_or_else(|| Some(arg.clone()), |v| Some(format!("{flag} {v}")));
+    }
+  }
+  None
 }
 
 /// Builds the `SurfaceResult` returned when autofix is requested on a surface
@@ -2663,6 +2723,64 @@ mod tests {
         assert_eq!(message, "ONEISSUE");
       }
       other => panic!("expected ViolationsFound, got {other:?}"),
+    }
+  }
+
+  fn args(items: &[&str]) -> Vec<String> {
+    items.iter().map(|s| (*s).to_string()).collect()
+  }
+
+  #[test]
+  fn test_extra_args_set_flag_detects_both_spellings() {
+    // Fixes #173: `--flag=value` and `--flag value` are both detected, and
+    // the offending argument is echoed back in the form the user can search
+    // for in their own `formality.toml`.
+    assert_eq!(
+      extra_args_set_flag(
+        "--linter-enabled",
+        &args(&["--linter-enabled=true"])
+      ),
+      Some("--linter-enabled=true".to_string())
+    );
+    assert_eq!(
+      extra_args_set_flag(
+        "--linter-enabled",
+        &args(&["--max-diagnostics=5", "--linter-enabled", "true"]),
+      ),
+      Some("--linter-enabled true".to_string())
+    );
+    // A bare trailing flag with no value still counts: it is still the user
+    // putting a flag `fml` owns into the argv.
+    assert_eq!(
+      extra_args_set_flag("--linter-enabled", &args(&["--linter-enabled"])),
+      Some("--linter-enabled".to_string())
+    );
+    // Restating the value `fml` itself passes is detected too, and must be:
+    // biome errors out on the duplicate rather than accepting it.
+    assert_eq!(
+      extra_args_set_flag(
+        "--linter-enabled",
+        &args(&["--linter-enabled=false"])
+      ),
+      Some("--linter-enabled=false".to_string())
+    );
+  }
+
+  #[test]
+  fn test_extra_args_set_flag_ignores_unrelated_arguments() {
+    // Fixes #173: unrelated flags, a longer flag that happens to share the
+    // prefix, and anything after a bare `--` (positional from there on) must
+    // all be left alone — the guard is narrow by design.
+    for extra in [
+      args(&["--max-diagnostics=5"]),
+      args(&["--linter-enabled-extra=true"]),
+      args(&["--", "--linter-enabled=true"]),
+    ] {
+      assert_eq!(
+        extra_args_set_flag("--linter-enabled", &extra),
+        None,
+        "must not flag {extra:?}"
+      );
     }
   }
 }
