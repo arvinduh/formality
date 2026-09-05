@@ -1028,3 +1028,166 @@ fn test_probe_raw_gofmt_sources_go_toolchain_or_reports_nothing() {
     );
   }
 }
+
+/// Pins the shape of the registry: the three tools that do not answer a plain
+/// `--version` declare exactly why, and every other entry uses the
+/// conventional flag (Fixes #177).
+///
+/// This is a change-detector, and one-directional by construction. It catches
+/// an entry that acquires an *unexpected* probe, and the loop below forces a
+/// new non-default entry to be named here — which is where the "why" comment
+/// gets written. It cannot catch the converse: an entry wrongly declaring the
+/// default for a tool that has no `--version`, which is #114's own bug.
+/// Proving that needs the tools themselves executed, and a fleet-wide "every
+/// installed tool probes" assertion would fail today for a reason that is not
+/// a declaration bug — taplo's npm build prints a real version and then exits
+/// non-zero. That sweep belongs with #176, whose own acceptance criteria
+/// already call for it.
+#[test]
+fn test_registry_probe_strategies_match_what_each_tool_supports() {
+  let probe_of = |binary: &str| {
+    get_tool_mstv_entry(binary)
+      .unwrap_or_else(|| panic!("{binary} should be in the MSTV registry"))
+      .probe
+  };
+
+  // `gofmt` ships with the Go toolchain and has no version flag of its own.
+  assert_eq!(
+    probe_of("gofmt"),
+    VersionProbe::ViaBinary {
+      bin: "go",
+      args: &["version"],
+    }
+  );
+  // `golangci-lint` uses a bare `version` subcommand, not `--version` — and
+  // declares only that, with no implicit `-v` second attempt behind it.
+  assert_eq!(
+    probe_of("golangci-lint"),
+    VersionProbe::OwnFlags(&["version"])
+  );
+  // Rustup ships no `clippy` binary — the component answers as
+  // `clippy-driver`, or through `cargo clippy`.
+  assert_eq!(
+    probe_of("clippy"),
+    VersionProbe::FirstOf(&[
+      VersionProbe::ViaBinary {
+        bin: "clippy-driver",
+        args: &["--version"],
+      },
+      VersionProbe::ViaBinary {
+        bin: "cargo",
+        args: &["clippy", "--version"],
+      },
+    ])
+  );
+
+  for entry in all_mstv_entries() {
+    if matches!(entry.binary, "gofmt" | "golangci-lint" | "clippy") {
+      continue;
+    }
+    assert_eq!(
+      entry.probe, DEFAULT_VERSION_PROBE,
+      "{} declares a non-default probe with no comment explaining why",
+      entry.binary
+    );
+  }
+}
+
+/// Structural invariants every declaration must hold, whatever tool it is
+/// for: a probe that runs no command, or a `ViaBinary` that just re-runs the
+/// tool itself (which is `OwnFlags`), is a malformed entry.
+#[test]
+fn test_every_declared_probe_is_structurally_well_formed() {
+  fn check(binary: &str, probe: &VersionProbe) {
+    match probe {
+      VersionProbe::OwnFlags(flags) => assert!(
+        !flags.is_empty(),
+        "{binary} declares OwnFlags with no flags, which would run the tool bare"
+      ),
+      VersionProbe::ViaBinary { bin, args } => {
+        assert_ne!(
+          *bin, binary,
+          "{binary} declares ViaBinary against itself; that is OwnFlags"
+        );
+        assert!(!args.is_empty(), "{binary} declares ViaBinary with no args");
+      }
+      VersionProbe::FirstOf(probes) => {
+        assert!(
+          probes.len() > 1,
+          "{binary} declares FirstOf with fewer than two alternatives"
+        );
+        for inner in *probes {
+          assert!(
+            !matches!(inner, VersionProbe::FirstOf(_)),
+            "{binary} nests FirstOf inside FirstOf; flatten it"
+          );
+          check(binary, inner);
+        }
+      }
+    }
+  }
+
+  for entry in all_mstv_entries() {
+    check(entry.binary, &entry.probe);
+  }
+  check("<default>", &DEFAULT_VERSION_PROBE);
+}
+
+/// The default probe is the only place the `--version` then `-v` sequence is
+/// declared, and it is declared as data: `run_probe` adds no second attempt
+/// of its own, so `OwnFlags` runs exactly one command (Fixes #177).
+#[test]
+fn test_default_probe_declares_its_short_flag_fallback_as_data() {
+  assert_eq!(
+    DEFAULT_VERSION_PROBE,
+    VersionProbe::FirstOf(&[
+      VersionProbe::OwnFlags(&["--version"]),
+      VersionProbe::OwnFlags(&["-v"]),
+    ]),
+    "the -v fallback must be visible in the declaration, not hidden in run_probe"
+  );
+}
+
+/// A binary with no registry entry falls back to the conventional
+/// `--version`, and clippy's aliases resolve to clippy's own chain rather
+/// than to that default (Fixes #177).
+#[test]
+fn test_version_probe_for_defaults_and_resolves_aliases() {
+  assert_eq!(
+    version_probe_for("some-tool-not-in-the-registry"),
+    DEFAULT_VERSION_PROBE
+  );
+  assert_eq!(version_probe_for("rustfmt"), DEFAULT_VERSION_PROBE);
+  for alias in ["clippy", "clippy-driver", "cargo-clippy"] {
+    assert!(
+      matches!(version_probe_for(alias), VersionProbe::FirstOf(_)),
+      "{alias} should resolve to clippy's probe chain"
+    );
+  }
+}
+
+/// `FirstOf` skips a probe whose binary does not exist and takes the next
+/// one that yields a version — the property clippy's two distribution shapes
+/// and the default probe's `-v` fallback both depend on (Fixes #177).
+#[test]
+fn test_first_of_falls_through_to_the_next_working_probe() {
+  if which::which("cargo").is_err() {
+    return;
+  }
+  let probe = VersionProbe::FirstOf(&[
+    VersionProbe::ViaBinary {
+      bin: "formality-no-such-binary-exists",
+      args: &["--version"],
+    },
+    VersionProbe::ViaBinary {
+      bin: "cargo",
+      args: &["--version"],
+    },
+  ]);
+  let raw = run_probe("cargo", &probe)
+    .expect("the second probe in the chain should report cargo's version");
+  assert!(
+    raw.contains("cargo"),
+    "expected cargo's version banner, got: {raw:?}"
+  );
+}
