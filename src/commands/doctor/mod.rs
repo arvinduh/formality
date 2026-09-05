@@ -44,17 +44,28 @@ use std::path::Path;
 #[must_use]
 pub fn install_missing_tools(missing: &[ToolInfo]) -> bool {
   // Standalone entry point (`fml fmt/lint/fix --install` preflight): no scan
-  // table to size the frame against, so use the plain 80-col cap.
-  install_missing_tools_framed(missing, &Frame::capped())
+  // table to size the frame against, so use the plain 80-col cap. This caller
+  // prints no tally of its own, so it keeps the pass/fail bit only.
+  install_missing_tools_framed(missing, &Frame::capped()).all_ok
 }
 
 /// [`install_missing_tools`] rendered inside `frame` so `fml doctor --install`
 /// brackets this block with the same rule width as every other section it
 /// prints (the "Installing…" progress block, then the Install Summary table).
+///
+/// Returns the whole per-tool outcome set rather than just a pass/fail bit,
+/// because `fml doctor --install`'s closing tally has to be reconciled
+/// against what this run actually did (#106).
 #[must_use]
-fn install_missing_tools_framed(missing: &[ToolInfo], frame: &Frame) -> bool {
+fn install_missing_tools_framed(
+  missing: &[ToolInfo],
+  frame: &Frame,
+) -> InstallRunReport {
   if missing.is_empty() {
-    return true;
+    return InstallRunReport {
+      all_ok: true,
+      rows: Vec::new(),
+    };
   }
 
   let palette = Palette::detect();
@@ -146,40 +157,74 @@ fn install_missing_tools_framed(missing: &[ToolInfo], frame: &Frame) -> bool {
           // which install alongside a package manager already on `PATH`).
           crate::surfaces::refresh_path_after_install(&program);
 
-          // Convergence guard: a successful install exit code only proves
-          // the package manager *ran* to completion, not that the binary it
-          // produced actually reports the pinned version — re-probe and
-          // warn (once, this invocation) rather than silently claiming
-          // success on a tool that would still show `[STALE]` on the very
-          // next `fml doctor`. This can only fire for a legitimately
-          // misconfigured pin now (an `expected_binary_version` that
-          // doesn't actually match what gets installed) -- see
-          // `surfaces::tooling::ToolChain`'s doc comment for why most tools
-          // deliberately opt out of the pin comparison entirely rather than
-          // risk exactly this.
-          if let Some(expected) =
+          // Resolution guard: an exit code of 0 only proves the package
+          // manager ran to completion, never that the binary it produced is
+          // reachable from *this* process. `npm i -g prettier` exits 0 with
+          // npm's global bin directory absent from `PATH` (routine under
+          // nvm, a user-level npm prefix, or a container whose prefix was
+          // set after the shell started), and `refresh_path_after_install`
+          // is a deliberate no-op for npm. Claiming `[OK]` there would make
+          // the doctor footer count a tool as installed that the very next
+          // `fml fmt` reports missing -- so ask the same question the scan
+          // asks, once, before any row is emitted.
+          let on_path = tool_is_on_path(tool.binary);
+
+          // Convergence guard: nor does that exit code prove the binary
+          // reports the pinned version — re-probe and warn (once, this
+          // invocation) rather than silently claiming success on a tool
+          // that would still show `[STALE]` on the very next `fml doctor`.
+          // This can only fire for a legitimately misconfigured pin now (an
+          // `expected_binary_version` that doesn't actually match what gets
+          // installed) -- see `surfaces::tooling::ToolChain`'s doc comment
+          // for why most tools deliberately opt out of the pin comparison
+          // entirely rather than risk exactly this. Skipped entirely when
+          // the binary isn't resolvable: there is nothing to probe, and an
+          // unpinned tool must not pay for a probe it never needed.
+          let expected = if on_path {
             crate::surfaces::pinned_version_for(tool.binary)
-          {
-            let actual = probe_tool_version(tool.binary);
-            if actual.as_ref() == Some(&expected) {
-              println!(
-                "    {} Successfully installed {} ({expected})",
-                "[OK]  ".green().bold(),
-                tool.binary.bold()
-              );
+          } else {
+            None
+          };
+          let actual = expected
+            .as_ref()
+            .and_then(|_| probe_tool_version(tool.binary));
+
+          match classify_install_outcome(
+            on_path,
+            expected.as_ref(),
+            actual.as_ref(),
+          ) {
+            InstallOutcome::Ok => {
+              let detail = expected.map(|v| v.to_string()).unwrap_or_default();
+              if detail.is_empty() {
+                println!(
+                  "    {} Successfully installed {}",
+                  "[OK]  ".green().bold(),
+                  tool.binary.bold()
+                );
+              } else {
+                println!(
+                  "    {} Successfully installed {} ({detail})",
+                  "[OK]  ".green().bold(),
+                  tool.binary.bold()
+                );
+              }
               summary_rows.push(InstallSummaryRow {
                 binary: tool.binary,
                 installer: program.clone(),
                 outcome: InstallOutcome::Ok,
-                detail: expected.to_string(),
+                detail,
               });
-            } else {
+            }
+            InstallOutcome::Warn => {
               let actual_str = actual
                 .map(|v| v.to_string())
                 .unwrap_or_else(|| "an unparseable version".to_string());
+              let expected_str =
+                expected.map(|v| v.to_string()).unwrap_or_default();
               println!(
                 "    {} Installed {}, but it still reports {actual_str} \
-                 (expected {expected}) -- the pin for this tool may not \
+                 (expected {expected_str}) -- the pin for this tool may not \
                  match what the binary itself reports; not retrying \
                  automatically.",
                 "[WARN]".yellow().bold(),
@@ -190,21 +235,35 @@ fn install_missing_tools_framed(missing: &[ToolInfo], frame: &Frame) -> bool {
                 binary: tool.binary,
                 installer: program.clone(),
                 outcome: InstallOutcome::Warn,
-                detail: format!("reports {actual_str}, expected {expected}"),
+                detail: format!(
+                  "reports {actual_str}, expected {expected_str}"
+                ),
               });
             }
-          } else {
-            println!(
-              "    {} Successfully installed {}",
-              "[OK]  ".green().bold(),
-              tool.binary.bold()
-            );
-            summary_rows.push(InstallSummaryRow {
-              binary: tool.binary,
-              installer: program.clone(),
-              outcome: InstallOutcome::Ok,
-              detail: String::new(),
-            });
+            outcome @ InstallOutcome::NotOnPath => {
+              println!(
+                "    {} {} reported success, but {} is still not on PATH -- \
+                 the installer most likely wrote it to a directory this \
+                 shell's PATH doesn't contain. Reopen your shell (or add \
+                 that directory to PATH) and re-run; treating it as \
+                 installed here would only move the failure to the next \
+                 command.",
+                "[FAIL]".red().bold(),
+                program.bold(),
+                tool.binary.bold()
+              );
+              all_ok = false;
+              summary_rows.push(InstallSummaryRow {
+                binary: tool.binary,
+                installer: program.clone(),
+                outcome,
+                detail: format!("{program} exited 0, but it is not on PATH"),
+              });
+            }
+            // `classify_install_outcome` only ever returns the three above:
+            // these two describe an install command that failed or never
+            // ran, which this arm has already ruled out.
+            InstallOutcome::Fail | InstallOutcome::NoInstaller => {}
           }
         }
         Ok(status) => {
@@ -260,7 +319,24 @@ fn install_missing_tools_framed(missing: &[ToolInfo], frame: &Frame) -> bool {
   println!("{}", frame.dim_rule(&palette));
   print_install_summary_table(&summary_rows, frame);
 
-  all_ok
+  InstallRunReport {
+    all_ok,
+    rows: summary_rows,
+  }
+}
+
+/// What one [`install_missing_tools_framed`] run did, for a caller that needs
+/// more than the pass/fail bit — specifically `fml doctor --install`, whose
+/// closing tally is reconciled against these per-tool outcomes rather than by
+/// re-probing every tool a second time (#106). Carries the very rows the
+/// Install Summary table was rendered from, so the tally and that table can
+/// never disagree: there is only one source of truth for both.
+struct InstallRunReport {
+  /// `true` iff every attempted tool installed cleanly — the value the
+  /// pass/fail-only [`install_missing_tools`] entry point still returns.
+  all_ok: bool,
+  /// One entry per tool this run attempted, in attempt order.
+  rows: Vec<InstallSummaryRow>,
 }
 
 /// One row of the recap table [`print_install_summary_table`] renders after
@@ -278,16 +354,52 @@ struct InstallSummaryRow {
 }
 
 /// Outcome of one tool's install attempt, for [`InstallSummaryRow`].
+///
+/// `PartialEq`/`Debug` exist so [`classify_install_outcome`]'s decision table
+/// can be asserted directly in tests, rather than inferred from rendered
+/// output.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum InstallOutcome {
   /// Installed and (where a pin exists) confirmed at the expected version.
   Ok,
   /// Installed, but the convergence guard above found its reported version
   /// didn't match the pin.
   Warn,
+  /// The installer exited 0, but the binary it claims to have installed is
+  /// still not resolvable on `PATH` — so nothing in this process (or the
+  /// next command the user runs) can actually invoke it.
+  NotOnPath,
   /// The installer command ran and failed, or failed to run at all.
   Fail,
   /// No installer chain entry was available at all -- manual install only.
   NoInstaller,
+}
+
+/// Decide what a successful install *command* actually accomplished, from
+/// the two facts the install site has just established: whether the binary
+/// now resolves on `PATH`, and — for a pinned tool only — what version it
+/// reports.
+///
+/// Split out as a pure function so the case this exists for is unit-testable
+/// without spawning a package manager: an installer that exits 0 while the
+/// binary never lands on `PATH` must not be reported as installed (#106).
+/// `PATH` resolution is checked first and unconditionally, because a tool
+/// that cannot be invoked is not "installed at the wrong version", it is
+/// absent — and unpinned tools (most of them, per
+/// `surfaces::tooling::ToolChain`) would otherwise have no post-install
+/// verification at all.
+fn classify_install_outcome(
+  on_path: bool,
+  expected: Option<&Version>,
+  probed: Option<&Version>,
+) -> InstallOutcome {
+  if !on_path {
+    return InstallOutcome::NotOnPath;
+  }
+  match expected {
+    Some(expected) if probed != Some(expected) => InstallOutcome::Warn,
+    _ => InstallOutcome::Ok,
+  }
 }
 
 /// Renders and prints the post-install recap table as a framed section, using
@@ -311,7 +423,12 @@ fn print_install_summary_table(rows: &[InstallSummaryRow], frame: &Frame) {
     let (label, style) = match row.outcome {
       InstallOutcome::Ok => ("[OK]  ", Style::Ok),
       InstallOutcome::Warn => ("[WARN]", Style::Warn),
-      InstallOutcome::Fail => ("[FAIL]", Style::Error),
+      // Renders like a failure because that is what it is from the caller's
+      // side: the tool is not usable. The `detail` column carries the
+      // distinction (installer exited 0) that the label can't.
+      InstallOutcome::NotOnPath | InstallOutcome::Fail => {
+        ("[FAIL]", Style::Error)
+      }
       InstallOutcome::NoInstaller => ("[MISS]", Style::Warn),
     };
     table.add_row(Row::new(vec![
@@ -575,56 +692,25 @@ pub fn run_doctor(
   // divider above the summary line below.
   print_sync_notice(&frame, &palette);
 
+  // The closing tally is a value derived from the scan *and then* updated by
+  // the install run below — never read back off `scan` again. Keeping it in
+  // its own binding is what makes the ordering structural rather than a
+  // comment: an install that happens after this point still has somewhere to
+  // record itself, whereas the previous code rendered straight from the
+  // pre-install snapshot and could only ever contradict the Install Summary
+  // table printed a few lines above it (#106).
+  let mut tally = ToolTally::from_scan(&scan);
+
   let mut install_failed = false;
-  if install
-    && !to_install.is_empty()
-    && !install_missing_tools_framed(&to_install, &frame)
-  {
-    install_failed = true;
+  if install && !to_install.is_empty() {
+    let report = install_missing_tools_framed(&to_install, &frame);
+    install_failed = !report.all_ok;
+    tally.apply_install_run(&report);
   }
 
-  let outdated_str = if scan.outdated.is_empty() {
-    String::new()
-  } else {
-    format!(" ({} outdated)", scan.outdated.len())
-      .yellow()
-      .to_string()
-  };
-  let stale_str = if scan.stale.is_empty() {
-    String::new()
-  } else {
-    format!(" ({} stale)", scan.stale.len())
-      .yellow()
-      .to_string()
-  };
-  let unknown_str = if scan.unknown.is_empty() {
-    String::new()
-  } else {
-    format!(" ({} unknown)", scan.unknown.len())
-      .yellow()
-      .to_string()
-  };
-  println!(
-    "  {} installed{}{}{}, {} missing{}\n",
-    scan.installed.len().to_string().green().bold(),
-    outdated_str,
-    stale_str,
-    unknown_str,
-    if scan.missing.is_empty() {
-      "0".green().bold().to_string()
-    } else {
-      scan.missing.len().to_string().yellow().bold().to_string()
-    },
-    if !to_install.is_empty() && !install {
-      " (run 'fml install' to install missing/stale tools)"
-        .dimmed()
-        .to_string()
-    } else {
-      String::new()
-    }
-  );
+  println!("{}\n", tally.render(!to_install.is_empty() && !install));
 
-  if (scan.missing.is_empty() || install) && !install_failed {
+  if (tally.missing.is_empty() || install) && !install_failed {
     ExitStatus::Clean
   } else {
     ExitStatus::Error
@@ -662,20 +748,31 @@ fn clippy_probe_succeeds(driver_bin: &str, cargo_bin: &str) -> bool {
   )
 }
 
-fn lookup_tool_info(binary: &'static str) -> ToolLookupResult {
+/// Whether `binary` is reachable from this process right now.
+///
+/// The single predicate for "is this tool present": both the scan that fills
+/// the doctor table ([`lookup_tool_info`]) and the post-install check in
+/// [`install_missing_tools_framed`] go through here, so the table, the
+/// Install Summary and the closing tally cannot disagree about what
+/// "installed" means (#106). [`check_binary_exists`] is a memoized
+/// `which::which` — a filesystem lookup, no process spawn — so asking it
+/// again after an install costs nothing and is not a second round of version
+/// probes.
+fn tool_is_on_path(binary: &str) -> bool {
   // The rust surface (and `probe_tool_version`/`get_raw_tool_version`
   // elsewhere in this crate) register/accept the clippy tool under any of
   // these three names — match all of them, not just the literal `"clippy"`
   // that production code never actually passes (`src/surfaces/rust.rs`
   // registers it as `"clippy-driver"`).
-  let is_installed =
-    if matches!(binary, "clippy" | "clippy-driver" | "cargo-clippy") {
-      clippy_probe_succeeds("clippy-driver", "cargo")
-    } else {
-      check_binary_exists(binary)
-    };
+  if matches!(binary, "clippy" | "clippy-driver" | "cargo-clippy") {
+    clippy_probe_succeeds("clippy-driver", "cargo")
+  } else {
+    check_binary_exists(binary)
+  }
+}
 
-  if is_installed {
+fn lookup_tool_info(binary: &'static str) -> ToolLookupResult {
+  if tool_is_on_path(binary) {
     let path = which::which(binary)
       .or_else(|_| which::which("clippy-driver"))
       .or_else(|_| which::which("cargo"))
@@ -728,6 +825,119 @@ struct DoctorScanResult {
   outdated: HashSet<&'static str>,
   stale: Vec<ToolInfo>,
   unknown: HashSet<&'static str>,
+}
+
+/// The counts `fml doctor` closes with ("`8 installed (1 unknown), 0
+/// missing`"), held apart from [`DoctorScanResult`] on purpose.
+///
+/// The scan is a snapshot of the world *before* `--install` runs; this is the
+/// running tally the footer is actually rendered from, so a successful
+/// install has a place to land. Rendering the footer directly off the scan is
+/// what made `fml install` report tools as missing in the same breath as the
+/// Install Summary table listing them `[OK]` (#106) — the counts were
+/// structurally the pre-install snapshot and could not have been anything
+/// else.
+///
+/// The three buckets `--install` moves tools between (`installed`, `stale`,
+/// `missing`) stay as name sets so reconciliation can be idempotent;
+/// `outdated` and `unknown` collapse to their pre-install counts, since
+/// neither is what `--install` fixes. That collapse is a deliberate
+/// approximation, not an invariant: a tool installed this run whose version
+/// turns out to be unprobeable would ideally join `unknown`, and does not —
+/// it is counted plainly as installed. #106's stated expected output matches
+/// that, so it stays; anything that later needs `unknown` to be exact must
+/// widen it back to a name set rather than assume an install cannot touch it.
+struct ToolTally {
+  installed: HashSet<&'static str>,
+  outdated: usize,
+  stale: HashSet<&'static str>,
+  unknown: usize,
+  missing: HashSet<&'static str>,
+}
+
+impl ToolTally {
+  /// The pre-install tally, straight off the scan.
+  fn from_scan(scan: &DoctorScanResult) -> Self {
+    Self {
+      installed: scan.installed.clone(),
+      outdated: scan.outdated.len(),
+      stale: scan.stale.iter().map(|tool| tool.binary).collect(),
+      unknown: scan.unknown.len(),
+      missing: scan.missing.iter().map(|tool| tool.binary).collect(),
+    }
+  }
+
+  /// Fold one install run's per-tool outcomes into the tally, so the footer
+  /// agrees with the Install Summary table rendered from those same rows
+  /// (#106). Driven by the outcomes that table already computed — no second
+  /// round of version probes.
+  ///
+  /// Only the tools that actually landed on `PATH` move: a `[FAIL]` or
+  /// `[MISS]` row leaves the tally alone, so a tool that could not be
+  /// installed stays counted as missing. A reinstalled `[STALE]` tool was
+  /// already present and therefore already in `installed`, so dropping it
+  /// from `stale` is the whole change — the `insert` is idempotent and never
+  /// double-counts.
+  fn apply_install_run(&mut self, report: &InstallRunReport) {
+    for row in &report.rows {
+      match row.outcome {
+        InstallOutcome::Ok => {
+          self.missing.remove(row.binary);
+          self.stale.remove(row.binary);
+          self.installed.insert(row.binary);
+        }
+        // Installed, and confirmed resolvable on `PATH` by the same
+        // predicate this scan used — so it stops being missing. But
+        // "present at the wrong version" is exactly what `[STALE]` means,
+        // so it lands there rather than being quietly counted as a clean
+        // install.
+        InstallOutcome::Warn => {
+          self.missing.remove(row.binary);
+          self.installed.insert(row.binary);
+          self.stale.insert(row.binary);
+        }
+        // `NotOnPath` is an installer that exited 0 without producing a
+        // usable binary: the tool stays counted as missing, matching the
+        // `[FAIL]` row the Install Summary printed for it.
+        InstallOutcome::NotOnPath
+        | InstallOutcome::Fail
+        | InstallOutcome::NoInstaller => {}
+      }
+    }
+  }
+
+  /// The footer line itself. `offer_install_hint` appends the "run
+  /// 'fml install'" nudge, which only makes sense on a run that found work to
+  /// do and wasn't already `--install`.
+  fn render(&self, offer_install_hint: bool) -> String {
+    let qualifier = |count: usize, label: &str| {
+      if count == 0 {
+        String::new()
+      } else {
+        format!(" ({count} {label})").yellow().to_string()
+      }
+    };
+
+    format!(
+      "  {} installed{}{}{}, {} missing{}",
+      self.installed.len().to_string().green().bold(),
+      qualifier(self.outdated, "outdated"),
+      qualifier(self.stale.len(), "stale"),
+      qualifier(self.unknown, "unknown"),
+      if self.missing.is_empty() {
+        "0".green().bold().to_string()
+      } else {
+        self.missing.len().to_string().yellow().bold().to_string()
+      },
+      if offer_install_hint {
+        " (run 'fml install' to install missing/stale tools)"
+          .dimmed()
+          .to_string()
+      } else {
+        String::new()
+      }
+    )
+  }
 }
 
 fn scan_tools_and_build_table(
