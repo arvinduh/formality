@@ -157,40 +157,74 @@ fn install_missing_tools_framed(
           // which install alongside a package manager already on `PATH`).
           crate::surfaces::refresh_path_after_install(&program);
 
-          // Convergence guard: a successful install exit code only proves
-          // the package manager *ran* to completion, not that the binary it
-          // produced actually reports the pinned version — re-probe and
-          // warn (once, this invocation) rather than silently claiming
-          // success on a tool that would still show `[STALE]` on the very
-          // next `fml doctor`. This can only fire for a legitimately
-          // misconfigured pin now (an `expected_binary_version` that
-          // doesn't actually match what gets installed) -- see
-          // `surfaces::tooling::ToolChain`'s doc comment for why most tools
-          // deliberately opt out of the pin comparison entirely rather than
-          // risk exactly this.
-          if let Some(expected) =
+          // Resolution guard: an exit code of 0 only proves the package
+          // manager ran to completion, never that the binary it produced is
+          // reachable from *this* process. `npm i -g prettier` exits 0 with
+          // npm's global bin directory absent from `PATH` (routine under
+          // nvm, a user-level npm prefix, or a container whose prefix was
+          // set after the shell started), and `refresh_path_after_install`
+          // is a deliberate no-op for npm. Claiming `[OK]` there would make
+          // the doctor footer count a tool as installed that the very next
+          // `fml fmt` reports missing -- so ask the same question the scan
+          // asks, once, before any row is emitted.
+          let on_path = tool_is_on_path(tool.binary);
+
+          // Convergence guard: nor does that exit code prove the binary
+          // reports the pinned version — re-probe and warn (once, this
+          // invocation) rather than silently claiming success on a tool
+          // that would still show `[STALE]` on the very next `fml doctor`.
+          // This can only fire for a legitimately misconfigured pin now (an
+          // `expected_binary_version` that doesn't actually match what gets
+          // installed) -- see `surfaces::tooling::ToolChain`'s doc comment
+          // for why most tools deliberately opt out of the pin comparison
+          // entirely rather than risk exactly this. Skipped entirely when
+          // the binary isn't resolvable: there is nothing to probe, and an
+          // unpinned tool must not pay for a probe it never needed.
+          let expected = if on_path {
             crate::surfaces::pinned_version_for(tool.binary)
-          {
-            let actual = probe_tool_version(tool.binary);
-            if actual.as_ref() == Some(&expected) {
-              println!(
-                "    {} Successfully installed {} ({expected})",
-                "[OK]  ".green().bold(),
-                tool.binary.bold()
-              );
+          } else {
+            None
+          };
+          let actual = expected
+            .as_ref()
+            .and_then(|_| probe_tool_version(tool.binary));
+
+          match classify_install_outcome(
+            on_path,
+            expected.as_ref(),
+            actual.as_ref(),
+          ) {
+            InstallOutcome::Ok => {
+              let detail = expected.map(|v| v.to_string()).unwrap_or_default();
+              if detail.is_empty() {
+                println!(
+                  "    {} Successfully installed {}",
+                  "[OK]  ".green().bold(),
+                  tool.binary.bold()
+                );
+              } else {
+                println!(
+                  "    {} Successfully installed {} ({detail})",
+                  "[OK]  ".green().bold(),
+                  tool.binary.bold()
+                );
+              }
               summary_rows.push(InstallSummaryRow {
                 binary: tool.binary,
                 installer: program.clone(),
                 outcome: InstallOutcome::Ok,
-                detail: expected.to_string(),
+                detail,
               });
-            } else {
+            }
+            InstallOutcome::Warn => {
               let actual_str = actual
                 .map(|v| v.to_string())
                 .unwrap_or_else(|| "an unparseable version".to_string());
+              let expected_str =
+                expected.map(|v| v.to_string()).unwrap_or_default();
               println!(
                 "    {} Installed {}, but it still reports {actual_str} \
-                 (expected {expected}) -- the pin for this tool may not \
+                 (expected {expected_str}) -- the pin for this tool may not \
                  match what the binary itself reports; not retrying \
                  automatically.",
                 "[WARN]".yellow().bold(),
@@ -201,21 +235,35 @@ fn install_missing_tools_framed(
                 binary: tool.binary,
                 installer: program.clone(),
                 outcome: InstallOutcome::Warn,
-                detail: format!("reports {actual_str}, expected {expected}"),
+                detail: format!(
+                  "reports {actual_str}, expected {expected_str}"
+                ),
               });
             }
-          } else {
-            println!(
-              "    {} Successfully installed {}",
-              "[OK]  ".green().bold(),
-              tool.binary.bold()
-            );
-            summary_rows.push(InstallSummaryRow {
-              binary: tool.binary,
-              installer: program.clone(),
-              outcome: InstallOutcome::Ok,
-              detail: String::new(),
-            });
+            outcome @ InstallOutcome::NotOnPath => {
+              println!(
+                "    {} {} reported success, but {} is still not on PATH -- \
+                 the installer most likely wrote it to a directory this \
+                 shell's PATH doesn't contain. Reopen your shell (or add \
+                 that directory to PATH) and re-run; treating it as \
+                 installed here would only move the failure to the next \
+                 command.",
+                "[FAIL]".red().bold(),
+                program.bold(),
+                tool.binary.bold()
+              );
+              all_ok = false;
+              summary_rows.push(InstallSummaryRow {
+                binary: tool.binary,
+                installer: program.clone(),
+                outcome,
+                detail: format!("{program} exited 0, but it is not on PATH"),
+              });
+            }
+            // `classify_install_outcome` only ever returns the three above:
+            // these two describe an install command that failed or never
+            // ran, which this arm has already ruled out.
+            InstallOutcome::Fail | InstallOutcome::NoInstaller => {}
           }
         }
         Ok(status) => {
@@ -306,16 +354,52 @@ struct InstallSummaryRow {
 }
 
 /// Outcome of one tool's install attempt, for [`InstallSummaryRow`].
+///
+/// `PartialEq`/`Debug` exist so [`classify_install_outcome`]'s decision table
+/// can be asserted directly in tests, rather than inferred from rendered
+/// output.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum InstallOutcome {
   /// Installed and (where a pin exists) confirmed at the expected version.
   Ok,
   /// Installed, but the convergence guard above found its reported version
   /// didn't match the pin.
   Warn,
+  /// The installer exited 0, but the binary it claims to have installed is
+  /// still not resolvable on `PATH` — so nothing in this process (or the
+  /// next command the user runs) can actually invoke it.
+  NotOnPath,
   /// The installer command ran and failed, or failed to run at all.
   Fail,
   /// No installer chain entry was available at all -- manual install only.
   NoInstaller,
+}
+
+/// Decide what a successful install *command* actually accomplished, from
+/// the two facts the install site has just established: whether the binary
+/// now resolves on `PATH`, and — for a pinned tool only — what version it
+/// reports.
+///
+/// Split out as a pure function so the case this exists for is unit-testable
+/// without spawning a package manager: an installer that exits 0 while the
+/// binary never lands on `PATH` must not be reported as installed (#106).
+/// `PATH` resolution is checked first and unconditionally, because a tool
+/// that cannot be invoked is not "installed at the wrong version", it is
+/// absent — and unpinned tools (most of them, per
+/// `surfaces::tooling::ToolChain`) would otherwise have no post-install
+/// verification at all.
+fn classify_install_outcome(
+  on_path: bool,
+  expected: Option<&Version>,
+  probed: Option<&Version>,
+) -> InstallOutcome {
+  if !on_path {
+    return InstallOutcome::NotOnPath;
+  }
+  match expected {
+    Some(expected) if probed != Some(expected) => InstallOutcome::Warn,
+    _ => InstallOutcome::Ok,
+  }
 }
 
 /// Renders and prints the post-install recap table as a framed section, using
@@ -339,7 +423,12 @@ fn print_install_summary_table(rows: &[InstallSummaryRow], frame: &Frame) {
     let (label, style) = match row.outcome {
       InstallOutcome::Ok => ("[OK]  ", Style::Ok),
       InstallOutcome::Warn => ("[WARN]", Style::Warn),
-      InstallOutcome::Fail => ("[FAIL]", Style::Error),
+      // Renders like a failure because that is what it is from the caller's
+      // side: the tool is not usable. The `detail` column carries the
+      // distinction (installer exited 0) that the label can't.
+      InstallOutcome::NotOnPath | InstallOutcome::Fail => {
+        ("[FAIL]", Style::Error)
+      }
       InstallOutcome::NoInstaller => ("[MISS]", Style::Warn),
     };
     table.add_row(Row::new(vec![
@@ -659,20 +748,31 @@ fn clippy_probe_succeeds(driver_bin: &str, cargo_bin: &str) -> bool {
   )
 }
 
-fn lookup_tool_info(binary: &'static str) -> ToolLookupResult {
+/// Whether `binary` is reachable from this process right now.
+///
+/// The single predicate for "is this tool present": both the scan that fills
+/// the doctor table ([`lookup_tool_info`]) and the post-install check in
+/// [`install_missing_tools_framed`] go through here, so the table, the
+/// Install Summary and the closing tally cannot disagree about what
+/// "installed" means (#106). [`check_binary_exists`] is a memoized
+/// `which::which` — a filesystem lookup, no process spawn — so asking it
+/// again after an install costs nothing and is not a second round of version
+/// probes.
+fn tool_is_on_path(binary: &str) -> bool {
   // The rust surface (and `probe_tool_version`/`get_raw_tool_version`
   // elsewhere in this crate) register/accept the clippy tool under any of
   // these three names — match all of them, not just the literal `"clippy"`
   // that production code never actually passes (`src/surfaces/rust.rs`
   // registers it as `"clippy-driver"`).
-  let is_installed =
-    if matches!(binary, "clippy" | "clippy-driver" | "cargo-clippy") {
-      clippy_probe_succeeds("clippy-driver", "cargo")
-    } else {
-      check_binary_exists(binary)
-    };
+  if matches!(binary, "clippy" | "clippy-driver" | "cargo-clippy") {
+    clippy_probe_succeeds("clippy-driver", "cargo")
+  } else {
+    check_binary_exists(binary)
+  }
+}
 
-  if is_installed {
+fn lookup_tool_info(binary: &'static str) -> ToolLookupResult {
+  if tool_is_on_path(binary) {
     let path = which::which(binary)
       .or_else(|_| which::which("clippy-driver"))
       .or_else(|_| which::which("cargo"))
@@ -738,10 +838,15 @@ struct DoctorScanResult {
 /// structurally the pre-install snapshot and could not have been anything
 /// else.
 ///
-/// Buckets an install cannot change (`outdated`, `unknown` — a tool has to be
-/// present to land in either, and neither is what `--install` fixes) collapse
-/// to their counts here; the three an install *does* move tools between stay
-/// as name sets so reconciliation can be idempotent.
+/// The three buckets `--install` moves tools between (`installed`, `stale`,
+/// `missing`) stay as name sets so reconciliation can be idempotent;
+/// `outdated` and `unknown` collapse to their pre-install counts, since
+/// neither is what `--install` fixes. That collapse is a deliberate
+/// approximation, not an invariant: a tool installed this run whose version
+/// turns out to be unprobeable would ideally join `unknown`, and does not —
+/// it is counted plainly as installed. #106's stated expected output matches
+/// that, so it stays; anything that later needs `unknown` to be exact must
+/// widen it back to a name set rather than assume an install cannot touch it.
 struct ToolTally {
   installed: HashSet<&'static str>,
   outdated: usize,
@@ -781,17 +886,22 @@ impl ToolTally {
           self.stale.remove(row.binary);
           self.installed.insert(row.binary);
         }
-        // Installed, but the convergence guard found it reporting a version
-        // that doesn't match the pin. It *is* on `PATH` now, so it stops
-        // being missing — but "present at the wrong version" is exactly what
-        // `[STALE]` means, so it lands there rather than being quietly
-        // counted as a clean install.
+        // Installed, and confirmed resolvable on `PATH` by the same
+        // predicate this scan used — so it stops being missing. But
+        // "present at the wrong version" is exactly what `[STALE]` means,
+        // so it lands there rather than being quietly counted as a clean
+        // install.
         InstallOutcome::Warn => {
           self.missing.remove(row.binary);
           self.installed.insert(row.binary);
           self.stale.insert(row.binary);
         }
-        InstallOutcome::Fail | InstallOutcome::NoInstaller => {}
+        // `NotOnPath` is an installer that exited 0 without producing a
+        // usable binary: the tool stays counted as missing, matching the
+        // `[FAIL]` row the Install Summary printed for it.
+        InstallOutcome::NotOnPath
+        | InstallOutcome::Fail
+        | InstallOutcome::NoInstaller => {}
       }
     }
   }

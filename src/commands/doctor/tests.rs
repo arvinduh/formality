@@ -693,7 +693,23 @@ fn test_run_doctor_folds_install_into_tally_before_rendering_footer() {
     })
     .collect::<Vec<_>>()
     .join("\n");
-  let body = stripped.as_str();
+
+  // Bound the scan to `run_doctor`'s own body -- the first column-0 `}`,
+  // which for rustfmt-formatted source is the function's closing brace.
+  // Scanning to EOF instead would let an `apply`/`render` pair anywhere later
+  // in the file (a helper, a future function) satisfy this test while
+  // `run_doctor` itself had regressed, and would drag unrelated `scan.` /
+  // `from_scan` text into the "between" window.
+  let end = stripped
+    .find("\n}\n")
+    .map_or(stripped.len(), |offset| offset + 2);
+  let body = &stripped[..end];
+  assert!(
+    body.contains("ToolTally::from_scan("),
+    "the scanned window must actually be run_doctor's body -- it no longer \
+     contains the tally construction, so this guard is measuring the wrong \
+     code"
+  );
 
   let apply = body
     .find("tally.apply_install_run(")
@@ -715,6 +731,22 @@ fn test_run_doctor_folds_install_into_tally_before_rendering_footer() {
     !between.contains("scan."),
     "the footer must be rendered from the reconciled tally, not the \
      pre-install scan (#106); found a `scan.` read at: {between}"
+  );
+
+  // The `scan.` check alone has a hole big enough to reinstate the bug
+  // verbatim: `let tally = ToolTally::from_scan(&scan);` re-bound here would
+  // throw away everything `apply_install_run` just folded in, yet the
+  // substring `&scan)` *contains* `scan.`-free text and, worse, the
+  // `from_scan` call reads the snapshot without ever writing the literal
+  // `scan.` -- so the assertion above passes. Confirmed by inserting exactly
+  // that line and watching the guard stay green. Name the constructor
+  // explicitly (#213: a guard that greps for a leak must also grep for every
+  // wrapper that performs the same leak).
+  assert!(
+    !between.contains("from_scan"),
+    "the tally must not be rebuilt from the pre-install scan between the \
+     install run and the render -- that discards the reconciliation and \
+     restores #106 exactly; found a `from_scan` call at: {between}"
   );
 }
 
@@ -821,6 +853,171 @@ fn test_tool_tally_version_mismatched_install_counts_as_stale() {
   assert_eq!(
     strip_ansi_escapes(&tally.render(false)).trim(),
     "2 installed (1 stale), 0 missing"
+  );
+}
+
+/// The case this whole gate exists for: `npm i -g prettier` exits 0, npm's
+/// global bin directory is not on this process's `PATH`, and
+/// `refresh_path_after_install` is a deliberate no-op for npm. The exit code
+/// alone would say `[OK]`; the tool is nonetheless uninvokable, and the very
+/// next `fml fmt` would report it missing. Unpinned (`expected: None`) is the
+/// common path — per `surfaces::tooling::ToolChain`, most tools opt out of
+/// the pin — and is exactly where the old code had no post-install
+/// verification at all.
+#[test]
+fn test_classify_install_outcome_unpinned_absent_binary_is_not_ok() {
+  assert_eq!(
+    classify_install_outcome(false, None, None),
+    InstallOutcome::NotOnPath,
+    "an installer exiting 0 without putting the binary on PATH must not be \
+     reported as installed (#106)"
+  );
+}
+
+/// `PATH` resolution is checked first and unconditionally: a tool that cannot
+/// be invoked is not "present at the wrong version", it is absent. Even a
+/// probed version matching the pin exactly cannot promote it — that
+/// combination is unreachable in production, and pinning it here is what
+/// stops a future reordering of the two checks from turning an absent tool
+/// into an `[OK]` row.
+#[test]
+fn test_classify_install_outcome_path_check_precedes_version_check() {
+  let pinned = Version::new(1, 2, 3);
+  assert_eq!(
+    classify_install_outcome(false, Some(&pinned), Some(&pinned)),
+    InstallOutcome::NotOnPath
+  );
+  assert_eq!(
+    classify_install_outcome(false, Some(&pinned), None),
+    InstallOutcome::NotOnPath
+  );
+}
+
+/// The ordinary success path: on `PATH`, no pin to satisfy.
+#[test]
+fn test_classify_install_outcome_unpinned_present_binary_is_ok() {
+  assert_eq!(
+    classify_install_outcome(true, None, None),
+    InstallOutcome::Ok
+  );
+}
+
+/// A pinned tool that lands on `PATH` reporting the pinned version is a clean
+/// install; one reporting anything else (or nothing parseable) trips the
+/// convergence guard.
+#[test]
+fn test_classify_install_outcome_pinned_compares_versions_when_present() {
+  let pinned = Version::new(0, 9, 0);
+  let other = Version::new(0, 8, 0);
+
+  assert_eq!(
+    classify_install_outcome(true, Some(&pinned), Some(&pinned)),
+    InstallOutcome::Ok
+  );
+  assert_eq!(
+    classify_install_outcome(true, Some(&pinned), Some(&other)),
+    InstallOutcome::Warn
+  );
+  assert_eq!(
+    classify_install_outcome(true, Some(&pinned), None),
+    InstallOutcome::Warn
+  );
+}
+
+/// The tally half of the same case: an `[FAIL]`/`NotOnPath` row must leave the
+/// tool counted as missing, so the closing footer agrees with the Install
+/// Summary table instead of claiming `8 installed, 0 missing` for a tool the
+/// next command cannot run.
+#[test]
+fn test_tool_tally_not_on_path_install_stays_missing() {
+  let mut tally = pre_install_tally(&["rustfmt"], &[], &["prettier"], 0);
+
+  tally.apply_install_run(&InstallRunReport {
+    all_ok: false,
+    rows: vec![install_row("prettier", InstallOutcome::NotOnPath)],
+  });
+
+  assert_eq!(
+    strip_ansi_escapes(&tally.render(false)).trim(),
+    "1 installed, 1 missing",
+    "a tool whose installer exited 0 without putting it on PATH must stay \
+     counted as missing (#106)"
+  );
+  assert!(tally.missing.contains("prettier"));
+  assert!(!tally.installed.contains("prettier"));
+}
+
+/// `tool_is_on_path` is not a second, looser notion of "present" living
+/// alongside the scan's — it *is* the scan's. If these ever disagree the
+/// doctor table and the Install Summary can contradict each other again,
+/// which is the class of bug #106 is.
+#[test]
+fn test_tool_is_on_path_matches_the_scan_predicate() {
+  // A name no package manager will ever have installed.
+  const ABSENT: &str = "fml-nonexistent-binary-for-issue-106";
+  assert!(!tool_is_on_path(ABSENT));
+  assert!(!lookup_tool_info(ABSENT).is_installed);
+
+  // `cargo` is running this very test, so it is unambiguously on `PATH`.
+  assert!(tool_is_on_path("cargo"));
+  assert!(lookup_tool_info("cargo").is_installed);
+}
+
+/// Tier-2 source scan, same mechanism as the ordering guard above. The gate
+/// has to live *at the install site*, before any `InstallSummaryRow` is
+/// pushed, so the Install Summary table and the closing tally are a single
+/// honest source of truth rather than two places that could classify the same
+/// install differently. Doing it downstream in `apply_install_run` would
+/// leave the printed table claiming `[OK]` for a tool the footer counted
+/// missing.
+#[test]
+fn test_install_site_resolves_path_before_classifying_the_outcome() {
+  let source = include_str!("mod.rs");
+  let start = source
+    .find("fn install_missing_tools_framed(")
+    .expect("install_missing_tools_framed must exist");
+
+  // Comment lines are blanked for the same reason as the ordering guard: the
+  // install site's own prose names both calls this test looks for, so an
+  // unstripped scan would pass on the comments alone.
+  let stripped: String = source[start..]
+    .lines()
+    .map(|line| {
+      if line.trim_start().starts_with("//") {
+        ""
+      } else {
+        line
+      }
+    })
+    .collect::<Vec<_>>()
+    .join("\n");
+  let end = stripped
+    .find("\n}\n")
+    .map_or(stripped.len(), |offset| offset + 2);
+  let body = &stripped[..end];
+
+  let probe = body.find("tool_is_on_path(").expect(
+    "the install site must resolve the binary on PATH before deciding what \
+     the install accomplished -- an exit code of 0 is not evidence the tool \
+     is usable (#106)",
+  );
+  let classify = body.find("classify_install_outcome(").expect(
+    "the install site must classify the outcome through the shared \
+             predicate (#106)",
+  );
+  assert!(
+    probe < classify,
+    "the PATH resolution must happen before the outcome is classified"
+  );
+
+  let pushes = body
+    .find("summary_rows.push(")
+    .expect("the install site must record a summary row per tool");
+  assert!(
+    classify < pushes,
+    "no Install Summary row may be pushed for a successful install command \
+     before the outcome has been classified -- that is how an unverified \
+     `[OK]` gets into the table and the tally (#106)"
   );
 }
 
