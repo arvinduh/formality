@@ -79,7 +79,7 @@ machine-generated shape.
   `import_sort` configurable; `quote_style`, `trailing_comma`, `prose_wrap`,
   `edition` unsupported.
 - **`supports_lint_fix`**: `false` — checkstyle is diagnostics-only and has no
-  auto-fix mode, so `fml fix` / `fml lint --fix` only reformats Java files (via
+  auto-fix mode, so `fml fix` only reformats Java files (via
   `google-java-format`) and reports checkstyle violations without attempting to
   fix them.
 
@@ -169,9 +169,8 @@ machine-generated shape.
 - **Format**: `biome check --write --linter-enabled=false` — this is the Smart
   Format pass: it runs Biome's formatter _and_ `organizeImports` (governed by
   `biome.json`'s `organizeImports.enabled`) with the linter explicitly disabled,
-  so `fml fmt` never applies lint fixes; those are reserved for `fml lint --fix`
-  / `fml fix`. Covers `.js`, `.jsx`, `.ts`, `.tsx`, `.mjs`, `.cjs`, `.mts`,
-  `.cts`.
+  so `fml fmt` never applies lint fixes; those are reserved for `fml fix`.
+  Covers `.js`, `.jsx`, `.ts`, `.tsx`, `.mjs`, `.cjs`, `.mts`, `.cts`.
 - **Lint**: `biome lint` (or `biome check` when running the fix path).
 - **Managed config**: `biome.json`.
 - **`[lang.javascript]` options**: `quote_style`, `trailing_comma`, `semicolons`
