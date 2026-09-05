@@ -2,7 +2,7 @@
 //! single source of truth for every `fml` subcommand's flags, parsed once in
 //! [`crate::run`] and dispatched from [`crate::run_command_inner`].
 
-use clap::{Parser, Subcommand};
+use clap::{CommandFactory, Parser, Subcommand};
 use std::path::PathBuf;
 
 /// Top-level command-line arguments parser for formality.
@@ -32,17 +32,17 @@ pub struct Cli {
 /// Available subcommands for formality CLI.
 #[derive(Subcommand, Debug)]
 pub enum Commands {
-  /// Format source files across detected or specified surfaces
+  /// Format source files. Writes changes; --check reports without writing
   Fmt {
-    /// Check formatting without writing changes to disk
+    /// Report what would be reformatted, without writing
     #[arg(long)]
     check: bool,
 
-    /// Only format files staged for git commit
+    /// Only act on files staged for git commit
     #[arg(short = 's', long)]
     staged: bool,
 
-    /// Only format modified uncommitted files in git
+    /// Only act on modified uncommitted files in git
     #[arg(long)]
     changed: bool,
 
@@ -50,7 +50,7 @@ pub enum Commands {
     #[arg(short = 'l', long = "lang", value_name = "LANG")]
     lang: Vec<String>,
 
-    /// Auto-install any missing tool dependencies before formatting
+    /// Auto-install any missing tool dependencies first
     #[arg(short = 'i', long)]
     install: bool,
 
@@ -59,17 +59,29 @@ pub enum Commands {
     paths: Vec<PathBuf>,
   },
 
-  /// Lint source files across detected or specified surfaces
+  /// Lint source files. Never writes -- use `fml fix` to apply fixes
   Lint {
-    /// Automatically apply available lint fixes (does not reformat; see `fml fix` for lint+format together)
-    #[arg(long)]
+    /// Deprecated: use `fml fix`. Kept working for one minor release.
+    ///
+    /// Hidden from `--help` deliberately: it is on its way out, so help
+    /// advertises only the spelling we want adopted. It still parses, and
+    /// dispatches to the `fix` plan (lint fixes *and* format) after
+    /// printing the shared deprecation notice.
+    #[arg(long, hide = true)]
     fix: bool,
 
-    /// Only lint files staged for git commit
+    /// Rejected, not a no-op: `fml lint` never writes, so a mode flag on it
+    /// would be meaningless clutter. Declared only so the error names the
+    /// real reason instead of clap's misleading "to pass '--check' as a
+    /// value, use '-- --check'" tip; validated in [`Cli::parse_checked`].
+    #[arg(long, hide = true)]
+    check: bool,
+
+    /// Only act on files staged for git commit
     #[arg(short = 's', long)]
     staged: bool,
 
-    /// Only lint modified uncommitted files in git
+    /// Only act on modified uncommitted files in git
     #[arg(long)]
     changed: bool,
 
@@ -77,7 +89,7 @@ pub enum Commands {
     #[arg(short = 'l', long = "lang", value_name = "LANG")]
     lang: Vec<String>,
 
-    /// Auto-install any missing tool dependencies before linting
+    /// Auto-install any missing tool dependencies first
     #[arg(short = 'i', long)]
     install: bool,
 
@@ -86,13 +98,17 @@ pub enum Commands {
     paths: Vec<PathBuf>,
   },
 
-  /// Automatically fix lint violations and reformat code (equivalent to `fml lint --fix` followed by `fml fmt`)
+  /// Apply lint fixes, then reformat. Writes changes; --check reports without writing
   Fix {
-    /// Only fix files staged for git commit
+    /// Report whether `fml fix` would change anything, without writing
+    #[arg(long)]
+    check: bool,
+
+    /// Only act on files staged for git commit
     #[arg(short = 's', long)]
     staged: bool,
 
-    /// Only fix modified uncommitted files in git
+    /// Only act on modified uncommitted files in git
     #[arg(long)]
     changed: bool,
 
@@ -100,7 +116,7 @@ pub enum Commands {
     #[arg(short = 'l', long = "lang", value_name = "LANG")]
     lang: Vec<String>,
 
-    /// Auto-install any missing tool dependencies before fixing
+    /// Auto-install any missing tool dependencies first
     #[arg(short = 'i', long)]
     install: bool,
 
@@ -188,6 +204,59 @@ pub enum Commands {
   },
 }
 
+impl Cli {
+  /// Parses `std::env::args()` and rejects flag combinations clap's derive
+  /// cannot express, exiting with clap's own error rendering.
+  ///
+  /// Used by [`crate::run`] in place of a bare [`Parser::parse`].
+  #[must_use]
+  pub fn parse_checked() -> Self {
+    let cli = Self::parse();
+    if let Err(e) = cli.validate() {
+      e.exit();
+    }
+    cli
+  }
+
+  /// Validates flag combinations that are parseable but meaningless.
+  ///
+  /// Currently one rule: `fml lint --check`. `--check` selects the
+  /// report-only mode, and `fml lint` is *always* report-only, so the flag
+  /// is clutter rather than a no-op and is rejected outright. It is
+  /// declared as a hidden arg purely so this can explain why; left
+  /// undeclared, clap answers with "unexpected argument '--check' found"
+  /// and a "to pass '--check' as a value, use '-- --check'" tip that points
+  /// the user somewhere actively wrong.
+  ///
+  /// # Errors
+  ///
+  /// Returns a [`clap::Error`] describing the rejected combination.
+  ///
+  /// # Panics
+  ///
+  /// Panics if the `lint` subcommand is missing from [`Commands`] — it is
+  /// declared directly above, so this is a "the enum was edited without
+  /// updating this" assertion, not a runtime condition.
+  pub fn validate(&self) -> Result<(), clap::Error> {
+    if let Commands::Lint { check: true, .. } = &self.command {
+      let mut cmd = Self::command();
+      cmd.build();
+      let lint = cmd
+        .find_subcommand_mut("lint")
+        .expect("`lint` subcommand is declared above");
+      return Err(lint.error(
+        clap::error::ErrorKind::ArgumentConflict,
+        concat!(
+          "`fml lint` never writes, so `--check` has no meaning.\n\n",
+          "  tip: `fml lint` is already report-only. For a read-only run ",
+          "of the fix pipeline, use `fml fix --check`.",
+        ),
+      ));
+    }
+    Ok(())
+  }
+}
+
 /// Subcommands of `fml migrate`.
 #[derive(Subcommand, Debug)]
 pub enum MigrateCommands {
@@ -210,6 +279,121 @@ mod tests {
 
     let cli_alias = Cli::try_parse_from(["fml", "surfaces"]).unwrap();
     assert!(matches!(cli_alias.command, Commands::ListSurfaces));
+  }
+
+  #[test]
+  fn test_lint_check_is_rejected_with_a_tailored_error() {
+    // `--check` parses (it is declared hidden) so that `validate` can
+    // explain *why* it is refused. Clap's own "unexpected argument" answer
+    // suggests `-- --check`, which would silently pass `--check` through as
+    // a path argument.
+    let cli = Cli::try_parse_from(["fml", "lint", "--check"])
+      .expect("--check must parse so validate can reject it by name");
+    let err = cli
+      .validate()
+      .expect_err("`fml lint --check` must be an error");
+    let rendered = err.to_string();
+    assert!(
+      rendered.contains("never writes"),
+      "error should say why lint has no mode flag, got:
+{rendered}"
+    );
+    assert!(
+      rendered.contains("fml fix --check"),
+      "error should name the spelling that does what the user wanted, got:
+{rendered}"
+    );
+    assert!(
+      !rendered.contains("-- --check"),
+      "error must not reproduce clap's misleading passthrough tip, got:
+{rendered}"
+    );
+  }
+
+  #[test]
+  fn test_lint_without_check_validates() {
+    let cli = Cli::try_parse_from(["fml", "lint"]).unwrap();
+    assert!(cli.validate().is_ok());
+  }
+
+  #[test]
+  fn test_fix_accepts_check() {
+    let cli = Cli::try_parse_from(["fml", "fix", "--check"]).unwrap();
+    assert!(matches!(cli.command, Commands::Fix { check: true, .. }));
+    assert!(cli.validate().is_ok());
+  }
+
+  #[test]
+  fn test_deprecated_lint_fix_still_parses_but_is_hidden_from_help() {
+    let cli = Cli::try_parse_from(["fml", "lint", "--fix"]).unwrap();
+    assert!(matches!(cli.command, Commands::Lint { fix: true, .. }));
+    assert!(cli.validate().is_ok());
+
+    let mut cmd = Cli::command();
+    cmd.build();
+    let help = cmd
+      .find_subcommand_mut("lint")
+      .expect("lint subcommand")
+      .render_help()
+      .to_string();
+    assert!(
+      !help.contains("--fix"),
+      "a deprecated spelling should not be advertised in --help, got:
+{help}"
+    );
+    assert!(
+      !help.contains("--check"),
+      "`fml lint` has no mode flag to advertise, got:
+{help}"
+    );
+  }
+
+  #[test]
+  fn test_mode_flag_help_is_consistent_across_the_three_commands() {
+    // The `--check` help text is reviewed as a set (#118): every command
+    // that has it describes it as *reporting*, and the shared selection
+    // flags read identically everywhere.
+    let mut cmd = Cli::command();
+    cmd.build();
+    for (name, expected_check) in [
+      ("fmt", "Report what would be reformatted, without writing"),
+      (
+        "fix",
+        "Report whether `fml fix` would change anything, without writing",
+      ),
+    ] {
+      let help = cmd
+        .find_subcommand_mut(name)
+        .expect("subcommand")
+        .render_help()
+        .to_string();
+      assert!(
+        help.contains(expected_check),
+        "`fml {name} --help` should describe --check as reporting, got:
+{help}"
+      );
+      assert!(
+        help.contains("Only act on files staged for git commit"),
+        "`fml {name} --help` should use the shared --staged wording, got:
+{help}"
+      );
+      assert!(
+        help.contains("Auto-install any missing tool dependencies first"),
+        "`fml {name} --help` should use the shared --install wording, got:
+{help}"
+      );
+    }
+
+    let lint_help = cmd
+      .find_subcommand_mut("lint")
+      .expect("lint subcommand")
+      .render_help()
+      .to_string();
+    assert!(
+      lint_help.contains("Only act on files staged for git commit"),
+      "`fml lint --help` should use the shared --staged wording, got:
+{lint_help}"
+    );
   }
 
   #[test]

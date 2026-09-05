@@ -209,31 +209,77 @@ fml fmt src/
 # Check formatting in CI (exits 1 if changes would be made)
 fml fmt --check
 
-# Run linters across all active surfaces
+# Run linters across all active surfaces (never writes)
 fml lint
 
 # Install missing tools then lint in one step
 fml lint --install
 
-# Run linters with auto-fix
-fml lint --fix
-
-# Composite pipeline: lint --fix, then reformat, across all active surfaces
-# in one command (useful as a single "clean everything up" entrypoint)
+# Apply lint fixes and reformat, across all active surfaces, in one command
+# (the single "clean everything up" entrypoint)
 fml fix
+
+# In CI: would `fml fix` change anything? Writes nothing, exits 1 if so
+fml fix --check
 ```
 
-`fml fix` is a three-stage composite: it first runs `lint(fix: true)` (so
-semantic autofixes like unused-import removal land first), then runs `format()`
-(so the result is guaranteed to be in the canonical formatted state), then
-re-lints (check-only) just the surfaces whose lint pass still reported
-violations — so the status it prints reflects the tree _after_ formatting, and a
-violation the format pass resolved (e.g. a long line prettier rewrapped) no
-longer reports `[FAIL]` or forces a non-zero exit. See
-[docs/language-surfaces.md](docs/language-surfaces.md) for which surfaces have a
-real lint auto-fix mode (`supports_lint_fix()`) versus which only reformat under
-`fml fix` because their linter is diagnostics-only (e.g. Java's `checkstyle`,
-YAML's `yamllint`, TOML's `taplo lint`).
+### The command surface
+
+`--check` is the only mode flag. It never writes; its absence writes.
+
+| command            | passes                | writes? | exit 0                         | exit 1                                            |
+| ------------------ | --------------------- | ------- | ------------------------------ | ------------------------------------------------- |
+| `fml fmt`          | format                | yes     | formatted                      | a formatter reported a violation                  |
+| `fml fmt --check`  | format                | no      | already formatted              | a file would be reformatted                       |
+| `fml lint`         | lint                  | never   | no violations                  | violations                                        |
+| `fml fix`          | lint-fix, then format | yes     | clean after both passes        | violations remain after both passes               |
+| `fml fix --check`  | lint, then format     | no      | `fml fix` would change nothing | `fml fix` would change files, or leave violations |
+| `fml sync`         | config sync           | yes     | native configs written         | —                                                 |
+| `fml sync --check` | config sync           | no      | native configs in sync         | a native config has drifted                       |
+
+Exit code `2` means an operational failure for every command — a missing tool
+binary, an invalid config, or a tool that crashed — never a rule violation.
+
+`fml lint --check` is rejected rather than accepted as a no-op: `lint` never
+writes, so a mode flag on it would be meaningless clutter.
+
+### Why `fix` runs lint fixes _before_ formatting
+
+`fml fix` runs `lint(fix: true)` first (so semantic autofixes like unused-import
+removal land first), then `format()` (so the result is guaranteed to be in the
+canonical formatted state), then re-lints (check-only) just the surfaces whose
+lint pass still reported violations — so the status it prints reflects the tree
+_after_ formatting, and a violation the format pass resolved (e.g. a long line
+prettier rewrapped) no longer reports `[FAIL]` or forces a non-zero exit.
+
+The order is not interchangeable. A lint fix routinely leaves code the formatter
+then has to lay out again, so **`fml fmt && fml lint --fix` was always the wrong
+order** — it ended on the lint pass and left the tree lint-fixed but
+unformatted. That is exactly the state `fml` must never leave behind, and it is
+why `lint --fix` no longer exists: fixing lives in the composite, where the
+format pass always gets the last word.
+
+`fml fix --check` runs the same two passes in their read-only forms — `lint`
+without `--fix`, and `format` in check-only mode against scratch copies — so it
+writes nothing. It exits 0 exactly when `fml fix` would be a complete no-op.
+Note that on a dirty tree it can report a lint violation that `fml fix` would
+then silently resolve (that long line again): the exit code is right either way,
+but the two runs' _diagnostics_ can differ, because nothing was written for a
+re-check to observe.
+
+See [docs/language-surfaces.md](docs/language-surfaces.md) for which surfaces
+have a real lint auto-fix mode (`supports_lint_fix()`) versus which only
+reformat under `fml fix` because their linter is diagnostics-only (e.g. Java's
+`checkstyle`, YAML's `yamllint`, TOML's `taplo lint`).
+
+### Deprecated spellings
+
+| deprecated       | use instead | removed in |
+| ---------------- | ----------- | ---------- |
+| `fml lint --fix` | `fml fix`   | `v0.4.0`   |
+
+`fml lint --fix` still works and now runs the full `fml fix` pipeline — lint
+fixes _and_ formatting — after printing a notice to stderr.
 
 ---
 
@@ -303,9 +349,9 @@ prose_wrap = "always"
 Usage: fml [OPTIONS] <COMMAND>
 
 Commands:
-  fmt            Format source files across detected or specified surfaces
-  lint           Lint source files across detected or specified surfaces
-  fix            Composite pipeline: lint --fix, then fmt, across all active surfaces
+  fmt            Format source files. Writes changes; --check reports without writing
+  lint           Lint source files. Never writes -- use `fml fix` to apply fixes
+  fix            Apply lint fixes, then reformat. Writes changes; --check reports without writing
   sync           Sync native tool configs from canonical globals
   doctor         Diagnose installed toolchains with install hints
   install        Auto-install missing toolchains using system package managers
@@ -333,11 +379,11 @@ Options:
 | `fml fmt`     | `--staged`  | Operate only on `git diff --cached` files                                                      |
 | `fml fmt`     | `--changed` | Operate only on `git diff` (unstaged) files                                                    |
 | `fml fmt`     | `--lang`    | Filter to a specific surface, e.g. `--lang rust`                                               |
-| `fml lint`    | `--fix`     | Apply auto-fixes where the tool supports it                                                    |
 | `fml lint`    | `--install` | Auto-install missing tools for active surfaces, then lint                                      |
 | `fml lint`    | `--staged`  | Operate only on `git diff --cached` files                                                      |
 | `fml lint`    | `--changed` | Operate only on `git diff` (unstaged) files                                                    |
 | `fml lint`    | `--lang`    | Filter to a specific surface                                                                   |
+| `fml fix`     | `--check`   | Exit 1 if `fml fix` would change anything; writes nothing (CI safe)                            |
 | `fml fix`     | `--staged`  | Operate only on `git diff --cached` files                                                      |
 | `fml fix`     | `--changed` | Operate only on `git diff` (unstaged) files                                                    |
 | `fml fix`     | `--lang`    | Filter to a specific surface                                                                   |
@@ -495,13 +541,13 @@ code --install-extension formality-<version>.vsix
   the file is saved or created (configurable).
 - Exposes commands in the Command Palette (`Ctrl+Shift+P` / `Cmd+Shift+P`):
 
-| Command                                | Description                            |
-| :------------------------------------- | :------------------------------------- |
-| `Formality: Format Entire Workspace`   | Run `fml fmt` on the workspace         |
-| `Formality: Lint Entire Workspace`     | Run `fml lint` on the workspace        |
-| `Formality: Lint Workspace (Auto-Fix)` | Run `fml lint --fix` on the workspace  |
-| `Formality: Sync Native Configs`       | Run `fml sync` manually                |
-| `Formality: Run Toolchain Doctor`      | Run `fml doctor --all` and show output |
+| Command                                          | Description                            |
+| :----------------------------------------------- | :------------------------------------- |
+| `Formality: Format Entire Workspace`             | Run `fml fmt` on the workspace         |
+| `Formality: Lint Entire Workspace`               | Run `fml lint` on the workspace        |
+| `Formality: Fix Workspace (Lint Fixes + Format)` | Run `fml fix` on the workspace         |
+| `Formality: Sync Native Configs`                 | Run `fml sync` manually                |
+| `Formality: Run Toolchain Doctor`                | Run `fml doctor --all` and show output |
 
 ### Extension settings
 

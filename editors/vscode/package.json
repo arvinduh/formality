@@ -65,7 +65,7 @@
       },
       {
         "command": "formality.lintFix",
-        "title": "Formality: Lint Workspace (Auto-Fix)",
+        "title": "Formality: Fix Workspace (Lint Fixes + Format)",
         "category": "Formality"
       },
       {

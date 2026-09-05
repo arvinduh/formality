@@ -425,7 +425,6 @@ impl LanguageServer for FormalityLsp {
         &config,
         false,
         false,
-        false,
         vec![],
         false,
         vec![path.clone()],

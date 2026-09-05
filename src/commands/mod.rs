@@ -30,7 +30,7 @@ use std::path::{Path, PathBuf};
 use colored::Colorize;
 
 use crate::config::FormalityConfig;
-use crate::engine::{Runner, RunnerAction};
+use crate::engine::{Pass, Plan, Runner};
 use crate::errors::{ExitStatus, FormalityError, GitError, SurfaceError};
 use crate::surfaces::{
   LanguageSurface, all_surfaces, detect_surfaces_smart, find_files_with_ext,
@@ -46,11 +46,11 @@ pub fn warn_tool_install_failed(verb: &str) {
   );
 }
 
-/// Dispatches a surface action across target surfaces for `fmt`, `lint`, and
-/// `fix` commands after resolving git paths, target surfaces, and preflight tool
-/// requirements.
+/// Dispatches a [`Plan`] across target surfaces for the `fmt`, `lint`, and
+/// `fix` commands after resolving git paths, target surfaces, and preflight
+/// tool requirements.
 #[allow(clippy::too_many_arguments)]
-pub fn dispatch_surface_action(
+pub fn dispatch_plan(
   root: &Path,
   config: &FormalityConfig,
   staged: bool,
@@ -58,7 +58,7 @@ pub fn dispatch_surface_action(
   lang: Vec<String>,
   install: bool,
   paths: Vec<PathBuf>,
-  action: RunnerAction,
+  plan: &Plan,
   verb: &'static str,
 ) -> ExitStatus {
   let target_paths = match resolve_git_paths(root, staged, changed, paths) {
@@ -78,12 +78,11 @@ pub fn dispatch_surface_action(
       }
     };
 
-  let (for_fmt, for_lint) = match action {
-    RunnerAction::Format { .. } => (true, false),
-    RunnerAction::Lint { .. } => (false, true),
-    RunnerAction::Fix => (true, true),
-    RunnerAction::Sync { .. } => (false, false),
-  };
+  // Which tools to preflight follows directly from the plan's passes: a
+  // plan that formats needs the formatters, a plan that lints needs the
+  // linters, and `fix` needs both.
+  let for_fmt = plan.includes(Pass::Format);
+  let for_lint = plan.includes(Pass::Lint);
 
   let mut install_failed = false;
   if install {
@@ -99,7 +98,7 @@ pub fn dispatch_surface_action(
     );
   }
 
-  let status = Runner::run(surfaces, root, &target_paths, action, config);
+  let status = Runner::run(surfaces, root, &target_paths, plan, config);
   if install_failed && status.is_clean() {
     ExitStatus::Error
   } else {

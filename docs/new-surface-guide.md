@@ -126,8 +126,8 @@ Key implementation notes drawn from the existing fleet of surfaces:
   both in a single invocation (Go's `goimports -w`, Kotlin's `ktlint -F`,
   JS/TS's `biome check --write --linter-enabled=false`), a single call is fine —
   do not invent a fake two-stage split.
-- **`fml lint --fix` vs. `fml fmt`**: `format()` must never apply _semantic_
-  lint fixes (unused-import removal, rule-based rewrites) — that is what
+- **`fml fix` vs. `fml fmt`**: `format()` must never apply _semantic_ lint fixes
+  (unused-import removal, rule-based rewrites) — that is what
   `lint(ctx, fix: true)` and `supports_lint_fix()` are for. If the tool has no
   real auto-fix mode for lint violations (Checkstyle, yamllint, taplo lint), set
   `supports_lint_fix()` to `false` (the trait default) and return
