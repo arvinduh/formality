@@ -121,6 +121,9 @@ machine-generated shape.
   configurable; `quote_style`, `trailing_comma`, `import_sort`, `edition`,
   `standard` unsupported.
 - **`supports_lint_fix`**: `true`.
+- **`extra_args` caveat**: one list reaches **two** binaries, and a `--config`
+  entry silently overrides `fml`'s own markdownlint settings — see
+  [Markdown: one list, two tools](#markdown-one-list-two-tools).
 
 ## YAML
 
@@ -250,6 +253,46 @@ lint finding on that path to misclassify.
 See [ADR 0005](adr/0005-extra-args-exit-code-contracts.md) for the full
 reasoning, including why re-deriving each classifier from the final argv (which
 _would_ have covered the python and java cases) was rejected.
+
+### Markdown: one list, two tools
+
+`[lang.<name>] extra_args` is a single flat list per surface, forwarded verbatim
+to every tool invocation the pass makes. Markdown is the surface where that
+hurts most: `fml fmt` drives `markdownlint-cli2 --fix` and then
+`prettier --write` — two separate binaries with essentially disjoint flag
+vocabularies — and both receive the same list. (Before #150 the markdownlint
+pass silently dropped it during `fml fmt` while `fml lint` forwarded it, so the
+same config behaved differently between the two commands.)
+
+This is **not** an exit-code-contract problem like the table above, and nothing
+here is guarded. Reproduced against
+`markdownlint-cli2 v0.23.2 (markdownlint v0.41.1)`:
+
+- **A prettier-only flag is swallowed, not rejected.** markdownlint-cli2 treats
+  an unrecognized argument as a **glob**, so
+  `--fix --config c.json a.md --prose-wrap always` prints
+  `Finding: a.md --prose-wrap always` and lints `a.md` normally. Harmless, and
+  the reason routing `extra_args` into this pass did not break projects that
+  already carried prettier-only flags — but also not the loud, attributable
+  failure you might expect.
+- **`--config` is accepted by both tools, and yours wins.** `extra_args` is
+  appended after `fml`'s injected temp config, and markdownlint-cli2 honours the
+  **last** `--config` it sees. A `.prettierrc.json` in `extra_args` is therefore
+  parsed by markdownlint, which ignores its unknown keys and falls back to its
+  own defaults — `MD013` at 80 columns instead of the `line_length` your
+  `formality.toml` resolved. markdownlint exits 1, `fml fmt` classifies exit 1
+  as "violations remain, prettier still runs", and reports **`[PASS]`**. Your
+  resolved markdownlint settings were silently discarded.
+- **A flag markdownlint recognizes and rejects does fail loudly.** `--config`
+  naming a path that doesn't exist exits 2 and is surfaced as
+  `[ERR] Execution error`.
+
+`fml lint` has always behaved this way; #150 made `fml fmt` consistent with it
+rather than changing it. If you need a flag for exactly one of the two tools,
+there is no way to express that today —
+[#210](https://github.com/arvinduh/formality/issues/210) owns the design for a
+per-tool split (it is a `formality.toml` shape change, so it carries a
+`SCHEMA_VERSION` bump with it).
 
 ---
 
