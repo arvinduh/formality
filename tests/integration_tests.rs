@@ -598,6 +598,7 @@ fn test_fmt_fix_lint_doctor_install_flag_paths() {
 
   // Test fix with install: true
   let fix_args = Commands::Fix {
+    check: false,
     staged: false,
     changed: false,
     lang: vec!["rust".to_string()],
@@ -608,6 +609,7 @@ fn test_fmt_fix_lint_doctor_install_flag_paths() {
 
   // Test lint with install: true
   let lint_args = Commands::Lint {
+    check: false,
     fix: false,
     staged: false,
     changed: false,

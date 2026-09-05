@@ -1,15 +1,15 @@
-//! `fml fmt` command: formats, or with `--check` only verifies, the resolved
+//! `fml fmt` command: formats, or with `--check` only reports, the resolved
 //! target surfaces via [`Runner`].
 
 use std::path::{Path, PathBuf};
 
-use crate::commands::dispatch_surface_action;
+use crate::commands::dispatch_plan;
 use crate::config::FormalityConfig;
-use crate::engine::RunnerAction;
+use crate::engine::Plan;
 use crate::errors::ExitStatus;
 
-/// Runs the `fml fmt` command: formats (or, with `check`, only verifies) the
-/// resolved target surfaces, optionally installing missing tools first.
+/// Runs the `fml fmt` command: the `[Format]` plan, writing by default and
+/// reporting only under `check`, optionally installing missing tools first.
 #[allow(clippy::too_many_arguments)]
 pub fn run_fmt(
   root: &Path,
@@ -21,7 +21,7 @@ pub fn run_fmt(
   install: bool,
   paths: Vec<PathBuf>,
 ) -> ExitStatus {
-  dispatch_surface_action(
+  dispatch_plan(
     root,
     config,
     staged,
@@ -29,7 +29,7 @@ pub fn run_fmt(
     lang,
     install,
     paths,
-    RunnerAction::Format { check },
+    &Plan::fmt(check),
     "formatting",
   )
 }

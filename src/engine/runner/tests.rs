@@ -2,7 +2,7 @@ use super::*;
 use std::time::Duration;
 
 #[test]
-fn test_combine_fix_results_passed_and_skipped() {
+fn test_combine_pass_results_passed_and_skipped() {
   let lint_res = SurfaceResult {
     surface_name: "yaml",
     status: SurfaceStatus::Skipped {
@@ -16,14 +16,14 @@ fn test_combine_fix_results_passed_and_skipped() {
     duration: Duration::from_millis(20),
   };
 
-  let combined = combine_fix_results(lint_res, fmt_res, None);
+  let combined = combine_pass_results(apply_recheck(lint_res, None), fmt_res);
   assert_eq!(combined.surface_name, "yaml");
   assert_eq!(combined.duration, Duration::from_millis(30));
   assert!(matches!(combined.status, SurfaceStatus::Passed));
 }
 
 #[test]
-fn test_combine_fix_results_both_passed() {
+fn test_combine_pass_results_both_passed() {
   let lint_res = SurfaceResult {
     surface_name: "python",
     status: SurfaceStatus::Passed,
@@ -35,14 +35,14 @@ fn test_combine_fix_results_both_passed() {
     duration: Duration::from_millis(25),
   };
 
-  let combined = combine_fix_results(lint_res, fmt_res, None);
+  let combined = combine_pass_results(apply_recheck(lint_res, None), fmt_res);
   assert_eq!(combined.surface_name, "python");
   assert_eq!(combined.duration, Duration::from_millis(40));
   assert!(matches!(combined.status, SurfaceStatus::Passed));
 }
 
 #[test]
-fn test_combine_fix_results_recheck_clears_lint_violation() {
+fn test_combine_pass_results_recheck_clears_lint_violation() {
   // Issue #116: the lint pass reported a violation, but the post-format
   // re-check came back clean. The re-check supersedes the stale lint status,
   // so the surface reports Passed and its duration folds in all three passes.
@@ -65,13 +65,14 @@ fn test_combine_fix_results_recheck_clears_lint_violation() {
     duration: Duration::from_millis(20),
   };
 
-  let combined = combine_fix_results(lint_res, fmt_res, Some(recheck));
+  let combined =
+    combine_pass_results(apply_recheck(lint_res, Some(recheck)), fmt_res);
   assert!(matches!(combined.status, SurfaceStatus::Passed));
   assert_eq!(combined.duration, Duration::from_millis(90));
 }
 
 #[test]
-fn test_combine_fix_results_recheck_preserves_surviving_violation() {
+fn test_combine_pass_results_recheck_preserves_surviving_violation() {
   // Issue #116 inverse: the violation survived the format pass, so the
   // re-check still reports it and the surface still fails.
   let lint_res = SurfaceResult {
@@ -96,7 +97,8 @@ fn test_combine_fix_results_recheck_preserves_surviving_violation() {
     duration: Duration::from_millis(20),
   };
 
-  let combined = combine_fix_results(lint_res, fmt_res, Some(recheck));
+  let combined =
+    combine_pass_results(apply_recheck(lint_res, Some(recheck)), fmt_res);
   assert!(matches!(
     combined.status,
     SurfaceStatus::ViolationsFound { message, .. }
@@ -106,7 +108,7 @@ fn test_combine_fix_results_recheck_preserves_surviving_violation() {
 }
 
 #[test]
-fn test_combine_fix_results_violations_precedence() {
+fn test_combine_pass_results_violations_precedence() {
   let lint_res = SurfaceResult {
     surface_name: "rust",
     status: SurfaceStatus::ViolationsFound {
@@ -121,7 +123,7 @@ fn test_combine_fix_results_violations_precedence() {
     duration: Duration::from_millis(30),
   };
 
-  let combined = combine_fix_results(lint_res, fmt_res, None);
+  let combined = combine_pass_results(apply_recheck(lint_res, None), fmt_res);
   assert!(matches!(
     combined.status,
     SurfaceStatus::ViolationsFound { message, .. } if message.contains("warning: unused")
@@ -129,7 +131,7 @@ fn test_combine_fix_results_violations_precedence() {
 }
 
 #[test]
-fn test_combine_fix_results_tool_missing_precedence() {
+fn test_combine_pass_results_tool_missing_precedence() {
   let lint_res = SurfaceResult {
     surface_name: "python",
     status: SurfaceStatus::ToolMissing {
@@ -144,7 +146,7 @@ fn test_combine_fix_results_tool_missing_precedence() {
     duration: Duration::from_millis(5),
   };
 
-  let combined = combine_fix_results(lint_res, fmt_res, None);
+  let combined = combine_pass_results(apply_recheck(lint_res, None), fmt_res);
   assert!(matches!(
     combined.status,
     SurfaceStatus::ToolMissing { binary, .. } if binary == "ruff"
@@ -152,7 +154,7 @@ fn test_combine_fix_results_tool_missing_precedence() {
 }
 
 #[test]
-fn test_combine_fix_results_execution_error_precedence() {
+fn test_combine_pass_results_execution_error_precedence() {
   let lint_res = SurfaceResult {
     surface_name: "cpp",
     status: SurfaceStatus::ExecutionError {
@@ -166,7 +168,7 @@ fn test_combine_fix_results_execution_error_precedence() {
     duration: Duration::from_millis(10),
   };
 
-  let combined = combine_fix_results(lint_res, fmt_res, None);
+  let combined = combine_pass_results(apply_recheck(lint_res, None), fmt_res);
   assert!(matches!(
     combined.status,
     SurfaceStatus::ExecutionError { message } if message.contains("clang-tidy crashed")
@@ -214,15 +216,34 @@ fn test_execution_error_and_violations_render_detail_identically() {
 }
 
 #[test]
-fn test_tool_output_detail_prefers_diff_over_message() {
-  // ViolationsFound's `Some(diff)` branch renders the diff verbatim,
-  // bypassing normalize_diagnostics entirely -- assert that precedence here
-  // rather than only through `normalize_diagnostics`'s own unit test.
+fn test_tool_output_detail_renders_message_then_diff() {
+  // A diff is still rendered verbatim (bypassing normalize_diagnostics,
+  // whose blank-line trimming would eat diff *content*), but it no longer
+  // replaces the message. `fml fix --check` folds a lint result and a
+  // format result for one surface into a single status, so both halves are
+  // routinely present at once and returning only the diff silently dropped
+  // every lint finding.
   let detail = tool_output_detail(
     "Checking formatting...\nraw message noise",
     Some("- old\n+ new"),
   );
+  assert_eq!(detail, "raw message noise\n- old\n+ new");
+}
+
+#[test]
+fn test_tool_output_detail_diff_alone_when_message_is_empty() {
+  // `diff_check_via_tempcopy_classified` is the only producer of a diff and
+  // always pairs it with an empty message, so a plain `fml fmt --check`
+  // must render exactly the diff with no leading blank line -- i.e. output
+  // unchanged by message-then-diff rendering.
+  let detail = tool_output_detail("", Some("- old\n+ new"));
   assert_eq!(detail, "- old\n+ new");
+}
+
+#[test]
+fn test_tool_output_detail_message_alone_when_no_diff() {
+  let detail = tool_output_detail("Checking formatting...\nreal finding", None);
+  assert_eq!(detail, "real finding");
 }
 
 #[test]
