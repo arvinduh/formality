@@ -16,11 +16,11 @@
 pub mod mstv;
 
 pub use mstv::{
-  MSTV_BIOME, MSTV_CHECKSTYLE, MSTV_CLANG_FORMAT, MSTV_CLANG_TIDY, MSTV_CLIPPY,
-  MSTV_GOFMT, MSTV_GOLANGCI_LINT, MSTV_KTFMT, MSTV_KTLINT,
-  MSTV_MARKDOWNLINT_CLI2, MSTV_PRETTIER, MSTV_RUFF, MSTV_RUSTFMT, MSTV_TAPLO,
-  MSTV_TYPSTYLE, MSTV_YAMLLINT, TOOL_MSTV_REGISTRY, ToolMstvEntry,
-  all_mstv_entries, get_tool_mstv_entry,
+  DEFAULT_VERSION_PROBE, MSTV_BIOME, MSTV_CHECKSTYLE, MSTV_CLANG_FORMAT,
+  MSTV_CLANG_TIDY, MSTV_CLIPPY, MSTV_GOFMT, MSTV_GOLANGCI_LINT, MSTV_KTFMT,
+  MSTV_KTLINT, MSTV_MARKDOWNLINT_CLI2, MSTV_PRETTIER, MSTV_RUFF, MSTV_RUSTFMT,
+  MSTV_TAPLO, MSTV_TYPSTYLE, MSTV_YAMLLINT, TOOL_MSTV_REGISTRY, ToolMstvEntry,
+  VersionProbe, all_mstv_entries, get_tool_mstv_entry,
 };
 
 use crate::surfaces::create_tool_command;
@@ -130,80 +130,51 @@ fn line_carries_version_token(line: &str) -> bool {
   })
 }
 
-/// `gofmt` has no version flag of its own — it ships with the Go toolchain
-/// and carries that toolchain's version, which only `go version` reports
-/// (`go version go1.27.0 windows/amd64`). Probe that explicitly instead of
-/// letting a failed `gofmt --version` fall through to scraping its usage
-/// text. `None` when `go` is not on PATH or the call fails — the caller then
-/// reports `(version unprobeable)`, never scraped help text (Fixes #114).
-fn probe_gofmt_version_via_go_toolchain() -> Option<String> {
-  let output = create_tool_command("go").arg("version").output().ok()?;
+/// The [`VersionProbe`] declared for `binary`, falling back to
+/// [`DEFAULT_VERSION_PROBE`] for a binary with no registry entry.
+#[must_use]
+pub fn version_probe_for(binary: &str) -> VersionProbe {
+  get_tool_mstv_entry(binary).map_or(DEFAULT_VERSION_PROBE, |entry| entry.probe)
+}
+
+/// Runs one probe command and extracts the first version-shaped line from its
+/// output. `None` when the command cannot be spawned, exits non-zero, or
+/// prints nothing [`first_versionish_line`] accepts.
+fn run_probe_command(bin: &str, args: &[&str]) -> Option<String> {
+  let output = create_tool_command(bin).args(args).output().ok()?;
   if !output.status.success() {
     return None;
   }
   first_versionish_line(&String::from_utf8_lossy(&output.stdout))
+    .or_else(|| first_versionish_line(&String::from_utf8_lossy(&output.stderr)))
 }
 
-/// Executes the tool binary with `--version` or `-v` uncached and extracts the raw output line.
+/// Executes `probe` against `binary` and extracts the raw version line.
+///
+/// The function carries no policy of its own: it is ignorant of *which* tool
+/// it is probing, and runs exactly the commands the [`VersionProbe`] names —
+/// no implicit second attempt, so a registry entry always describes what
+/// actually runs. A tool that reports its version unusually is an entry here,
+/// not a branch (Fixes #177).
+fn run_probe(binary: &str, probe: &VersionProbe) -> Option<String> {
+  match probe {
+    VersionProbe::OwnFlags(flags) => run_probe_command(binary, flags),
+    VersionProbe::ViaBinary { bin, args } => run_probe_command(bin, args),
+    VersionProbe::FirstOf(probes) => {
+      probes.iter().find_map(|probe| run_probe(binary, probe))
+    }
+  }
+}
+
+/// Executes the version probe the registry declares for `binary`, uncached,
+/// and extracts the raw output line.
 #[must_use]
 pub fn probe_raw_tool_version_uncached(binary: &str) -> Option<String> {
-  // `gofmt` is sourced from the Go toolchain, not its own (nonexistent)
-  // `--version` flag — see [`probe_gofmt_version_via_go_toolchain`].
-  if binary == "gofmt" {
-    return probe_gofmt_version_via_go_toolchain();
-  }
-
-  let output = if binary == "clippy" {
-    if let Ok(out) = create_tool_command("clippy-driver")
-      .arg("--version")
-      .output()
-    {
-      if out.status.success() {
-        Some(out)
-      } else {
-        create_tool_command("cargo")
-          .args(["clippy", "--version"])
-          .output()
-          .ok()
-      }
-    } else {
-      create_tool_command("cargo")
-        .args(["clippy", "--version"])
-        .output()
-        .ok()
-    }
-  } else {
-    let args = tool_version_args(binary).unwrap_or(&["--version"]);
-    create_tool_command(binary).args(args).output().ok()
-  }?;
-
-  if output.status.success() {
-    if let Some(v) =
-      first_versionish_line(&String::from_utf8_lossy(&output.stdout))
-    {
-      return Some(v);
-    }
-    if let Some(v) =
-      first_versionish_line(&String::from_utf8_lossy(&output.stderr))
-    {
-      return Some(v);
-    }
-  }
-
-  // Fallback for tools expecting -v or -version
-  if let Ok(output_v) = create_tool_command(binary).arg("-v").output()
-    && output_v.status.success()
-    && let Some(v) =
-      first_versionish_line(&String::from_utf8_lossy(&output_v.stdout))
-  {
-    return Some(v);
-  }
-
-  None
+  run_probe(binary, &version_probe_for(binary))
 }
 
-/// Retrieve the raw output line from executing the tool with `--version` or `-v`,
-/// checking the on-disk cache at `cache_path` first.
+/// Retrieve the raw output line from executing the tool's registry-declared
+/// [`VersionProbe`], checking the on-disk cache at `cache_path` first.
 /// If cached version is fresh (TTL valid) and binary modification time matches,
 /// returns the cached version string without spawning a subprocess.
 /// Otherwise, invokes the tool CLI, updates the cache, and returns the result.
@@ -538,12 +509,6 @@ impl FromStr for Version {
 #[must_use]
 pub fn minimum_supported_tool_version(binary: &str) -> Option<Version> {
   get_tool_mstv_entry(binary).map(|e| e.min_version.clone())
-}
-
-/// Retrieve version query arguments for a tool binary.
-#[must_use]
-pub fn tool_version_args(binary: &str) -> Option<&'static [&'static str]> {
-  get_tool_mstv_entry(binary).map(|e| e.version_args)
 }
 
 /// Normalize a raw version output string probed from a tool into a semver [`Version`],
