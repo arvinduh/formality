@@ -238,6 +238,55 @@ On top of that tier-1 floor, this codebase's own convention:
   this. **Tier 3 (promote to tier 2 if a mechanical check is found)** —
   "non-obvious" isn't mechanically detectable without deeper analysis than a
   text scan gives.
+- **Doc comments on `JsonSchema`-derived types (tier 2 / tier 3):** A doc
+  comment on a type or field that derives `JsonSchema` (such as `LangConfig` and
+  configuration structs in `src/config/mod.rs`) is **published output**, not an
+  internal note: `schemars` lifts it verbatim into
+  `schema/formality.schema.json`'s `description` properties, where users and IDE
+  tooltips read it directly. Editing one is a schema change: it changes the
+  generated schema JSON, triggers a failure in `tests/schema_drift.rs`, and once
+  regenerated forces a `SCHEMA_VERSION` progression (`src/config/schema.rs`).
+  Per `docs/release.md`, cutting a new `sX.Y` schema release marks every
+  existing user configuration pinned to an earlier schema version (e.g.
+  `#:schema .../s1.1/...`) as **Stale**. Never reword or edit a doc comment on a
+  `JsonSchema` type incidentally — batch prose corrections onto a schema bump
+  that is already occurring for a functional reason. Internal implementation
+  rationales, notes, and issue-tracker syntax (`(Fixes #N)`, `TODO`, internal
+  shorthand) belong in regular code comments (`//`) at call sites or inside
+  function bodies, **never** in `///` doc comments on schema types. When
+  `tests/schema_drift.rs` fails on a doc-comment edit, that failure is the gate
+  working as intended, not a false positive. **Motivating case:** In `#150` / PR
+  `#194`, an initial commit reworded the doc comments on
+  `LangConfig::extra_args` and `ResolvedLangConfig::extra_args` to explain
+  multi-tool flag forwarding, inadvertently embedding an internal `(Fixes #150)`
+  reference into public schema tooltip descriptions and failing
+  `schema_drift.rs`. Reverting the doc-comment changes and moving the rationale
+  to call-site code comments kept the fix strictly scoped without forcing an
+  unintended schema release.
+- **External tool behavior claims and citations (tier 3, promote to tier 2 if a
+  mechanical check is found):** A doc comment, ADR, code rationale, or
+  user-facing diagnostic that asserts how an external tool behaves (e.g. exit
+  codes, flag syntax, duplicate flag handling, error formatting) must cite a
+  concrete reproduction actually run against the version this repo pins in
+  `Cargo.toml` or `docs/language-surfaces.md`. "The tool does X" is an
+  empirical, testable claim, not background intuition. This obligation applies
+  equally to premises inherited from issue descriptions: restating an unverified
+  premise in code or documentation adopts it as fact. Where the reproduction is
+  cited depends on scope: record the exact command line, tool version, and
+  output in the PR body and review comments, in the relevant ADR for
+  cross-cutting design decisions, or directly in a test or code comment for
+  local guards. **Motivating case:** In `#173` / PR `#197`, the issue asserted
+  that passing `--linter-enabled` via `extra_args` would override `fml`'s flag
+  and re-enable Biome's linter on the format path, causing lint diagnostics to
+  be misreported as execution errors (`[ERR]`). The PR adopted that premise in
+  its code comments, user-facing diagnostic, and draft ADR. A QA review ran
+  Biome 2.5.10 (the pinned version) directly and disproved the entire premise:
+  Biome strictly rejects duplicate `--linter-enabled` flags with an immediate
+  error before parsing any value, so the scenario was unreproducible and no lint
+  finding was ever misclassified. In the same review round, markdownlint-cli2's
+  flag handling was assumed to fail loudly on unknown flags, whereas testing
+  against v0.23.2 proved unknown flags are consumed as globs. Testing against
+  the pinned version replaces plausible assumptions with empirical facts.
 
 ---
 
@@ -297,6 +346,120 @@ those arguments, not from ambient lookup. This is what makes the
 `rayon::par_iter` dispatch in `Runner::run` safe without additional
 synchronization.
 
+### Manifest probes vs. surface detection
+
+**Rule (tier 3, promote to tier 2 if a mechanical check is found):** Probing for
+a project build manifest (`Cargo.toml`, `go.mod`, `package.json`, etc.) must use
+`.is_file()`, never `.exists()` — a directory can legitimately share the
+manifest's name (e.g. a directory named `Cargo.toml`), which `.exists()` falsely
+accepts.
+
+Furthermore, the distinction between tool execution preflights and surface
+detection is load-bearing:
+
+1. **Tool execution preflights / workspace member guards:** When a surface
+   decides whether a tool can run (such as `RustSurface::lint` checking for
+   `Cargo.toml` or `GoSurface::lint` checking for `go.mod`), it must walk
+   ancestor directories using `crate::surfaces::glob::find_manifest_upwards`. In
+   a Cargo workspace member or Go submodule, the build manifest legitimately
+   lives above `ctx.root`, and the underlying CLI tool (`cargo clippy`,
+   `go test`, etc.) walks parent directories to find it. Checking only
+   `ctx.root` produces false `ExecutionError` failures when `fml` is invoked
+   from a subcrate.
+2. **Surface detection (`LanguageSurface::detect`):** Probing in `detect(&Path)`
+   **must remain root-only** (`root.join(...)`). `detect` answers "is this root
+   a project of language X?" If `detect` walked parent directories, running
+   `fml` against any nested subdirectory or subcrate of a repository would
+   falsely activate surfaces for every ancestor project type in the tree.
+
+**Motivating case:** In `#185` / PR `#193`, `RustSurface::lint` checked only
+`ctx.root.join("Cargo.toml").exists()`, despite its user error message claiming
+to check parent directories. Running `fml lint` from a subdirectory of a Cargo
+workspace failed with an `ExecutionError`, even though `cargo clippy` walked
+ancestors and ran successfully. `find_manifest_upwards` was extracted to walk
+ancestors using `.is_file()`, while `detect` was kept strictly root-only to
+prevent false cross-surface activations.
+
+### Raw vs. ANSI-stripped text and offsets
+
+**Rule (tier 3, promote to tier 2 if a mechanical check is found):** A byte
+offset derived from raw, ANSI-bearing text may **never** index or slice
+ANSI-stripped text, and a byte offset derived from ANSI-stripped text may
+**never** index or slice raw text. Where an operation spans both representations
+— such as eligibility or classification decided on stripped text, followed by
+splicing or rewriting performed on raw text — the coordinate translation must be
+handled by a shared, dedicated, unit-tested helper (such as
+`src/ui/paths::char_before_ansi`), never by ad hoc inline slicing or secondary
+stripping at the point of use.
+
+**OSC sequence payload caveat:** Stripping ANSI escapes via `strip_ansi_escapes`
+or similar filters strips escape _payloads_ as well as formatting bytes. For
+example, an Operating System Command sequence like an OSC-8 hyperlink
+(`\x1b]8;;url\x1b\...`) contains meaningful text (the `file://` or `http://`
+URI) inside its escape sequence. Blindly stripping escapes discards that text
+entirely; asserting that "no characters precede an offset" in stripped text does
+not mean no characters precede it in raw text. Splicing raw text based on a
+stripped-prefix boundary check can land squarely inside an escape payload,
+corrupting URLs and escape sequences.
+
+Text scanners and the type system cannot readily distinguish a raw `&str` from
+an ANSI-stripped `&str` without a newtype abstraction. Reviewers must verify
+that any string manipulation in UI or diagnostic rendering preserves coordinate
+integrity across ANSI boundaries.
+
+**Motivating cases:** This exact boundary produced two successive bugs in
+`src/ui/paths.rs` during `#182` / PR `#191`:
+
+1. In `#182`, `relativize_text` classified line eligibility using ANSI-stripped
+   text, but `relativize_line` performed token-boundary checks on raw text. Its
+   `is_path_char` check inspected the byte immediately preceding a path
+   candidate, which for colored text was the trailing `m` of an ANSI SGR
+   sequence (e.g. `\x1b[31m`). Because `m` is an alphanumeric path character,
+   the boundary check failed, and colored diagnostic lines were silently left
+   un-relativized.
+2. The initial fix for `#182` stripped ANSI from the entire prefix preceding the
+   match before inspecting the boundary character. However, because
+   `strip_ansi_escapes` discards OSC-8 hyperlink payloads, a candidate path
+   inside a `file://...` hyperlink URL stripped the preceding URI to empty text,
+   falsely passing the boundary check and splicing the hyperlink target. PR
+   `#191` resolved this by replacing the blind strip with `char_before_ansi`, a
+   backward scan that steps over only complete, adjacent terminal escape
+   sequences without consuming OSC payloads.
+
+### Speculative API surface and unused variants/fields
+
+**Rule (tier 3, promote to tier 2 if a mechanical check is found):** Any enum
+variant, struct field, or function parameter added in anticipation of a future
+issue must have an active **production user in the same PR**, or else be
+deferred to the PR that actually implements that future issue. **Unit tests are
+not a production user.**
+
+When a PR justifies new API surface or data modeling by claiming that a
+downstream issue will need it, that claim is part of the diff's design contract.
+Reviewers and authors must verify the claim against the downstream issue's
+actual acceptance criteria and technical requirements before introducing the
+surface. Speculative machinery designed ahead of its consumer frequently makes
+incorrect assumptions about what the consumer needs, leaving behind dead code
+that must be reworked when the real consumer arrives.
+
+The compiler's `dead_code` lint catches unconstructed types or unused private
+fields across the crate, but it is completely blind to variants, fields, or
+parameters that are constructed or accessed solely within `#[cfg(test)]` test
+blocks. Reviewers must ensure every new variant or field has a non-test call
+site in the crate.
+
+**Motivating case:** In `#177` / PR `#195`, an unused `version_args` field was
+refactored into an explicit `VersionProbe` strategy enum so that no registry
+entry carried unread values. However, the PR introduced `ProbeArg::ToolPath` on
+the speculative premise that `#178` (probing `goimports` via
+`go version -m <path>`) would be a registry-only change. When QA audited `#178`,
+the premise was false: `go version -m` outputs the Go toolchain version on line
+1 and the module version on line 3, requiring custom line-extraction logic
+regardless of `ProbeArg`. `ProbeArg::ToolPath` was inert machinery tested only
+by unit tests, in the very PR meant to eliminate inert machinery. It was
+reverted, leaving `#178` to introduce the parameter alongside its real
+production consumer and extractor.
+
 ### `Runner` dispatch
 
 `Runner::run` (`src/engine/runner/mod.rs`) is the single dispatch point for
@@ -348,6 +511,119 @@ time this document was written. `src/errors.rs` is the single source of truth:
 **Tier 2 (enforced by `test_all_inner_error_enums_implement_std_error` in
 `src/errors.rs`):** every `FormalityError` variant's inner type implements
 `std::error::Error`, so `?`-conversion via `From` stays ergonomic at call sites.
+
+---
+
+## 6. Testing conventions
+
+Beyond test organization (§1) and naming (§2), tests in `fml` must adhere to the
+following authoring and verification rules:
+
+### Test specificity: assert what only the tested path produces
+
+**Rule (tier 3, promote to tier 2 if a mechanical check is found):** A test
+asserting that a specific code path was reached must assert on an attribute,
+message, or artifact that **only that specific path produces**.
+
+Asserting a generic error _variant_ (e.g.
+`matches!(status, SurfaceStatus::ExecutionError { .. })`) is vacuous whenever
+the surface or subsystem can reach that same variant through other failure
+modes. This trap is especially dangerous on **multi-tool surfaces** (such as
+Markdown running `markdownlint` and `prettier`, or Python running `ruff` and
+`isort`), where multiple underlying CLI tools can fail on the same invalid flag
+or broken configuration. If tool B produces `ExecutionError` on the test input
+independently of tool A, an assertion matching only `ExecutionError` will pass
+even if tool A never receives the input or its forwarding logic is completely
+deleted. Tests must assert on distinct error message text (e.g. markdownlint's
+unique config error string), inspect the assembled command argv directly, or
+unit-test argument builders in isolation.
+
+**Verification discipline:** Verify every path-specific test by temporarily
+reverting or commenting out the code under test and confirming the test
+**fails**. A test that has never been observed to fail has not been proven to
+test anything (see also §6's source-scan and file-matching verification rules
+below; these are three instances of the same "break it and watch it fail"
+discipline).
+
+**Motivating cases:** In `#150` / PR `#194`, `ctx.lang_config.extra_args` was
+forwarded to `markdownlint-cli2 --fix` on the format path. The PR added two
+tests asserting `matches!(status, ExecutionError { .. })` when an invalid
+`--config` was passed in `extra_args`. However, `prettier` also received
+`extra_args` and already failed with `ExecutionError` on that same invalid flag.
+When QA temporarily deleted the markdownlint forwarding lines, both new tests
+remained 100% green. The trap had even been named one day earlier in PR `#197`
+("matching the variant alone would be vacuous"), yet reoccurred in `#194`. The
+tests were replaced with deterministic argv builder assertions and a
+message-specific check asserting on markdownlint's unique output string.
+
+### Source-scan tests: assert absence, bound the window, prefer runtime assertions
+
+**Rule (tier 3, promote to tier 2 if a mechanical check is found):** A
+source-scan test (a tier-2 test that uses `include_str!` to inspect Rust source
+code and assert structural properties that the type system cannot express) must:
+
+1. **Assert the absence** of what it guards against, not merely the presence of
+   the fix. An assertion checking only that a correct helper or function call is
+   present can be satisfied even if the buggy pattern is reintroduced right next
+   to it.
+2. **Bound its scan window** strictly to the function, method, or block under
+   test (for instance, slicing between the function signature and its closing
+   brace), never scanning to end-of-file (EOF). Scanning to EOF allows helper
+   functions, unrelated methods, or future code located further down the file to
+   accidentally satisfy (or falsely trip) the scan.
+3. **Be verified by reintroducing the defect** and confirming that the test
+   **fails**.
+
+**Prefer runtime assertions:** Source-scan tests are inherently fragile against
+benign formatting and refactoring changes. Where a property can be expressed via
+a runtime assertion (such as inspecting an execution report, return value, or
+side-effect), always prefer the runtime assertion. Reach for `include_str!`
+source scans only when the invariant is strictly structural (e.g. execution
+order within an untestable I/O loop) and cannot be exercised in a hermetic unit
+test. Always document the rationale for the scan in the test's doc comment.
+
+**Motivating case:** In `#106` / PR `#196`,
+`test_run_doctor_folds_install_into_tally_before_rendering_footer` was
+introduced to ensure `fml doctor` folded installer results into its tool tally
+before rendering the summary footer. The initial guard checked that
+`tally.apply_install_run` appeared before `tally.render`, and asserted that the
+substring `scan.` was absent between them. However, the scan ran to EOF, and
+when a reviewer reintroduced the bug verbatim with
+`let tally = ToolTally::from_scan(&scan);` right before `render`, the test
+**still passed**: `&scan)` does not contain the substring `scan.`. The test was
+updated to bound its slice strictly to `run_doctor`'s closing brace, strip
+comment lines, and assert the absence of both `scan.` and `from_scan`.
+
+### File-matching invariant tests: strip comments before matching
+
+**Rule (tier 3, promote to tier 2 if a mechanical check is found):** A
+repo-invariant test that asserts on the contents of a file (such as checking
+workflow YAML, config files, or source code) must **strip comments before
+matching**, whenever that file contains comments or documentation describing the
+very pattern being asserted. Otherwise, explanatory comments quoting the guarded
+text will satisfy the assertion even when the live configuration or code has
+been deleted or reverted.
+
+This applies broadly across the codebase: to workflow guards (e.g.
+`tests/release_workflow_local_edits.rs`), source code scans (e.g.
+`src/commands/doctor/tests.rs`), and any test scanning files that contain
+self-documenting prose.
+
+**Verification discipline:** Always verify file-matching guards by temporarily
+deleting or corrupting the live line in the target file and confirming that the
+test **fails**. Like §6's test specificity and source-scan rules above, an
+invariant test that has never failed in the presence of the defect provides no
+protection.
+
+**Motivating case:** In `#164` / PR `#199`,
+`tests/release_workflow_local_edits.rs` was added to guard three local edits in
+`.github/workflows/release.yml` against silent reversion by
+`cargo-dist generate`. Each edit was documented by a `# LOCAL EDIT (issue #134)`
+comment that quoted what it replaced. When comment-stripping was tested,
+deleting the live `fetch-depth: 0` line from the workflow produced zero test
+failures: the comment explaining the edit quoted `fetch-depth: 0` verbatim,
+satisfying the naive substring check. Stripping comment lines before evaluation
+ensured the test only inspected live configuration.
 
 ---
 
