@@ -60,6 +60,9 @@ pub fn run_with_args(args: Cli) -> ExitStatus {
   let root = args.root.clone().unwrap_or_else(|| {
     std::env::current_dir().unwrap_or_else(|_| PathBuf::from("."))
   });
+  let root = std::path::absolute(&root).unwrap_or_else(|_| {
+    std::env::current_dir().map_or_else(|_| root.clone(), |cwd| cwd.join(&root))
+  });
 
   let project_config_path = config::find_project_config(&root);
 
@@ -229,6 +232,8 @@ fn warn_unrecognized_lang_sections(config: &FormalityConfig) {
 #[cfg(test)]
 #[allow(missing_docs, clippy::missing_errors_doc, clippy::missing_panics_doc)]
 mod tests {
+  use super::*;
+
   // Tier-2 enforcement for the module/file hierarchy rule documented in
   // docs/style-guide.md ("`*_tests.rs` vs `#[cfg(test)] mod tests`"): a
   // `#[test]` walking the filesystem, same mechanism `registry.rs`'s fleet
@@ -662,5 +667,16 @@ mod tests {
       "canonical module path violation(s) — see docs/style-guide.md §1:\n{}",
       violations.join("\n")
     );
+  }
+
+  #[test]
+  fn test_relative_root_resolves_to_absolute() {
+    let args = Cli {
+      config: None,
+      root: Some(std::path::PathBuf::from(".")),
+      command: Commands::ListSurfaces,
+    };
+    let status = run_with_args(args);
+    assert_eq!(status, ExitStatus::Clean);
   }
 }
