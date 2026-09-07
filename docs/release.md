@@ -52,9 +52,12 @@ committed `CHANGELOG.md`.
    cargo test --lib -q
    cargo clippy -q
    cargo run -q -- fmt --check
-   cargo run -q -- sync --check
    cargo run -q -- lint
    ```
+
+   `sync --check` is excluded from the root because the repo root carries only
+   `formality.toml` without native config files (`.rustfmt.toml`, `.prettierrc`,
+   etc.).
 
 2. **Bump the version.**
 
