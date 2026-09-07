@@ -40,7 +40,7 @@ and behavior) · [Adding a New Surface](docs/new-surface-guide.md) ·
 - **Deterministic exit codes**:
   - `0`: All clean / passed.
   - `1`: Formatting or lint violations found, or config drift detected.
-  - `2`: Missing tool or underlying execution error.
+  - `2`: Underlying execution error or operational failure.
 
 ---
 
@@ -237,8 +237,8 @@ fml fix --check
 | `fml sync`         | config sync           | yes     | native configs written         | —                                                 |
 | `fml sync --check` | config sync           | no      | native configs in sync         | a native config has drifted                       |
 
-Exit code `2` means an operational failure for every command — a missing tool
-binary, an invalid config, or a tool that crashed — never a rule violation.
+Exit code `2` means an operational failure for every command — an invalid
+config, or a tool that crashed — never a rule violation or missing tool.
 
 `fml lint --check` is rejected rather than accepted as a no-op: `lint` never
 writes, so a mode flag on it would be meaningless clutter.
