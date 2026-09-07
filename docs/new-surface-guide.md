@@ -126,8 +126,8 @@ Key implementation notes drawn from the existing fleet of surfaces:
   both in a single invocation (Go's `goimports -w`, Kotlin's `ktlint -F`,
   JS/TS's `biome check --write --linter-enabled=false`), a single call is fine —
   do not invent a fake two-stage split.
-- **`fml lint --fix` vs. `fml fmt`**: `format()` must never apply _semantic_
-  lint fixes (unused-import removal, rule-based rewrites) — that is what
+- **`fml fix` vs. `fml fmt`**: `format()` must never apply _semantic_ lint fixes
+  (unused-import removal, rule-based rewrites) — that is what
   `lint(ctx, fix: true)` and `supports_lint_fix()` are for. If the tool has no
   real auto-fix mode for lint violations (Checkstyle, yamllint, taplo lint), set
   `supports_lint_fix()` to `false` (the trait default) and return
@@ -320,6 +320,18 @@ If the tool reads a persisted configuration file (`.foorc`, `foo.toml`,
 If the tool has no native config file (driven entirely by CLI flags or
 `.editorconfig`), `sync_config()` can return `SurfaceStatus::Passed` or
 `SurfaceStatus::Skipped`.
+
+If the surface syncs **more than one** file, run each through `sync_file_helper`
+with its own `Instant::now()` and fold the results with `merge_sync_results` —
+returning just one of them hides the others from `fml sync`'s output, which is
+what #130 fixed.
+
+**Never sync a file another surface also claims.** A shared file gets one
+writer, in a pass that runs after the parallel fan-out (`sync_editorconfig`,
+`sync_shared_prettier_config`); the surface only _declares_ that it consumes it.
+If your tool is `prettier`, override `uses_prettier()` to return `true` and sync
+nothing for that file. See "Shared config files" in
+[`language-surfaces.md`](language-surfaces.md).
 
 ---
 

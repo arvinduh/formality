@@ -29,7 +29,8 @@ fn absolutize(p: &Path) -> PathBuf {
   if p.has_root() {
     p.to_path_buf()
   } else {
-    std::env::current_dir().unwrap_or_default().join(p)
+    std::path::absolute(p)
+      .unwrap_or_else(|_| std::env::current_dir().unwrap_or_default().join(p))
   }
 }
 
@@ -48,18 +49,26 @@ fn root_prefixes(root: &Path) -> Vec<String> {
   let base: String = if looks_absolute(&raw) {
     raw.into_owned()
   } else {
-    std::env::current_dir()
-      .unwrap_or_default()
-      .join(root)
+    std::path::absolute(root)
+      .unwrap_or_else(|_| {
+        std::env::current_dir().unwrap_or_default().join(root)
+      })
       .to_string_lossy()
       .into_owned()
   };
   let trimmed = base.trim_end_matches(['/', '\\']);
-  let spellings = [
-    trimmed.to_string(),
-    trimmed.replace('\\', "/"),
-    trimmed.replace('/', "\\"),
+  let clean_trimmed = trimmed.strip_prefix(r"\\?\").unwrap_or(trimmed);
+  let mut spellings = vec![
+    clean_trimmed.to_string(),
+    clean_trimmed.replace('\\', "/"),
+    clean_trimmed.replace('/', "\\"),
   ];
+  let verbatim_bs = format!(r"\\?\{clean_trimmed}");
+  let verbatim_fwd = format!("//?/{clean_trimmed}");
+  spellings.push(verbatim_bs.clone());
+  spellings.push(verbatim_bs.replace('/', "\\"));
+  spellings.push(verbatim_fwd.clone());
+  spellings.push(verbatim_fwd.replace('\\', "/"));
 
   let mut variants: Vec<String> = Vec::new();
   for s in &spellings {
@@ -308,7 +317,8 @@ fn relativize_line(
 /// entry for it here would never match. Don't re-add it speculatively; if a
 /// future surface starts a diagnostic line with `"Finding: "` and needs it
 /// relativized, add it back then, with a test that exercises it.
-const RELATIVIZE_LINE_PREFIXES: [&str; 3] = ["--- ", "+++ ", "diff --git "];
+const RELATIVIZE_LINE_PREFIXES: [&str; 4] =
+  ["--- ", "+++ ", "diff --git ", "Diff in "];
 
 /// Rewrite absolute paths that lie under `root` to their `root`-relative form,
 /// leaving every other path and all other text untouched.
@@ -429,6 +439,47 @@ mod tests {
   /// is rewritten now; the second occurrence stays absolute. The
   /// `--- `/`+++ ` arms keep all-occurrence rewriting, pinned by
   /// `relativize_text_diff_header_arm_rewrites_every_occurrence` below.
+  #[test]
+  fn display_path_relativizes_under_relative_root() {
+    let cwd = std::env::current_dir().unwrap();
+    let file = cwd.join("src").join("lib.rs");
+    // With "." as relative root
+    assert_eq!(display_path(Path::new("."), &file), "src/lib.rs");
+    assert_eq!(
+      display_path(Path::new("."), Path::new("src/lib.rs")),
+      "src/lib.rs"
+    );
+    assert_eq!(display_path(Path::new("."), Path::new(".")), ".");
+
+    // With "src" as relative root
+    assert_eq!(display_path(Path::new("src"), &file), "lib.rs");
+    assert_eq!(
+      display_path(Path::new("src"), Path::new("src/lib.rs")),
+      "lib.rs"
+    );
+  }
+
+  #[test]
+  fn relativize_text_handles_relative_root() {
+    let cwd = std::env::current_dir().unwrap();
+    let file = cwd.join("src").join("lib.rs");
+    let text = format!("{}:1:1 error", file.display());
+    let relativized = relativize_text(Path::new("."), &text);
+    assert!(
+      relativized == "src/lib.rs:1:1 error"
+        || relativized == "src\\lib.rs:1:1 error",
+      "expected relative path in {relativized}"
+    );
+
+    let diff_text = format!("--- {}", file.display());
+    let diff_relativized = relativize_text(Path::new("."), &diff_text);
+    assert!(
+      diff_relativized == "--- src/lib.rs"
+        || diff_relativized == "--- src\\lib.rs",
+      "expected relative path in {diff_relativized}"
+    );
+  }
+
   #[test]
   fn relativize_text_rewrites_only_the_leading_token_on_a_leading_path_line() {
     let root = Path::new("/home/u/proj");

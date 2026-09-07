@@ -39,8 +39,9 @@ is not run against this repository's root.
    - `Library Tests` (**required status check**):
      `cargo clippy --all-targets -- -D warnings` and full unit/integration test
      suite (`cargo test --verbose`).
-   - `Formality Dogfooding`: `fml fmt --check` and `fml lint` against this repo,
-     plus `fml schema` drift check and schema version progression enforcement.
+   - `Formality Dogfooding` (**required status check**): `fml fmt --check` and
+     `fml lint` against this repo, plus `fml schema` drift check and schema
+     version progression enforcement.
    - `Security Audit`: `cargo audit` against Rust advisory database.
 
 ## Conventions

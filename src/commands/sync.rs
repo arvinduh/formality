@@ -5,12 +5,11 @@ use std::path::Path;
 
 use crate::commands::resolve_target_surfaces;
 use crate::config::FormalityConfig;
-use crate::engine::{Runner, RunnerAction};
+use crate::engine::{Plan, Runner};
 use crate::errors::ExitStatus;
 
-/// Runs the `fml sync` command: synchronizes (or, with `check`, only
-/// verifies) the native tool configs generated from `formality.toml` for the
-/// resolved target surfaces.
+/// Runs the `fml sync` command: the `[ConfigSync]` plan, writing by default
+/// and reporting only under `check`, for the resolved target surfaces.
 pub fn run_sync(
   root: &Path,
   config: &FormalityConfig,
@@ -24,5 +23,5 @@ pub fn run_sync(
       return ExitStatus::Error;
     }
   };
-  Runner::run(surfaces, root, &[], RunnerAction::Sync { check }, config)
+  Runner::run(surfaces, root, &[], &Plan::sync(check), config)
 }

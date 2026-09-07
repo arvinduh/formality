@@ -83,7 +83,7 @@ machine-generated shape.
   `import_sort` configurable; `quote_style`, `trailing_comma`, `prose_wrap`,
   `edition` unsupported.
 - **`supports_lint_fix`**: `false` — checkstyle is diagnostics-only and has no
-  auto-fix mode, so `fml fix` / `fml lint --fix` only reformats Java files (via
+  auto-fix mode, so `fml fix` only reformats Java files (via
   `google-java-format`) and reports checkstyle violations without attempting to
   fix them.
 - **`extra_args` caveat**: `--set-exit-if-changed` makes a successful reformat
@@ -114,20 +114,24 @@ machine-generated shape.
   keeps `fml lint`'s markdownlint pass from immediately failing on cosmetic
   issues `fml fmt` could have fixed.
 - **Lint**: `markdownlint-cli2`.
-- **Managed config**: `.markdownlint.json`, `.prettierrc.json`.
+- **Managed config**: `.markdownlint.json`, plus the shared `.prettierrc.json`
+  (see below).
 - **`[lang.markdown]` options**: `prose_wrap` (`"always"` / `"never"` /
   `"preserve"`).
 - **Facets**: `indent_tabs`/`indent_width`/`line_length`/`prose_wrap`
   configurable; `quote_style`, `trailing_comma`, `import_sort`, `edition`,
   `standard` unsupported.
 - **`supports_lint_fix`**: `true`.
+- **`extra_args` caveat**: one list reaches **two** binaries, and a `--config`
+  entry silently overrides `fml`'s own markdownlint settings — see
+  [Markdown: one list, two tools](#markdown-one-list-two-tools).
 
 ## YAML
 
 - **Format**: `prettier`.
 - **Lint**: `yamllint`.
-- **Managed config**: `.prettierrc.json` (shared with JSON/Markdown) plus a
-  generated `yamllint` config.
+- **Managed config**: a generated `yamllint` config, plus the shared
+  `.prettierrc.json` (see below).
 - **`[lang.yaml]` options**: `indent_sequence` (whether sequence items are
   indented under their parent key), `document_start` (require the `---` document
   marker), `truthy` (restrict truthy-value spellings, e.g. forbid bare
@@ -141,7 +145,8 @@ machine-generated shape.
 - **Format**: `prettier`.
 - **Lint**: prettier itself acts as the check (`prettier --check`); no dedicated
   JSON linter is wired in.
-- **Managed config**: `.prettierrc.json`.
+- **Managed config**: the shared `.prettierrc.json` only (see below); JSON has
+  no native config of its own.
 - **`[lang.json]` options**: none currently (reserved for future knobs).
 - **Facets**: `indent_tabs`/`indent_width` configurable; `quote_style` **fixed**
   to `double` and `trailing_comma` **fixed** to `none` — both are JSON-spec
@@ -176,9 +181,8 @@ machine-generated shape.
 - **Format**: `biome check --write --linter-enabled=false` — this is the Smart
   Format pass: it runs Biome's formatter _and_ `organizeImports` (governed by
   `biome.json`'s `organizeImports.enabled`) with the linter explicitly disabled,
-  so `fml fmt` never applies lint fixes; those are reserved for `fml lint --fix`
-  / `fml fix`. Covers `.js`, `.jsx`, `.ts`, `.tsx`, `.mjs`, `.cjs`, `.mts`,
-  `.cts`.
+  so `fml fmt` never applies lint fixes; those are reserved for `fml fix`.
+  Covers `.js`, `.jsx`, `.ts`, `.tsx`, `.mjs`, `.cjs`, `.mts`, `.cts`.
 - **Lint**: `biome lint` (or `biome check` when running the fix path).
 - **Managed config**: `biome.json`.
 - **`[lang.javascript]` options**: `quote_style`, `trailing_comma`, `semicolons`
@@ -208,6 +212,45 @@ machine-generated shape.
   `indent_width`/`line_length`/`trailing_comma`/`import_sort` configurable;
   `prose_wrap`, `edition`, `standard` unsupported.
 - **`supports_lint_fix`**: `true`.
+
+---
+
+## Shared config files
+
+Two managed files are not owned by any one surface, because more than one
+surface needs them:
+
+- **`.editorconfig`** — aggregates every active surface's layout facets.
+- **`.prettierrc.json`** — used by the Markdown, YAML and JSON surfaces, which
+  all format via `prettier`.
+
+`fml sync` writes each of them **once**, in a pass that runs after the
+per-surface fan-out and reports itself under its own name (`editorconfig`,
+`prettier`). A surface declares that it consumes the prettier config via
+`LanguageSurface::uses_prettier`; it must never sync that file from its own
+`sync_config`. Three surfaces doing exactly that raced on one path under
+`surfaces.par_iter()`, which made the report nondeterministic and risked a
+sharing violation on Windows (#130).
+
+Because there is one file, all of its surfaces must resolve it the same way.
+Conflicting `[lang.<name>]` overrides — say `[lang.markdown] line_length = 100`
+or `[lang.markdown] prose_wrap = "preserve"` against the global default — are
+reported as an explicit error naming the surfaces and the settings they disagree
+on.
+
+**What `fml sync` does on such a conflict:** it still writes every file it can
+resolve unambiguously — `.editorconfig`, `.markdownlint.json`, the `yamllint`
+config, `taplo.toml` and so on — and withholds only `.prettierrc.json`, the one
+file the overrides genuinely disagree about. The run then exits `2`, so
+`fml sync --check` used as a pre-commit hook fails until the overrides are
+aligned. Unrelated surfaces are never blocked by the conflict, but the run as a
+whole is not reported as clean, because one requested file was not materialized.
+
+`fml fmt` is unaffected either way: it passes each surface's own settings to
+`prettier` inline and never reads the file, so a `prose_wrap` override that
+`fml sync` declines to write is still applied by `fml fmt`. Aligning the
+overrides (or moving the setting to the global table) is what reconciles the
+two.
 
 ---
 
@@ -250,6 +293,46 @@ lint finding on that path to misclassify.
 See [ADR 0005](adr/0005-extra-args-exit-code-contracts.md) for the full
 reasoning, including why re-deriving each classifier from the final argv (which
 _would_ have covered the python and java cases) was rejected.
+
+### Markdown: one list, two tools
+
+`[lang.<name>] extra_args` is a single flat list per surface, forwarded verbatim
+to every tool invocation the pass makes. Markdown is the surface where that
+hurts most: `fml fmt` drives `markdownlint-cli2 --fix` and then
+`prettier --write` — two separate binaries with essentially disjoint flag
+vocabularies — and both receive the same list. (Before #150 the markdownlint
+pass silently dropped it during `fml fmt` while `fml lint` forwarded it, so the
+same config behaved differently between the two commands.)
+
+This is **not** an exit-code-contract problem like the table above, and nothing
+here is guarded. Reproduced against
+`markdownlint-cli2 v0.23.2 (markdownlint v0.41.1)`:
+
+- **A prettier-only flag is swallowed, not rejected.** markdownlint-cli2 treats
+  an unrecognized argument as a **glob**, so
+  `--fix --config c.json a.md --prose-wrap always` prints
+  `Finding: a.md --prose-wrap always` and lints `a.md` normally. Harmless, and
+  the reason routing `extra_args` into this pass did not break projects that
+  already carried prettier-only flags — but also not the loud, attributable
+  failure you might expect.
+- **`--config` is accepted by both tools, and yours wins.** `extra_args` is
+  appended after `fml`'s injected temp config, and markdownlint-cli2 honours the
+  **last** `--config` it sees. A `.prettierrc.json` in `extra_args` is therefore
+  parsed by markdownlint, which ignores its unknown keys and falls back to its
+  own defaults — `MD013` at 80 columns instead of the `line_length` your
+  `formality.toml` resolved. markdownlint exits 1, `fml fmt` classifies exit 1
+  as "violations remain, prettier still runs", and reports **`[PASS]`**. Your
+  resolved markdownlint settings were silently discarded.
+- **A flag markdownlint recognizes and rejects does fail loudly.** `--config`
+  naming a path that doesn't exist exits 2 and is surfaced as
+  `[ERR] Execution error`.
+
+`fml lint` has always behaved this way; #150 made `fml fmt` consistent with it
+rather than changing it. If you need a flag for exactly one of the two tools,
+there is no way to express that today —
+[#210](https://github.com/arvinduh/formality/issues/210) owns the design for a
+per-tool split (it is a `formality.toml` shape change, so it carries a
+`SCHEMA_VERSION` bump with it).
 
 ---
 

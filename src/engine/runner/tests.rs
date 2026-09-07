@@ -2,7 +2,7 @@ use super::*;
 use std::time::Duration;
 
 #[test]
-fn test_combine_fix_results_passed_and_skipped() {
+fn test_combine_pass_results_passed_and_skipped() {
   let lint_res = SurfaceResult {
     surface_name: "yaml",
     status: SurfaceStatus::Skipped {
@@ -16,14 +16,14 @@ fn test_combine_fix_results_passed_and_skipped() {
     duration: Duration::from_millis(20),
   };
 
-  let combined = combine_fix_results(lint_res, fmt_res, None);
+  let combined = combine_pass_results(apply_recheck(lint_res, None), fmt_res);
   assert_eq!(combined.surface_name, "yaml");
   assert_eq!(combined.duration, Duration::from_millis(30));
   assert!(matches!(combined.status, SurfaceStatus::Passed));
 }
 
 #[test]
-fn test_combine_fix_results_both_passed() {
+fn test_combine_pass_results_both_passed() {
   let lint_res = SurfaceResult {
     surface_name: "python",
     status: SurfaceStatus::Passed,
@@ -35,14 +35,14 @@ fn test_combine_fix_results_both_passed() {
     duration: Duration::from_millis(25),
   };
 
-  let combined = combine_fix_results(lint_res, fmt_res, None);
+  let combined = combine_pass_results(apply_recheck(lint_res, None), fmt_res);
   assert_eq!(combined.surface_name, "python");
   assert_eq!(combined.duration, Duration::from_millis(40));
   assert!(matches!(combined.status, SurfaceStatus::Passed));
 }
 
 #[test]
-fn test_combine_fix_results_recheck_clears_lint_violation() {
+fn test_combine_pass_results_recheck_clears_lint_violation() {
   // Issue #116: the lint pass reported a violation, but the post-format
   // re-check came back clean. The re-check supersedes the stale lint status,
   // so the surface reports Passed and its duration folds in all three passes.
@@ -65,13 +65,14 @@ fn test_combine_fix_results_recheck_clears_lint_violation() {
     duration: Duration::from_millis(20),
   };
 
-  let combined = combine_fix_results(lint_res, fmt_res, Some(recheck));
+  let combined =
+    combine_pass_results(apply_recheck(lint_res, Some(recheck)), fmt_res);
   assert!(matches!(combined.status, SurfaceStatus::Passed));
   assert_eq!(combined.duration, Duration::from_millis(90));
 }
 
 #[test]
-fn test_combine_fix_results_recheck_preserves_surviving_violation() {
+fn test_combine_pass_results_recheck_preserves_surviving_violation() {
   // Issue #116 inverse: the violation survived the format pass, so the
   // re-check still reports it and the surface still fails.
   let lint_res = SurfaceResult {
@@ -96,7 +97,8 @@ fn test_combine_fix_results_recheck_preserves_surviving_violation() {
     duration: Duration::from_millis(20),
   };
 
-  let combined = combine_fix_results(lint_res, fmt_res, Some(recheck));
+  let combined =
+    combine_pass_results(apply_recheck(lint_res, Some(recheck)), fmt_res);
   assert!(matches!(
     combined.status,
     SurfaceStatus::ViolationsFound { message, .. }
@@ -106,7 +108,7 @@ fn test_combine_fix_results_recheck_preserves_surviving_violation() {
 }
 
 #[test]
-fn test_combine_fix_results_violations_precedence() {
+fn test_combine_pass_results_violations_precedence() {
   let lint_res = SurfaceResult {
     surface_name: "rust",
     status: SurfaceStatus::ViolationsFound {
@@ -121,7 +123,7 @@ fn test_combine_fix_results_violations_precedence() {
     duration: Duration::from_millis(30),
   };
 
-  let combined = combine_fix_results(lint_res, fmt_res, None);
+  let combined = combine_pass_results(apply_recheck(lint_res, None), fmt_res);
   assert!(matches!(
     combined.status,
     SurfaceStatus::ViolationsFound { message, .. } if message.contains("warning: unused")
@@ -129,7 +131,7 @@ fn test_combine_fix_results_violations_precedence() {
 }
 
 #[test]
-fn test_combine_fix_results_tool_missing_precedence() {
+fn test_combine_pass_results_tool_missing_precedence() {
   let lint_res = SurfaceResult {
     surface_name: "python",
     status: SurfaceStatus::ToolMissing {
@@ -144,7 +146,7 @@ fn test_combine_fix_results_tool_missing_precedence() {
     duration: Duration::from_millis(5),
   };
 
-  let combined = combine_fix_results(lint_res, fmt_res, None);
+  let combined = combine_pass_results(apply_recheck(lint_res, None), fmt_res);
   assert!(matches!(
     combined.status,
     SurfaceStatus::ToolMissing { binary, .. } if binary == "ruff"
@@ -152,7 +154,7 @@ fn test_combine_fix_results_tool_missing_precedence() {
 }
 
 #[test]
-fn test_combine_fix_results_execution_error_precedence() {
+fn test_combine_pass_results_execution_error_precedence() {
   let lint_res = SurfaceResult {
     surface_name: "cpp",
     status: SurfaceStatus::ExecutionError {
@@ -166,7 +168,7 @@ fn test_combine_fix_results_execution_error_precedence() {
     duration: Duration::from_millis(10),
   };
 
-  let combined = combine_fix_results(lint_res, fmt_res, None);
+  let combined = combine_pass_results(apply_recheck(lint_res, None), fmt_res);
   assert!(matches!(
     combined.status,
     SurfaceStatus::ExecutionError { message } if message.contains("clang-tidy crashed")
@@ -214,15 +216,34 @@ fn test_execution_error_and_violations_render_detail_identically() {
 }
 
 #[test]
-fn test_tool_output_detail_prefers_diff_over_message() {
-  // ViolationsFound's `Some(diff)` branch renders the diff verbatim,
-  // bypassing normalize_diagnostics entirely -- assert that precedence here
-  // rather than only through `normalize_diagnostics`'s own unit test.
+fn test_tool_output_detail_renders_message_then_diff() {
+  // A diff is still rendered verbatim (bypassing normalize_diagnostics,
+  // whose blank-line trimming would eat diff *content*), but it no longer
+  // replaces the message. `fml fix --check` folds a lint result and a
+  // format result for one surface into a single status, so both halves are
+  // routinely present at once and returning only the diff silently dropped
+  // every lint finding.
   let detail = tool_output_detail(
     "Checking formatting...\nraw message noise",
     Some("- old\n+ new"),
   );
+  assert_eq!(detail, "raw message noise\n- old\n+ new");
+}
+
+#[test]
+fn test_tool_output_detail_diff_alone_when_message_is_empty() {
+  // `diff_check_via_tempcopy_classified` is the only producer of a diff and
+  // always pairs it with an empty message, so a plain `fml fmt --check`
+  // must render exactly the diff with no leading blank line -- i.e. output
+  // unchanged by message-then-diff rendering.
+  let detail = tool_output_detail("", Some("- old\n+ new"));
   assert_eq!(detail, "- old\n+ new");
+}
+
+#[test]
+fn test_tool_output_detail_message_alone_when_no_diff() {
+  let detail = tool_output_detail("Checking formatting...\nreal finding", None);
+  assert_eq!(detail, "real finding");
 }
 
 #[test]
@@ -360,4 +381,175 @@ fn test_execution_context_candidate_files_filtering() {
   assert!(matched.contains(&PathBuf::from("/ws/src/lib.rs")));
   assert!(!matched.contains(&PathBuf::from("/ws/src/ignored.rs")));
   assert!(!matched.contains(&PathBuf::from("/ws/script.py")));
+}
+
+#[test]
+fn test_passed_detail_reads_as_already_in_sync_for_sync() {
+  // Issue #130: a `fml sync` no-op rendered `Clean / Formatted`, which is the
+  // wrong vocabulary — nothing was formatted, the config file simply already
+  // matched formality.toml.
+  assert_eq!(passed_detail(&Plan::sync(false)), "Already in sync");
+  assert_eq!(passed_detail(&Plan::sync(true)), "Already in sync");
+  assert_eq!(passed_detail(&Plan::fmt(false)), "Clean / Formatted");
+  assert_eq!(passed_detail(&Plan::lint()), "Clean / Formatted");
+  assert_eq!(passed_detail(&Plan::fix(false)), "Clean / Formatted");
+}
+
+#[test]
+fn test_header_count_label_pluralizes_on_the_row_count() {
+  // Issue #130: the count is the number of rendered rows, not the number of
+  // matched surfaces — `fml sync` appends shared-config rows after the fan-out.
+  assert_eq!(header_count_label(1), "1 surface");
+  assert_eq!(header_count_label(2), "2 surfaces");
+  assert_eq!(header_count_label(0), "0 surfaces");
+}
+
+#[test]
+fn test_synced_files_detail_names_every_file() {
+  use crate::surfaces::SyncedConfigFile;
+  assert_eq!(
+    synced_files_detail(&[
+      SyncedConfigFile::new(".clang-format", true),
+      SyncedConfigFile::new(".clang-tidy", false),
+    ]),
+    "Created .clang-format, Synced .clang-tidy"
+  );
+  assert_eq!(
+    synced_files_detail(&[SyncedConfigFile::new(".rustfmt.toml", true)]),
+    "Created .rustfmt.toml"
+  );
+}
+
+#[derive(Debug, Clone)]
+struct MockMissingSurface;
+
+impl crate::surfaces::DeclaresFacets for MockMissingSurface {
+  fn facet_support(
+    &self,
+    _: crate::surfaces::Facet,
+  ) -> crate::surfaces::FacetSupport {
+    crate::surfaces::FacetSupport::Unsupported
+  }
+}
+
+impl LanguageSurface for MockMissingSurface {
+  fn name(&self) -> &'static str {
+    "mock_missing"
+  }
+  fn file_extensions(&self) -> &[&'static str] {
+    &["mock"]
+  }
+  fn detect(&self, _: &Path) -> bool {
+    true
+  }
+  fn tool_info(
+    &self,
+    _: &crate::config::ResolvedLangConfig,
+  ) -> Vec<crate::surfaces::ToolInfo> {
+    vec![]
+  }
+  fn format(&self, _: &ExecutionContext) -> SurfaceResult {
+    SurfaceResult {
+      surface_name: self.name(),
+      status: SurfaceStatus::ToolMissing {
+        binary: "mock-tool".to_string(),
+        install_hint: "echo install".to_string(),
+      },
+      duration: Duration::from_millis(1),
+    }
+  }
+  fn lint(&self, _: &ExecutionContext, _: bool) -> SurfaceResult {
+    SurfaceResult {
+      surface_name: self.name(),
+      status: SurfaceStatus::ToolMissing {
+        binary: "mock-tool".to_string(),
+        install_hint: "echo install".to_string(),
+      },
+      duration: Duration::from_millis(1),
+    }
+  }
+  fn sync_config(&self, _: &ExecutionContext, _: bool) -> SurfaceResult {
+    SurfaceResult {
+      surface_name: self.name(),
+      status: SurfaceStatus::Passed,
+      duration: Duration::from_millis(1),
+    }
+  }
+  fn clone_box(&self) -> Box<dyn LanguageSurface> {
+    Box::new(self.clone())
+  }
+}
+
+#[test]
+fn test_runner_missing_tool_exit_code_is_clean() {
+  let root = PathBuf::from(".");
+  let config = FormalityConfig::default();
+  let staged_paths = vec![PathBuf::from("test.mock")];
+
+  // Lint unstaged & staged
+  let unstaged_lint = Runner::run(
+    vec![Box::new(MockMissingSurface)],
+    &root,
+    &[],
+    &Plan::lint(),
+    &config,
+  );
+  assert_eq!(unstaged_lint, ExitStatus::Clean);
+
+  let staged_lint = Runner::run(
+    vec![Box::new(MockMissingSurface)],
+    &root,
+    &staged_paths,
+    &Plan::lint(),
+    &config,
+  );
+  assert_eq!(staged_lint, ExitStatus::Clean);
+  assert_eq!(unstaged_lint, staged_lint);
+
+  // Fmt unstaged & staged
+  let unstaged_fmt = Runner::run(
+    vec![Box::new(MockMissingSurface)],
+    &root,
+    &[],
+    &Plan::fmt(false),
+    &config,
+  );
+  assert_eq!(unstaged_fmt, ExitStatus::Clean);
+
+  let staged_fmt = Runner::run(
+    vec![Box::new(MockMissingSurface)],
+    &root,
+    &staged_paths,
+    &Plan::fmt(false),
+    &config,
+  );
+  assert_eq!(staged_fmt, ExitStatus::Clean);
+  assert_eq!(unstaged_fmt, staged_fmt);
+}
+
+#[test]
+fn test_combine_pass_results_violations_over_tool_missing() {
+  let lint_res = SurfaceResult {
+    surface_name: "markdown",
+    status: SurfaceStatus::ToolMissing {
+      binary: "markdownlint-cli2".to_string(),
+      install_hint: "npm install -g markdownlint-cli2".to_string(),
+    },
+    duration: Duration::from_millis(10),
+  };
+  let fmt_res = SurfaceResult {
+    surface_name: "markdown",
+    status: SurfaceStatus::ViolationsFound {
+      message: "unformatted".to_string(),
+      diff: Some("diff".to_string()),
+    },
+    duration: Duration::from_millis(20),
+  };
+
+  let combined = combine_pass_results(apply_recheck(lint_res, None), fmt_res);
+  assert!(matches!(
+    combined.status,
+    SurfaceStatus::ViolationsFound { .. }
+  ));
+  assert_eq!(combined.duration, Duration::from_millis(30));
 }

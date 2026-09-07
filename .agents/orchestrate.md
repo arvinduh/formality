@@ -88,10 +88,10 @@ or merge.
     1. `Library Tests` (**required status check**):
        `cargo clippy --all-targets -- -D warnings` and full unit/integration
        test suite (`cargo test --verbose`).
-    2. `Formality Dogfooding`: `fml fmt --check` and `fml lint` against this
-       repo, plus schema-drift verification (`fml schema --output ...` /
-       `fml fmt` / `git diff --exit-code`) and `SCHEMA_VERSION` progression
-       enforcement in `src/config/schema.rs`.
+    2. `Formality Dogfooding` (**required status check**): `fml fmt --check` and
+       `fml lint` against this repo, plus schema-drift verification
+       (`fml schema --output ...` / `fml fmt` / `git diff --exit-code`) and
+       `SCHEMA_VERSION` progression enforcement in `src/config/schema.rs`.
     3. `Security Audit`: `cargo audit`.
 - Before every commit: standard presubmit command suite:
   `cargo test --lib -q && cargo clippy --all-targets -- -D warnings`, dogfooded
@@ -151,8 +151,10 @@ sign-off, always — an "ask first" item per `AGENTS.md`.
 
 ## 4.5. When the orchestrator merges, and how it handles conflicts
 
-**Checked directly (`gh api repos/.../branches/main/protection`):** this repo
-requires the `Library Tests` status check and conversation resolution, but
+**Branch protection is the source of truth for required checks** — query it
+directly via `gh api repos/.../branches/main/protection`. As of the 2026-09-06
+snapshot, this repo requires two status checks (`Library Tests` and
+`Formality Dogfooding`) and conversation resolution, but
 `required_approving_review_count` is **0** — an approving review is not actually
 gate-enforced by GitHub here, only the QA process above requires one. That means
 the same-account self-approval block doesn't prevent merging; it only prevents
@@ -163,7 +165,8 @@ insurance regardless of what GitHub demands.
 
 **The orchestrator merges a PR once, in order:**
 
-1. Required status checks are green (`Library Tests`, currently).
+1. Required status checks are green (`Library Tests` and `Formality Dogfooding`,
+   currently).
 2. All review conversations are resolved.
 3. Either: the change was trivial enough to skip §4's ceremony entirely, or §4's
    QA debate concluded with the reviewer's written sign-off as a PR comment (not
