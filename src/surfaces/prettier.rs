@@ -3,7 +3,6 @@
 use super::{
   AUTO_GENERATED_JSON_COMMENT, ExecutionContext, LanguageSurface, NativeConfig,
   SurfaceResult, SurfaceStatus, render_native_config, sync_file_helper,
-  sync_native_config,
 };
 use crate::config::{
   FormalityConfig, ResolvedGlobalConfig, ResolvedLangConfig,
@@ -106,24 +105,6 @@ pub fn build_prettier_inline_args(cfg: &PrettierConfig) -> Vec<String> {
   args
 }
 
-/// Synchronizes `.prettierrc.json` for a single surface.
-///
-/// **Not reachable from `fml sync` any more** — see
-/// [`sync_shared_prettier_config`], which owns the file. Retained because a
-/// surface may still want to materialize the file on its own (and because
-/// `sync_native_config::<PrettierConfig>` is the natural spelling for it),
-/// but calling this from more than one surface in the same run reintroduces
-/// the concurrent-write bug this module's shared pass exists to prevent.
-#[must_use]
-pub fn sync_prettier_config(
-  ctx: &ExecutionContext,
-  check: bool,
-  start: Instant,
-  surface_name: &'static str,
-) -> SurfaceResult {
-  sync_native_config::<PrettierConfig>(ctx, check, start, surface_name)
-}
-
 /// Surface name reported by the shared `.prettierrc.json` pass, mirroring
 /// how the shared `.editorconfig` pass reports itself as `editorconfig`.
 pub const PRETTIER_PASS_NAME: &str = "prettier";
@@ -134,8 +115,9 @@ pub const PRETTIER_PASS_NAME: &str = "prettier";
 /// # Why this exists
 ///
 /// `json`, `markdown` and `yaml` all format via prettier, and all three used
-/// to call `sync_prettier_config` from their own `sync_config` — which the
-/// runner invokes concurrently under `surfaces.par_iter()`. Three threads
+/// to call `sync_native_config::<PrettierConfig>` from their own
+/// `sync_config` — which the runner invokes concurrently under
+/// `surfaces.par_iter()`. Three threads
 /// therefore ran the read-compare-write in [`sync_file_helper`] against the
 /// same path with no coordination (#130). Consequences, in ascending
 /// severity:

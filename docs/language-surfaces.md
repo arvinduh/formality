@@ -232,10 +232,24 @@ sharing violation on Windows (#130).
 
 Because there is one file, all of its surfaces must resolve it the same way.
 Conflicting `[lang.<name>]` overrides — say `[lang.markdown] line_length = 100`
-against a global `80` — are reported as an explicit error naming the surfaces
-and the settings they disagree on, and nothing is written. `fml fmt` is
-unaffected either way: it passes each surface's own settings to `prettier`
-inline and never reads the file.
+or `[lang.markdown] prose_wrap = "preserve"` against the global default — are
+reported as an explicit error naming the surfaces and the settings they
+disagree on.
+
+**What `fml sync` does on such a conflict:** it still writes every file it can
+resolve unambiguously — `.editorconfig`, `.markdownlint.json`, the `yamllint`
+config, `taplo.toml` and so on — and withholds only `.prettierrc.json`, the one
+file the overrides genuinely disagree about. The run then exits `2`, so
+`fml sync --check` used as a pre-commit hook fails until the overrides are
+aligned. Unrelated surfaces are never blocked by the conflict, but the run as a
+whole is not reported as clean, because one requested file was not
+materialized.
+
+`fml fmt` is unaffected either way: it passes each surface's own settings to
+`prettier` inline and never reads the file, so a `prose_wrap` override that
+`fml sync` declines to write is still applied by `fml fmt`. Aligning the
+overrides (or moving the setting to the global table) is what reconciles the
+two.
 
 ---
 

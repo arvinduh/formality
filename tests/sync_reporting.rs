@@ -77,6 +77,37 @@ fn status_rows(plain: &str) -> Vec<&str> {
     .collect()
 }
 
+/// The surface-name column of a status row.
+///
+/// Rows render as `[SYNC]   markdown       Created .markdownlint.json`, so
+/// the second whitespace-separated token is the surface that owns the row.
+/// Tests assert against *this*, never against a `contains` over the whole
+/// line: `.prettierrc.json` has the substring `prettier` inside its own
+/// filename, so a naive `row.contains("prettier")` is satisfied by a row
+/// that reads `[SYNC] markdown Created .prettierrc.json` — i.e. by the
+/// buggy behaviour it was meant to reject.
+fn row_surface(row: &str) -> &str {
+  row
+    .split_whitespace()
+    .nth(1)
+    .unwrap_or_else(|| panic!("row has no surface column: {row:?}"))
+}
+
+/// Rows that claim to have *written* (or to need to write) `.prettierrc.json`.
+/// The `json` surface also names the file in a `[SKIP]` row to say it shares
+/// it; that is not a write claim.
+fn prettierrc_writer_rows(plain: &str) -> Vec<&str> {
+  status_rows(plain)
+    .into_iter()
+    .filter(|r| {
+      r.contains(".prettierrc.json")
+        && (r.starts_with("[SYNC]")
+          || r.starts_with("[DRIFT]")
+          || r.starts_with("[MANUAL]"))
+    })
+    .collect()
+}
+
 #[test]
 fn sync_header_count_matches_the_rows_it_renders() {
   // Defect 1 of #130: the header rendered `surfaces.len()`, but `fml sync`
@@ -205,7 +236,8 @@ fn scrub_timings(plain: &str) -> String {
 #[test]
 fn prettierrc_has_exactly_one_writer() {
   // Defect 3 of #130: json, markdown and yaml all called
-  // `sync_prettier_config` from their own `sync_config`, which the runner
+  // `sync_native_config::<PrettierConfig>` from their own `sync_config`,
+  // which the runner
   // invokes under `surfaces.par_iter()` — three threads running an unlocked
   // read-compare-write against one path. Whichever won reported `Created
   // .prettierrc.json` and the others reported a no-op, so the credited
@@ -214,59 +246,111 @@ fn prettierrc_has_exactly_one_writer() {
   let dir = polyglot_repo();
   let plain = run_sync(dir.path(), &[]);
 
-  // Only rows that claim to have *written* the file count as writers; the
-  // json surface still names it in a `[SKIP]` row to say it shares it.
-  let claiming_rows: Vec<&str> = status_rows(&plain)
-    .into_iter()
-    .filter(|r| {
-      r.contains(".prettierrc.json")
-        && (r.starts_with("[SYNC]")
-          || r.starts_with("[DRIFT]")
-          || r.starts_with("[MANUAL]"))
-    })
-    .collect();
+  let claiming_rows = prettierrc_writer_rows(&plain);
   assert_eq!(
     claiming_rows.len(),
     1,
     "`.prettierrc.json` must have exactly one writer, got {claiming_rows:?} in:\n{plain}"
   );
-  assert!(
-    claiming_rows[0].contains("prettier"),
-    "the shared pass should own the row: {:?}",
+  // The load-bearing assertion, and the reason it is spelled against the
+  // parsed surface column rather than `row.contains("prettier")`: with the
+  // fix reverted this row reads `[SYNC] markdown Created .prettierrc.json`,
+  // whose *filename* contains `prettier`. Only the surface column
+  // distinguishes the shared single-writer pass from a racing surface.
+  assert_eq!(
+    row_surface(claiming_rows[0]),
+    "prettier",
+    "the shared single-writer pass must own the row, not whichever surface \
+     won the race; got {:?} in:\n{plain}",
     claiming_rows[0]
   );
   assert!(dir.path().join(".prettierrc.json").is_file());
 }
 
-#[test]
-fn repeated_sync_on_a_polyglot_tree_is_byte_identical() {
-  // The regression test for the race itself: with three surfaces racing on
-  // one path, which of them reported `Created .prettierrc.json` (and which
-  // reported a no-op) was decided by whichever rayon worker won, so two
-  // consecutive runs over a settled tree could differ. Timings aside, they
-  // must now be identical.
-  let dir = polyglot_repo();
-  let _first = run_sync(dir.path(), &[]);
-  let second = scrub_timings(&run_sync(dir.path(), &[]));
-  let third = scrub_timings(&run_sync(dir.path(), &[]));
-  let fourth = scrub_timings(&run_sync(dir.path(), &[]));
+/// How many independent fixtures the two determinism tests below compare.
+/// The race is scheduler-dependent, so one trial proves nothing; eight fresh
+/// trees make a surviving race overwhelmingly likely to show up as a
+/// mismatch.
+const DETERMINISM_TRIALS: usize = 8;
 
-  assert_eq!(second, third, "run 2 and run 3 disagree");
-  assert_eq!(third, fourth, "run 3 and run 4 disagree");
+/// Runs the *first* `fml sync` of `extra` against `DETERMINISM_TRIALS`
+/// independent, freshly created polyglot trees and returns the scrubbed
+/// reports.
+///
+/// A fresh tree per trial is the whole point. The race only ever existed on
+/// the run that **creates** `.prettierrc.json`: three surfaces raced one
+/// read-compare-write, and whichever rayon worker won reported `Created`
+/// while the losers reported a no-op. Runs 2..N over an already-settled tree
+/// write nothing, report `Already in sync` for every row, and are perfectly
+/// deterministic *with the bug still present* — so comparing repeated runs
+/// against a single tree tests nothing at all.
+fn first_run_reports(extra: &[&str]) -> Vec<String> {
+  (0..DETERMINISM_TRIALS)
+    .map(|_| {
+      let dir = polyglot_repo();
+      scrub_timings(&run_sync(dir.path(), extra))
+    })
+    .collect()
+}
+
+/// Asserts every report in `reports` is byte-identical to the first.
+fn assert_all_identical(reports: &[String], what: &str) {
+  for (i, report) in reports.iter().enumerate().skip(1) {
+    assert_eq!(
+      reports[0], *report,
+      "{what}: fresh tree #{i} produced a different report than fresh tree \
+       #0.\n--- #0 ---\n{}\n--- #{i} ---\n{report}",
+      reports[0]
+    );
+  }
 }
 
 #[test]
-fn sync_check_agrees_with_itself_on_a_settled_tree() {
-  // `fml sync --check` is a `.pre-commit-hooks.yaml` entry point, and the
-  // same race made it capable of disagreeing with itself between runs.
+fn the_creating_sync_of_a_fresh_polyglot_tree_is_deterministic() {
+  // The regression test for the race itself.
+  assert_all_identical(&first_run_reports(&[]), "fml sync");
+}
+
+#[test]
+fn sync_check_of_a_fresh_polyglot_tree_names_the_shared_config_once() {
+  // `fml sync --check` is a `.pre-commit-hooks.yaml` entry point, so it is
+  // the entry point a surviving race would break on every commit. Checked
+  // against fresh trees, for the same reason as above: on a settled tree
+  // check mode has nothing to disagree about.
+  let reports = first_run_reports(&["--check"]);
+  assert_all_identical(&reports, "fml sync --check");
+
+  // With the fix reverted, all three prettier surfaces independently observe
+  // the missing file and each renders its own drift row.
+  let claiming_rows = prettierrc_writer_rows(&reports[0]);
+  assert_eq!(
+    claiming_rows.len(),
+    1,
+    "`fml sync --check` must name `.prettierrc.json` in exactly one row, got \
+     {claiming_rows:?} in:\n{}",
+    reports[0]
+  );
+  assert_eq!(
+    row_surface(claiming_rows[0]),
+    "prettier",
+    "the shared single-writer pass must own the row in check mode too; got \
+     {:?} in:\n{}",
+    claiming_rows[0],
+    reports[0]
+  );
+}
+
+#[test]
+fn sync_check_reports_no_drift_on_a_settled_tree() {
+  // The complement to the test above: whatever the creating run wrote must
+  // satisfy the very next `--check`, or the pre-commit hook fails on a tree
+  // `fml sync` itself just produced.
   let dir = polyglot_repo();
   let _ = run_sync(dir.path(), &[]);
 
-  let a = scrub_timings(&run_sync(dir.path(), &["--check"]));
-  let b = scrub_timings(&run_sync(dir.path(), &["--check"]));
-  assert_eq!(a, b, "`fml sync --check` disagreed with itself");
+  let checked = run_sync(dir.path(), &["--check"]);
   assert!(
-    !a.contains("[DRIFT]"),
-    "a freshly synced tree must not report drift:\n{a}"
+    !checked.contains("[DRIFT]"),
+    "a freshly synced tree must not report drift:\n{checked}"
   );
 }

@@ -49,7 +49,7 @@ pub use native::{
 };
 pub use prettier::{
   PRETTIER_PASS_NAME, PrettierConfig, build_prettier_inline_args,
-  sync_prettier_config, sync_shared_prettier_config,
+  sync_shared_prettier_config,
 };
 
 pub use crate::config::facets::{DeclaresFacets, Facet, FacetSupport};
@@ -441,10 +441,10 @@ pub trait LanguageSurface: DeclaresFacets + Send + Sync {
   /// single root `.prettierrc.json` with every other prettier surface.
   ///
   /// Declaring this — rather than each surface syncing the file itself — is
-  /// what gives that file exactly one writer (#130). Three surfaces calling
-  /// `sync_prettier_config` from their own `sync_config` raced on one path
-  /// under `surfaces.par_iter()`, making the report nondeterministic and
-  /// risking a sharing violation on Windows.
+  /// what gives that file exactly one writer (#130). Three surfaces used to
+  /// sync `.prettierrc.json` from their own `sync_config`, racing on one
+  /// path under `surfaces.par_iter()`, which made the report
+  /// nondeterministic and risked a sharing violation on Windows.
   fn uses_prettier(&self) -> bool {
     false
   }
