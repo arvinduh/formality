@@ -420,4 +420,107 @@ mod tests {
     assert_eq!(changed_all.len(), 1);
     assert_eq!(changed_all[0], file_b);
   }
+
+  #[test]
+  fn test_staged_file_discovery_respects_surface_exclusions() {
+    let temp = TempDir::new().unwrap();
+    let root = temp.path();
+
+    // Initialize git repository
+    let init_ok = std::process::Command::new("git")
+      .arg("init")
+      .current_dir(root)
+      .output()
+      .map(|o| o.status.success())
+      .unwrap_or(false);
+    if !init_ok {
+      return;
+    }
+
+    let _ = std::process::Command::new("git")
+      .args(["config", "user.name", "test"])
+      .current_dir(root)
+      .output();
+    let _ = std::process::Command::new("git")
+      .args(["config", "user.email", "test@example.com"])
+      .current_dir(root)
+      .output();
+
+    let src = root.join("src");
+    let fixtures = root.join("fixtures");
+    fs::create_dir_all(&src).unwrap();
+    fs::create_dir_all(&fixtures).unwrap();
+
+    let file_active = src.join("main.rs");
+    let file_excluded = src.join("generated.rs");
+    let file_fixture = fixtures.join("mock.rs");
+    let file_ignored = root.join("ignored.rs");
+
+    fs::write(&file_active, "fn main() {}\n").unwrap();
+    fs::write(&file_excluded, "fn generated() {}\n").unwrap();
+    fs::write(&file_fixture, "fn mock() {}\n").unwrap();
+    fs::write(&file_ignored, "fn ignored() {}\n").unwrap();
+    fs::write(root.join(".gitignore"), "ignored.rs\n").unwrap();
+
+    // Initial commit so HEAD exists
+    let _ = std::process::Command::new("git")
+      .args(["add", "."])
+      .current_dir(root)
+      .output();
+    let _ = std::process::Command::new("git")
+      .args(["commit", "-m", "initial"])
+      .current_dir(root)
+      .output();
+
+    // Modify files and stage them
+    fs::write(&file_active, "fn main() { /* mod */ }\n").unwrap();
+    fs::write(&file_excluded, "fn generated() { /* mod */ }\n").unwrap();
+    fs::write(&file_fixture, "fn mock() { /* mod */ }\n").unwrap();
+    fs::write(&file_ignored, "fn ignored() { /* mod */ }\n").unwrap();
+
+    let _ = std::process::Command::new("git")
+      .args(["add", "src/main.rs", "src/generated.rs", "fixtures/mock.rs"])
+      .current_dir(root)
+      .output();
+    let _ = std::process::Command::new("git")
+      .args(["add", "-f", "ignored.rs"])
+      .current_dir(root)
+      .output();
+
+    // Verify git reports all 4 files staged
+    let staged_files = resolve_git_paths(root, true, false, vec![]).unwrap();
+    assert_eq!(staged_files.len(), 4);
+
+    // Formality config with surface exclusion for Rust
+    let mut config = FormalityConfig::empty();
+    let rust_lang = crate::config::LangConfig {
+      exclude: Some(vec![PathBuf::from("src/generated.rs")]),
+      ..Default::default()
+    };
+    config.lang.insert("rust".to_string(), rust_lang);
+
+    // Target surface discovery with staged paths
+    let surfaces =
+      resolve_target_surfaces(root, &[], &staged_files, &config).unwrap();
+    assert_eq!(surfaces.len(), 1);
+    assert_eq!(surfaces[0].name(), "rust");
+
+    // Discover staged files for the surface (Execution context matched_files)
+    let global = config.resolve_global();
+    let lang_cfg = config.resolve_for_lang_with_global("rust", &global);
+    let resolved_files = find_files_with_ext(
+      root,
+      surfaces[0].file_extensions(),
+      &staged_files,
+      &lang_cfg.files,
+      &lang_cfg.exclude,
+    );
+
+    // Per #214 / style guide §6: assert on the resolved file set directly
+    assert_eq!(resolved_files, vec![file_active.clone()]);
+    assert!(resolved_files.contains(&file_active));
+    assert!(!resolved_files.contains(&file_excluded));
+    assert!(!resolved_files.contains(&file_fixture));
+    assert!(!resolved_files.contains(&file_ignored));
+  }
 }

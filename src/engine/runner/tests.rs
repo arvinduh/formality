@@ -382,3 +382,46 @@ fn test_execution_context_candidate_files_filtering() {
   assert!(!matched.contains(&PathBuf::from("/ws/src/ignored.rs")));
   assert!(!matched.contains(&PathBuf::from("/ws/script.py")));
 }
+
+#[test]
+fn test_execution_context_staged_files_filtering() {
+  let temp = tempfile::TempDir::new().unwrap();
+  let root = temp.path();
+
+  let src = root.join("src");
+  let fixtures = root.join("fixtures");
+  std::fs::create_dir_all(&src).unwrap();
+  std::fs::create_dir_all(&fixtures).unwrap();
+
+  let main_rs = src.join("main.rs");
+  let excluded_rs = src.join("generated.rs");
+  let fixture_rs = fixtures.join("mock.rs");
+  let py_file = root.join("script.py");
+
+  std::fs::write(&main_rs, "fn main() {}\n").unwrap();
+  std::fs::write(&excluded_rs, "fn gen() {}\n").unwrap();
+  std::fs::write(&fixture_rs, "fn mock() {}\n").unwrap();
+  std::fs::write(&py_file, "print('hi')\n").unwrap();
+
+  let staged_paths = Arc::new(vec![
+    main_rs.clone(),
+    excluded_rs.clone(),
+    fixture_rs.clone(),
+    py_file.clone(),
+  ]);
+
+  let mut lang_config = crate::config::ResolvedLangConfig::new("rust");
+  lang_config.exclude = vec![PathBuf::from("src/generated.rs")];
+
+  let ctx = ExecutionContext {
+    root: Arc::new(root.to_path_buf()),
+    paths: staged_paths,
+    global_config: Arc::new(crate::config::ResolvedGlobalConfig::default()),
+    lang_config,
+    check_only: false,
+    candidate_files: None,
+  };
+
+  let matched = ctx.matched_files(&["rs"]);
+  assert_eq!(matched, vec![main_rs]);
+}
