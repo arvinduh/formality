@@ -19,14 +19,16 @@ pub use mstv::{
   DEFAULT_VERSION_PROBE, MSTV_BIOME, MSTV_CHECKSTYLE, MSTV_CLANG_FORMAT,
   MSTV_CLANG_TIDY, MSTV_CLIPPY, MSTV_GOFMT, MSTV_GOLANGCI_LINT, MSTV_KTFMT,
   MSTV_KTLINT, MSTV_MARKDOWNLINT_CLI2, MSTV_PRETTIER, MSTV_RUFF, MSTV_RUSTFMT,
-  MSTV_TAPLO, MSTV_TYPSTYLE, MSTV_YAMLLINT, TOOL_MSTV_REGISTRY, ToolMstvEntry,
-  VersionProbe, all_mstv_entries, get_tool_mstv_entry,
+  MSTV_TAPLO, MSTV_TYPSTYLE, MSTV_YAMLLINT, ProbeArg, ProbeExtractor,
+  TOOL_MSTV_REGISTRY, ToolMstvEntry, VersionProbe, all_mstv_entries,
+  get_tool_mstv_entry,
 };
 
 use crate::surfaces::create_tool_command;
 use serde::{Deserialize, Serialize};
 use std::cmp::Ordering;
 use std::collections::BTreeMap;
+use std::ffi::OsString;
 use std::fmt;
 use std::path::{Path, PathBuf};
 use std::str::FromStr;
@@ -137,16 +139,91 @@ pub fn version_probe_for(binary: &str) -> VersionProbe {
   get_tool_mstv_entry(binary).map_or(DEFAULT_VERSION_PROBE, |entry| entry.probe)
 }
 
-/// Runs one probe command and extracts the first version-shaped line from its
-/// output. `None` when the command cannot be spawned, exits non-zero, or
-/// prints nothing [`first_versionish_line`] accepts.
-fn run_probe_command(bin: &str, args: &[&str]) -> Option<String> {
+/// Extracts the module version from the `mod` line of `go version -m` output.
+///
+/// Note: The version reported is the `golang.org/x/tools` module version that
+/// `goimports` was built from, not a goimports-specific release version (Fixes #178).
+///
+/// Returns `None` if:
+/// - There is no `mod` line in the output.
+/// - The module version is `(devel)` (built from a local working copy).
+/// - The module version token is not a valid semantic version.
+#[must_use]
+pub fn parse_go_version_m(output: &str) -> Option<String> {
+  for line in output.lines() {
+    let mut parts = line.split_whitespace();
+    if parts.next() == Some("mod") {
+      let _mod_path = parts.next()?;
+      let version = parts.next()?;
+      if version == "(devel)" {
+        return None;
+      }
+      if let TokenParse::Ok(_) = classify_token(version) {
+        return Some(version.to_string());
+      }
+      return None;
+    }
+  }
+  None
+}
+
+/// Renders a list of [`ProbeArg`]s into arguments for command execution.
+/// Resolves [`ProbeArg::ToolPath`] using the path to `binary` found on PATH.
+/// Returns `None` if [`ProbeArg::ToolPath`] is needed but the binary cannot be resolved.
+pub fn render_probe_args(
+  binary: &str,
+  args: &[ProbeArg],
+) -> Option<Vec<OsString>> {
+  let mut rendered = Vec::with_capacity(args.len());
+  let mut resolved_path: Option<PathBuf> = None;
+
+  for arg in args {
+    match arg {
+      ProbeArg::Literal(s) => rendered.push(OsString::from(s)),
+      ProbeArg::ToolPath => {
+        let path = match &resolved_path {
+          Some(p) => p.clone(),
+          None => {
+            let p = which::which(binary).ok()?;
+            resolved_path = Some(p.clone());
+            p
+          }
+        };
+        rendered.push(path.into_os_string());
+      }
+    }
+  }
+
+  Some(rendered)
+}
+
+/// Runs one probe command and extracts the raw version line using `extractor`.
+/// `None` when the command cannot be spawned, exits non-zero, or the extractor
+/// yields `None`.
+fn run_probe_command<I, S>(
+  bin: &str,
+  args: I,
+  extractor: ProbeExtractor,
+) -> Option<String>
+where
+  I: IntoIterator<Item = S>,
+  S: AsRef<std::ffi::OsStr>,
+{
   let output = create_tool_command(bin).args(args).output().ok()?;
   if !output.status.success() {
     return None;
   }
-  first_versionish_line(&String::from_utf8_lossy(&output.stdout))
-    .or_else(|| first_versionish_line(&String::from_utf8_lossy(&output.stderr)))
+  match extractor {
+    ProbeExtractor::FirstVersionishLine => {
+      first_versionish_line(&String::from_utf8_lossy(&output.stdout)).or_else(
+        || first_versionish_line(&String::from_utf8_lossy(&output.stderr)),
+      )
+    }
+    ProbeExtractor::GoModuleVersion => parse_go_version_m(
+      &String::from_utf8_lossy(&output.stdout),
+    )
+    .or_else(|| parse_go_version_m(&String::from_utf8_lossy(&output.stderr))),
+  }
 }
 
 /// Executes `probe` against `binary` and extracts the raw version line.
@@ -158,8 +235,17 @@ fn run_probe_command(bin: &str, args: &[&str]) -> Option<String> {
 /// not a branch (Fixes #177).
 fn run_probe(binary: &str, probe: &VersionProbe) -> Option<String> {
   match probe {
-    VersionProbe::OwnFlags(flags) => run_probe_command(binary, flags),
-    VersionProbe::ViaBinary { bin, args } => run_probe_command(bin, args),
+    VersionProbe::OwnFlags(flags) => {
+      run_probe_command(binary, *flags, ProbeExtractor::FirstVersionishLine)
+    }
+    VersionProbe::ViaBinary {
+      bin,
+      args,
+      extractor,
+    } => {
+      let rendered = render_probe_args(binary, args)?;
+      run_probe_command(bin, &rendered, *extractor)
+    }
     VersionProbe::FirstOf(probes) => {
       probes.iter().find_map(|probe| run_probe(binary, probe))
     }
@@ -508,7 +594,7 @@ impl FromStr for Version {
 /// Returns the Minimum Supported Tool Version (MSTV) for a given tool binary, if defined.
 #[must_use]
 pub fn minimum_supported_tool_version(binary: &str) -> Option<Version> {
-  get_tool_mstv_entry(binary).map(|e| e.min_version.clone())
+  get_tool_mstv_entry(binary).and_then(|e| e.min_version.clone())
 }
 
 /// Normalize a raw version output string probed from a tool into a semver [`Version`],

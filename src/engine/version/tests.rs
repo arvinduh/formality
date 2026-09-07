@@ -1056,7 +1056,24 @@ fn test_registry_probe_strategies_match_what_each_tool_supports() {
     probe_of("gofmt"),
     VersionProbe::ViaBinary {
       bin: "go",
-      args: &["version"],
+      args: &[ProbeArg::Literal("version")],
+      extractor: ProbeExtractor::FirstVersionishLine,
+    }
+  );
+  // `goimports` has no version flag; its module version is reported by
+  // `go version -m <path>` from the `mod` line (Fixes #178).
+  // Note: the version reported is the golang.org/x/tools module version
+  // that goimports was built from, not goimports' own release version.
+  assert_eq!(
+    probe_of("goimports"),
+    VersionProbe::ViaBinary {
+      bin: "go",
+      args: &[
+        ProbeArg::Literal("version"),
+        ProbeArg::Literal("-m"),
+        ProbeArg::ToolPath,
+      ],
+      extractor: ProbeExtractor::GoModuleVersion,
     }
   );
   // `golangci-lint` uses a bare `version` subcommand, not `--version` — and
@@ -1072,17 +1089,22 @@ fn test_registry_probe_strategies_match_what_each_tool_supports() {
     VersionProbe::FirstOf(&[
       VersionProbe::ViaBinary {
         bin: "clippy-driver",
-        args: &["--version"],
+        args: &[ProbeArg::Literal("--version")],
+        extractor: ProbeExtractor::FirstVersionishLine,
       },
       VersionProbe::ViaBinary {
         bin: "cargo",
-        args: &["clippy", "--version"],
+        args: &[ProbeArg::Literal("clippy"), ProbeArg::Literal("--version")],
+        extractor: ProbeExtractor::FirstVersionishLine,
       },
     ])
   );
 
   for entry in all_mstv_entries() {
-    if matches!(entry.binary, "gofmt" | "golangci-lint" | "clippy") {
+    if matches!(
+      entry.binary,
+      "gofmt" | "goimports" | "golangci-lint" | "clippy"
+    ) {
       continue;
     }
     assert_eq!(
@@ -1104,12 +1126,22 @@ fn test_every_declared_probe_is_structurally_well_formed() {
         !flags.is_empty(),
         "{binary} declares OwnFlags with no flags, which would run the tool bare"
       ),
-      VersionProbe::ViaBinary { bin, args } => {
+      VersionProbe::ViaBinary {
+        bin,
+        args,
+        extractor,
+      } => {
         assert_ne!(
           *bin, binary,
           "{binary} declares ViaBinary against itself; that is OwnFlags"
         );
         assert!(!args.is_empty(), "{binary} declares ViaBinary with no args");
+        if *extractor == ProbeExtractor::GoModuleVersion {
+          assert!(
+            args.contains(&ProbeArg::ToolPath),
+            "{binary} declares GoModuleVersion without ProbeArg::ToolPath"
+          );
+        }
       }
       VersionProbe::FirstOf(probes) => {
         assert!(
@@ -1177,11 +1209,13 @@ fn test_first_of_falls_through_to_the_next_working_probe() {
   let probe = VersionProbe::FirstOf(&[
     VersionProbe::ViaBinary {
       bin: "formality-no-such-binary-exists",
-      args: &["--version"],
+      args: &[ProbeArg::Literal("--version")],
+      extractor: ProbeExtractor::FirstVersionishLine,
     },
     VersionProbe::ViaBinary {
       bin: "cargo",
-      args: &["--version"],
+      args: &[ProbeArg::Literal("--version")],
+      extractor: ProbeExtractor::FirstVersionishLine,
     },
   ]);
   let raw = run_probe("cargo", &probe)
@@ -1190,4 +1224,162 @@ fn test_first_of_falls_through_to_the_next_working_probe() {
     raw.contains("cargo"),
     "expected cargo's version banner, got: {raw:?}"
   );
+}
+
+/// Tests `parse_go_version_m` extracts the module version from real `go version -m` output.
+/// Note: The version reported is the `golang.org/x/tools` module version, not goimports' own (Fixes #178).
+#[test]
+fn test_parse_go_version_m_extracts_module_version_from_real_output() {
+  let output = "\
+C:\\Users\\olives\\go\\bin\\goimports.exe: go1.26.7
+\tpath\tgolang.org/x/tools/cmd/goimports
+\tmod\tgolang.org/x/tools\tv0.49.0\th1:3NI7VXzL9+1WZD52Dx2ttoPwD5DWrFGpl9mFZDlmisI=
+\tdep\tgolang.org/x/mod\tv0.39.0\th1:UF5zwQdCRRUpHfyPwr7d4UrGiVeldIsogtzWVnczL74=
+\tdep\tgolang.org/x/sync\tv0.22.0\th1:SZjpbeLmrCk4xhRSZFNZW5gFUeCeFgjekvI/+gfScek=
+\tbuild\t-compiler=gc
+";
+  let parsed =
+    parse_go_version_m(output).expect("should extract module version");
+  assert_eq!(parsed, "v0.49.0");
+
+  let ver = normalize_probed_version("goimports", &parsed)
+    .expect("extracted version should normalize to semver");
+  assert_eq!(ver, Version::new(0, 49, 0));
+}
+
+/// Tests `parse_go_version_m` with space-separated columns and without checksum hash.
+#[test]
+fn test_parse_go_version_m_without_hash() {
+  let output = "\
+/home/user/go/bin/goimports: go1.24.7
+        path    golang.org/x/tools/cmd/goimports
+        mod     golang.org/x/tools      v0.28.0
+";
+  let parsed =
+    parse_go_version_m(output).expect("should extract module version");
+  assert_eq!(parsed, "v0.28.0");
+
+  let ver = normalize_probed_version("goimports", &parsed)
+    .expect("extracted version should normalize to semver");
+  assert_eq!(ver, Version::new(0, 28, 0));
+}
+
+/// Tests `parse_go_version_m` extracts pseudo-versions cleanly.
+#[test]
+fn test_parse_go_version_m_pseudo_version() {
+  let output = "\
+/path/to/goimports: go1.24.7
+\tpath\tgolang.org/x/tools/cmd/goimports
+\tmod\tgolang.org/x/tools\tv0.0.0-20260811182544-a038080d80e5\th1:ZUSxONxc981v7AW7QUg+I9WwZzSTTJ019ENBYr5pV/Q=
+";
+  let parsed =
+    parse_go_version_m(output).expect("should extract pseudo-version");
+  assert_eq!(parsed, "v0.0.0-20260811182544-a038080d80e5");
+
+  let ver = normalize_probed_version("goimports", &parsed)
+    .expect("extracted pseudo-version should normalize to semver");
+  assert_eq!(ver.major, 0);
+  assert_eq!(ver.minor, 0);
+  assert_eq!(ver.patch, 0);
+}
+
+/// Degradation path 1: output reports `(devel)` (built from local working copy)
+/// degrades cleanly to `None` (so doctor surfaces `(version unprobeable)`) (Fixes #178).
+#[test]
+fn test_parse_go_version_m_degrades_cleanly_on_devel() {
+  let output = "\
+/home/user/go/bin/goimports: go1.24.7
+        path    golang.org/x/tools/cmd/goimports
+        mod     golang.org/x/tools      (devel)
+";
+  assert_eq!(
+    parse_go_version_m(output),
+    None,
+    "(devel) must degrade to None, never a junk string"
+  );
+}
+
+/// Degradation path 2: output has no `mod` line (e.g. stripped or non-module binary)
+/// degrades cleanly to `None` (so doctor surfaces `(version unprobeable)`) (Fixes #178).
+#[test]
+fn test_parse_go_version_m_degrades_cleanly_without_mod_line() {
+  let output_without_mod = "\
+/home/user/go/bin/goimports: go1.24.7
+        path    golang.org/x/tools/cmd/goimports
+";
+  assert_eq!(
+    parse_go_version_m(output_without_mod),
+    None,
+    "missing mod line must degrade to None"
+  );
+
+  assert_eq!(
+    parse_go_version_m(""),
+    None,
+    "empty output must degrade to None"
+  );
+
+  let output_not_go = "go: /path/to/goimports: not a Go executable\n";
+  assert_eq!(
+    parse_go_version_m(output_not_go),
+    None,
+    "non-Go output must degrade to None"
+  );
+}
+
+/// Tests `render_probe_args` handles Literal and ToolPath cleanly without
+/// requiring goimports on PATH.
+#[test]
+fn test_render_probe_args_resolution() {
+  let literal_args = &[ProbeArg::Literal("version"), ProbeArg::Literal("-m")];
+  let rendered = render_probe_args("any-binary", literal_args)
+    .expect("literal args should always render");
+  assert_eq!(
+    rendered,
+    vec![
+      std::ffi::OsString::from("version"),
+      std::ffi::OsString::from("-m")
+    ]
+  );
+
+  // Missing binary with ToolPath must return None (clean degradation).
+  let tool_path_args = &[ProbeArg::ToolPath];
+  assert_eq!(
+    render_probe_args("fml-nonexistent-binary-for-testing-xyz", tool_path_args),
+    None
+  );
+
+  // Existing binary (cargo) with ToolPath resolves to its location.
+  if let Ok(cargo_path) = which::which("cargo") {
+    let mixed_args = &[ProbeArg::Literal("check"), ProbeArg::ToolPath];
+    let rendered = render_probe_args("cargo", mixed_args)
+      .expect("cargo should resolve on PATH");
+    assert_eq!(rendered.len(), 2);
+    assert_eq!(rendered[0], "check");
+    assert_eq!(rendered[1], cargo_path.into_os_string());
+  }
+}
+
+/// Live uncached probe test: when both `go` and `goimports` are on PATH,
+/// goimports reports a real, parseable module version sourced from `go version -m <path>`;
+/// when either is absent it returns `None` (doctor renders `(version unprobeable)`) (Fixes #178).
+#[test]
+fn test_probe_raw_goimports_sources_module_version_or_reports_nothing() {
+  let raw = probe_raw_tool_version_uncached("goimports");
+  if which::which("go").is_ok() && which::which("goimports").is_ok() {
+    let raw = raw.expect("go and goimports on PATH: version should probe");
+    assert!(
+      raw.starts_with('v') || raw.starts_with('V'),
+      "goimports version should be a module version starting with v, got: {raw:?}"
+    );
+    assert!(
+      normalize_probed_version("goimports", &raw).is_some(),
+      "probed goimports version should parse, got: {raw:?}"
+    );
+  } else {
+    assert_eq!(
+      raw, None,
+      "go or goimports absent: goimports must be unprobeable"
+    );
+  }
 }
