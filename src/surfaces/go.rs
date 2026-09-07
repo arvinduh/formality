@@ -689,10 +689,7 @@ pub(crate) mod tests {
     let ctx = test_ctx(temp.path(), ResolvedLangConfig::new("go"));
 
     let res = surface.sync_config(&ctx, false);
-    assert!(matches!(
-      res.status,
-      SurfaceStatus::ConfigSynced { created: true, .. }
-    ));
+    assert_eq!(res.status.created_file_names(), [".golangci.yml"]);
 
     let config_path = temp.path().join(".golangci.yml");
     assert!(config_path.is_file());
