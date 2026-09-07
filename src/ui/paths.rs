@@ -195,8 +195,53 @@ fn char_before_ansi(s: &str, mut idx: usize) -> Option<char> {
   }
 }
 
-/// Strip a leading `root/` from every occurrence in `line` that begins at a
-/// real token boundary (start of line, or a non-path char before it).
+/// How much of an eligible line [`relativize_line`] may rewrite.
+///
+/// The two eligibility arms in [`relativize_text`] differ in kind, so they
+/// differ here too. A unified-diff file header's *entire* payload is a path
+/// by construction, so rewriting every token-boundary occurrence on it is
+/// correct. A `<path>:<line>:<col> message` diagnostic's payload is arbitrary
+/// text — anything after the leading path may be echoed file *content*, which
+/// must not be rewritten (#183).
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum RewriteScope {
+  /// Every occurrence that begins at a real token boundary. Used by the
+  /// [`RELATIVIZE_LINE_PREFIXES`] arm only.
+  WholeLine,
+  /// Only the line's leading token — the occurrence with nothing but ANSI
+  /// escape sequences before it. Used by the leading-root-path arm.
+  LeadingTokenOnly,
+}
+
+/// Whether the prefix occurrence starting at byte `idx` of `line` may be
+/// rewritten under `scope`.
+///
+/// The single place both arms' boundary decisions are made, so raw-vs-stripped
+/// reasoning stays in one tested helper rather than being re-derived per call
+/// site. `idx` is always an offset into the *raw*, still-colored `line`, and
+/// [`char_before_ansi`] is the only thing that interprets what sits before it;
+/// nothing here ever indexes ANSI-stripped text.
+///
+/// `None` from [`char_before_ansi`] means "nothing at all precedes `idx` but
+/// complete escape sequences" — i.e. this occurrence *is* the line's leading
+/// token — which satisfies both scopes. Any real preceding character satisfies
+/// only [`RewriteScope::WholeLine`], and then only when it is not itself a
+/// path char (a longer path that merely contains the root string, see
+/// [`is_path_char`]).
+#[must_use]
+fn occurrence_is_rewritable(
+  line: &str,
+  idx: usize,
+  scope: RewriteScope,
+) -> bool {
+  match char_before_ansi(line, idx) {
+    None => true,
+    Some(c) => scope == RewriteScope::WholeLine && !is_path_char(c),
+  }
+}
+
+/// Strip a leading `root/` from the occurrences in `line` that `scope` allows
+/// and that begin at a real token boundary (see [`occurrence_is_rewritable`]).
 ///
 /// `line` is the *raw*, still-colored text — splicing it, not a stripped
 /// copy, is what keeps styling intact (see [`relativize_text`]) — so the
@@ -219,18 +264,32 @@ fn char_before_ansi(s: &str, mut idx: usize) -> Option<char> {
 /// two SGR spans) is not handled: `find` requires the prefix to be
 /// contiguous in the raw text, so a split prefix never matches at all and
 /// the line silently ships absolute. Tracked as #203, not fixed here.
-fn relativize_line(line: &str, prefixes: &[String]) -> String {
+fn relativize_line(
+  line: &str,
+  prefixes: &[String],
+  scope: RewriteScope,
+) -> String {
   let mut out = line.to_string();
   for prefix in prefixes {
     let mut from = 0;
     while let Some(rel) = out[from..].find(prefix.as_str()) {
       let idx = from + rel;
-      let boundary_ok =
-        idx == 0 || !char_before_ansi(&out, idx).is_some_and(is_path_char);
-      if boundary_ok {
+      if occurrence_is_rewritable(&out, idx, scope) {
         out.replace_range(idx..idx + prefix.len(), "");
+        if scope == RewriteScope::LeadingTokenOnly {
+          // The leading token is rewritten at most once per line, and the
+          // prefixes are ordered longest-first, so the most specific
+          // spelling has already won — nothing left to look at.
+          return out;
+        }
         from = idx;
       } else {
+        // Under `LeadingTokenOnly` the scan deliberately keeps going rather
+        // than stopping at the first rejected occurrence: an earlier match
+        // can sit *inside* a complete escape sequence's payload (an OSC-8
+        // hyperlink URI wrapping the very path being reported), and
+        // `char_before_ansi` skips that whole sequence, so the line's
+        // leading token can legitimately come after it.
         from = idx + prefix.len();
       }
     }
@@ -258,24 +317,50 @@ const RELATIVIZE_LINE_PREFIXES: [&str; 3] = ["--- ", "+++ ", "diff --git "];
 /// machine (color codes and the leading-space context marker both defeat that).
 /// A line is rewritten only when, after ANSI stripping, it either:
 /// - begins with one of [`RELATIVIZE_LINE_PREFIXES`] — a line whose whole
-///   payload is paths (unified-diff file headers), or
+///   payload is paths (unified-diff file headers). *Every* token-boundary
+///   occurrence on such a line is rewritten
+///   ([`RewriteScope::WholeLine`]), which is correct by construction: a
+///   unified-diff header carries nothing but paths, or
 /// - begins with `root` itself (any [`root_prefixes`] spelling) — a line
 ///   whose *leading token* is an absolute path under `root`, the shape
 ///   compiler- and linter-style tools use for `<path>:<line>:<col> message`
 ///   diagnostics. Observed live from yamllint, clang-format, clang-tidy and
 ///   `gofmt -l` when invoked with absolute file arguments; markdownlint-cli2
 ///   is *not* a live case, since it emits cwd-relative paths and fml always
-///   runs it with `current_dir(root)`. Column 0 makes this safe: prose
-///   or diff-hunk body content that happens to *mention* the root path
-///   elsewhere on the line is never touched, only a line that opens with it.
+///   runs it with `current_dir(root)`. Here only that leading token is
+///   rewritten ([`RewriteScope::LeadingTokenOnly`]) — see the decision note
+///   below.
 ///
-/// Every other line (unified-diff context and `+`/`-` hunk bodies, `@@`
-/// markers, prose) is passed through byte-for-byte, so file *content* that
-/// embeds the run-root path is never corrupted. On a rewritten line the path
-/// text is spliced out of the original, so any ANSI styling *around* the
-/// matched path is preserved — including a hyperlink escape (OSC 8) wrapped
-/// around it, see [`relativize_line`]. Within a rewritten line the strip is
-/// still token-anchored (see [`relativize_line`]) so a sibling dir or a
+/// # Decision (#183): the leading-path arm rewrites the leading token only
+///
+/// This arm used to rewrite every token-boundary occurrence on the line, the
+/// same as the diff-header arm. That was incidental — both arms shared one
+/// code path — not an intended guarantee, and it made the module's promise
+/// about file *content* true only for *ineligible* lines. A
+/// `<path>:<line>:<col> message` line's payload after the leading path is
+/// arbitrary text, and a linter may echo the offending source on it:
+///
+/// ```text
+/// in : /root/README.md:3:1 MD044 [Context: "see /root/secret/notes.txt"]
+/// out: README.md:3:1 MD044 [Context: "see secret/notes.txt"]      (wrong)
+/// ```
+///
+/// The quoted path is file content, not a diagnostic location; rewriting it
+/// changes what the file is reported to say, and it fails quietly — the line
+/// still looks like a plausible diagnostic. So the leading-path arm is now
+/// restricted to the token that made the line eligible in the first place,
+/// and all-occurrence rewriting is left to the arms whose payload genuinely
+/// is paths.
+///
+/// Every ineligible line (unified-diff context and `+`/`-` hunk bodies, `@@`
+/// markers, prose) is passed through byte-for-byte, and on an eligible
+/// `<path>:<line>:<col>` line everything after the leading token is passed
+/// through too — so file *content* that embeds the run-root path is never
+/// corrupted, on any line. On a rewritten line the path text is spliced out
+/// of the original, so any ANSI styling *around* the matched path is
+/// preserved — including a hyperlink escape (OSC 8) wrapped around it, see
+/// [`relativize_line`]. Within a rewritten diff header the strip is still
+/// token-anchored (see [`occurrence_is_rewritable`]) so a sibling dir or a
 /// longer superpath is left alone.
 ///
 /// Escapes *around* a matched path — before, or wrapping it — are handled;
@@ -290,12 +375,15 @@ pub fn relativize_text(root: &Path, text: &str) -> String {
     .split('\n')
     .map(|line| {
       let plain = strip_ansi_escapes(line);
-      let eligible = RELATIVIZE_LINE_PREFIXES
+      // Marker prefixes are checked first: a diff header's payload is paths
+      // whatever else the line looks like.
+      if RELATIVIZE_LINE_PREFIXES
         .iter()
         .any(|p| plain.starts_with(p))
-        || prefixes.iter().any(|p| plain.starts_with(p.as_str()));
-      if eligible {
-        relativize_line(line, &prefixes)
+      {
+        relativize_line(line, &prefixes, RewriteScope::WholeLine)
+      } else if prefixes.iter().any(|p| plain.starts_with(p.as_str())) {
+        relativize_line(line, &prefixes, RewriteScope::LeadingTokenOnly)
       } else {
         line.to_string()
       }
@@ -327,19 +415,28 @@ mod tests {
     );
   }
 
+  /// A line whose leading token is the absolute root path — the shape
+  /// compiler/linter tools use for `<path>:<line>:<col> message` diagnostics
+  /// (yamllint, clang-format, clang-tidy, `gofmt -l`) — is eligible even
+  /// without one of the fixed marker prefixes.
+  ///
+  /// **Changed deliberately by #183** (was
+  /// `relativize_text_rewrites_all_occurrences_on_a_leading_path_line`, which
+  /// asserted `"README.md docs/a.md and /usr/share/x"`). The old
+  /// all-occurrences behavior on this arm was incidental — it fell out of
+  /// sharing one code path with the `--- `/`+++ ` arms — and it let echoed
+  /// file content on a diagnostic line be rewritten. Only the leading token
+  /// is rewritten now; the second occurrence stays absolute. The
+  /// `--- `/`+++ ` arms keep all-occurrence rewriting, pinned by
+  /// `relativize_text_diff_header_arm_rewrites_every_occurrence` below.
   #[test]
-  fn relativize_text_rewrites_all_occurrences_on_a_leading_path_line() {
-    // A line whose leading token is the absolute root path — the shape
-    // compiler/linter tools use for `<path>:<line>:<col> message` diagnostics
-    // (yamllint, clang-format, clang-tidy, `gofmt -l`) — is eligible even
-    // without one of the fixed marker prefixes, and every in-bounds
-    // occurrence on it is rewritten.
+  fn relativize_text_rewrites_only_the_leading_token_on_a_leading_path_line() {
     let root = Path::new("/home/u/proj");
     let text = "/home/u/proj/README.md /home/u/proj/docs/a.md \
                 and /usr/share/x";
     assert_eq!(
       relativize_text(root, text),
-      "README.md docs/a.md and /usr/share/x"
+      "README.md /home/u/proj/docs/a.md and /usr/share/x"
     );
   }
 
@@ -362,22 +459,25 @@ mod tests {
   /// itself (SGR reset right after it), and a second, later occurrence of
   /// the root path further into the line that should be rewritten too.
   ///
-  /// Note for whoever picks up #183: this pins the *all-occurrences*
-  /// behavior on an eligible leading-path line — the second, non-leading
-  /// occurrence (`y.rs`) is rewritten too, same as
-  /// `relativize_text_rewrites_all_occurrences_on_a_leading_path_line`
-  /// above pins for the uncolored case. #183 proposes restricting that arm
-  /// to the leading token only, which would need this assertion updated
-  /// alongside that one — this test isn't asserting a second, independent
-  /// guarantee, it's the colored counterpart of the same one.
+  /// **Changed deliberately by #183**, together with its uncolored
+  /// counterpart above (was
+  /// `relativize_text_rewrites_all_occurrences_on_a_colored_leading_path_line`,
+  /// asserting `"\x1b[31mx.rs\x1b[0m:1:1 error in y.rs"`). PR #191 added this
+  /// as the colored counterpart of the same all-occurrences pin, not as a
+  /// second independent guarantee, and its doc comment said so — so both
+  /// moved to leading-token-only in one change.
+  ///
+  /// It still pins #182 in the direction that matters: the leading token is
+  /// preceded by the `m` of an SGR sequence, so it is only rewritten because
+  /// [`char_before_ansi`] recognizes and skips that complete escape.
   #[test]
-  fn relativize_text_rewrites_all_occurrences_on_a_colored_leading_path_line() {
+  fn relativize_text_rewrites_only_the_colored_leading_token() {
     let root = Path::new("/home/u/project");
     let text = "\x1b[31m/home/u/project/x.rs\x1b[0m:1:1 error in \
                 /home/u/project/y.rs";
     assert_eq!(
       relativize_text(root, text),
-      "\x1b[31mx.rs\x1b[0m:1:1 error in y.rs"
+      "\x1b[31mx.rs\x1b[0m:1:1 error in /home/u/project/y.rs"
     );
   }
 
@@ -402,6 +502,12 @@ mod tests {
   /// a complete, terminated escape sequence abutting the checked position,
   /// never looking through a payload — so the literal `/` in `file://`
   /// still counts as an ordinary, boundary-rejecting path char.
+  ///
+  /// Since #183 this line is rewritten under
+  /// [`RewriteScope::LeadingTokenOnly`], which would spare the payload on its
+  /// own — so the O1 protection is *also* pinned where it stays load-bearing,
+  /// on the whole-line diff-header arm, by
+  /// `relativize_text_does_not_mangle_an_osc8_payload_on_a_diff_header`.
   #[test]
   fn relativize_text_does_not_mangle_an_osc8_hyperlink_payload() {
     let root = Path::new("/home/u/proj");
@@ -417,6 +523,12 @@ mod tests {
   /// The exact #182-shaped repro, but wrapped in an OSC-8 hyperlink instead
   /// of an SGR color: the leading path itself must still be rewritten (the
   /// escape *before* it is recognized and skipped)...
+  ///
+  /// Also pins a subtlety of #183's leading-token-only scan: the first *raw*
+  /// occurrence of the root prefix on this line is inside the hyperlink's
+  /// URI payload, so the scan must keep looking past it instead of
+  /// concluding the leading token was already passed. An earlier draft
+  /// stopped at the first rejected occurrence and left this line unrewritten.
   #[test]
   fn relativize_text_rewrites_a_hyperlinked_leading_path_line() {
     let root = Path::new("/home/u/proj");
@@ -425,6 +537,110 @@ mod tests {
       relativize_text(root, text),
       "\x1b]8;;file:///home/u/proj/x.rs\x1b\\x.rs:1:1 error\x1b]8;;\x1b\\"
     );
+  }
+
+  /// The #183 repro: a diagnostic line whose message echoes source content
+  /// containing a second path under the run root. The leading token is a
+  /// diagnostic *location* and is rewritten; the quoted text is file
+  /// *content* and must survive byte-for-byte, or `fml` misreports what the
+  /// user's file says.
+  #[test]
+  fn relativize_text_does_not_rewrite_echoed_content_on_a_diagnostic_line() {
+    let root = Path::new("/home/u/project");
+    let text = "/home/u/project/README.md:3:1 error MD044 \
+                [Context: \"see /home/u/project/secret/notes.txt\"]";
+    assert_eq!(
+      relativize_text(root, text),
+      "README.md:3:1 error MD044 \
+       [Context: \"see /home/u/project/secret/notes.txt\"]"
+    );
+  }
+
+  /// The same shape colored, which is the case PR #191 (#182) newly made
+  /// reachable: before that fix this line no-op'd entirely, so the echoed
+  /// content was safe by accident. Now the line really is rewritten, and the
+  /// quoted content is protected on purpose instead.
+  #[test]
+  fn relativize_text_does_not_rewrite_echoed_content_on_a_colored_line() {
+    let root = Path::new("/home/u/proj");
+    let text = "\x1b[31m/home/u/proj/README.md\x1b[0m:3:1 MD044 \
+                [Context: \"see /home/u/proj/secret/notes.txt\"]";
+    assert_eq!(
+      relativize_text(root, text),
+      "\x1b[31mREADME.md\x1b[0m:3:1 MD044 \
+       [Context: \"see /home/u/proj/secret/notes.txt\"]"
+    );
+  }
+
+  /// The counterpart of #183's restriction: the `--- `/`+++ `/`diff --git `
+  /// arm keeps rewriting *every* token-boundary occurrence, because a
+  /// unified-diff header's whole payload is paths by construction. `diff
+  /// --git` carries two of them on one line, which is exactly why that arm
+  /// cannot be narrowed to the leading token.
+  #[test]
+  fn relativize_text_diff_header_arm_rewrites_every_occurrence() {
+    let root = Path::new("/home/u/proj");
+    let text = "diff --git /home/u/proj/a/x.rs /home/u/proj/b/x.rs";
+    assert_eq!(relativize_text(root, text), "diff --git a/x.rs b/x.rs");
+  }
+
+  /// All-occurrence rewriting on the diff-header arm is still
+  /// *token-anchored*: a longer path that merely contains the root string is
+  /// left alone even though the arm is willing to rewrite non-leading
+  /// occurrences. This is what
+  /// `relativize_text_does_not_mangle_a_path_that_merely_contains_the_root`
+  /// used to pin on the leading-path arm before #183 restricted that arm to
+  /// its leading token.
+  #[test]
+  fn relativize_text_diff_header_arm_still_token_anchors_occurrences() {
+    let root = Path::new("/home/u/proj");
+    let text = "--- /home/u/proj/a.md /mnt/backup/home/u/proj/b.md \
+                /home/u/project/c.md";
+    assert_eq!(
+      relativize_text(root, text),
+      "--- a.md /mnt/backup/home/u/proj/b.md /home/u/project/c.md"
+    );
+  }
+
+  /// PR #191's O1 regression, re-pinned on the arm where it is still
+  /// load-bearing after #183: on a whole-line (diff-header) rewrite, a match
+  /// landing inside an OSC-8 hyperlink's `file://` payload must not be
+  /// spliced. The `/` of `file://` is a real preceding path char, and
+  /// [`char_before_ansi`] must see it rather than looking through the
+  /// payload the way `strip_ansi_escapes` would.
+  #[test]
+  fn relativize_text_does_not_mangle_an_osc8_payload_on_a_diff_header() {
+    let root = Path::new("/home/u/proj");
+    let text = "--- \x1b]8;;file:///home/u/proj/y.rs\x1b\\y.rs\x1b]8;;\x1b\\";
+    assert_eq!(relativize_text(root, text), text);
+  }
+
+  /// The shared boundary helper both arms route through, at the level of the
+  /// decision itself: "nothing but escapes precedes" satisfies either scope,
+  /// a non-path char satisfies only [`RewriteScope::WholeLine`], and a path
+  /// char satisfies neither.
+  #[test]
+  fn occurrence_is_rewritable_distinguishes_the_two_scopes() {
+    let cases = [
+      // (line, idx, whole_line, leading_only)
+      ("/home/u/proj/x.rs", 0, true, true),
+      ("\x1b[31m/home/u/proj/x.rs", 5, true, true),
+      ("--- /home/u/proj/x.rs", 4, true, false),
+      ("\x1b]8;;file:///home/u/proj/x.rs", 12, false, false),
+      ("/mnt/backup/home/u/proj/x.rs", 11, false, false),
+    ];
+    for (line, idx, whole, leading) in cases {
+      assert_eq!(
+        occurrence_is_rewritable(line, idx, RewriteScope::WholeLine),
+        whole,
+        "WholeLine at {idx} of {line:?}"
+      );
+      assert_eq!(
+        occurrence_is_rewritable(line, idx, RewriteScope::LeadingTokenOnly),
+        leading,
+        "LeadingTokenOnly at {idx} of {line:?}"
+      );
+    }
   }
 
   #[test]
@@ -512,6 +728,12 @@ mod tests {
     // mid-way through an unrelated absolute path (no token boundary before
     // it), the other is a sibling directory sharing a name prefix (the
     // literal substring doesn't even occur).
+    //
+    // Since #183 this arm wouldn't touch them regardless of the boundary
+    // check, so this is no longer the pin for token anchoring — see
+    // `relativize_text_diff_header_arm_still_token_anchors_occurrences`,
+    // which asserts the same thing on the arm that still rewrites
+    // non-leading occurrences. Kept as a plain non-regression assertion.
     let text = "/home/u/proj/a.md refers to /mnt/backup/home/u/proj/b.md \
                 and sibling /home/u/project/c.md";
     assert_eq!(
