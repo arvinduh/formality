@@ -433,7 +433,6 @@ impl Runner {
           install_hint,
         } => {
           tool_missing_count += 1;
-          exit_code = 2;
           runner_table.add_row(crate::ui::table::Row::new(vec![
             crate::ui::table::Cell::styled(
               "[MISS] ",
@@ -702,8 +701,8 @@ fn apply_recheck(
 ///
 /// Applied left-to-right over a [`Plan`]'s passes, so for `fix` this merges
 /// the lint pass's result with the format pass's exactly as before the
-/// `Plan` refactor. Precedence runs errors → missing tool → violations →
-/// config drift → passed, and durations always sum.
+/// `Plan` refactor. Precedence runs errors → violations → config drift →
+/// missing tool → passed, and durations always sum.
 fn combine_pass_results(
   first: SurfaceResult,
   second: SurfaceResult,
@@ -717,17 +716,51 @@ fn combine_pass_results(
       SurfaceStatus::ExecutionError { message: m1 },
       SurfaceStatus::ExecutionError { message: m2 },
     ) => SurfaceStatus::ExecutionError {
-      message: format!(
-        "{m1}
-{m2}"
-      ),
+      message: format!("{m1}\n{m2}"),
     },
     (SurfaceStatus::ExecutionError { message }, _)
     | (_, SurfaceStatus::ExecutionError { message }) => {
       SurfaceStatus::ExecutionError { message }
     }
 
-    // 2. Missing tool binary
+    // 2. Violations found (e.g. unfixable lint errors or formatting errors)
+    (
+      SurfaceStatus::ViolationsFound {
+        message: m1,
+        diff: d1,
+      },
+      SurfaceStatus::ViolationsFound {
+        message: m2,
+        diff: d2,
+      },
+    ) => {
+      let combined_msg = format!("{m1}\n{m2}");
+      let combined_diff = match (d1, d2) {
+        (Some(a), Some(b)) => Some(format!("{a}\n{b}")),
+        (Some(a), None) | (None, Some(a)) => Some(a),
+        (None, None) => None,
+      };
+      SurfaceStatus::ViolationsFound {
+        message: combined_msg,
+        diff: combined_diff,
+      }
+    }
+    (SurfaceStatus::ViolationsFound { message, diff }, _)
+    | (_, SurfaceStatus::ViolationsFound { message, diff }) => {
+      SurfaceStatus::ViolationsFound { message, diff }
+    }
+
+    // 3. Config drift or manual config
+    (SurfaceStatus::ConfigDrifted { file, diff }, _)
+    | (_, SurfaceStatus::ConfigDrifted { file, diff }) => {
+      SurfaceStatus::ConfigDrifted { file, diff }
+    }
+    (SurfaceStatus::ManualConfig { file, suggestion }, _)
+    | (_, SurfaceStatus::ManualConfig { file, suggestion }) => {
+      SurfaceStatus::ManualConfig { file, suggestion }
+    }
+
+    // 4. Missing tool binary (non-fatal warning; takes precedence over Passed/Skipped)
     (
       SurfaceStatus::ToolMissing {
         binary,
@@ -745,49 +778,6 @@ fn combine_pass_results(
       binary,
       install_hint,
     },
-
-    // 3. Violations found (e.g. unfixable lint errors or formatting errors)
-    (
-      SurfaceStatus::ViolationsFound {
-        message: m1,
-        diff: d1,
-      },
-      SurfaceStatus::ViolationsFound {
-        message: m2,
-        diff: d2,
-      },
-    ) => {
-      let combined_msg = format!(
-        "{m1}
-{m2}"
-      );
-      let combined_diff = match (d1, d2) {
-        (Some(a), Some(b)) => Some(format!(
-          "{a}
-{b}"
-        )),
-        (Some(a), None) | (None, Some(a)) => Some(a),
-        (None, None) => None,
-      };
-      SurfaceStatus::ViolationsFound {
-        message: combined_msg,
-        diff: combined_diff,
-      }
-    }
-    (SurfaceStatus::ViolationsFound { message, diff }, _)
-    | (_, SurfaceStatus::ViolationsFound { message, diff }) => {
-      SurfaceStatus::ViolationsFound { message, diff }
-    }
-
-    // 4. Config drift or manual config
-    (SurfaceStatus::ConfigDrifted { file, diff }, _)
-    | (_, SurfaceStatus::ConfigDrifted { file, diff }) => {
-      SurfaceStatus::ConfigDrifted { file, diff }
-    }
-    (SurfaceStatus::ManualConfig { file, suggestion }, _)
-    | (_, SurfaceStatus::ManualConfig { file, suggestion }) => {
-      SurfaceStatus::ManualConfig { file, suggestion }
-    }
 
     // 5. Passed (both passed, or one passed and one was skipped)
     (
