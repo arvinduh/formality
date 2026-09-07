@@ -789,6 +789,37 @@ pub(crate) mod tests {
   }
 
   #[test]
+  fn test_go_write_reports_execution_error_on_goimports_failure() {
+    // Fixes #174: a file with valid syntax passes `gofmt` cleanly, allowing
+    // the write path to proceed to `goimports -w`. An invalid extra argument
+    // causes `goimports` specifically to fail, verifying that the `goimports`
+    // write-path failure branch classifies the failure as `ExecutionError`
+    // (`[ERR]`), not `ViolationsFound` (`[FAIL]`).
+    if !check_binary_exists("gofmt") || !check_binary_exists("goimports") {
+      return;
+    }
+    let temp = TempDir::new().unwrap();
+    std::fs::write(
+      temp.path().join("valid.go"),
+      "package main\n\nfunc main() {}\n",
+    )
+    .unwrap();
+
+    let surface = GoSurface;
+    let mut config = ResolvedLangConfig::new("go");
+    config.extra_args = vec!["-local".to_string()];
+    let ctx = test_ctx(temp.path(), config);
+
+    let res = surface.format(&ctx);
+    assert!(
+      matches!(res.status, SurfaceStatus::ExecutionError { .. }),
+      "a goimports failure on the write path must be ExecutionError, got: {:?}",
+      res.status
+    );
+    assert!(!res.is_success());
+  }
+
+  #[test]
   fn test_build_golangci_lint_inline_args_shape() {
     let linters = vec!["errcheck".to_string(), "govet".to_string()];
     let args = build_golangci_lint_inline_args(&linters);

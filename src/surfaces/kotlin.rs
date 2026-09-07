@@ -276,9 +276,98 @@ impl LanguageSurface for KotlinSurface {
 mod tests {
   use super::*;
   use crate::config::ResolvedLangConfig;
-  use crate::surfaces::{check_binary_exists, test_ctx};
+  use crate::surfaces::{check_binary_exists, forget_binary, test_ctx};
   use std::path::PathBuf;
+  use std::sync::{Mutex, MutexGuard, PoisonError};
   use tempfile::TempDir;
+
+  static KTLINT_TEST_GUARD: Mutex<()> = Mutex::new(());
+
+  fn ktlint_test_lock() -> MutexGuard<'static, ()> {
+    KTLINT_TEST_GUARD
+      .lock()
+      .unwrap_or_else(PoisonError::into_inner)
+  }
+
+  fn with_ktlint_stub<F>(exit_code: i32, test: F)
+  where
+    F: FnOnce(&Path),
+  {
+    let _guard = ktlint_test_lock();
+
+    let temp = TempDir::new().unwrap();
+    let stub_dir = temp.path().join("bin");
+    std::fs::create_dir(&stub_dir).unwrap();
+
+    #[cfg(windows)]
+    {
+      let batch_path = stub_dir.join("ktlint.cmd");
+      std::fs::write(
+        &batch_path,
+        format!(
+          "@echo off\r\necho stub ktlint exit {exit_code} 1>&2\r\nexit /b {exit_code}\r\n"
+        ),
+      )
+      .unwrap();
+    }
+
+    #[cfg(not(windows))]
+    {
+      use std::os::unix::fs::PermissionsExt;
+      let sh_path = stub_dir.join("ktlint");
+      std::fs::write(
+        &sh_path,
+        format!(
+          "#!/bin/sh\necho \"stub ktlint exit {exit_code}\" >&2\nexit {exit_code}\n"
+        ),
+      )
+      .unwrap();
+      let perms = std::fs::Permissions::from_mode(0o755);
+      std::fs::set_permissions(&sh_path, perms).unwrap();
+    }
+
+    let orig_path = std::env::var_os("PATH");
+    let mut new_path = stub_dir.into_os_string();
+    if let Some(ref p) = orig_path {
+      new_path.push(if cfg!(windows) { ";" } else { ":" });
+      new_path.push(p);
+    }
+
+    forget_binary("ktlint");
+    // SAFETY: serialized by `KTLINT_TEST_GUARD`; no other thread runs ktlint
+    // concurrently in this test harness.
+    unsafe {
+      std::env::set_var("PATH", &new_path);
+    }
+
+    struct Cleanup {
+      orig_path: Option<std::ffi::OsString>,
+    }
+    impl Drop for Cleanup {
+      fn drop(&mut self) {
+        if let Some(ref p) = self.orig_path {
+          // SAFETY: serialized by `KTLINT_TEST_GUARD`.
+          unsafe {
+            std::env::set_var("PATH", p);
+          }
+        } else {
+          // SAFETY: serialized by `KTLINT_TEST_GUARD`.
+          unsafe {
+            std::env::remove_var("PATH");
+          }
+        }
+        forget_binary("ktlint");
+      }
+    }
+
+    let _cleanup = Cleanup { orig_path };
+
+    let project_dir = temp.path().join("project");
+    std::fs::create_dir(&project_dir).unwrap();
+    std::fs::write(project_dir.join("Main.kt"), "fun main() {}\n").unwrap();
+
+    test(&project_dir);
+  }
 
   #[test]
   fn test_kotlin_surface_facets() {
@@ -411,6 +500,7 @@ mod tests {
 
   #[test]
   fn test_kotlin_format_and_lint_empty_project_passes() {
+    let _guard = ktlint_test_lock();
     // An empty project has no Kotlin files to act on, but ktlint's binary
     // presence is still checked first (matching every other surface's
     // convention, e.g. Python/ruff) — so this only asserts Passed when the
@@ -442,6 +532,7 @@ mod tests {
 
   #[test]
   fn test_kotlin_format_with_real_ktlint() {
+    let _guard = ktlint_test_lock();
     if !check_binary_exists("ktlint")
       || !create_tool_command("ktlint")
         .arg("--version")
@@ -476,6 +567,7 @@ mod tests {
 
   #[test]
   fn test_kotlin_check_exit_one_stays_violation_not_execution_error() {
+    let _guard = ktlint_test_lock();
     // Issue #151: unlike the other prettier-adjacent surfaces, ktlint `-F`
     // has no operational-failure exit code distinct from "found an unfixable
     // violation" — both are exit `1`. This surface is therefore wired to
@@ -507,31 +599,49 @@ mod tests {
 
   #[test]
   fn test_kotlin_write_exit_one_stays_violation_not_execution_error() {
-    // Fixes #155: the non-`--check` write path now explicitly runs through
-    // `classify_exit_one_as_violation` too (previously the unclassified
-    // `run_tool_command`, which happened to treat every non-zero exit as
-    // `ViolationsFound` and so agreed with this classifier only on exit 1).
-    // Same case as
-    // `test_kotlin_check_exit_one_stays_violation_not_execution_error`
-    // above: an unparseable file drives ktlint `-F` to exit `1`, which must
-    // stay `ViolationsFound` (`[FAIL]`), not flip to `ExecutionError`
-    // (`[ERR]`).
-    if !check_binary_exists("ktlint") {
-      return;
-    }
-    let temp = TempDir::new().unwrap();
-    std::fs::write(temp.path().join("Broken.kt"), "fun main( { val x = }\n")
-      .unwrap();
+    // Fixes #155, #174: pin the exit-1 half of `classify_exit_one_as_violation`
+    // on the write path: ktlint exit 1 signals formatting/lint violations,
+    // which must classify as `ViolationsFound`, not flip to `ExecutionError`.
+    with_ktlint_stub(1, |project_dir| {
+      let surface = KotlinSurface;
+      let ctx = test_ctx(project_dir, ResolvedLangConfig::new("kotlin"));
 
-    let surface = KotlinSurface;
-    let ctx = test_ctx(temp.path(), ResolvedLangConfig::new("kotlin"));
+      let res = surface.format(&ctx);
+      assert!(
+        !matches!(res.status, SurfaceStatus::ExecutionError { .. }),
+        "ktlint exit 1 on the write path must not be reclassified as ExecutionError, got: {:?}",
+        res.status
+      );
+      assert!(
+        matches!(res.status, SurfaceStatus::ViolationsFound { .. }),
+        "ktlint exit 1 on the write path must be ViolationsFound, got: {:?}",
+        res.status
+      );
+    });
+  }
 
-    let res = surface.format(&ctx);
-    assert!(
-      !matches!(res.status, SurfaceStatus::ExecutionError { .. }),
-      "ktlint exit 1 on the write path must not be reclassified as ExecutionError, got: {:?}",
-      res.status
-    );
-    assert!(matches!(res.status, SurfaceStatus::ViolationsFound { .. }));
+  #[test]
+  fn test_kotlin_write_non_one_exit_reports_execution_error() {
+    // Fixes #174: pin the non-1 non-zero half of `classify_exit_one_as_violation`
+    // on the write path: an exit code other than 1 (such as exit 2 from a tool
+    // crash or abnormal exit) must classify as `ExecutionError`, NOT
+    // `ViolationsFound`.
+    //
+    // Prior to #155, the unclassified write path used `run_tool_command`,
+    // which unconditionally treated *all* non-zero exits as `ViolationsFound`.
+    // Reverting `run_tool_command_classified` back to `run_tool_command`
+    // fails this test.
+    with_ktlint_stub(2, |project_dir| {
+      let surface = KotlinSurface;
+      let ctx = test_ctx(project_dir, ResolvedLangConfig::new("kotlin"));
+
+      let res = surface.format(&ctx);
+      assert!(
+        matches!(res.status, SurfaceStatus::ExecutionError { .. }),
+        "ktlint non-1 exit on the write path must be ExecutionError, got: {:?}",
+        res.status
+      );
+      assert!(!res.is_success());
+    });
   }
 }
