@@ -257,35 +257,36 @@ impl LanguageSurface for RustSurface {
     let inline_config =
       build_rustfmt_inline_config(&RustfmtConfig::from_context(ctx));
 
-    let mut cmd =
-      if check_binary_exists("cargo") && ctx.root.join("Cargo.toml").exists() {
-        let mut c = create_tool_command("cargo");
-        c.arg("fmt");
-        if ctx.check_only {
-          c.arg("--")
-            .arg("--check")
-            .arg("--config")
-            .arg(&inline_config);
-        } else {
-          c.arg("--").arg("--config").arg(&inline_config);
-        }
-        if !ctx.paths.is_empty()
-          || !ctx.lang_config.files.is_empty()
-          || !ctx.lang_config.exclude.is_empty()
-        {
-          for f in &files {
-            c.arg(f);
-          }
-        }
-        c
+    let mut cmd = if check_binary_exists("cargo")
+      && find_manifest_upwards(&ctx.root, "Cargo.toml")
+    {
+      let mut c = create_tool_command("cargo");
+      c.arg("fmt");
+      if ctx.check_only {
+        c.arg("--")
+          .arg("--check")
+          .arg("--config")
+          .arg(&inline_config);
       } else {
-        build_rustfmt_fallback_cmd(
-          edition,
-          &inline_config,
-          ctx.check_only,
-          &files,
-        )
-      };
+        c.arg("--").arg("--config").arg(&inline_config);
+      }
+      if !ctx.paths.is_empty()
+        || !ctx.lang_config.files.is_empty()
+        || !ctx.lang_config.exclude.is_empty()
+      {
+        for f in &files {
+          c.arg(f);
+        }
+      }
+      c
+    } else {
+      build_rustfmt_fallback_cmd(
+        edition,
+        &inline_config,
+        ctx.check_only,
+        &files,
+      )
+    };
 
     cmd.args(&ctx.lang_config.extra_args);
     cmd.current_dir(ctx.root.as_path());
@@ -430,6 +431,62 @@ mod tests {
          got {other:?}"
       ),
     }
+  }
+
+  #[test]
+  fn test_format_directory_named_cargo_toml_is_not_treated_as_manifest() {
+    // `.is_file()`, not `.exists()` (Fixes #204): a directory that happens
+    // to be named `Cargo.toml` must not be mistaken for the manifest and
+    // cause `cargo fmt` to be chosen over bare `rustfmt`.
+    if !check_binary_exists("rustfmt") && !check_binary_exists("cargo") {
+      return;
+    }
+    let temp = TempDir::new().unwrap();
+    std::fs::create_dir(temp.path().join("Cargo.toml")).unwrap();
+    let src = temp.path().join("src");
+    std::fs::create_dir_all(&src).unwrap();
+    let file = src.join("main.rs");
+    std::fs::write(&file, "fn main() {}\n").unwrap();
+
+    let surface = RustSurface;
+    let ctx = test_ctx(temp.path(), ResolvedLangConfig::new("rust"));
+    let res = surface.format(&ctx);
+
+    assert!(
+      !matches!(res.status, SurfaceStatus::ExecutionError { .. }),
+      "directory named Cargo.toml must not trigger cargo fmt failure, got: {:?}",
+      res.status
+    );
+  }
+
+  #[test]
+  fn test_format_cargo_toml_in_ancestor_directory_finds_manifest() {
+    // A subdirectory of a real crate (Cargo.toml in ancestor) must find
+    // the manifest via `find_manifest_upwards` rather than taking the
+    // bare-rustfmt fallback (Fixes #204).
+    if !check_binary_exists("cargo") {
+      return;
+    }
+    let temp = TempDir::new().unwrap();
+    std::fs::write(
+      temp.path().join("Cargo.toml"),
+      "[package]\nname = \"test_format_ancestor_crate\"\nversion = \"0.1.0\"\nedition = \"2021\"\n",
+    )
+    .unwrap();
+    let nested = temp.path().join("src").join("deep");
+    std::fs::create_dir_all(&nested).unwrap();
+    let file = nested.join("lib.rs");
+    std::fs::write(&file, "pub fn foo() {}\n").unwrap();
+
+    let surface = RustSurface;
+    let ctx = test_ctx(&nested, ResolvedLangConfig::new("rust"));
+    let res = surface.format(&ctx);
+
+    assert!(
+      !matches!(res.status, SurfaceStatus::ExecutionError { .. }),
+      "ancestor Cargo.toml must be detected for cargo fmt, got: {:?}",
+      res.status
+    );
   }
 
   #[test]

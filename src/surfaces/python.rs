@@ -799,10 +799,10 @@ mod tests {
 
   #[test]
   fn test_python_write_reports_execution_error_on_formatter_failure() {
-    // Fixes #155: the non-`--check` write path must classify the same
-    // operational ruff failure as `ExecutionError`, not `ViolationsFound` —
-    // mirroring `test_python_check_reports_execution_error_on_formatter_failure`
-    // above.
+    // Fixes #155: the non-`--check` write path must classify operational
+    // ruff failures as `ExecutionError`, not `ViolationsFound`.
+    // On a syntax-error file, the isort pass (`ruff check --select I --fix`)
+    // fails first and exercises the isort return branch of the write path.
     if !check_binary_exists("ruff") {
       return;
     }
@@ -817,6 +817,35 @@ mod tests {
     assert!(
       matches!(res.status, SurfaceStatus::ExecutionError { .. }),
       "a formatter failure on the write path must be ExecutionError, got: {:?}",
+      res.status
+    );
+    assert!(!res.is_success());
+  }
+
+  #[test]
+  fn test_python_write_reports_execution_error_on_ruff_format_failure() {
+    // Fixes #174: the isort pass (`ruff check --select I --fix`) succeeds on
+    // valid syntax with `--ignore E501`, allowing the write path to proceed
+    // to the trailing `ruff format` pass. `ruff format` rejects `--ignore`
+    // (exiting 2), asserting that `run_tool_command_classified` at the tail
+    // of the write path classifies it as `ExecutionError`.
+    if !check_binary_exists("ruff") {
+      return;
+    }
+    let temp = TempDir::new().unwrap();
+    std::fs::write(temp.path().join("valid.py"), "x = 1\n").unwrap();
+
+    let surface = PythonSurface;
+    let mut config = ResolvedLangConfig::new("python");
+    // `--ignore` is a valid `ruff check` option, so the isort pass succeeds.
+    // However, `ruff format` rejects `--ignore`, causing ruff format specifically to fail.
+    config.extra_args = vec!["--ignore".to_string(), "E501".to_string()];
+    let ctx = test_ctx(temp.path(), config);
+
+    let res = surface.format(&ctx);
+    assert!(
+      matches!(res.status, SurfaceStatus::ExecutionError { .. }),
+      "a ruff format failure on the write path must be ExecutionError, got: {:?}",
       res.status
     );
     assert!(!res.is_success());

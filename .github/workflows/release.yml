@@ -45,6 +45,8 @@ on:
       # LOCAL EDIT (issue #134): constrained to a leading `v` so schema tags
       # (`s1.0`, `s2.0.0`, ...) owned by schema-release.yml can never trigger
       # cargo-dist. dist's default is the prefix-less `**[0-9]+.[0-9]+.[0-9]+*`.
+      # Must match .github/workflows/release-extras.yml (issue #165); guarded by
+      # tests/release_workflow_local_edits.rs.
       - 'v[0-9]+.[0-9]+.[0-9]+*'
 
 jobs:
