@@ -516,7 +516,7 @@ impl LanguageSurface for GoSurface {
 
 #[cfg(test)]
 #[allow(missing_docs, clippy::missing_errors_doc, clippy::missing_panics_doc)]
-mod tests {
+pub(crate) mod tests {
   use super::*;
   use crate::config::{GoOptions, ResolvedLangConfig};
   use crate::surfaces::{check_binary_exists, test_ctx};
@@ -526,11 +526,11 @@ mod tests {
   /// `golangci-lint run` takes a machine-global lock and aborts with
   /// `parallel golangci-lint is running` if a second invocation overlaps.
   /// libtest runs these tests on parallel threads, so every test that
-  /// actually invokes `golangci-lint run` (via `GoSurface::lint`) must hold
-  /// this guard for the duration of the call.
+  /// actually invokes `golangci-lint run` (via `GoSurface::lint` or
+  /// LSP diagnostics) must hold this guard for the duration of the call.
   static GOLANGCI_LINT_GUARD: Mutex<()> = Mutex::new(());
 
-  fn golangci_lint_lock() -> MutexGuard<'static, ()> {
+  pub(crate) fn golangci_lint_lock() -> MutexGuard<'static, ()> {
     GOLANGCI_LINT_GUARD
       .lock()
       .unwrap_or_else(PoisonError::into_inner)
