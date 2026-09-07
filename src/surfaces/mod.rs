@@ -78,8 +78,9 @@ pub use tooling::{
   pinned_installer_for, pinned_version_for, refresh_go_install_path,
   refresh_path_after_install, refresh_windows_path_from_registry,
   resolve_binary_path, run_tool_command, run_tool_command_classified,
-  selected_install_method_for, selected_pinned_version_for, tool_missing_guard,
-  tool_missing_result, tool_would_benefit_from_cargo_binstall_bootstrap,
+  selected_install_method_for, selected_pinned_version_for,
+  set_binary_path_for_test, tool_missing_guard, tool_missing_result,
+  tool_would_benefit_from_cargo_binstall_bootstrap,
 };
 
 /// Execution context shared with every [`LanguageSurface`] invocation for a

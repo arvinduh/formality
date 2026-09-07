@@ -5,6 +5,7 @@ use common::{
   temp_repo,
 };
 use fml::cli::{Commands, MigrateCommands};
+use fml::errors::ExitStatus;
 use fml::surfaces::{
   SurfaceRegistry, all_surfaces, detect_surfaces, get_surface_by_name,
   resolve_canonical_name,
@@ -813,5 +814,112 @@ fn test_relative_root_preserves_ancestor_manifest_walks_and_display() {
   assert!(
     !combined_lint.contains("No Cargo.toml found"),
     "ancestor Cargo.toml walk in lint should succeed with relative --root ., got:\n{combined_lint}"
+  );
+}
+
+#[test]
+fn test_missing_tool_exit_code_parity_staged_vs_unstaged() {
+  struct BinaryCacheResetGuard(&'static [&'static str]);
+  impl Drop for BinaryCacheResetGuard {
+    fn drop(&mut self) {
+      for binary in self.0 {
+        fml::surfaces::forget_binary(binary);
+      }
+    }
+  }
+
+  let temp = temp_repo(&[("README.md", "# Test Project\n")]);
+  let root = temp.path();
+
+  if !init_git_repo(root) {
+    return;
+  }
+
+  let _ = std::process::Command::new("git")
+    .args(["add", "README.md"])
+    .current_dir(root)
+    .output();
+
+  let _guard =
+    BinaryCacheResetGuard(&["markdownlint-cli2", "markdownlint", "prettier"]);
+
+  // Simulate missing markdownlint tools
+  fml::surfaces::set_binary_path_for_test("markdownlint-cli2", None);
+  fml::surfaces::set_binary_path_for_test("markdownlint", None);
+
+  // 1. Lint staged vs unstaged parity with missing tool
+  let lint_staged = Commands::Lint {
+    fix: false,
+    check: false,
+    staged: true,
+    changed: false,
+    lang: vec!["markdown".to_string()],
+    install: false,
+    paths: vec![],
+  };
+  let lint_unstaged = Commands::Lint {
+    fix: false,
+    check: false,
+    staged: false,
+    changed: false,
+    lang: vec!["markdown".to_string()],
+    install: false,
+    paths: vec![],
+  };
+
+  let lint_staged_status = run_cli(root, lint_staged);
+  let lint_unstaged_status = run_cli(root, lint_unstaged);
+
+  assert_eq!(
+    lint_staged_status,
+    ExitStatus::Clean,
+    "fml lint --staged must exit 0 on missing tool"
+  );
+  assert_eq!(
+    lint_unstaged_status,
+    ExitStatus::Clean,
+    "fml lint must exit 0 on missing tool"
+  );
+  assert_eq!(
+    lint_staged_status, lint_unstaged_status,
+    "exit-code parity between staged and unstaged lint with missing tool"
+  );
+
+  // 2. Fmt staged vs unstaged parity with missing tool (prettier)
+  fml::surfaces::set_binary_path_for_test("prettier", None);
+
+  let fmt_staged = Commands::Fmt {
+    check: false,
+    staged: true,
+    changed: false,
+    lang: vec!["markdown".to_string()],
+    install: false,
+    paths: vec![],
+  };
+  let fmt_unstaged = Commands::Fmt {
+    check: false,
+    staged: false,
+    changed: false,
+    lang: vec!["markdown".to_string()],
+    install: false,
+    paths: vec![],
+  };
+
+  let fmt_staged_status = run_cli(root, fmt_staged);
+  let fmt_unstaged_status = run_cli(root, fmt_unstaged);
+
+  assert_eq!(
+    fmt_staged_status,
+    ExitStatus::Clean,
+    "fml fmt --staged must exit 0 on missing tool"
+  );
+  assert_eq!(
+    fmt_unstaged_status,
+    ExitStatus::Clean,
+    "fml fmt must exit 0 on missing tool"
+  );
+  assert_eq!(
+    fmt_staged_status, fmt_unstaged_status,
+    "exit-code parity between staged and unstaged fmt with missing tool"
   );
 }
