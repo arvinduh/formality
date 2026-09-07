@@ -37,6 +37,24 @@ pub const MSTV_GOFMT: Version = Version::new(1, 18, 0);
 /// MSTV for golangci-lint.
 pub const MSTV_GOLANGCI_LINT: Version = Version::new(1, 50, 0);
 
+/// How an argument to a [`VersionProbe::ViaBinary`] command is supplied.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ProbeArg {
+  /// Literal string argument passed directly.
+  Literal(&'static str),
+  /// The resolved path of the tool binary being probed.
+  ToolPath,
+}
+
+/// How the raw version string is extracted from the probe command's output.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ProbeExtractor {
+  /// First line carrying a plausibly version-shaped token.
+  FirstVersionishLine,
+  /// Go module version extracted from the `mod` line of `go version -m <path>`.
+  GoModuleVersion,
+}
+
 /// How a tool's version string is obtained.
 ///
 /// This is registry *data*, not a special case inside the probing function: a
@@ -54,12 +72,15 @@ pub enum VersionProbe {
   OwnFlags(&'static [&'static str]),
   /// Run a *different* binary to learn this tool's version — for a tool that
   /// ships inside a toolchain and carries the toolchain's version rather than
-  /// one of its own.
+  /// one of its own, or whose version is queried via an external inspector
+  /// (such as `go version -m <path>`).
   ViaBinary {
     /// The binary to execute in the tool's place.
     bin: &'static str,
     /// Arguments passed to `bin`.
-    args: &'static [&'static str],
+    args: &'static [ProbeArg],
+    /// How to extract the version string from the command output.
+    extractor: ProbeExtractor,
   },
   /// Try each probe in order, taking the first that yields a version — for a
   /// tool reachable under more than one distribution shape, or answering to
@@ -81,8 +102,8 @@ pub const DEFAULT_VERSION_PROBE: VersionProbe = VersionProbe::FirstOf(&[
 pub struct ToolMstvEntry {
   /// Name of the binary executable.
   pub binary: &'static str,
-  /// Declared MSTV minimum required version.
-  pub min_version: Version,
+  /// Declared MSTV minimum required version, if one is enforced.
+  pub min_version: Option<Version>,
   /// How this tool's version string is obtained.
   pub probe: VersionProbe,
   /// Upgrade advice message shown when tool is outdated.
@@ -93,119 +114,141 @@ pub struct ToolMstvEntry {
 pub const TOOL_MSTV_REGISTRY: &[ToolMstvEntry] = &[
   ToolMstvEntry {
     binary: "rustfmt",
-    min_version: MSTV_RUSTFMT,
+    min_version: Some(MSTV_RUSTFMT),
     probe: DEFAULT_VERSION_PROBE,
     advice: "Run 'rustup component add rustfmt' or 'rustup update'",
   },
   ToolMstvEntry {
     binary: "clippy",
-    min_version: MSTV_CLIPPY,
+    min_version: Some(MSTV_CLIPPY),
     // Rustup ships no `clippy` binary: the component is reachable as the
     // `clippy-driver` shim, or through `cargo clippy`. Try both, in that
     // order.
     probe: VersionProbe::FirstOf(&[
       VersionProbe::ViaBinary {
         bin: "clippy-driver",
-        args: &["--version"],
+        args: &[ProbeArg::Literal("--version")],
+        extractor: ProbeExtractor::FirstVersionishLine,
       },
       VersionProbe::ViaBinary {
         bin: "cargo",
-        args: &["clippy", "--version"],
+        args: &[ProbeArg::Literal("clippy"), ProbeArg::Literal("--version")],
+        extractor: ProbeExtractor::FirstVersionishLine,
       },
     ]),
     advice: "Run 'rustup component add clippy' or 'rustup update'",
   },
   ToolMstvEntry {
     binary: "ruff",
-    min_version: MSTV_RUFF,
+    min_version: Some(MSTV_RUFF),
     probe: DEFAULT_VERSION_PROBE,
     advice: "Run 'pip install -U ruff' or 'brew install ruff'",
   },
   ToolMstvEntry {
     binary: "clang-format",
-    min_version: MSTV_CLANG_FORMAT,
+    min_version: Some(MSTV_CLANG_FORMAT),
     probe: DEFAULT_VERSION_PROBE,
     advice: "Install clang-format >= 14 via system package manager or LLVM toolchain",
   },
   ToolMstvEntry {
     binary: "clang-tidy",
-    min_version: MSTV_CLANG_TIDY,
+    min_version: Some(MSTV_CLANG_TIDY),
     probe: DEFAULT_VERSION_PROBE,
     advice: "Install clang-tidy >= 14 via system package manager or LLVM toolchain",
   },
   ToolMstvEntry {
     binary: "prettier",
-    min_version: MSTV_PRETTIER,
+    min_version: Some(MSTV_PRETTIER),
     probe: DEFAULT_VERSION_PROBE,
     advice: "Run 'npm install -g prettier' or 'brew install prettier'",
   },
   ToolMstvEntry {
     binary: "taplo",
-    min_version: MSTV_TAPLO,
+    min_version: Some(MSTV_TAPLO),
     probe: DEFAULT_VERSION_PROBE,
     advice: "Run 'cargo binstall taplo-cli' or 'brew install taplo' or 'cargo install --locked taplo-cli'",
   },
   ToolMstvEntry {
     binary: "markdownlint-cli2",
-    min_version: MSTV_MARKDOWNLINT_CLI2,
+    min_version: Some(MSTV_MARKDOWNLINT_CLI2),
     probe: DEFAULT_VERSION_PROBE,
     advice: "Run 'npm install -g markdownlint-cli2' or 'brew install markdownlint-cli2'",
   },
   ToolMstvEntry {
     binary: "typstyle",
-    min_version: MSTV_TYPSTYLE,
+    min_version: Some(MSTV_TYPSTYLE),
     probe: DEFAULT_VERSION_PROBE,
     advice: "Run 'cargo install --locked typstyle' or 'brew install typstyle'",
   },
   ToolMstvEntry {
     binary: "yamllint",
-    min_version: MSTV_YAMLLINT,
+    min_version: Some(MSTV_YAMLLINT),
     probe: DEFAULT_VERSION_PROBE,
     advice: "Run 'pip install -U yamllint' or 'brew install yamllint'",
   },
   ToolMstvEntry {
     binary: "biome",
-    min_version: MSTV_BIOME,
+    min_version: Some(MSTV_BIOME),
     probe: DEFAULT_VERSION_PROBE,
     advice: "Run 'npm install -g @biomejs/biome' or 'brew install biome'",
   },
   ToolMstvEntry {
     binary: "checkstyle",
-    min_version: MSTV_CHECKSTYLE,
+    min_version: Some(MSTV_CHECKSTYLE),
     probe: DEFAULT_VERSION_PROBE,
     advice: "Run 'brew install checkstyle' or update your checkstyle jar",
   },
   ToolMstvEntry {
     binary: "ktfmt",
-    min_version: MSTV_KTFMT,
+    min_version: Some(MSTV_KTFMT),
     probe: DEFAULT_VERSION_PROBE,
     advice: "Run 'brew install ktfmt'",
   },
   ToolMstvEntry {
     binary: "ktlint",
-    min_version: MSTV_KTLINT,
+    min_version: Some(MSTV_KTLINT),
     probe: DEFAULT_VERSION_PROBE,
     advice: "Run 'brew install ktlint'",
   },
   ToolMstvEntry {
     binary: "gofmt",
-    min_version: MSTV_GOFMT,
+    min_version: Some(MSTV_GOFMT),
     // `gofmt` has no version flag; it ships with the Go toolchain and
     // carries that toolchain's version, which only `go version` reports
     // (Fixes #114). With `go` absent the probe yields nothing and the tool
     // reports `(version unprobeable)` — never scraped `gofmt` usage text.
     probe: VersionProbe::ViaBinary {
       bin: "go",
-      args: &["version"],
+      args: &[ProbeArg::Literal("version")],
+      extractor: ProbeExtractor::FirstVersionishLine,
     },
     advice: "Update Go toolchain via https://go.dev/dl/",
+  },
+  ToolMstvEntry {
+    binary: "goimports",
+    // `goimports` has no version flag; its module version is reported by
+    // `go version -m <path>` from the `mod` line (Fixes #178).
+    // Note: the version reported is the golang.org/x/tools module version
+    // that goimports was built from, not goimports' own release version.
+    // No MSTV floor is enforced against it today.
+    min_version: None,
+    probe: VersionProbe::ViaBinary {
+      bin: "go",
+      args: &[
+        ProbeArg::Literal("version"),
+        ProbeArg::Literal("-m"),
+        ProbeArg::ToolPath,
+      ],
+      extractor: ProbeExtractor::GoModuleVersion,
+    },
+    advice: "Install via: go install golang.org/x/tools/cmd/goimports@latest",
   },
   ToolMstvEntry {
     // A bare `version` subcommand, not a flag: `golangci-lint --version` is
     // not recognised. This is the whole probe — no `-v` behind it, because
     // the entry is what runs.
     binary: "golangci-lint",
-    min_version: MSTV_GOLANGCI_LINT,
+    min_version: Some(MSTV_GOLANGCI_LINT),
     probe: VersionProbe::OwnFlags(&["version"]),
     advice: "Run 'brew install golangci-lint' or update via https://golangci-lint.run",
   },

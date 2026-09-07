@@ -227,12 +227,10 @@ fn test_fix_command_python_composite_lifecycle() {
   let script_py = root.join("main.py");
 
   let exit_code = run_cli(root, fix_cmd(false, &["python"]));
+  assert_eq!(exit_code, 0);
   if fml::surfaces::check_binary_exists("ruff") {
-    assert_eq!(exit_code, 0);
     let formatted = fs::read_to_string(&script_py).unwrap();
     assert!(formatted.contains("def foo(x, y):"));
-  } else {
-    assert_ne!(exit_code, 0);
   }
 }
 
@@ -246,12 +244,10 @@ fn test_fix_command_javascript_composite_lifecycle() {
   let script_js = root.join("index.js");
 
   let exit_code = run_cli(root, fix_cmd(false, &["javascript"]));
+  assert_eq!(exit_code, 0);
   if fml::surfaces::check_binary_exists("biome") {
-    assert_eq!(exit_code, 0);
     let formatted = fs::read_to_string(&script_js).unwrap();
     assert!(formatted.contains("function add(a, b) {"));
-  } else {
-    assert_ne!(exit_code, 0);
   }
 }
 
@@ -329,12 +325,10 @@ fn test_fix_command_markdown_composite_lifecycle() {
   let readme_md = root.join("README.md");
 
   let exit_code = run_cli(root, fix_cmd(false, &["markdown"]));
+  assert_eq!(exit_code, 0);
   if fml::surfaces::check_binary_exists("prettier") {
-    assert_eq!(exit_code, 0);
     let formatted = fs::read_to_string(&readme_md).unwrap();
     assert!(formatted.contains("# Title"));
-  } else {
-    assert_ne!(exit_code, 0);
   }
 }
 

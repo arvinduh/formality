@@ -419,3 +419,137 @@ fn test_synced_files_detail_names_every_file() {
     "Created .rustfmt.toml"
   );
 }
+
+#[derive(Debug, Clone)]
+struct MockMissingSurface;
+
+impl crate::surfaces::DeclaresFacets for MockMissingSurface {
+  fn facet_support(
+    &self,
+    _: crate::surfaces::Facet,
+  ) -> crate::surfaces::FacetSupport {
+    crate::surfaces::FacetSupport::Unsupported
+  }
+}
+
+impl LanguageSurface for MockMissingSurface {
+  fn name(&self) -> &'static str {
+    "mock_missing"
+  }
+  fn file_extensions(&self) -> &[&'static str] {
+    &["mock"]
+  }
+  fn detect(&self, _: &Path) -> bool {
+    true
+  }
+  fn tool_info(
+    &self,
+    _: &crate::config::ResolvedLangConfig,
+  ) -> Vec<crate::surfaces::ToolInfo> {
+    vec![]
+  }
+  fn format(&self, _: &ExecutionContext) -> SurfaceResult {
+    SurfaceResult {
+      surface_name: self.name(),
+      status: SurfaceStatus::ToolMissing {
+        binary: "mock-tool".to_string(),
+        install_hint: "echo install".to_string(),
+      },
+      duration: Duration::from_millis(1),
+    }
+  }
+  fn lint(&self, _: &ExecutionContext, _: bool) -> SurfaceResult {
+    SurfaceResult {
+      surface_name: self.name(),
+      status: SurfaceStatus::ToolMissing {
+        binary: "mock-tool".to_string(),
+        install_hint: "echo install".to_string(),
+      },
+      duration: Duration::from_millis(1),
+    }
+  }
+  fn sync_config(&self, _: &ExecutionContext, _: bool) -> SurfaceResult {
+    SurfaceResult {
+      surface_name: self.name(),
+      status: SurfaceStatus::Passed,
+      duration: Duration::from_millis(1),
+    }
+  }
+  fn clone_box(&self) -> Box<dyn LanguageSurface> {
+    Box::new(self.clone())
+  }
+}
+
+#[test]
+fn test_runner_missing_tool_exit_code_is_clean() {
+  let root = PathBuf::from(".");
+  let config = FormalityConfig::default();
+  let staged_paths = vec![PathBuf::from("test.mock")];
+
+  // Lint unstaged & staged
+  let unstaged_lint = Runner::run(
+    vec![Box::new(MockMissingSurface)],
+    &root,
+    &[],
+    &Plan::lint(),
+    &config,
+  );
+  assert_eq!(unstaged_lint, ExitStatus::Clean);
+
+  let staged_lint = Runner::run(
+    vec![Box::new(MockMissingSurface)],
+    &root,
+    &staged_paths,
+    &Plan::lint(),
+    &config,
+  );
+  assert_eq!(staged_lint, ExitStatus::Clean);
+  assert_eq!(unstaged_lint, staged_lint);
+
+  // Fmt unstaged & staged
+  let unstaged_fmt = Runner::run(
+    vec![Box::new(MockMissingSurface)],
+    &root,
+    &[],
+    &Plan::fmt(false),
+    &config,
+  );
+  assert_eq!(unstaged_fmt, ExitStatus::Clean);
+
+  let staged_fmt = Runner::run(
+    vec![Box::new(MockMissingSurface)],
+    &root,
+    &staged_paths,
+    &Plan::fmt(false),
+    &config,
+  );
+  assert_eq!(staged_fmt, ExitStatus::Clean);
+  assert_eq!(unstaged_fmt, staged_fmt);
+}
+
+#[test]
+fn test_combine_pass_results_violations_over_tool_missing() {
+  let lint_res = SurfaceResult {
+    surface_name: "markdown",
+    status: SurfaceStatus::ToolMissing {
+      binary: "markdownlint-cli2".to_string(),
+      install_hint: "npm install -g markdownlint-cli2".to_string(),
+    },
+    duration: Duration::from_millis(10),
+  };
+  let fmt_res = SurfaceResult {
+    surface_name: "markdown",
+    status: SurfaceStatus::ViolationsFound {
+      message: "unformatted".to_string(),
+      diff: Some("diff".to_string()),
+    },
+    duration: Duration::from_millis(20),
+  };
+
+  let combined = combine_pass_results(apply_recheck(lint_res, None), fmt_res);
+  assert!(matches!(
+    combined.status,
+    SurfaceStatus::ViolationsFound { .. }
+  ));
+  assert_eq!(combined.duration, Duration::from_millis(30));
+}

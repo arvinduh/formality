@@ -16,7 +16,7 @@ pub enum ExitStatus {
   Clean = 0,
   /// Execution completed but rule violations or config drift were found (exit code 1).
   Violations = 1,
-  /// An operational failure, invalid configuration, missing tool, or internal error occurred (exit code 2).
+  /// An operational failure, invalid configuration, or internal error occurred (exit code 2).
   Error = 2,
 }
 
