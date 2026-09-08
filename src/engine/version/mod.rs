@@ -127,7 +127,7 @@ fn line_carries_version_token(line: &str) -> bool {
   line.split_whitespace().any(|tok| {
     matches!(
       classify_token(tok),
-      TokenParse::Ok(_) | TokenParse::Rejected
+      TokenParse::Ok(_, _) | TokenParse::Rejected
     )
   })
 }
@@ -187,7 +187,7 @@ pub fn parse_go_version_m(output: &str) -> Option<String> {
       if version == "(devel)" {
         return None;
       }
-      if let TokenParse::Ok(_) = classify_token(version) {
+      if let TokenParse::Ok(_, _) = classify_token(version) {
         return Some(version.to_string());
       }
       return None;
@@ -427,7 +427,7 @@ impl Version {
   pub fn parse(input: &str) -> Option<Self> {
     let trimmed = input.trim();
     match classify_token(trimmed) {
-      TokenParse::Ok(v) => Some(v),
+      TokenParse::Ok(v, _) => Some(v),
       TokenParse::Rejected => None,
       TokenParse::NotVersion => Self::extract(trimmed),
     }
@@ -438,9 +438,23 @@ impl Version {
   /// with `None` rather than walking on to a later, unrelated number.
   #[must_use]
   pub fn extract(input: &str) -> Option<Self> {
+    Self::extract_with_raw(input).map(|(v, _)| v)
+  }
+
+  /// Extracts the raw version string token from a multi-token banner, if
+  /// a valid version-shaped token is found.
+  #[must_use]
+  pub fn extract_raw(input: &str) -> Option<&str> {
+    Self::extract_with_raw(input).map(|(_, raw)| raw)
+  }
+
+  /// Scan a multi-token banner and extract both the parsed [`Version`] and
+  /// the raw version token string from the banner.
+  #[must_use]
+  pub fn extract_with_raw(input: &str) -> Option<(Self, &str)> {
     for token in input.split_whitespace() {
       match classify_token(token) {
-        TokenParse::Ok(v) => return Some(v),
+        TokenParse::Ok(v, raw) => return Some((v, raw)),
         TokenParse::Rejected => return None,
         TokenParse::NotVersion => {}
       }
@@ -454,9 +468,10 @@ impl Version {
 // layer scrapes a `MAJOR.MINOR.PATCH` core out of the token and hands that to
 // `semver` for the real parse. No ordering semantics live here.
 
-enum TokenParse {
-  /// Parsed — strict (suffix preserved) or salvaged to the bare `M.M.P` core.
-  Ok(Version),
+enum TokenParse<'a> {
+  /// Parsed — strict (suffix preserved) or salvaged to the bare `M.M.P` core,
+  /// paired with the raw version token extracted from the input text.
+  Ok(Version, &'a str),
   /// Not version-shaped: keep scanning.
   NotVersion,
   /// Version-shaped but invalid semver even bare (leading-zero core): abort.
@@ -471,7 +486,7 @@ enum TokenParse {
 /// (`18.1.8-0ubuntu1~22.04.1`, `1.35.1.post1`, `0.9.6.dev0` — which the
 /// pre-`semver` parser also ignored). A non-numeric 3rd component
 /// (`0.9.6rc1`, `1.2.x`) is rejected, never zeroed.
-fn classify_token(token: &str) -> TokenParse {
+fn classify_token<'a>(token: &'a str) -> TokenParse<'a> {
   let cleaned = token.trim_matches(|c: char| "()[]{}<>\"',:;".contains(c));
 
   // Strip a leading `v`/`V`/`go`/`Go` marker, kept only if a digit follows.
@@ -513,21 +528,27 @@ fn classify_token(token: &str) -> TokenParse {
     // suffixes above already get.
     Ok(sv) if !sv.pre.is_empty() && !is_genuine_prerelease(sv.pre.as_str()) => {
       match semver::Version::parse(&core) {
-        Ok(bare) => TokenParse::Ok(Version {
-          major: bare.major,
-          minor: bare.minor,
-          patch: bare.patch,
-          prerelease: None,
-        }),
+        Ok(bare) => TokenParse::Ok(
+          Version {
+            major: bare.major,
+            minor: bare.minor,
+            patch: bare.patch,
+            prerelease: None,
+          },
+          s,
+        ),
         Err(_) => TokenParse::Rejected,
       }
     }
-    Ok(sv) => TokenParse::Ok(Version {
-      major: sv.major,
-      minor: sv.minor,
-      patch: sv.patch,
-      prerelease: (!sv.pre.is_empty()).then(|| sv.pre.as_str().to_string()),
-    }),
+    Ok(sv) => TokenParse::Ok(
+      Version {
+        major: sv.major,
+        minor: sv.minor,
+        patch: sv.patch,
+        prerelease: (!sv.pre.is_empty()).then(|| sv.pre.as_str().to_string()),
+      },
+      s,
+    ),
     Err(_) => TokenParse::Rejected,
   }
 }
@@ -670,6 +691,26 @@ pub fn normalize_probed_version(binary: &str, raw: &str) -> Option<Version> {
   }
 
   Some(ver)
+}
+
+/// Returns the raw version string token from `raw_banner` if it differs from
+/// the normalized `current` version.
+///
+/// Returns `None` if:
+/// - `raw_banner` is `None` or contains no version-shaped token.
+/// - The extracted raw version token is identical to `current`'s rendered
+///   version (e.g. `1.2.3` or `v1.2.3` matching `1.2.3`).
+#[must_use]
+pub fn reported_raw_version_if_differing<'a>(
+  current: &Version,
+  raw_banner: Option<&'a str>,
+) -> Option<&'a str> {
+  let raw = raw_banner.and_then(Version::extract_raw)?;
+  if raw != current.to_string() {
+    Some(raw)
+  } else {
+    None
+  }
 }
 
 /// Status of a tool relative to its minimum required version.
