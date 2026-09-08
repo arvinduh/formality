@@ -196,13 +196,9 @@ fn test_normalize_diagnostics_keeps_error_signal_lines() {
 fn test_execution_error_and_violations_render_detail_identically() {
   // Issue #146: identical raw tool output must produce byte-identical rendered
   // detail regardless of which status arm it lands in. This calls
-  // `tool_output_detail` directly -- the exact function both the
-  // `ViolationsFound` and `ExecutionError` arms in `Runner::run` call to
-  // build the pushed diagnostic -- rather than re-deriving the arms' logic
-  // here.
+  // `tool_output_detail` directly.
   //
-  // This pins the helper's behavior, NOT the call-site wiring: un-wiring
-  // either arm still passes. See the helper's doc comment.
+  // Call-site wiring is verified separately through `collect_diagnostics` (issue #175).
   let raw = "Checking formatting...\n\nsrc/x.js: error   \n  2:1  Delete `;`\n\nAll checks passed!\nCommand failed with exit code 2\n";
 
   // ViolationsFound with no diff, and ExecutionError, both pass `diff: None`
@@ -247,14 +243,10 @@ fn test_tool_output_detail_message_alone_when_no_diff() {
 }
 
 #[test]
-fn test_execution_error_arm_normalizes_via_runner_render() {
-  // Issue #146: build a real ExecutionError SurfaceResult with noisy raw
-  // tool output and check the detail `tool_output_detail` computes for it,
-  // confirming an ExecutionError is normalized identically to a
-  // ViolationsFound one.
-  //
-  // This calls the helper directly; it does NOT enter `Runner::run`, whose
-  // rendering loop prints to stdout and is not observable from a test.
+fn test_collect_diagnostics_execution_error_arm_normalizes() {
+  // Issue #146, #175: build a real ExecutionError SurfaceResult with noisy raw
+  // tool output and check the detail `collect_diagnostics` computes for it,
+  // confirming the ExecutionError arm is wired to normalize diagnostics.
   let raw = "Checking formatting...\n\n  fatal: crashed   \n\nAll checks passed!\nCommand failed with exit code 2\n";
   let exec_result = SurfaceResult {
     surface_name: "go",
@@ -264,16 +256,149 @@ fn test_execution_error_arm_normalizes_via_runner_render() {
     duration: Duration::from_millis(5),
   };
 
-  let detail = match &exec_result.status {
-    SurfaceStatus::ExecutionError { message } => {
-      tool_output_detail(message, None)
-    }
-    _ => unreachable!(),
+  let diags = collect_diagnostics(&[exec_result]);
+  assert_eq!(diags.len(), 1);
+  assert_eq!(diags[0].0, "go");
+  assert_eq!(
+    diags[0].1,
+    "  fatal: crashed\nCommand failed with exit code 2"
+  );
+  assert!(!diags[0].1.contains("Checking formatting..."));
+  assert!(!diags[0].1.contains("All checks passed!"));
+}
+
+#[test]
+fn test_collect_diagnostics_violations_found_arm_normalizes() {
+  // Issue #146, #175: build a real ViolationsFound SurfaceResult with noisy raw
+  // tool output and diff, confirming the ViolationsFound arm is wired to normalize
+  // diagnostics and format diffs.
+  let raw = "Checking formatting...\n\nsrc/x.js: error   \n  2:1  Delete `;`\n\nAll checks passed!\nCommand failed with exit code 2\n";
+  let violations_result = SurfaceResult {
+    surface_name: "javascript",
+    status: SurfaceStatus::ViolationsFound {
+      message: raw.to_string(),
+      diff: Some("- old\n+ new".to_string()),
+    },
+    duration: Duration::from_millis(5),
   };
 
-  assert_eq!(detail, "  fatal: crashed\nCommand failed with exit code 2");
-  assert!(!detail.contains("Checking formatting..."));
-  assert!(!detail.contains("All checks passed!"));
+  let diags = collect_diagnostics(&[violations_result]);
+  assert_eq!(diags.len(), 1);
+  assert_eq!(diags[0].0, "javascript");
+  assert_eq!(
+    diags[0].1,
+    "src/x.js: error\n  2:1  Delete `;`\nCommand failed with exit code 2\n- old\n+ new"
+  );
+  assert!(!diags[0].1.contains("Checking formatting..."));
+  assert!(!diags[0].1.contains("All checks passed!"));
+}
+
+#[test]
+fn test_collect_diagnostics_execution_error_and_violations_parity() {
+  // Issue #146, #175: identical raw tool output must produce byte-identical
+  // rendered detail regardless of whether it was classified as ViolationsFound
+  // or ExecutionError.
+  //
+  // Un-wiring either arm (original asymmetry: ViolationsFound normalized but
+  // ExecutionError not; reverse asymmetry: ExecutionError normalized but
+  // ViolationsFound not) causes this parity assertion to fail.
+  let raw = "Checking formatting...\n\nsrc/x.js: error   \n  2:1  Delete `;`\n\nAll checks passed!\nCommand failed with exit code 2\n";
+  let violations_res = SurfaceResult {
+    surface_name: "js",
+    status: SurfaceStatus::ViolationsFound {
+      message: raw.to_string(),
+      diff: None,
+    },
+    duration: Duration::from_millis(5),
+  };
+  let exec_error_res = SurfaceResult {
+    surface_name: "js",
+    status: SurfaceStatus::ExecutionError {
+      message: raw.to_string(),
+    },
+    duration: Duration::from_millis(5),
+  };
+
+  let violations_diags = collect_diagnostics(&[violations_res]);
+  let exec_error_diags = collect_diagnostics(&[exec_error_res]);
+
+  assert_eq!(violations_diags.len(), 1);
+  assert_eq!(exec_error_diags.len(), 1);
+  assert_eq!(violations_diags[0].0, "js");
+  assert_eq!(exec_error_diags[0].0, "js");
+
+  // Parity assertion: identical raw output produces byte-identical diagnostic detail.
+  assert_eq!(violations_diags[0].1, exec_error_diags[0].1);
+  assert_eq!(
+    violations_diags[0].1,
+    "src/x.js: error\n  2:1  Delete `;`\nCommand failed with exit code 2"
+  );
+}
+
+#[test]
+fn test_collect_diagnostics_all_statuses() {
+  use crate::surfaces::SyncedConfigFile;
+
+  let results = vec![
+    SurfaceResult {
+      surface_name: "clean",
+      status: SurfaceStatus::Passed,
+      duration: Duration::from_millis(1),
+    },
+    SurfaceResult {
+      surface_name: "synced",
+      status: SurfaceStatus::ConfigSynced {
+        files: vec![SyncedConfigFile::new(".prettierrc", true)],
+      },
+      duration: Duration::from_millis(1),
+    },
+    SurfaceResult {
+      surface_name: "skipped",
+      status: SurfaceStatus::Skipped {
+        reason: "not installed".to_string(),
+      },
+      duration: Duration::from_millis(1),
+    },
+    SurfaceResult {
+      surface_name: "drifted",
+      status: SurfaceStatus::ConfigDrifted {
+        file: ".rustfmt.toml".to_string(),
+        diff: "- old\n+ new".to_string(),
+      },
+      duration: Duration::from_millis(1),
+    },
+    SurfaceResult {
+      surface_name: "manual",
+      status: SurfaceStatus::ManualConfig {
+        file: "tsconfig.json".to_string(),
+        suggestion: "Please update tsconfig.json manually".to_string(),
+      },
+      duration: Duration::from_millis(1),
+    },
+    SurfaceResult {
+      surface_name: "missing",
+      status: SurfaceStatus::ToolMissing {
+        binary: "biome".to_string(),
+        install_hint: "npm i -g @biomejs/biome".to_string(),
+      },
+      duration: Duration::from_millis(1),
+    },
+  ];
+
+  let diags = collect_diagnostics(&results);
+  assert_eq!(diags.len(), 3);
+  assert_eq!(diags[0].0, "drifted");
+  assert_eq!(
+    diags[0].1,
+    "Native config '.rustfmt.toml' drifted from formality.toml:\n- old\n+ new"
+  );
+  assert_eq!(diags[1].0, "manual");
+  assert_eq!(diags[1].1, "Please update tsconfig.json manually");
+  assert_eq!(diags[2].0, "missing");
+  assert_eq!(
+    diags[2].1,
+    "Missing tool binary 'biome'.\n  Install hint: npm i -g @biomejs/biome"
+  );
 }
 
 #[test]
