@@ -85,6 +85,13 @@ pub enum VersionProbe {
   /// Try each probe in order, taking the first that yields a version — for a
   /// tool reachable under more than one distribution shape, or answering to
   /// more than one flag.
+  ///
+  /// "Yields a version" means version-shaped output, not a zero exit status
+  /// (Fixes #176): a link that prints a real version and then exits non-zero
+  /// answers the chain rather than falling through to the next link. Falling
+  /// through still happens for the cases the chains here are built on — a
+  /// binary that cannot be spawned, and a command that prints nothing
+  /// version-shaped.
   FirstOf(&'static [VersionProbe]),
 }
 
