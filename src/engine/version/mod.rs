@@ -137,16 +137,45 @@ pub fn version_probe_for(binary: &str) -> VersionProbe {
   get_tool_mstv_entry(binary).map_or(DEFAULT_VERSION_PROBE, |entry| entry.probe)
 }
 
+/// Picks the version line out of a finished probe command's streams.
+///
+/// A non-zero exit is not by itself evidence that the output is garbage: the
+/// npm `@taplo/cli` build writes `taplo 0.9.0` to stdout and *then* exits 1,
+/// so gating the scrape on the exit status read a perfectly good version and
+/// threw it away (Fixes #176). What keeps that relaxation honest is #114's
+/// [`line_carries_version_token`], which requires a genuinely version-shaped
+/// token rather than "contains a digit" — usage text and error messages carry
+/// no such token and still yield `None`.
+///
+/// The relaxation is deliberately asymmetric across the two streams:
+///
+/// - **Exit 0** — stdout, then stderr. Unchanged; `google-java-format` is the
+///   one tool in the fleet that reports its version on stderr.
+/// - **Non-zero exit** — stdout *only*. A failed command's stderr is where it
+///   explains its failure, and scraping that is the path #167 deliberately
+///   removed. Nothing here brings it back.
+fn version_line_from_probe_output(
+  succeeded: bool,
+  stdout: &str,
+  stderr: &str,
+) -> Option<String> {
+  let from_stdout = first_versionish_line(stdout);
+  if !succeeded {
+    return from_stdout;
+  }
+  from_stdout.or_else(|| first_versionish_line(stderr))
+}
+
 /// Runs one probe command and extracts the first version-shaped line from its
-/// output. `None` when the command cannot be spawned, exits non-zero, or
-/// prints nothing [`first_versionish_line`] accepts.
+/// output. `None` when the command cannot be spawned, or prints nothing
+/// [`version_line_from_probe_output`] accepts.
 fn run_probe_command(bin: &str, args: &[&str]) -> Option<String> {
   let output = create_tool_command(bin).args(args).output().ok()?;
-  if !output.status.success() {
-    return None;
-  }
-  first_versionish_line(&String::from_utf8_lossy(&output.stdout))
-    .or_else(|| first_versionish_line(&String::from_utf8_lossy(&output.stderr)))
+  version_line_from_probe_output(
+    output.status.success(),
+    &String::from_utf8_lossy(&output.stdout),
+    &String::from_utf8_lossy(&output.stderr),
+  )
 }
 
 /// Executes `probe` against `binary` and extracts the raw version line.
