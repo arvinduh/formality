@@ -226,6 +226,60 @@ fn test_distro_revision_vs_genuine_prerelease() {
       Version::with_prerelease(1, 2, 3, "rc1"),
       true,
     ),
+    // #171: inverted alphabetic-leading branch defaults unknown alphabetic
+    // prefixes to genuine prereleases (Maven milestones, npm next, devel, etc.).
+    ("1.2.3-m1", Version::with_prerelease(1, 2, 3, "m1"), true),
+    ("1.2.3-M1", Version::with_prerelease(1, 2, 3, "M1"), true),
+    ("1.2.3-a1", Version::with_prerelease(1, 2, 3, "a1"), true),
+    ("1.2.3-b2", Version::with_prerelease(1, 2, 3, "b2"), true),
+    (
+      "1.2.3-next",
+      Version::with_prerelease(1, 2, 3, "next"),
+      true,
+    ),
+    (
+      "1.2.3-next.5",
+      Version::with_prerelease(1, 2, 3, "next.5"),
+      true,
+    ),
+    (
+      "1.2.3-experimental",
+      Version::with_prerelease(1, 2, 3, "experimental"),
+      true,
+    ),
+    (
+      "1.2.3-unstable",
+      Version::with_prerelease(1, 2, 3, "unstable"),
+      true,
+    ),
+    (
+      "1.2.3-insiders",
+      Version::with_prerelease(1, 2, 3, "insiders"),
+      true,
+    ),
+    (
+      "1.2.3-devel",
+      Version::with_prerelease(1, 2, 3, "devel"),
+      true,
+    ),
+    (
+      "1.2.3-milestone1",
+      Version::with_prerelease(1, 2, 3, "milestone1"),
+      true,
+    ),
+    // #171: packaging blocklist entries are recognized and stripped to bare core.
+    ("1.2.3-deb1", Version::new(1, 2, 3), false),
+    ("1.2.3-el8", Version::new(1, 2, 3), false),
+    ("1.2.3-fc39", Version::new(1, 2, 3), false),
+    ("1.2.3-build5", Version::new(1, 2, 3), false),
+    ("1.2.3-alt1", Version::new(1, 2, 3), false),
+    ("1.2.3-mga8", Version::new(1, 2, 3), false),
+    ("1.2.3-bp1", Version::new(1, 2, 3), false),
+    ("1.2.3-lp152", Version::new(1, 2, 3), false),
+    ("1.2.3-ga", Version::new(1, 2, 3), false),
+    ("1.2.3-final", Version::new(1, 2, 3), false),
+    ("1.2.3-FINAL", Version::new(1, 2, 3), false),
+    ("1.2.3-release", Version::new(1, 2, 3), false),
   ];
 
   for (input, expected, is_prerelease) in cases {
@@ -1038,11 +1092,10 @@ fn test_probe_raw_gofmt_sources_go_toolchain_or_reports_nothing() {
 /// new non-default entry to be named here — which is where the "why" comment
 /// gets written. It cannot catch the converse: an entry wrongly declaring the
 /// default for a tool that has no `--version`, which is #114's own bug.
-/// Proving that needs the tools themselves executed, and a fleet-wide "every
-/// installed tool probes" assertion would fail today for a reason that is not
-/// a declaration bug — taplo's npm build prints a real version and then exits
-/// non-zero. That sweep belongs with #176, whose own acceptance criteria
-/// already call for it.
+/// Proving that needs the tools themselves executed, which is what
+/// `test_no_installed_registry_tool_prints_a_version_the_probe_discards` does
+/// — a sweep deferred out of #177 because it failed on taplo's npm build, and
+/// landed with #176 once that cause was fixed.
 #[test]
 fn test_registry_probe_strategies_match_what_each_tool_supports() {
   let probe_of = |binary: &str| {
@@ -1224,6 +1277,169 @@ fn test_first_of_falls_through_to_the_next_working_probe() {
     raw.contains("cargo"),
     "expected cargo's version banner, got: {raw:?}"
   );
+}
+
+/// The literal streams the npm `@taplo/cli` build produces for `--version`:
+/// a real version on stdout, nothing on stderr, and exit 1. Reproduced against
+/// `@taplo/cli@0.7.0` (which wraps taplo 0.9.0) on 2026-09-04.
+const TAPLO_NPM_VERSION_STDOUT: &str = "taplo 0.9.0\n";
+
+/// The literal stdout the same build produces for `-v` — clap's
+/// unknown-argument error, also on stdout, also exit 1. No line carries a
+/// version-shaped token, which is what keeps the relaxation below honest.
+const TAPLO_NPM_SHORT_FLAG_STDOUT: &str = "error: Found argument '-v' which \
+wasn't expected, or isn't valid in this context\n\n\tIf you tried to supply \
+`-v` as a value rather than a flag, use `-- -v`\n\nUSAGE:\n    taplo \
+[OPTIONS] <SUBCOMMAND>\n\nFor more information try --help\n";
+
+/// A version-shaped line on stdout is kept even when the command exits
+/// non-zero: the npm `@taplo/cli` build prints `taplo 0.9.0` and *then* exits
+/// 1, and the old exit-status gate read that version and discarded it, so
+/// `fml doctor` said `(version unprobeable)` for a tool that had just told it
+/// the answer (Fixes #176).
+///
+/// This is the assertion the fix exists for: with the gate restored it
+/// returns `None`, which no other path in this function produces for this
+/// input.
+#[test]
+fn test_version_shaped_stdout_survives_a_non_zero_exit() {
+  assert_eq!(
+    version_line_from_probe_output(false, TAPLO_NPM_VERSION_STDOUT, ""),
+    Some("taplo 0.9.0".to_string()),
+    "taplo's real version was discarded because the command exited non-zero"
+  );
+  assert_eq!(
+    normalize_probed_version("taplo", "taplo 0.9.0"),
+    Some(Version::new(0, 9, 0))
+  );
+}
+
+/// The relaxation is not "trust a failed command": a non-zero exit whose
+/// stdout carries no version-shaped token is still unprobeable. Both real
+/// shapes — the tool's own usage/error text, and no output at all — must
+/// stay `None`, or #114's garbage-scraping bug comes back through the door
+/// this fix opens (Fixes #176).
+#[test]
+fn test_non_zero_exit_without_a_version_token_stays_unprobeable() {
+  assert_eq!(
+    version_line_from_probe_output(false, TAPLO_NPM_SHORT_FLAG_STDOUT, ""),
+    None,
+    "clap's unknown-argument text was scraped as a version"
+  );
+  assert_eq!(version_line_from_probe_output(false, "", ""), None);
+  assert_eq!(
+    version_line_from_probe_output(
+      false,
+      "flag provided but not defined: -version\n",
+      ""
+    ),
+    None
+  );
+}
+
+/// The relaxation is stdout-only. A failed command's stderr is where it
+/// explains its failure, and scraping that is the path #167 deliberately
+/// removed — accepting non-zero-exit stdout must not bring it back
+/// (Fixes #176). On a *successful* exit stderr is still read, which is the
+/// only way `google-java-format` reports at all.
+#[test]
+fn test_failed_probe_never_scrapes_stderr_but_a_successful_one_still_does() {
+  assert_eq!(
+    version_line_from_probe_output(false, "", "some-tool 1.2.3\n"),
+    None,
+    "a failed probe scraped stderr; #167 removed that path"
+  );
+  assert_eq!(
+    version_line_from_probe_output(
+      true,
+      "",
+      "google-java-format: Version 1.28.0\n"
+    ),
+    Some("google-java-format: Version 1.28.0".to_string())
+  );
+  // stdout wins over stderr on the success path, as before.
+  assert_eq!(
+    version_line_from_probe_output(true, "tool 2.0.0\n", "tool 9.9.9\n"),
+    Some("tool 2.0.0".to_string())
+  );
+}
+
+/// Every `(binary, args)` pair the declared `probe` would actually execute,
+/// flattened out of any [`VersionProbe::FirstOf`] chain.
+fn probe_leaf_commands(
+  binary: &str,
+  probe: &VersionProbe,
+) -> Vec<(String, Vec<String>)> {
+  match probe {
+    VersionProbe::OwnFlags(flags) => vec![(
+      binary.to_string(),
+      flags.iter().map(|a| (*a).to_string()).collect(),
+    )],
+    VersionProbe::ViaBinary { bin, args, .. } => {
+      if let Some(rendered) = render_probe_args(binary, args) {
+        vec![(
+          bin.to_string(),
+          rendered
+            .into_iter()
+            .map(|s| s.to_string_lossy().into_owned())
+            .collect(),
+        )]
+      } else {
+        vec![]
+      }
+    }
+    VersionProbe::FirstOf(probes) => probes
+      .iter()
+      .flat_map(|inner| probe_leaf_commands(binary, inner))
+      .collect(),
+  }
+}
+
+/// Presence-gated execution sweep across the whole registry (#176's AC 5,
+/// deferred here from PR #195 because it failed on taplo — the bug this PR
+/// fixes).
+///
+/// For every entry whose declared probe would run a binary that is actually
+/// installed, run those commands and assert the fleet-wide property #114 and
+/// #176 are both instances of: **if a tool prints a version-shaped line on
+/// stdout, formality must not report it as unprobeable.** Unlike
+/// `test_registry_probe_strategies_match_what_each_tool_supports`, this
+/// executes the tools, so it can catch an entry whose declaration silently
+/// disagrees with the tool — the #114-class bug a change-detector cannot see.
+///
+/// It is deliberately an implication, not "every installed tool probes": a
+/// genuinely broken install (a `ktlint` shim that cannot exec its JDK, exit
+/// 126 with empty stdout) prints nothing version-shaped, so the premise is
+/// false and the entry is skipped rather than failing a test for something
+/// that is not a declaration bug.
+#[test]
+fn test_no_installed_registry_tool_prints_a_version_the_probe_discards() {
+  for entry in all_mstv_entries() {
+    let leaves = probe_leaf_commands(entry.binary, &entry.probe);
+    if !leaves.iter().any(|(bin, _)| which::which(bin).is_ok()) {
+      continue;
+    }
+
+    let printed = leaves.iter().find_map(|(bin, args)| {
+      let output = create_tool_command(bin)
+        .args(args.iter().map(String::as_str))
+        .output()
+        .ok()?;
+      let line =
+        first_versionish_line(&String::from_utf8_lossy(&output.stdout))?;
+      Some((format!("{bin} {}", args.join(" ")), line))
+    });
+    let Some((command, line)) = printed else {
+      continue;
+    };
+
+    assert!(
+      probe_raw_tool_version_uncached(entry.binary).is_some(),
+      "`{command}` printed {line:?} on stdout, but {} still probes as \
+       unprobeable",
+      entry.binary
+    );
+  }
 }
 
 /// Tests `parse_go_version_m` extracts the module version from real `go version -m` output.
