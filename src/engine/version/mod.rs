@@ -521,10 +521,11 @@ fn classify_token<'a>(token: &'a str) -> TokenParse<'a> {
   let parsed = semver::Version::parse(&format!("{core}{suffix}"))
     .or_else(|_| semver::Version::parse(&core));
   match parsed {
-    // A `-`-suffix that parses as valid semver but isn't a *recognised*
-    // prerelease keyword is a packaging/distro revision (`-1ubuntu1`,
-    // `-4.fc39`, a bare `-1`), not a genuine prerelease: drop it and keep the
-    // bare core, same salvage the invalid-semver suffixes above already get.
+    // A `-`-suffix that parses as valid semver but is classified as a
+    // packaging/distro revision (`-1ubuntu1`, `-4.fc39`, a bare `-1`,
+    // `-ubuntu1`, `-deb1`) rather than a genuine prerelease (`-rc1`, `-m1`,
+    // `-next`): drop it and keep the bare core, same salvage the invalid-semver
+    // suffixes above already get.
     Ok(sv) if !sv.pre.is_empty() && !is_genuine_prerelease(sv.pre.as_str()) => {
       match semver::Version::parse(&core) {
         Ok(bare) => TokenParse::Ok(
@@ -552,27 +553,48 @@ fn classify_token<'a>(token: &'a str) -> TokenParse<'a> {
   }
 }
 
-/// Recognised prerelease keywords (case-insensitive), matched against the
-/// leading alphabetic run of a semver prerelease's *first* dot-separated
-/// identifier (`"rc.1"` -> `"rc"`, `"beta2"` -> `"beta"`, `"1ubuntu1"` -> `""`
-/// since it starts with a digit). Anything that doesn't produce a leading
-/// alphabetic run matching this list is treated as a packaging/distro
-/// revision instead of a genuine prerelease — see `classify_token`.
-const PRERELEASE_KEYWORDS: &[&str] = &[
-  "alpha", "beta", "rc", "pre", "dev", "nightly", "snapshot", "preview",
-  "canary",
+/// Distro/packaging revision prefixes and post-release qualifiers (case-insensitive),
+/// matched against the leading alphabetic run of a semver prerelease's *first*
+/// dot-separated identifier (`"ubuntu1"` -> `"ubuntu"`, `"fc39"` -> `"fc"`,
+/// `"build5"` -> `"build"`, `"final"` -> `"final"`).
+///
+/// Suffixes whose leading alphabetic run matches this blocklist are treated as
+/// distro/packaging revisions or post-release qualifiers and stripped down to
+/// the bare core release (Fixes #149, #171). Unknown alphabetic prefixes default
+/// to genuine prereleases.
+const PACKAGING_BLOCKLIST: &[&str] = &[
+  "ubuntu", "deb", "el", "fc", "build", "alt", "mga", "bp", "lp", "ga",
+  "final", "release",
 ];
 
 /// Whether a semver prerelease string (e.g. `sv.pre.as_str()`) reads as a
 /// genuine prerelease rather than a distro/packaging revision suffix.
 ///
-/// Tie-break, deliberately conservative: only the *first* dot-separated
-/// identifier is inspected, and only its leading alphabetic run. A purely
-/// numeric leading identifier (`-1`, Arch-style; `-1ubuntu1`'s `1ubuntu1`,
-/// Debian/Ubuntu-style; `-4.fc39`'s `4`, Fedora-style) has no leading
-/// alphabetic run at all and is therefore never a genuine prerelease — real
-/// prerelease conventions (`alpha`, `beta.2`, `rc1`, `nightly`) always lead
-/// with a keyword, never a bare digit.
+/// This uses a hybrid strategy with opposite approaches for the two halves
+/// (Fixes #171):
+///
+/// 1. **Numeric-leading half (structural, list-free):**
+///    Inspects the *first* dot-separated identifier. A purely numeric leading
+///    identifier (`-1` Arch-style, `-1ubuntu1`'s `1ubuntu1` Debian/Ubuntu-style,
+///    `-4.fc39`'s `4` Fedora/RPM-style, `-2` Homebrew-style) has no leading
+///    alphabetic run at all (`leading_alpha.is_empty()`) and is structurally
+///    classified as a distro revision without needing any list. Every genuine
+///    prerelease convention leads with a letter or keyword, never a bare digit.
+///
+/// 2. **Alphabetic-leading half (blocklist, defaulting to prerelease):**
+///    For suffixes whose first identifier starts with letters (`-m1`, `-M1`,
+///    `-a1`, `-b2`, `-next`, `-beta.2`, `-ubuntu1`), an allowlist has an
+///    asymmetric failure mode: an allowlist miss is silent and fail-unsafe (a
+///    prerelease is falsely declared compatible with an MSTV floor it does not
+///    meet). Conversely, a blocklist miss is loud and self-diagnosing in CLI
+///    output (`v14.0.0-foo < MSTV v14.0.0`). Furthermore, the population in
+///    this bucket is lopsided: packaging spellings are few and bounded
+///    (`ubuntu`, `deb`, `el`, `fc`, `build`, etc.), while prerelease keywords
+///    are open-ended and constantly growing (`m`, `M`, `a`, `b`, `rc`, `next`,
+///    `experimental`, `unstable`, `insiders`, `devel`, `milestone`, etc.).
+///    Therefore, the alphabetic-leading branch blocks known packaging and
+///    release qualifiers and defaults all other alphabetic suffixes to
+///    genuine prereleases.
 #[must_use]
 fn is_genuine_prerelease(pre: &str) -> bool {
   let Some(first) = pre.split('.').next() else {
@@ -586,7 +608,7 @@ fn is_genuine_prerelease(pre: &str) -> bool {
     return false;
   }
   let lower = leading_alpha.to_ascii_lowercase();
-  PRERELEASE_KEYWORDS.contains(&lower.as_str())
+  !PACKAGING_BLOCKLIST.contains(&lower.as_str())
 }
 
 // === Comparison layer (delegated wholesale to the `semver` crate) ===========
