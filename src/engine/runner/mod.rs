@@ -279,8 +279,6 @@ impl Runner {
     let mut tool_missing_count = 0;
     let mut error_count = 0;
 
-    let mut diagnostics: Vec<(String, String)> = Vec::new();
-
     let mut runner_table = crate::ui::table::Table::new(vec![
       crate::ui::table::Column::new(crate::ui::table::Cell::text(""))
         .width(crate::ui::table::WidthPolicy::Fixed(8)),
@@ -352,7 +350,7 @@ impl Runner {
             .align(crate::ui::table::Align::Right),
           ]));
         }
-        SurfaceStatus::ConfigDrifted { file, diff } => {
+        SurfaceStatus::ConfigDrifted { file, .. } => {
           violation_count += 1;
           if exit_code < 1 {
             exit_code = 1;
@@ -376,14 +374,8 @@ impl Runner {
             )
             .align(crate::ui::table::Align::Right),
           ]));
-          diagnostics.push((
-            res.surface_name.to_string(),
-            format!(
-              "Native config '{file}' drifted from formality.toml:\n{diff}"
-            ),
-          ));
         }
-        SurfaceStatus::ManualConfig { file, suggestion } => {
+        SurfaceStatus::ManualConfig { file, .. } => {
           violation_count += 1;
           if exit_code < 1 {
             exit_code = 1;
@@ -407,9 +399,8 @@ impl Runner {
             )
             .align(crate::ui::table::Align::Right),
           ]));
-          diagnostics.push((res.surface_name.to_string(), suggestion.clone()));
         }
-        SurfaceStatus::ViolationsFound { message, diff } => {
+        SurfaceStatus::ViolationsFound { .. } => {
           violation_count += 1;
           if exit_code < 1 {
             exit_code = 1;
@@ -433,13 +424,8 @@ impl Runner {
             )
             .align(crate::ui::table::Align::Right),
           ]));
-          let detail = tool_output_detail(message, diff.as_deref());
-          diagnostics.push((res.surface_name.to_string(), detail));
         }
-        SurfaceStatus::ToolMissing {
-          binary,
-          install_hint,
-        } => {
+        SurfaceStatus::ToolMissing { binary, .. } => {
           tool_missing_count += 1;
           runner_table.add_row(crate::ui::table::Row::new(vec![
             crate::ui::table::Cell::styled(
@@ -460,14 +446,8 @@ impl Runner {
             )
             .align(crate::ui::table::Align::Right),
           ]));
-          diagnostics.push((
-            res.surface_name.to_string(),
-            format!(
-              "Missing tool binary '{binary}'.\n  Install hint: {install_hint}"
-            ),
-          ));
         }
-        SurfaceStatus::ExecutionError { message } => {
+        SurfaceStatus::ExecutionError { .. } => {
           error_count += 1;
           exit_code = 2;
           runner_table.add_row(crate::ui::table::Row::new(vec![
@@ -489,10 +469,6 @@ impl Runner {
             )
             .align(crate::ui::table::Align::Right),
           ]));
-          diagnostics.push((
-            res.surface_name.to_string(),
-            tool_output_detail(message, None),
-          ));
         }
         SurfaceStatus::Skipped { reason } => {
           runner_table.add_row(crate::ui::table::Row::new(vec![
@@ -530,6 +506,7 @@ impl Runner {
     );
     println!("{}", frame.section(&title, &rendered_table, &palette));
 
+    let diagnostics = collect_diagnostics(&results);
     if !diagnostics.is_empty() {
       let mut body = String::new();
       for (surface, detail) in &diagnostics {
@@ -886,8 +863,8 @@ fn normalize_diagnostics(raw: &str) -> String {
 /// carry raw tool output (`ViolationsFound` and `ExecutionError`, per #146):
 /// the raw message is run through [`normalize_diagnostics`], and a rendered
 /// diff is appended verbatim below it. Called from both arms in
-/// `Runner::run` so identical raw tool output renders identically regardless
-/// of which status it landed in.
+/// [`collect_diagnostics`] so identical raw tool output renders identically
+/// regardless of which status it landed in.
 ///
 /// **Both halves are rendered when both are present.** A diff used to
 /// replace the message outright, which was invisible while only one pass
@@ -904,12 +881,6 @@ fn normalize_diagnostics(raw: &str) -> String {
 /// *contents* — exactly the drift a whitespace diff exists to show. Path
 /// relativization is not lost by the bypass; it runs over every detail at
 /// the diagnostics-render step, after this function.
-///
-/// Coverage caveat: the tests pin this function's behavior only. Nothing
-/// currently asserts that either arm in `Runner::run` still calls it, so
-/// un-wiring a call site — i.e. reintroducing #146 — does not fail any
-/// test. Real call-site coverage needs a testable seam in the rendering
-/// loop; see #175, which is blocked on this issue's restructuring.
 fn tool_output_detail(message: &str, diff: Option<&str>) -> String {
   let normalized = normalize_diagnostics(message);
   match diff {
@@ -917,6 +888,56 @@ fn tool_output_detail(message: &str, diff: Option<&str>) -> String {
     Some(d) if normalized.is_empty() => d.to_string(),
     Some(d) => format!("{normalized}\n{d}"),
   }
+}
+
+/// Collects surface diagnostics and suggestions from execution results.
+///
+/// Walks the results list and extracts diagnostic detail for any surface whose
+/// status produced actionable findings: drift diffs, manual config suggestions,
+/// missing tool install hints, or tool violation / execution error output.
+/// Clean passes, synced configs, and skipped surfaces produce no diagnostics.
+fn collect_diagnostics(results: &[SurfaceResult]) -> Vec<(String, String)> {
+  let mut diagnostics = Vec::new();
+  for res in results {
+    match &res.status {
+      SurfaceStatus::Passed
+      | SurfaceStatus::ConfigSynced { .. }
+      | SurfaceStatus::Skipped { .. } => {}
+      SurfaceStatus::ConfigDrifted { file, diff } => {
+        diagnostics.push((
+          res.surface_name.to_string(),
+          format!(
+            "Native config '{file}' drifted from formality.toml:\n{diff}"
+          ),
+        ));
+      }
+      SurfaceStatus::ManualConfig { suggestion, .. } => {
+        diagnostics.push((res.surface_name.to_string(), suggestion.clone()));
+      }
+      SurfaceStatus::ViolationsFound { message, diff } => {
+        let detail = tool_output_detail(message, diff.as_deref());
+        diagnostics.push((res.surface_name.to_string(), detail));
+      }
+      SurfaceStatus::ToolMissing {
+        binary,
+        install_hint,
+      } => {
+        diagnostics.push((
+          res.surface_name.to_string(),
+          format!(
+            "Missing tool binary '{binary}'.\n  Install hint: {install_hint}"
+          ),
+        ));
+      }
+      SurfaceStatus::ExecutionError { message } => {
+        diagnostics.push((
+          res.surface_name.to_string(),
+          tool_output_detail(message, None),
+        ));
+      }
+    }
+  }
+  diagnostics
 }
 
 #[cfg(test)]
