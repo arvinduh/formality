@@ -36,7 +36,9 @@ if (command === "lsp") {
       const bodyStart = headerEnd + 4;
       if (buffer.length < bodyStart + contentLength) break;
 
-      const bodyStr = buffer.subarray(bodyStart, bodyStart + contentLength).toString("utf8");
+      const bodyStr = buffer
+        .subarray(bodyStart, bodyStart + contentLength)
+        .toString("utf8");
       buffer = buffer.subarray(bodyStart + contentLength);
 
       try {
@@ -77,16 +79,31 @@ if (command === "lsp") {
   process.exit(0);
 } else if (command === "lint") {
   if (args.includes("--fix")) {
+    // Deprecated spelling: real `fml` prints a notice and runs `fml fix`.
+    console.error(
+      "[DEPRECATED] `fml lint --fix` is deprecated and will be removed in v0.4.0. Use `fml fix` instead",
+    );
     console.log("Auto-fixed 0 lint violations. 0 warnings, 0 errors.");
   } else {
     console.log("0 warnings, 0 errors. Workspace clean.");
   }
   process.exit(0);
+} else if (command === "fix") {
+  if (args.includes("--check")) {
+    console.log("0 surfaces would change. Workspace clean.");
+  } else {
+    console.log("Auto-fixed 0 lint violations, formatted 0 files.");
+  }
+  process.exit(0);
 } else if (command === "sync") {
-  console.log("Synced 3 native config files (.rustfmt.toml, .prettierrc, taplo.toml).");
+  console.log(
+    "Synced 3 native config files (.rustfmt.toml, .prettierrc, taplo.toml).",
+  );
   process.exit(0);
 } else if (command === "doctor") {
-  console.log("[READY] rust: rustfmt, clippy\n[READY] toml: taplo\n[READY] javascript: biome");
+  console.log(
+    "[READY] rust: rustfmt, clippy\n[READY] toml: taplo\n[READY] javascript: biome",
+  );
   process.exit(0);
 } else {
   console.log(`fml ${args.join(" ")}`);

@@ -27,7 +27,6 @@ pub mod ui;
 pub use config::SCHEMA_VERSION;
 pub use config::schema::generate_schema;
 
-use clap::Parser;
 use cli::{Cli, Commands, MigrateCommands};
 use colored::Colorize;
 use config::FormalityConfig;
@@ -37,7 +36,7 @@ use std::path::{Path, PathBuf};
 /// Parses CLI arguments from `std::env::args()` and executes the command.
 #[must_use]
 pub fn run() -> ExitStatus {
-  let args = Cli::parse();
+  let args = Cli::parse_checked();
   run_with_args(args)
 }
 
@@ -60,6 +59,9 @@ pub fn run_with_args(args: Cli) -> ExitStatus {
 
   let root = args.root.clone().unwrap_or_else(|| {
     std::env::current_dir().unwrap_or_else(|_| PathBuf::from("."))
+  });
+  let root = std::path::absolute(&root).unwrap_or_else(|_| {
+    std::env::current_dir().map_or_else(|_| root.clone(), |cwd| cwd.join(&root))
   });
 
   let project_config_path = config::find_project_config(&root);
@@ -129,24 +131,54 @@ fn run_command_inner(
     ),
 
     Commands::Fix {
+      check,
       staged,
       changed,
       lang,
       install,
       paths,
     } => commands::fix::run_fix(
-      root, &config, staged, changed, lang, install, paths,
+      root, &config, check, staged, changed, lang, install, paths,
     ),
 
+    // `--fix` is the deprecated spelling of `fml fix` and dispatches to it
+    // outright, rather than to a lint-only writing form. That form no
+    // longer exists: a lint-fix pass without the format pass that follows
+    // it leaves the tree lint-fixed but unformatted, which is exactly the
+    // state `.agents/orchestrate.md` §5 says `fml` must never leave
+    // behind — and it was the sole source of the `fml fix` /
+    // `fml lint --fix` ambiguity. The notice says so, and the run banner
+    // reads `fml fix`, because that is genuinely what runs.
     Commands::Lint {
-      fix,
+      fix: true,
       staged,
       changed,
       lang,
       install,
       paths,
+      ..
+    } => {
+      crate::ui::deprecation::warn_deprecated_spelling(
+        "fml lint --fix",
+        "fml fix",
+        Some(
+          "it applies the same lint fixes and then reformats, which `fml lint --fix` never did",
+        ),
+      );
+      commands::fix::run_fix(
+        root, &config, false, staged, changed, lang, install, paths,
+      )
+    }
+
+    Commands::Lint {
+      staged,
+      changed,
+      lang,
+      install,
+      paths,
+      ..
     } => commands::lint::run_lint(
-      root, &config, fix, staged, changed, lang, install, paths,
+      root, &config, staged, changed, lang, install, paths,
     ),
 
     Commands::Sync { check, lang } => {
@@ -200,6 +232,8 @@ fn warn_unrecognized_lang_sections(config: &FormalityConfig) {
 #[cfg(test)]
 #[allow(missing_docs, clippy::missing_errors_doc, clippy::missing_panics_doc)]
 mod tests {
+  use super::*;
+
   // Tier-2 enforcement for the module/file hierarchy rule documented in
   // docs/style-guide.md ("`*_tests.rs` vs `#[cfg(test)] mod tests`"): a
   // `#[test]` walking the filesystem, same mechanism `registry.rs`'s fleet
@@ -753,5 +787,16 @@ mod tests {
       "bare pre-recreation issue citation(s) — see docs/INDEX.md:\n{}",
       violations.join("\n")
     );
+  }
+
+  #[test]
+  fn test_relative_root_resolves_to_absolute() {
+    let args = Cli {
+      config: None,
+      root: Some(std::path::PathBuf::from(".")),
+      command: Commands::ListSurfaces,
+    };
+    let status = run_with_args(args);
+    assert_eq!(status, ExitStatus::Clean);
   }
 }

@@ -320,6 +320,40 @@ mod tests {
   }
 
   #[test]
+  fn test_is_newer_version_inverted_prerelease_conventions() {
+    // #171: Suffixes outside the packaging blocklist (-m1, -M1, -next,
+    // -devel, etc.) classify as genuine prereleases, fixing the fail-unsafe
+    // direction where prereleases would be advertised as stable or a local
+    // prerelease build would suppress a legitimate stable update notice.
+    assert!(is_newer_version("v1.0.0", "1.0.0-m1"));
+    assert!(is_newer_version("v1.0.0", "1.0.0-M1"));
+    assert!(is_newer_version("v1.0.0", "1.0.0-a1"));
+    assert!(is_newer_version("v1.0.0", "1.0.0-b2"));
+    assert!(is_newer_version("v1.0.0", "1.0.0-next"));
+    assert!(is_newer_version("v1.0.0", "1.0.0-next.5"));
+    assert!(is_newer_version("v1.0.0", "1.0.0-experimental"));
+    assert!(is_newer_version("v1.0.0", "1.0.0-unstable"));
+    assert!(is_newer_version("v1.0.0", "1.0.0-insiders"));
+    assert!(is_newer_version("v1.0.0", "1.0.0-devel"));
+    assert!(is_newer_version("v1.0.0", "1.0.0-milestone1"));
+
+    // A prerelease never supersedes its matching final release.
+    assert!(!is_newer_version("v1.0.0-m1", "1.0.0"));
+    assert!(!is_newer_version("v1.0.0-next", "1.0.0"));
+
+    // Prereleases order among themselves.
+    assert!(is_newer_version("v1.0.0-m2", "1.0.0-m1"));
+    assert!(is_newer_version("v1.0.0-next.2", "1.0.0-next.1"));
+
+    // Packaging blocklist entries are salvaged to bare core, so neither
+    // side is newer than the other when base versions match.
+    assert!(!is_newer_version("v1.0.0", "1.0.0-ubuntu1"));
+    assert!(!is_newer_version("v1.0.0-ubuntu1", "1.0.0"));
+    assert!(!is_newer_version("v1.0.0", "1.0.0-deb1"));
+    assert!(!is_newer_version("v1.0.0", "1.0.0-fc39"));
+  }
+
+  #[test]
   fn test_process_release_response_caches_timestamp_on_malformed_json() {
     let temp = tempfile::TempDir::new().unwrap();
     let cache_path = temp.path().join("update_check.json");

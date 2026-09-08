@@ -746,6 +746,14 @@ pub fn forget_binary(binary: &str) {
   guard.remove(binary);
 }
 
+/// Overrides or mocks the resolved binary path in [`BINARY_CACHE`] for testing.
+#[doc(hidden)]
+pub fn set_binary_path_for_test(binary: &str, path: Option<PathBuf>) {
+  let cache = BINARY_CACHE.get_or_init(|| Mutex::new(HashMap::new()));
+  let mut guard = cache.lock().unwrap_or_else(|e| e.into_inner());
+  guard.insert(binary.to_string(), path);
+}
+
 /// Returns whether `binary` is resolvable on `PATH`, memoized per-process so
 /// repeated checks for the same binary don't re-hit the filesystem.
 #[must_use]

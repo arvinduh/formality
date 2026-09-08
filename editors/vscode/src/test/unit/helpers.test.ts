@@ -172,7 +172,7 @@ describe("Helpers & Pure Logic Unit Tests", () => {
 
       const fixDesc = getCommandDescriptor(COMMANDS.LINT_FIX);
       assert.ok(fixDesc);
-      assert.deepStrictEqual(fixDesc.args, ["lint", "--fix"]);
+      assert.deepStrictEqual(fixDesc.args, ["fix"]);
       assert.strictEqual(fixDesc.showOutput, true);
 
       const syncDesc = getCommandDescriptor(COMMANDS.SYNC);

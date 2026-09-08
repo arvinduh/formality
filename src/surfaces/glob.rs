@@ -4,6 +4,97 @@
 use super::LanguageSurface;
 use std::path::{Path, PathBuf};
 
+/// Standard directories ignored across all surfaces during file discovery.
+pub const STANDARD_IGNORED_DIRS: &[&str] = &[
+  "target",
+  "node_modules",
+  ".git",
+  ".venv",
+  "vendor",
+  "fixtures",
+];
+
+/// Returns `true` if `path` has a filename matching temporary file patterns.
+#[must_use]
+pub fn is_temp_file(path: &Path) -> bool {
+  let name = path.file_name().and_then(|f| f.to_str()).unwrap_or("");
+  name.ends_with(".tmp") || name.contains(".fml-check-tmp.")
+}
+
+/// Returns `true` if any component of `path` (relative to `root`) matches a standard ignored directory.
+#[must_use]
+pub fn is_standard_ignored(path: &Path, root: &Path) -> bool {
+  let rel = path.strip_prefix(root).unwrap_or(path);
+  rel.components().any(|c| {
+    let s = c.as_os_str().to_string_lossy();
+    STANDARD_IGNORED_DIRS.iter().any(|&ignored| s == ignored)
+  })
+}
+
+/// Builds a [`ignore::gitignore::Gitignore`] matcher for the given repository root,
+/// loading the root `.gitignore`, `.git/info/exclude`, and any nested `.gitignore` files for specific targets.
+#[must_use]
+pub fn build_repo_gitignore(
+  root: &Path,
+  targets: &[PathBuf],
+) -> Option<ignore::gitignore::Gitignore> {
+  let mut builder = ignore::gitignore::GitignoreBuilder::new(root);
+  let gitignore_path = root.join(".gitignore");
+  if gitignore_path.is_file() {
+    let _ = builder.add(&gitignore_path);
+  }
+  let git_info_exclude = root.join(".git").join("info").join("exclude");
+  if git_info_exclude.is_file() {
+    let _ = builder.add(&git_info_exclude);
+  }
+  for p in targets {
+    let full_p = if p.is_absolute() {
+      p.clone()
+    } else {
+      root.join(p)
+    };
+    let rel = full_p.strip_prefix(root).unwrap_or(&full_p);
+    let mut current = root.to_path_buf();
+    for comp in rel.components() {
+      if let std::path::Component::Normal(c) = comp {
+        current.push(c);
+        let nested = current.join(".gitignore");
+        if nested.is_file() {
+          let _ = builder.add(&nested);
+        }
+      }
+    }
+  }
+  builder.build().ok()
+}
+
+/// Returns whether a path is ignored by repository ignore rules:
+/// - conventional ignored directories (`target`, `node_modules`, `.git`, `.venv`, `vendor`, `fixtures`)
+/// - temporary files (`.tmp`, `.fml-check-tmp.`)
+/// - `.gitignore` / git exclusion rules
+#[must_use]
+pub fn is_repo_ignored(path: &Path, root: &Path) -> bool {
+  if is_standard_ignored(path, root) || is_temp_file(path) {
+    return true;
+  }
+  if let Some(gi) =
+    build_repo_gitignore(root, std::slice::from_ref(&path.to_path_buf()))
+  {
+    let full_p = if path.is_absolute() {
+      path.to_path_buf()
+    } else {
+      root.join(path)
+    };
+    if gi
+      .matched_path_or_any_parents(&full_p, full_p.is_dir())
+      .is_ignore()
+    {
+      return true;
+    }
+  }
+  false
+}
+
 /// Walks the workspace filesystem once, discovering all regular candidate files
 /// respecting gitignore rules, standard ignored directories (`target`, `node_modules`, etc.),
 /// and global exclude patterns.
@@ -20,16 +111,10 @@ pub fn walk_candidate_files(
     .git_exclude(true)
     .filter_entry(|entry| {
       let name = entry.file_name().to_string_lossy();
-      if name == "target"
-        || name == "node_modules"
-        || name == ".git"
-        || name == ".venv"
-        || name == "vendor"
-        || name == "fixtures"
-      {
+      if STANDARD_IGNORED_DIRS.iter().any(|&d| name == d) {
         return false;
       }
-      if name.ends_with(".tmp") || name.contains(".fml-check-tmp.") {
+      if is_temp_file(entry.path()) {
         return false;
       }
       true
@@ -189,6 +274,7 @@ pub fn find_files_with_ext(
   let raw_files = if targets.is_empty() {
     walk_dir_ext(root, extensions)
   } else {
+    let repo_gitignore = build_repo_gitignore(root, targets);
     let mut out = Vec::new();
     for p in targets {
       let full_p = if p.is_absolute() {
@@ -196,6 +282,16 @@ pub fn find_files_with_ext(
       } else {
         root.join(p)
       };
+      if is_standard_ignored(&full_p, root) || is_temp_file(&full_p) {
+        continue;
+      }
+      if let Some(ref gi) = repo_gitignore
+        && gi
+          .matched_path_or_any_parents(&full_p, full_p.is_dir())
+          .is_ignore()
+      {
+        continue;
+      }
       if full_p.is_file()
         && let Some(ext) = full_p.extension().and_then(|e| e.to_str())
         && extensions
@@ -283,6 +379,8 @@ fn is_excluded_normalized(
       || rel_str
         .strip_prefix(ex.trimmed.as_str())
         .is_some_and(|rest| rest.starts_with('/'))
+      || rel_str.contains(&format!("/{}/", ex.trimmed))
+      || rel_str.ends_with(&format!("/{}", ex.trimmed))
     {
       return true;
     }
@@ -303,7 +401,15 @@ fn is_excluded_normalized(
     // 5. Glob / wildcard pattern matching
     if (ex.trimmed.contains('*') || ex.trimmed.contains('?'))
       && (simple_glob_match(&ex.trimmed, &rel_str)
-        || simple_glob_match(&ex.trimmed, file_name))
+        || simple_glob_match(&ex.trimmed, file_name)
+        || simple_glob_match(&format!("**/{}", ex.trimmed), &rel_str))
+    {
+      return true;
+    }
+
+    // 6. Direct pattern match via matches_pattern
+    if matches_pattern(rel_path, &ex.slash_normalized)
+      || matches_pattern(path, &ex.slash_normalized)
     {
       return true;
     }
@@ -731,5 +837,68 @@ mod tests {
     assert!(matches_pattern(p, "*.rs"));
     assert!(!matches_pattern(p, "main.rs"));
     assert!(!matches_pattern(p, "src/other"));
+  }
+
+  #[test]
+  fn test_is_repo_ignored_conventional_directories() {
+    let temp = tempfile::TempDir::new().unwrap();
+    let root = temp.path();
+
+    assert!(is_repo_ignored(
+      &root.join("editors/vscode/test/fixtures/bin/mock-fml.js"),
+      root
+    ));
+    assert!(is_repo_ignored(&root.join("target/debug/fml"), root));
+    assert!(is_repo_ignored(
+      &root.join("node_modules/pkg/index.js"),
+      root
+    ));
+    assert!(is_repo_ignored(&root.join(".venv/lib/python.py"), root));
+    assert!(is_repo_ignored(&root.join("vendor/bundle/x"), root));
+    assert!(is_repo_ignored(&root.join(".git/config"), root));
+    assert!(is_repo_ignored(&root.join("scratch.tmp"), root));
+    assert!(is_repo_ignored(&root.join("main.fml-check-tmp.rs"), root));
+    assert!(!is_repo_ignored(&root.join("src/main.rs"), root));
+    assert!(!is_repo_ignored(
+      &root.join("editors/vscode/src/extension.ts"),
+      root
+    ));
+  }
+
+  #[test]
+  fn test_find_files_with_ext_staged_scope_filtering() {
+    let temp = tempfile::TempDir::new().unwrap();
+    let root = temp.path();
+
+    let src = root.join("src");
+    let fixtures = root.join("fixtures");
+    std::fs::create_dir_all(&src).unwrap();
+    std::fs::create_dir_all(&fixtures).unwrap();
+
+    let main_rs = src.join("main.rs");
+    let excluded_rs = src.join("generated.rs");
+    let fixture_rs = fixtures.join("mock.rs");
+    let ignored_rs = root.join("ignored.rs");
+
+    std::fs::write(&main_rs, "fn main() {}\n").unwrap();
+    std::fs::write(&excluded_rs, "fn gen() {}\n").unwrap();
+    std::fs::write(&fixture_rs, "fn mock() {}\n").unwrap();
+    std::fs::write(&ignored_rs, "fn ig() {}\n").unwrap();
+    std::fs::write(root.join(".gitignore"), "ignored.rs\n").unwrap();
+
+    let specific_staged = vec![
+      main_rs.clone(),
+      excluded_rs.clone(),
+      fixture_rs.clone(),
+      ignored_rs.clone(),
+    ];
+    let exclude = vec![PathBuf::from("src/generated.rs")];
+
+    let matched =
+      find_files_with_ext(root, &["rs"], &specific_staged, &[], &exclude);
+
+    // Only main.rs survives: excluded_rs is filtered by exclude,
+    // fixture_rs is filtered by conventional dir, and ignored_rs is filtered by .gitignore
+    assert_eq!(matched, vec![main_rs]);
   }
 }

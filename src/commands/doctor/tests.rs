@@ -402,7 +402,7 @@ fn test_needs_install_false_for_unknown_version_tool() {
 #[test]
 fn test_scan_tools_and_build_table_surfaces_unprobeable_status_not_ready() {
   // Use a system binary that exists on PATH but does not produce semver on `--version`
-  let binary_name: &'static str = if cfg!(windows) { "where" } else { "false" };
+  let binary_name: &'static str = if cfg!(windows) { "where" } else { "test" };
   if which::which(binary_name).is_err() {
     return;
   }
@@ -1091,4 +1091,132 @@ fn test_find_system_python() {
     .or_else(|_| which::which("python"))
     .ok();
   assert_eq!(found, expected);
+}
+
+#[test]
+fn test_format_version_details_distro_suffix_renders_both_forms() {
+  // Compatible: both normalized version and raw banner version rendered
+  let ready_info = format_version_details(
+    &Version::new(14, 0, 0),
+    None,
+    Some("clang-tidy version 14.0.0-1ubuntu1"),
+  );
+  assert_eq!(ready_info, " (v14.0.0 — reported 14.0.0-1ubuntu1)");
+
+  // Outdated branch: both normalized comparison and reported version rendered
+  let outdated_info = format_version_details(
+    &Version::new(13, 0, 0),
+    Some("< MSTV v14.0.0"),
+    Some("clang-tidy version 13.0.0-1ubuntu1"),
+  );
+  assert_eq!(
+    outdated_info,
+    " (v13.0.0 < MSTV v14.0.0 — reported 13.0.0-1ubuntu1)"
+  );
+
+  // Stale branch: both normalized comparison and reported version rendered
+  let stale_info = format_version_details(
+    &Version::new(13, 0, 0),
+    Some("!= pinned v14.0.0"),
+    Some("clang-tidy version 13.0.0-1ubuntu1"),
+  );
+  assert_eq!(
+    stale_info,
+    " (v13.0.0 != pinned v14.0.0 — reported 13.0.0-1ubuntu1)"
+  );
+}
+
+#[test]
+fn test_format_version_details_identical_when_versions_match() {
+  // Compatible: matches -> identical output without "reported"
+  let ready_info = format_version_details(
+    &Version::new(14, 0, 0),
+    None,
+    Some("clang-tidy version 14.0.0"),
+  );
+  assert_eq!(ready_info, " (v14.0.0)");
+
+  // Compatible with leading 'v' in banner token
+  let ready_v_info = format_version_details(
+    &Version::new(14, 0, 0),
+    None,
+    Some("clang-tidy version v14.0.0"),
+  );
+  assert_eq!(ready_v_info, " (v14.0.0)");
+
+  // Outdated: matches -> identical output without "reported"
+  let outdated_info = format_version_details(
+    &Version::new(13, 0, 0),
+    Some("< MSTV v14.0.0"),
+    Some("clang-tidy version 13.0.0"),
+  );
+  assert_eq!(outdated_info, " (v13.0.0 < MSTV v14.0.0)");
+
+  // Stale: matches -> identical output without "reported"
+  let stale_info = format_version_details(
+    &Version::new(13, 0, 0),
+    Some("!= pinned v14.0.0"),
+    Some("clang-tidy version 13.0.0"),
+  );
+  assert_eq!(stale_info, " (v13.0.0 != pinned v14.0.0)");
+
+  // None raw banner -> identical output
+  let no_banner = format_version_details(&Version::new(14, 0, 0), None, None);
+  assert_eq!(no_banner, " (v14.0.0)");
+}
+
+#[test]
+fn test_doctor_table_layout_budget_with_reported_distro_version() {
+  let mut doctor_table = Table::new(vec![
+    Column::new(Cell::text("")).width(WidthPolicy::Fixed(10)),
+    Column::new(Cell::text("")).width(WidthPolicy::Fixed(20)),
+    Column::new(Cell::text("")).width(WidthPolicy::Fixed(10)),
+    Column::new(Cell::text("")).width(WidthPolicy::Auto),
+  ])
+  .layout(Layout::compact().indent(2).padding(0, 1).max_width(80));
+
+  let v_info_reported = format_version_details(
+    &Version::new(14, 0, 0),
+    None,
+    Some("clang-tidy version 14.0.0-1ubuntu1"),
+  );
+  let v_info_matched =
+    format_version_details(&Version::new(1, 8, 0), None, Some("rustfmt 1.8.0"));
+
+  doctor_table.add_row(Row::new(vec![
+    Cell::styled("[READY]", Style::Ok),
+    Cell::styled("clang-tidy", Style::Tool),
+    Cell::styled("cpp", Style::Dim),
+    Cell::new(vec![
+      Span::styled("/usr/bin/clang-tidy", Style::Dim),
+      Span::styled(v_info_reported, Style::Info),
+    ]),
+  ]));
+
+  doctor_table.add_row(Row::new(vec![
+    Cell::styled("[READY]", Style::Ok),
+    Cell::styled("rustfmt", Style::Tool),
+    Cell::styled("rust", Style::Dim),
+    Cell::new(vec![
+      Span::styled("/home/user/.cargo/bin/rustfmt", Style::Dim),
+      Span::styled(v_info_matched, Style::Info),
+    ]),
+  ]));
+
+  let rendered = render(&doctor_table, &Palette::none());
+  assert!(rendered.contains("[READY]"));
+  assert!(rendered.contains("clang-tidy"));
+  assert!(rendered.contains("v14.0.0"));
+  assert!(rendered.contains("reported 14.0.0-1ubuntu1"));
+  assert!(rendered.contains("v1.8.0"));
+  assert!(!rendered.contains("v1.8.0 — reported"));
+
+  // Check 80-col budget enforcement: wrapping respects the width cap
+  for line in rendered.lines() {
+    assert!(
+      line.chars().count() <= 80,
+      "Doctor table line exceeded 80-col budget ({len} chars): {line}",
+      len = line.chars().count()
+    );
+  }
 }

@@ -19,14 +19,16 @@ pub use mstv::{
   DEFAULT_VERSION_PROBE, MSTV_BIOME, MSTV_CHECKSTYLE, MSTV_CLANG_FORMAT,
   MSTV_CLANG_TIDY, MSTV_CLIPPY, MSTV_GOFMT, MSTV_GOLANGCI_LINT, MSTV_KTFMT,
   MSTV_KTLINT, MSTV_MARKDOWNLINT_CLI2, MSTV_PRETTIER, MSTV_RUFF, MSTV_RUSTFMT,
-  MSTV_TAPLO, MSTV_TYPSTYLE, MSTV_YAMLLINT, TOOL_MSTV_REGISTRY, ToolMstvEntry,
-  VersionProbe, all_mstv_entries, get_tool_mstv_entry,
+  MSTV_TAPLO, MSTV_TYPSTYLE, MSTV_YAMLLINT, ProbeArg, ProbeExtractor,
+  TOOL_MSTV_REGISTRY, ToolMstvEntry, VersionProbe, all_mstv_entries,
+  get_tool_mstv_entry,
 };
 
 use crate::surfaces::create_tool_command;
 use serde::{Deserialize, Serialize};
 use std::cmp::Ordering;
 use std::collections::BTreeMap;
+use std::ffi::OsString;
 use std::fmt;
 use std::path::{Path, PathBuf};
 use std::str::FromStr;
@@ -125,7 +127,7 @@ fn line_carries_version_token(line: &str) -> bool {
   line.split_whitespace().any(|tok| {
     matches!(
       classify_token(tok),
-      TokenParse::Ok(_) | TokenParse::Rejected
+      TokenParse::Ok(_, _) | TokenParse::Rejected
     )
   })
 }
@@ -137,16 +139,120 @@ pub fn version_probe_for(binary: &str) -> VersionProbe {
   get_tool_mstv_entry(binary).map_or(DEFAULT_VERSION_PROBE, |entry| entry.probe)
 }
 
-/// Runs one probe command and extracts the first version-shaped line from its
-/// output. `None` when the command cannot be spawned, exits non-zero, or
-/// prints nothing [`first_versionish_line`] accepts.
-fn run_probe_command(bin: &str, args: &[&str]) -> Option<String> {
-  let output = create_tool_command(bin).args(args).output().ok()?;
-  if !output.status.success() {
-    return None;
+/// Picks the version line out of a finished probe command's streams.
+///
+/// A non-zero exit is not by itself evidence that the output is garbage: the
+/// npm `@taplo/cli` build writes `taplo 0.9.0` to stdout and *then* exits 1,
+/// so gating the scrape on the exit status read a perfectly good version and
+/// threw it away (Fixes #176). What keeps that relaxation honest is #114's
+/// [`line_carries_version_token`], which requires a genuinely version-shaped
+/// token rather than "contains a digit" — usage text and error messages carry
+/// no such token and still yield `None`.
+///
+/// The relaxation is deliberately asymmetric across the two streams:
+///
+/// - **Exit 0** — stdout, then stderr. Unchanged; `google-java-format` is the
+///   one tool in the fleet that reports its version on stderr.
+/// - **Non-zero exit** — stdout *only*. A failed command's stderr is where it
+///   explains its failure, and scraping that is the path #167 deliberately
+///   removed. Nothing here brings it back.
+fn version_line_from_probe_output(
+  succeeded: bool,
+  stdout: &str,
+  stderr: &str,
+) -> Option<String> {
+  let from_stdout = first_versionish_line(stdout);
+  if !succeeded {
+    return from_stdout;
   }
-  first_versionish_line(&String::from_utf8_lossy(&output.stdout))
-    .or_else(|| first_versionish_line(&String::from_utf8_lossy(&output.stderr)))
+  from_stdout.or_else(|| first_versionish_line(stderr))
+}
+
+/// Extracts the module version from the `mod` line of `go version -m` output.
+///
+/// Note: The version reported is the `golang.org/x/tools` module version that
+/// `goimports` was built from, not a goimports-specific release version (Fixes #178).
+///
+/// Returns `None` if:
+/// - There is no `mod` line in the output.
+/// - The module version is `(devel)` (built from a local working copy).
+/// - The module version token is not a valid semantic version.
+#[must_use]
+pub fn parse_go_version_m(output: &str) -> Option<String> {
+  for line in output.lines() {
+    let mut parts = line.split_whitespace();
+    if parts.next() == Some("mod") {
+      let _mod_path = parts.next()?;
+      let version = parts.next()?;
+      if version == "(devel)" {
+        return None;
+      }
+      if let TokenParse::Ok(_, _) = classify_token(version) {
+        return Some(version.to_string());
+      }
+      return None;
+    }
+  }
+  None
+}
+
+/// Renders a list of [`ProbeArg`]s into arguments for command execution.
+/// Resolves [`ProbeArg::ToolPath`] using the path to `binary` found on PATH.
+/// Returns `None` if [`ProbeArg::ToolPath`] is needed but the binary cannot be resolved.
+pub fn render_probe_args(
+  binary: &str,
+  args: &[ProbeArg],
+) -> Option<Vec<OsString>> {
+  let mut rendered = Vec::with_capacity(args.len());
+  let mut resolved_path: Option<PathBuf> = None;
+
+  for arg in args {
+    match arg {
+      ProbeArg::Literal(s) => rendered.push(OsString::from(s)),
+      ProbeArg::ToolPath => {
+        let path = match &resolved_path {
+          Some(p) => p.clone(),
+          None => {
+            let p = which::which(binary).ok()?;
+            resolved_path = Some(p.clone());
+            p
+          }
+        };
+        rendered.push(path.into_os_string());
+      }
+    }
+  }
+
+  Some(rendered)
+}
+
+/// Runs one probe command and extracts the raw version line using `extractor`.
+/// `None` when the command cannot be spawned, or the extractor yields `None`.
+fn run_probe_command<I, S>(
+  bin: &str,
+  args: I,
+  extractor: ProbeExtractor,
+) -> Option<String>
+where
+  I: IntoIterator<Item = S>,
+  S: AsRef<std::ffi::OsStr>,
+{
+  let output = create_tool_command(bin).args(args).output().ok()?;
+  match extractor {
+    ProbeExtractor::FirstVersionishLine => version_line_from_probe_output(
+      output.status.success(),
+      &String::from_utf8_lossy(&output.stdout),
+      &String::from_utf8_lossy(&output.stderr),
+    ),
+    ProbeExtractor::GoModuleVersion => {
+      if !output.status.success() {
+        return None;
+      }
+      parse_go_version_m(&String::from_utf8_lossy(&output.stdout)).or_else(
+        || parse_go_version_m(&String::from_utf8_lossy(&output.stderr)),
+      )
+    }
+  }
 }
 
 /// Executes `probe` against `binary` and extracts the raw version line.
@@ -158,8 +264,17 @@ fn run_probe_command(bin: &str, args: &[&str]) -> Option<String> {
 /// not a branch (Fixes #177).
 fn run_probe(binary: &str, probe: &VersionProbe) -> Option<String> {
   match probe {
-    VersionProbe::OwnFlags(flags) => run_probe_command(binary, flags),
-    VersionProbe::ViaBinary { bin, args } => run_probe_command(bin, args),
+    VersionProbe::OwnFlags(flags) => {
+      run_probe_command(binary, *flags, ProbeExtractor::FirstVersionishLine)
+    }
+    VersionProbe::ViaBinary {
+      bin,
+      args,
+      extractor,
+    } => {
+      let rendered = render_probe_args(binary, args)?;
+      run_probe_command(bin, &rendered, *extractor)
+    }
     VersionProbe::FirstOf(probes) => {
       probes.iter().find_map(|probe| run_probe(binary, probe))
     }
@@ -312,7 +427,7 @@ impl Version {
   pub fn parse(input: &str) -> Option<Self> {
     let trimmed = input.trim();
     match classify_token(trimmed) {
-      TokenParse::Ok(v) => Some(v),
+      TokenParse::Ok(v, _) => Some(v),
       TokenParse::Rejected => None,
       TokenParse::NotVersion => Self::extract(trimmed),
     }
@@ -323,9 +438,23 @@ impl Version {
   /// with `None` rather than walking on to a later, unrelated number.
   #[must_use]
   pub fn extract(input: &str) -> Option<Self> {
+    Self::extract_with_raw(input).map(|(v, _)| v)
+  }
+
+  /// Extracts the raw version string token from a multi-token banner, if
+  /// a valid version-shaped token is found.
+  #[must_use]
+  pub fn extract_raw(input: &str) -> Option<&str> {
+    Self::extract_with_raw(input).map(|(_, raw)| raw)
+  }
+
+  /// Scan a multi-token banner and extract both the parsed [`Version`] and
+  /// the raw version token string from the banner.
+  #[must_use]
+  pub fn extract_with_raw(input: &str) -> Option<(Self, &str)> {
     for token in input.split_whitespace() {
       match classify_token(token) {
-        TokenParse::Ok(v) => return Some(v),
+        TokenParse::Ok(v, raw) => return Some((v, raw)),
         TokenParse::Rejected => return None,
         TokenParse::NotVersion => {}
       }
@@ -339,9 +468,10 @@ impl Version {
 // layer scrapes a `MAJOR.MINOR.PATCH` core out of the token and hands that to
 // `semver` for the real parse. No ordering semantics live here.
 
-enum TokenParse {
-  /// Parsed — strict (suffix preserved) or salvaged to the bare `M.M.P` core.
-  Ok(Version),
+enum TokenParse<'a> {
+  /// Parsed — strict (suffix preserved) or salvaged to the bare `M.M.P` core,
+  /// paired with the raw version token extracted from the input text.
+  Ok(Version, &'a str),
   /// Not version-shaped: keep scanning.
   NotVersion,
   /// Version-shaped but invalid semver even bare (leading-zero core): abort.
@@ -356,7 +486,7 @@ enum TokenParse {
 /// (`18.1.8-0ubuntu1~22.04.1`, `1.35.1.post1`, `0.9.6.dev0` — which the
 /// pre-`semver` parser also ignored). A non-numeric 3rd component
 /// (`0.9.6rc1`, `1.2.x`) is rejected, never zeroed.
-fn classify_token(token: &str) -> TokenParse {
+fn classify_token<'a>(token: &'a str) -> TokenParse<'a> {
   let cleaned = token.trim_matches(|c: char| "()[]{}<>\"',:;".contains(c));
 
   // Strip a leading `v`/`V`/`go`/`Go` marker, kept only if a digit follows.
@@ -391,52 +521,80 @@ fn classify_token(token: &str) -> TokenParse {
   let parsed = semver::Version::parse(&format!("{core}{suffix}"))
     .or_else(|_| semver::Version::parse(&core));
   match parsed {
-    // A `-`-suffix that parses as valid semver but isn't a *recognised*
-    // prerelease keyword is a packaging/distro revision (`-1ubuntu1`,
-    // `-4.fc39`, a bare `-1`), not a genuine prerelease: drop it and keep the
-    // bare core, same salvage the invalid-semver suffixes above already get.
+    // A `-`-suffix that parses as valid semver but is classified as a
+    // packaging/distro revision (`-1ubuntu1`, `-4.fc39`, a bare `-1`,
+    // `-ubuntu1`, `-deb1`) rather than a genuine prerelease (`-rc1`, `-m1`,
+    // `-next`): drop it and keep the bare core, same salvage the invalid-semver
+    // suffixes above already get.
     Ok(sv) if !sv.pre.is_empty() && !is_genuine_prerelease(sv.pre.as_str()) => {
       match semver::Version::parse(&core) {
-        Ok(bare) => TokenParse::Ok(Version {
-          major: bare.major,
-          minor: bare.minor,
-          patch: bare.patch,
-          prerelease: None,
-        }),
+        Ok(bare) => TokenParse::Ok(
+          Version {
+            major: bare.major,
+            minor: bare.minor,
+            patch: bare.patch,
+            prerelease: None,
+          },
+          s,
+        ),
         Err(_) => TokenParse::Rejected,
       }
     }
-    Ok(sv) => TokenParse::Ok(Version {
-      major: sv.major,
-      minor: sv.minor,
-      patch: sv.patch,
-      prerelease: (!sv.pre.is_empty()).then(|| sv.pre.as_str().to_string()),
-    }),
+    Ok(sv) => TokenParse::Ok(
+      Version {
+        major: sv.major,
+        minor: sv.minor,
+        patch: sv.patch,
+        prerelease: (!sv.pre.is_empty()).then(|| sv.pre.as_str().to_string()),
+      },
+      s,
+    ),
     Err(_) => TokenParse::Rejected,
   }
 }
 
-/// Recognised prerelease keywords (case-insensitive), matched against the
-/// leading alphabetic run of a semver prerelease's *first* dot-separated
-/// identifier (`"rc.1"` -> `"rc"`, `"beta2"` -> `"beta"`, `"1ubuntu1"` -> `""`
-/// since it starts with a digit). Anything that doesn't produce a leading
-/// alphabetic run matching this list is treated as a packaging/distro
-/// revision instead of a genuine prerelease — see `classify_token`.
-const PRERELEASE_KEYWORDS: &[&str] = &[
-  "alpha", "beta", "rc", "pre", "dev", "nightly", "snapshot", "preview",
-  "canary",
+/// Distro/packaging revision prefixes and post-release qualifiers (case-insensitive),
+/// matched against the leading alphabetic run of a semver prerelease's *first*
+/// dot-separated identifier (`"ubuntu1"` -> `"ubuntu"`, `"fc39"` -> `"fc"`,
+/// `"build5"` -> `"build"`, `"final"` -> `"final"`).
+///
+/// Suffixes whose leading alphabetic run matches this blocklist are treated as
+/// distro/packaging revisions or post-release qualifiers and stripped down to
+/// the bare core release (Fixes #149, #171). Unknown alphabetic prefixes default
+/// to genuine prereleases.
+const PACKAGING_BLOCKLIST: &[&str] = &[
+  "ubuntu", "deb", "el", "fc", "build", "alt", "mga", "bp", "lp", "ga",
+  "final", "release",
 ];
 
 /// Whether a semver prerelease string (e.g. `sv.pre.as_str()`) reads as a
 /// genuine prerelease rather than a distro/packaging revision suffix.
 ///
-/// Tie-break, deliberately conservative: only the *first* dot-separated
-/// identifier is inspected, and only its leading alphabetic run. A purely
-/// numeric leading identifier (`-1`, Arch-style; `-1ubuntu1`'s `1ubuntu1`,
-/// Debian/Ubuntu-style; `-4.fc39`'s `4`, Fedora-style) has no leading
-/// alphabetic run at all and is therefore never a genuine prerelease — real
-/// prerelease conventions (`alpha`, `beta.2`, `rc1`, `nightly`) always lead
-/// with a keyword, never a bare digit.
+/// This uses a hybrid strategy with opposite approaches for the two halves
+/// (Fixes #171):
+///
+/// 1. **Numeric-leading half (structural, list-free):**
+///    Inspects the *first* dot-separated identifier. A purely numeric leading
+///    identifier (`-1` Arch-style, `-1ubuntu1`'s `1ubuntu1` Debian/Ubuntu-style,
+///    `-4.fc39`'s `4` Fedora/RPM-style, `-2` Homebrew-style) has no leading
+///    alphabetic run at all (`leading_alpha.is_empty()`) and is structurally
+///    classified as a distro revision without needing any list. Every genuine
+///    prerelease convention leads with a letter or keyword, never a bare digit.
+///
+/// 2. **Alphabetic-leading half (blocklist, defaulting to prerelease):**
+///    For suffixes whose first identifier starts with letters (`-m1`, `-M1`,
+///    `-a1`, `-b2`, `-next`, `-beta.2`, `-ubuntu1`), an allowlist has an
+///    asymmetric failure mode: an allowlist miss is silent and fail-unsafe (a
+///    prerelease is falsely declared compatible with an MSTV floor it does not
+///    meet). Conversely, a blocklist miss is loud and self-diagnosing in CLI
+///    output (`v14.0.0-foo < MSTV v14.0.0`). Furthermore, the population in
+///    this bucket is lopsided: packaging spellings are few and bounded
+///    (`ubuntu`, `deb`, `el`, `fc`, `build`, etc.), while prerelease keywords
+///    are open-ended and constantly growing (`m`, `M`, `a`, `b`, `rc`, `next`,
+///    `experimental`, `unstable`, `insiders`, `devel`, `milestone`, etc.).
+///    Therefore, the alphabetic-leading branch blocks known packaging and
+///    release qualifiers and defaults all other alphabetic suffixes to
+///    genuine prereleases.
 #[must_use]
 fn is_genuine_prerelease(pre: &str) -> bool {
   let Some(first) = pre.split('.').next() else {
@@ -450,7 +608,7 @@ fn is_genuine_prerelease(pre: &str) -> bool {
     return false;
   }
   let lower = leading_alpha.to_ascii_lowercase();
-  PRERELEASE_KEYWORDS.contains(&lower.as_str())
+  !PACKAGING_BLOCKLIST.contains(&lower.as_str())
 }
 
 // === Comparison layer (delegated wholesale to the `semver` crate) ===========
@@ -508,7 +666,7 @@ impl FromStr for Version {
 /// Returns the Minimum Supported Tool Version (MSTV) for a given tool binary, if defined.
 #[must_use]
 pub fn minimum_supported_tool_version(binary: &str) -> Option<Version> {
-  get_tool_mstv_entry(binary).map(|e| e.min_version.clone())
+  get_tool_mstv_entry(binary).and_then(|e| e.min_version.clone())
 }
 
 /// Normalize a raw version output string probed from a tool into a semver [`Version`],
@@ -533,6 +691,26 @@ pub fn normalize_probed_version(binary: &str, raw: &str) -> Option<Version> {
   }
 
   Some(ver)
+}
+
+/// Returns the raw version string token from `raw_banner` if it differs from
+/// the normalized `current` version.
+///
+/// Returns `None` if:
+/// - `raw_banner` is `None` or contains no version-shaped token.
+/// - The extracted raw version token is identical to `current`'s rendered
+///   version (e.g. `1.2.3` or `v1.2.3` matching `1.2.3`).
+#[must_use]
+pub fn reported_raw_version_if_differing<'a>(
+  current: &Version,
+  raw_banner: Option<&'a str>,
+) -> Option<&'a str> {
+  let raw = raw_banner.and_then(Version::extract_raw)?;
+  if raw != current.to_string() {
+    Some(raw)
+  } else {
+    None
+  }
 }
 
 /// Status of a tool relative to its minimum required version.

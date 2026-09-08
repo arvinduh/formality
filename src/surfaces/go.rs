@@ -97,14 +97,18 @@ pub const GO_EXTENSIONS: &[&str] = &["go"];
 /// `build_ruff_check_args` pattern: pass explicit files only when the caller
 /// scoped the run (specific paths, a `files` allowlist, or an `exclude`
 /// list); otherwise defer to golangci-lint's own project-wide package
-/// resolution via `./...`.
+/// resolution via `./...`. Passes `--allow-parallel-runners` so concurrent
+/// invocations (e.g. across worktrees, parallel test runs, or LSP
+/// diagnostics) do not abort with `parallel golangci-lint is running`
+/// (Fixes #201).
 #[must_use]
 pub fn build_golangci_lint_args(
   files: &[PathBuf],
   fix: bool,
   extra_args: &[String],
 ) -> Vec<String> {
-  let mut args = vec!["run".to_string()];
+  let mut args =
+    vec!["run".to_string(), "--allow-parallel-runners".to_string()];
   if fix {
     args.push("--fix".to_string());
   }
@@ -133,8 +137,11 @@ pub fn build_golangci_lint_json_args(
   files: &[PathBuf],
   extra_args: &[String],
 ) -> Vec<String> {
-  let mut args =
-    vec!["run".to_string(), "--output.json.path=stdout".to_string()];
+  let mut args = vec![
+    "run".to_string(),
+    "--allow-parallel-runners".to_string(),
+    "--output.json.path=stdout".to_string(),
+  ];
   if files.is_empty() {
     args.push("./...".to_string());
   } else {
@@ -516,7 +523,7 @@ impl LanguageSurface for GoSurface {
 
 #[cfg(test)]
 #[allow(missing_docs, clippy::missing_errors_doc, clippy::missing_panics_doc)]
-mod tests {
+pub(crate) mod tests {
   use super::*;
   use crate::config::{GoOptions, ResolvedLangConfig};
   use crate::surfaces::{check_binary_exists, test_ctx};
@@ -524,13 +531,15 @@ mod tests {
   use tempfile::TempDir;
 
   /// `golangci-lint run` takes a machine-global lock and aborts with
-  /// `parallel golangci-lint is running` if a second invocation overlaps.
-  /// libtest runs these tests on parallel threads, so every test that
-  /// actually invokes `golangci-lint run` (via `GoSurface::lint`) must hold
-  /// this guard for the duration of the call.
+  /// `parallel golangci-lint is running` if a second invocation overlaps
+  /// without `--allow-parallel-runners`. While `build_golangci_lint_args` passes
+  /// `--allow-parallel-runners` (Fixes #201), every test that invokes
+  /// `golangci-lint run` (via `GoSurface::lint` or LSP diagnostics) still holds
+  /// this guard so concurrent libtest threads do not compete for disk and CPU
+  /// during heavy analyzer runs.
   static GOLANGCI_LINT_GUARD: Mutex<()> = Mutex::new(());
 
-  fn golangci_lint_lock() -> MutexGuard<'static, ()> {
+  pub(crate) fn golangci_lint_lock() -> MutexGuard<'static, ()> {
     GOLANGCI_LINT_GUARD
       .lock()
       .unwrap_or_else(PoisonError::into_inner)
@@ -590,7 +599,14 @@ mod tests {
   #[test]
   fn test_build_golangci_lint_args_default_scope() {
     let args = build_golangci_lint_args(&[], false, &[]);
-    assert_eq!(args, vec!["run".to_string(), "./...".to_string()]);
+    assert_eq!(
+      args,
+      vec![
+        "run".to_string(),
+        "--allow-parallel-runners".to_string(),
+        "./...".to_string(),
+      ]
+    );
   }
 
   #[test]
@@ -602,6 +618,7 @@ mod tests {
       args,
       vec![
         "run".to_string(),
+        "--allow-parallel-runners".to_string(),
         "--fix".to_string(),
         "main.go".to_string(),
         "util.go".to_string(),
@@ -617,6 +634,7 @@ mod tests {
       args,
       vec![
         "run".to_string(),
+        "--allow-parallel-runners".to_string(),
         "--output.json.path=stdout".to_string(),
         "./...".to_string(),
       ]
@@ -631,6 +649,7 @@ mod tests {
       args,
       vec![
         "run".to_string(),
+        "--allow-parallel-runners".to_string(),
         "--output.json.path=stdout".to_string(),
         "main.go".to_string(),
       ]
@@ -670,10 +689,7 @@ mod tests {
     let ctx = test_ctx(temp.path(), ResolvedLangConfig::new("go"));
 
     let res = surface.sync_config(&ctx, false);
-    assert!(matches!(
-      res.status,
-      SurfaceStatus::ConfigSynced { created: true, .. }
-    ));
+    assert_eq!(res.status.created_file_names(), [".golangci.yml"]);
 
     let config_path = temp.path().join(".golangci.yml");
     assert!(config_path.is_file());
@@ -764,6 +780,37 @@ mod tests {
     assert!(
       matches!(res.status, SurfaceStatus::ExecutionError { .. }),
       "a gofmt failure on the write path must be ExecutionError, got: {:?}",
+      res.status
+    );
+    assert!(!res.is_success());
+  }
+
+  #[test]
+  fn test_go_write_reports_execution_error_on_goimports_failure() {
+    // Fixes #174: a file with valid syntax passes `gofmt` cleanly, allowing
+    // the write path to proceed to `goimports -w`. An invalid extra argument
+    // causes `goimports` specifically to fail, verifying that the `goimports`
+    // write-path failure branch classifies the failure as `ExecutionError`
+    // (`[ERR]`), not `ViolationsFound` (`[FAIL]`).
+    if !check_binary_exists("gofmt") || !check_binary_exists("goimports") {
+      return;
+    }
+    let temp = TempDir::new().unwrap();
+    std::fs::write(
+      temp.path().join("valid.go"),
+      "package main\n\nfunc main() {}\n",
+    )
+    .unwrap();
+
+    let surface = GoSurface;
+    let mut config = ResolvedLangConfig::new("go");
+    config.extra_args = vec!["-local".to_string()];
+    let ctx = test_ctx(temp.path(), config);
+
+    let res = surface.format(&ctx);
+    assert!(
+      matches!(res.status, SurfaceStatus::ExecutionError { .. }),
+      "a goimports failure on the write path must be ExecutionError, got: {:?}",
       res.status
     );
     assert!(!res.is_success());

@@ -6,7 +6,7 @@ use super::{
   DeclaresFacets, ExecutionContext, Facet, FacetSupport, LanguageSurface,
   NativeConfig, SurfaceResult, SurfaceStatus, ToolInfo,
   classify_all_nonzero_as_error, create_tool_command,
-  diff_check_via_tempcopy_classified, find_files_with_ext,
+  diff_check_via_tempcopy_classified, find_files_with_ext, merge_sync_results,
   render_native_config, run_tool_command_classified, sync_native_config,
   tool_missing_guard,
 };
@@ -639,24 +639,27 @@ impl LanguageSurface for CppSurface {
   // users who explicitly want the native files materialized on disk (e.g.
   // for editor/clangd integration outside of `fml`).
   fn sync_config(&self, ctx: &ExecutionContext, check: bool) -> SurfaceResult {
-    let start = Instant::now();
-    let format_res =
-      sync_native_config::<ClangFormatConfig>(ctx, check, start, self.name());
+    // Each file is timed from its own `Instant` because
+    // `merge_sync_results` sums the durations it is given; sharing one start
+    // would double-count the first file's time.
+    let format_res = sync_native_config::<ClangFormatConfig>(
+      ctx,
+      check,
+      Instant::now(),
+      self.name(),
+    );
 
     if !format_res.is_success() {
       return format_res;
     }
 
-    let tidy_res = sync_clang_tidy_config(ctx, check, start, self.name());
-    if !tidy_res.is_success() {
-      return tidy_res;
-    }
+    let tidy_res =
+      sync_clang_tidy_config(ctx, check, Instant::now(), self.name());
 
-    if matches!(tidy_res.status, SurfaceStatus::ConfigSynced { .. }) {
-      tidy_res
-    } else {
-      format_res
-    }
+    // Both filenames are reported, not just whichever happened to be
+    // written (#130): `.clang-format` used to be dropped whenever
+    // `.clang-tidy` was also synced.
+    merge_sync_results(vec![format_res, tidy_res])
   }
 }
 
@@ -868,6 +871,12 @@ mod tests {
     let surface = CppSurface;
     let res = surface.sync_config(&ctx, false);
     assert!(res.is_success());
+    // Fixes #130: both files are named. `.clang-format` used to be dropped
+    // whenever `.clang-tidy` was also written.
+    assert_eq!(
+      res.status.created_file_names(),
+      [".clang-format", ".clang-tidy"]
+    );
 
     let format_path = root.join(".clang-format");
     let tidy_path = root.join(".clang-tidy");

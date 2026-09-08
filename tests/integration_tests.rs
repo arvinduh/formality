@@ -5,6 +5,7 @@ use common::{
   temp_repo,
 };
 use fml::cli::{Commands, MigrateCommands};
+use fml::errors::ExitStatus;
 use fml::surfaces::{
   SurfaceRegistry, all_surfaces, detect_surfaces, get_surface_by_name,
   resolve_canonical_name,
@@ -598,6 +599,7 @@ fn test_fmt_fix_lint_doctor_install_flag_paths() {
 
   // Test fix with install: true
   let fix_args = Commands::Fix {
+    check: false,
     staged: false,
     changed: false,
     lang: vec!["rust".to_string()],
@@ -608,6 +610,7 @@ fn test_fmt_fix_lint_doctor_install_flag_paths() {
 
   // Test lint with install: true
   let lint_args = Commands::Lint {
+    check: false,
     fix: false,
     staged: false,
     changed: false,
@@ -722,4 +725,201 @@ fn test_install_command_active_surfaces() {
 
   // Install for active surfaces (rust is already installed or handled gracefully)
   assert_eq!(run_cli(root, Commands::Install { all: false }), 0);
+}
+
+#[test]
+fn test_relative_root_preserves_ancestor_manifest_walks_and_display() {
+  let temp = temp_repo(&[
+    (
+      "Cargo.toml",
+      "[package]\nname = \"root_pkg\"\nversion = \"0.1.0\"\nedition = \"2021\"\n",
+    ),
+    (
+      "formality.toml",
+      "#:schema https://formality.dev/s1.1/formality.schema.json\n\
+       languages = [\"rust\"]\n",
+    ),
+    (
+      "crates/nested/src/main.rs",
+      "fn main()  {   println!(\"unformatted\");  }\n",
+    ),
+  ]);
+
+  let nested_dir = temp.path().join("crates").join("nested");
+
+  // 1. Run fml fmt --check from inside nested_dir with relative --root .
+  let out_dot = std::process::Command::new(env!("CARGO_BIN_EXE_fml"))
+    .args(["fmt", "--check", "--root", "."])
+    .current_dir(&nested_dir)
+    .env("NO_COLOR", "1")
+    .env_remove("FORCE_COLOR")
+    .output()
+    .expect("failed to run fml");
+
+  let stdout_dot = String::from_utf8_lossy(&out_dot.stdout);
+  let stderr_dot = String::from_utf8_lossy(&out_dot.stderr);
+  let combined_dot = format!("{stdout_dot}\n{stderr_dot}");
+
+  // Manifest parent walk succeeded: found Cargo.toml and formality.toml in parent
+  assert!(
+    !combined_dot.contains("No Cargo.toml found"),
+    "ancestor Cargo.toml walk should succeed with relative --root ., got:\n{combined_dot}"
+  );
+  // Diagnostics/output must not leak absolute root path
+  let nested_str = nested_dir.to_string_lossy();
+  let nested_fwd = nested_str.replace('\\', "/");
+  let plain_dot = fml::ui::table::strip_ansi_escapes(&combined_dot);
+  assert!(
+    !plain_dot.replace('\\', "/").contains(&nested_fwd),
+    "output should not leak absolute root path:\n{plain_dot}"
+  );
+
+  // 2. Run fml fmt --check from parent temp dir with relative --root crates/nested
+  let out_rel = std::process::Command::new(env!("CARGO_BIN_EXE_fml"))
+    .args(["fmt", "--check", "--root", "crates/nested"])
+    .current_dir(temp.path())
+    .env("NO_COLOR", "1")
+    .env_remove("FORCE_COLOR")
+    .output()
+    .expect("failed to run fml");
+
+  let stdout_rel = String::from_utf8_lossy(&out_rel.stdout);
+  let stderr_rel = String::from_utf8_lossy(&out_rel.stderr);
+  let combined_rel = format!("{stdout_rel}\n{stderr_rel}");
+
+  assert!(
+    !combined_rel.contains("No Cargo.toml found"),
+    "ancestor Cargo.toml walk should succeed with relative --root crates/nested, got:\n{combined_rel}"
+  );
+  let plain_rel = fml::ui::table::strip_ansi_escapes(&combined_rel);
+  assert!(
+    !plain_rel.replace('\\', "/").contains(&nested_fwd),
+    "output should not leak absolute root path:\n{plain_rel}"
+  );
+
+  // 3. Run fml lint from inside nested_dir with relative --root .
+  let out_lint = std::process::Command::new(env!("CARGO_BIN_EXE_fml"))
+    .args(["lint", "--root", "."])
+    .current_dir(&nested_dir)
+    .env("NO_COLOR", "1")
+    .env_remove("FORCE_COLOR")
+    .output()
+    .expect("failed to run fml");
+
+  let stdout_lint = String::from_utf8_lossy(&out_lint.stdout);
+  let stderr_lint = String::from_utf8_lossy(&out_lint.stderr);
+  let combined_lint = format!("{stdout_lint}\n{stderr_lint}");
+
+  // Manifest parent walk succeeded for lint preflight: find_manifest_upwards found Cargo.toml in parent
+  assert!(
+    !combined_lint.contains("No Cargo.toml found"),
+    "ancestor Cargo.toml walk in lint should succeed with relative --root ., got:\n{combined_lint}"
+  );
+}
+
+#[test]
+fn test_missing_tool_exit_code_parity_staged_vs_unstaged() {
+  struct BinaryCacheResetGuard(&'static [&'static str]);
+  impl Drop for BinaryCacheResetGuard {
+    fn drop(&mut self) {
+      for binary in self.0 {
+        fml::surfaces::forget_binary(binary);
+      }
+    }
+  }
+
+  let temp = temp_repo(&[("README.md", "# Test Project\n")]);
+  let root = temp.path();
+
+  if !init_git_repo(root) {
+    return;
+  }
+
+  let _ = std::process::Command::new("git")
+    .args(["add", "README.md"])
+    .current_dir(root)
+    .output();
+
+  let _guard =
+    BinaryCacheResetGuard(&["markdownlint-cli2", "markdownlint", "prettier"]);
+
+  // Simulate missing markdownlint tools
+  fml::surfaces::set_binary_path_for_test("markdownlint-cli2", None);
+  fml::surfaces::set_binary_path_for_test("markdownlint", None);
+
+  // 1. Lint staged vs unstaged parity with missing tool
+  let lint_staged = Commands::Lint {
+    fix: false,
+    check: false,
+    staged: true,
+    changed: false,
+    lang: vec!["markdown".to_string()],
+    install: false,
+    paths: vec![],
+  };
+  let lint_unstaged = Commands::Lint {
+    fix: false,
+    check: false,
+    staged: false,
+    changed: false,
+    lang: vec!["markdown".to_string()],
+    install: false,
+    paths: vec![],
+  };
+
+  let lint_staged_status = run_cli(root, lint_staged);
+  let lint_unstaged_status = run_cli(root, lint_unstaged);
+
+  assert_eq!(
+    lint_staged_status,
+    ExitStatus::Clean,
+    "fml lint --staged must exit 0 on missing tool"
+  );
+  assert_eq!(
+    lint_unstaged_status,
+    ExitStatus::Clean,
+    "fml lint must exit 0 on missing tool"
+  );
+  assert_eq!(
+    lint_staged_status, lint_unstaged_status,
+    "exit-code parity between staged and unstaged lint with missing tool"
+  );
+
+  // 2. Fmt staged vs unstaged parity with missing tool (prettier)
+  fml::surfaces::set_binary_path_for_test("prettier", None);
+
+  let fmt_staged = Commands::Fmt {
+    check: false,
+    staged: true,
+    changed: false,
+    lang: vec!["markdown".to_string()],
+    install: false,
+    paths: vec![],
+  };
+  let fmt_unstaged = Commands::Fmt {
+    check: false,
+    staged: false,
+    changed: false,
+    lang: vec!["markdown".to_string()],
+    install: false,
+    paths: vec![],
+  };
+
+  let fmt_staged_status = run_cli(root, fmt_staged);
+  let fmt_unstaged_status = run_cli(root, fmt_unstaged);
+
+  assert_eq!(
+    fmt_staged_status,
+    ExitStatus::Clean,
+    "fml fmt --staged must exit 0 on missing tool"
+  );
+  assert_eq!(
+    fmt_unstaged_status,
+    ExitStatus::Clean,
+    "fml fmt must exit 0 on missing tool"
+  );
+  assert_eq!(
+    fmt_staged_status, fmt_unstaged_status,
+    "exit-code parity between staged and unstaged fmt with missing tool"
+  );
 }

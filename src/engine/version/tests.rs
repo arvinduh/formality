@@ -226,6 +226,60 @@ fn test_distro_revision_vs_genuine_prerelease() {
       Version::with_prerelease(1, 2, 3, "rc1"),
       true,
     ),
+    // #171: inverted alphabetic-leading branch defaults unknown alphabetic
+    // prefixes to genuine prereleases (Maven milestones, npm next, devel, etc.).
+    ("1.2.3-m1", Version::with_prerelease(1, 2, 3, "m1"), true),
+    ("1.2.3-M1", Version::with_prerelease(1, 2, 3, "M1"), true),
+    ("1.2.3-a1", Version::with_prerelease(1, 2, 3, "a1"), true),
+    ("1.2.3-b2", Version::with_prerelease(1, 2, 3, "b2"), true),
+    (
+      "1.2.3-next",
+      Version::with_prerelease(1, 2, 3, "next"),
+      true,
+    ),
+    (
+      "1.2.3-next.5",
+      Version::with_prerelease(1, 2, 3, "next.5"),
+      true,
+    ),
+    (
+      "1.2.3-experimental",
+      Version::with_prerelease(1, 2, 3, "experimental"),
+      true,
+    ),
+    (
+      "1.2.3-unstable",
+      Version::with_prerelease(1, 2, 3, "unstable"),
+      true,
+    ),
+    (
+      "1.2.3-insiders",
+      Version::with_prerelease(1, 2, 3, "insiders"),
+      true,
+    ),
+    (
+      "1.2.3-devel",
+      Version::with_prerelease(1, 2, 3, "devel"),
+      true,
+    ),
+    (
+      "1.2.3-milestone1",
+      Version::with_prerelease(1, 2, 3, "milestone1"),
+      true,
+    ),
+    // #171: packaging blocklist entries are recognized and stripped to bare core.
+    ("1.2.3-deb1", Version::new(1, 2, 3), false),
+    ("1.2.3-el8", Version::new(1, 2, 3), false),
+    ("1.2.3-fc39", Version::new(1, 2, 3), false),
+    ("1.2.3-build5", Version::new(1, 2, 3), false),
+    ("1.2.3-alt1", Version::new(1, 2, 3), false),
+    ("1.2.3-mga8", Version::new(1, 2, 3), false),
+    ("1.2.3-bp1", Version::new(1, 2, 3), false),
+    ("1.2.3-lp152", Version::new(1, 2, 3), false),
+    ("1.2.3-ga", Version::new(1, 2, 3), false),
+    ("1.2.3-final", Version::new(1, 2, 3), false),
+    ("1.2.3-FINAL", Version::new(1, 2, 3), false),
+    ("1.2.3-release", Version::new(1, 2, 3), false),
   ];
 
   for (input, expected, is_prerelease) in cases {
@@ -1038,11 +1092,10 @@ fn test_probe_raw_gofmt_sources_go_toolchain_or_reports_nothing() {
 /// new non-default entry to be named here — which is where the "why" comment
 /// gets written. It cannot catch the converse: an entry wrongly declaring the
 /// default for a tool that has no `--version`, which is #114's own bug.
-/// Proving that needs the tools themselves executed, and a fleet-wide "every
-/// installed tool probes" assertion would fail today for a reason that is not
-/// a declaration bug — taplo's npm build prints a real version and then exits
-/// non-zero. That sweep belongs with #176, whose own acceptance criteria
-/// already call for it.
+/// Proving that needs the tools themselves executed, which is what
+/// `test_no_installed_registry_tool_prints_a_version_the_probe_discards` does
+/// — a sweep deferred out of #177 because it failed on taplo's npm build, and
+/// landed with #176 once that cause was fixed.
 #[test]
 fn test_registry_probe_strategies_match_what_each_tool_supports() {
   let probe_of = |binary: &str| {
@@ -1056,7 +1109,24 @@ fn test_registry_probe_strategies_match_what_each_tool_supports() {
     probe_of("gofmt"),
     VersionProbe::ViaBinary {
       bin: "go",
-      args: &["version"],
+      args: &[ProbeArg::Literal("version")],
+      extractor: ProbeExtractor::FirstVersionishLine,
+    }
+  );
+  // `goimports` has no version flag; its module version is reported by
+  // `go version -m <path>` from the `mod` line (Fixes #178).
+  // Note: the version reported is the golang.org/x/tools module version
+  // that goimports was built from, not goimports' own release version.
+  assert_eq!(
+    probe_of("goimports"),
+    VersionProbe::ViaBinary {
+      bin: "go",
+      args: &[
+        ProbeArg::Literal("version"),
+        ProbeArg::Literal("-m"),
+        ProbeArg::ToolPath,
+      ],
+      extractor: ProbeExtractor::GoModuleVersion,
     }
   );
   // `golangci-lint` uses a bare `version` subcommand, not `--version` — and
@@ -1072,17 +1142,22 @@ fn test_registry_probe_strategies_match_what_each_tool_supports() {
     VersionProbe::FirstOf(&[
       VersionProbe::ViaBinary {
         bin: "clippy-driver",
-        args: &["--version"],
+        args: &[ProbeArg::Literal("--version")],
+        extractor: ProbeExtractor::FirstVersionishLine,
       },
       VersionProbe::ViaBinary {
         bin: "cargo",
-        args: &["clippy", "--version"],
+        args: &[ProbeArg::Literal("clippy"), ProbeArg::Literal("--version")],
+        extractor: ProbeExtractor::FirstVersionishLine,
       },
     ])
   );
 
   for entry in all_mstv_entries() {
-    if matches!(entry.binary, "gofmt" | "golangci-lint" | "clippy") {
+    if matches!(
+      entry.binary,
+      "gofmt" | "goimports" | "golangci-lint" | "clippy"
+    ) {
       continue;
     }
     assert_eq!(
@@ -1104,12 +1179,22 @@ fn test_every_declared_probe_is_structurally_well_formed() {
         !flags.is_empty(),
         "{binary} declares OwnFlags with no flags, which would run the tool bare"
       ),
-      VersionProbe::ViaBinary { bin, args } => {
+      VersionProbe::ViaBinary {
+        bin,
+        args,
+        extractor,
+      } => {
         assert_ne!(
           *bin, binary,
           "{binary} declares ViaBinary against itself; that is OwnFlags"
         );
         assert!(!args.is_empty(), "{binary} declares ViaBinary with no args");
+        if *extractor == ProbeExtractor::GoModuleVersion {
+          assert!(
+            args.contains(&ProbeArg::ToolPath),
+            "{binary} declares GoModuleVersion without ProbeArg::ToolPath"
+          );
+        }
       }
       VersionProbe::FirstOf(probes) => {
         assert!(
@@ -1177,11 +1262,13 @@ fn test_first_of_falls_through_to_the_next_working_probe() {
   let probe = VersionProbe::FirstOf(&[
     VersionProbe::ViaBinary {
       bin: "formality-no-such-binary-exists",
-      args: &["--version"],
+      args: &[ProbeArg::Literal("--version")],
+      extractor: ProbeExtractor::FirstVersionishLine,
     },
     VersionProbe::ViaBinary {
       bin: "cargo",
-      args: &["--version"],
+      args: &[ProbeArg::Literal("--version")],
+      extractor: ProbeExtractor::FirstVersionishLine,
     },
   ]);
   let raw = run_probe("cargo", &probe)
@@ -1189,5 +1276,430 @@ fn test_first_of_falls_through_to_the_next_working_probe() {
   assert!(
     raw.contains("cargo"),
     "expected cargo's version banner, got: {raw:?}"
+  );
+}
+
+/// The literal streams the npm `@taplo/cli` build produces for `--version`:
+/// a real version on stdout, nothing on stderr, and exit 1. Reproduced against
+/// `@taplo/cli@0.7.0` (which wraps taplo 0.9.0) on 2026-09-04.
+const TAPLO_NPM_VERSION_STDOUT: &str = "taplo 0.9.0\n";
+
+/// The literal stdout the same build produces for `-v` — clap's
+/// unknown-argument error, also on stdout, also exit 1. No line carries a
+/// version-shaped token, which is what keeps the relaxation below honest.
+const TAPLO_NPM_SHORT_FLAG_STDOUT: &str = "error: Found argument '-v' which \
+wasn't expected, or isn't valid in this context\n\n\tIf you tried to supply \
+`-v` as a value rather than a flag, use `-- -v`\n\nUSAGE:\n    taplo \
+[OPTIONS] <SUBCOMMAND>\n\nFor more information try --help\n";
+
+/// A version-shaped line on stdout is kept even when the command exits
+/// non-zero: the npm `@taplo/cli` build prints `taplo 0.9.0` and *then* exits
+/// 1, and the old exit-status gate read that version and discarded it, so
+/// `fml doctor` said `(version unprobeable)` for a tool that had just told it
+/// the answer (Fixes #176).
+///
+/// This is the assertion the fix exists for: with the gate restored it
+/// returns `None`, which no other path in this function produces for this
+/// input.
+#[test]
+fn test_version_shaped_stdout_survives_a_non_zero_exit() {
+  assert_eq!(
+    version_line_from_probe_output(false, TAPLO_NPM_VERSION_STDOUT, ""),
+    Some("taplo 0.9.0".to_string()),
+    "taplo's real version was discarded because the command exited non-zero"
+  );
+  assert_eq!(
+    normalize_probed_version("taplo", "taplo 0.9.0"),
+    Some(Version::new(0, 9, 0))
+  );
+}
+
+/// The relaxation is not "trust a failed command": a non-zero exit whose
+/// stdout carries no version-shaped token is still unprobeable. Both real
+/// shapes — the tool's own usage/error text, and no output at all — must
+/// stay `None`, or #114's garbage-scraping bug comes back through the door
+/// this fix opens (Fixes #176).
+#[test]
+fn test_non_zero_exit_without_a_version_token_stays_unprobeable() {
+  assert_eq!(
+    version_line_from_probe_output(false, TAPLO_NPM_SHORT_FLAG_STDOUT, ""),
+    None,
+    "clap's unknown-argument text was scraped as a version"
+  );
+  assert_eq!(version_line_from_probe_output(false, "", ""), None);
+  assert_eq!(
+    version_line_from_probe_output(
+      false,
+      "flag provided but not defined: -version\n",
+      ""
+    ),
+    None
+  );
+}
+
+/// The relaxation is stdout-only. A failed command's stderr is where it
+/// explains its failure, and scraping that is the path #167 deliberately
+/// removed — accepting non-zero-exit stdout must not bring it back
+/// (Fixes #176). On a *successful* exit stderr is still read, which is the
+/// only way `google-java-format` reports at all.
+#[test]
+fn test_failed_probe_never_scrapes_stderr_but_a_successful_one_still_does() {
+  assert_eq!(
+    version_line_from_probe_output(false, "", "some-tool 1.2.3\n"),
+    None,
+    "a failed probe scraped stderr; #167 removed that path"
+  );
+  assert_eq!(
+    version_line_from_probe_output(
+      true,
+      "",
+      "google-java-format: Version 1.28.0\n"
+    ),
+    Some("google-java-format: Version 1.28.0".to_string())
+  );
+  // stdout wins over stderr on the success path, as before.
+  assert_eq!(
+    version_line_from_probe_output(true, "tool 2.0.0\n", "tool 9.9.9\n"),
+    Some("tool 2.0.0".to_string())
+  );
+}
+
+/// Every `(binary, args)` pair the declared `probe` would actually execute,
+/// flattened out of any [`VersionProbe::FirstOf`] chain.
+fn probe_leaf_commands(
+  binary: &str,
+  probe: &VersionProbe,
+) -> Vec<(String, Vec<String>)> {
+  match probe {
+    VersionProbe::OwnFlags(flags) => vec![(
+      binary.to_string(),
+      flags.iter().map(|a| (*a).to_string()).collect(),
+    )],
+    VersionProbe::ViaBinary { bin, args, .. } => {
+      if let Some(rendered) = render_probe_args(binary, args) {
+        vec![(
+          bin.to_string(),
+          rendered
+            .into_iter()
+            .map(|s| s.to_string_lossy().into_owned())
+            .collect(),
+        )]
+      } else {
+        vec![]
+      }
+    }
+    VersionProbe::FirstOf(probes) => probes
+      .iter()
+      .flat_map(|inner| probe_leaf_commands(binary, inner))
+      .collect(),
+  }
+}
+
+/// Presence-gated execution sweep across the whole registry (#176's AC 5,
+/// deferred here from PR #195 because it failed on taplo — the bug this PR
+/// fixes).
+///
+/// For every entry whose declared probe would run a binary that is actually
+/// installed, run those commands and assert the fleet-wide property #114 and
+/// #176 are both instances of: **if a tool prints a version-shaped line on
+/// stdout, formality must not report it as unprobeable.** Unlike
+/// `test_registry_probe_strategies_match_what_each_tool_supports`, this
+/// executes the tools, so it can catch an entry whose declaration silently
+/// disagrees with the tool — the #114-class bug a change-detector cannot see.
+///
+/// It is deliberately an implication, not "every installed tool probes": a
+/// genuinely broken install (a `ktlint` shim that cannot exec its JDK, exit
+/// 126 with empty stdout) prints nothing version-shaped, so the premise is
+/// false and the entry is skipped rather than failing a test for something
+/// that is not a declaration bug.
+#[test]
+fn test_no_installed_registry_tool_prints_a_version_the_probe_discards() {
+  for entry in all_mstv_entries() {
+    let leaves = probe_leaf_commands(entry.binary, &entry.probe);
+    if !leaves.iter().any(|(bin, _)| which::which(bin).is_ok()) {
+      continue;
+    }
+
+    let printed = leaves.iter().find_map(|(bin, args)| {
+      let output = create_tool_command(bin)
+        .args(args.iter().map(String::as_str))
+        .output()
+        .ok()?;
+      let line =
+        first_versionish_line(&String::from_utf8_lossy(&output.stdout))?;
+      Some((format!("{bin} {}", args.join(" ")), line))
+    });
+    let Some((command, line)) = printed else {
+      continue;
+    };
+
+    assert!(
+      probe_raw_tool_version_uncached(entry.binary).is_some(),
+      "`{command}` printed {line:?} on stdout, but {} still probes as \
+       unprobeable",
+      entry.binary
+    );
+  }
+}
+
+/// Tests `parse_go_version_m` extracts the module version from real `go version -m` output.
+/// Note: The version reported is the `golang.org/x/tools` module version, not goimports' own (Fixes #178).
+#[test]
+fn test_parse_go_version_m_extracts_module_version_from_real_output() {
+  let output = "\
+C:\\Users\\olives\\go\\bin\\goimports.exe: go1.26.7
+\tpath\tgolang.org/x/tools/cmd/goimports
+\tmod\tgolang.org/x/tools\tv0.49.0\th1:3NI7VXzL9+1WZD52Dx2ttoPwD5DWrFGpl9mFZDlmisI=
+\tdep\tgolang.org/x/mod\tv0.39.0\th1:UF5zwQdCRRUpHfyPwr7d4UrGiVeldIsogtzWVnczL74=
+\tdep\tgolang.org/x/sync\tv0.22.0\th1:SZjpbeLmrCk4xhRSZFNZW5gFUeCeFgjekvI/+gfScek=
+\tbuild\t-compiler=gc
+";
+  let parsed =
+    parse_go_version_m(output).expect("should extract module version");
+  assert_eq!(parsed, "v0.49.0");
+
+  let ver = normalize_probed_version("goimports", &parsed)
+    .expect("extracted version should normalize to semver");
+  assert_eq!(ver, Version::new(0, 49, 0));
+}
+
+/// Tests `parse_go_version_m` with space-separated columns and without checksum hash.
+#[test]
+fn test_parse_go_version_m_without_hash() {
+  let output = "\
+/home/user/go/bin/goimports: go1.24.7
+        path    golang.org/x/tools/cmd/goimports
+        mod     golang.org/x/tools      v0.28.0
+";
+  let parsed =
+    parse_go_version_m(output).expect("should extract module version");
+  assert_eq!(parsed, "v0.28.0");
+
+  let ver = normalize_probed_version("goimports", &parsed)
+    .expect("extracted version should normalize to semver");
+  assert_eq!(ver, Version::new(0, 28, 0));
+}
+
+/// Tests `parse_go_version_m` extracts pseudo-versions cleanly.
+#[test]
+fn test_parse_go_version_m_pseudo_version() {
+  let output = "\
+/path/to/goimports: go1.24.7
+\tpath\tgolang.org/x/tools/cmd/goimports
+\tmod\tgolang.org/x/tools\tv0.0.0-20260811182544-a038080d80e5\th1:ZUSxONxc981v7AW7QUg+I9WwZzSTTJ019ENBYr5pV/Q=
+";
+  let parsed =
+    parse_go_version_m(output).expect("should extract pseudo-version");
+  assert_eq!(parsed, "v0.0.0-20260811182544-a038080d80e5");
+
+  let ver = normalize_probed_version("goimports", &parsed)
+    .expect("extracted pseudo-version should normalize to semver");
+  assert_eq!(ver.major, 0);
+  assert_eq!(ver.minor, 0);
+  assert_eq!(ver.patch, 0);
+}
+
+/// Degradation path 1: output reports `(devel)` (built from local working copy)
+/// degrades cleanly to `None` (so doctor surfaces `(version unprobeable)`) (Fixes #178).
+#[test]
+fn test_parse_go_version_m_degrades_cleanly_on_devel() {
+  let output = "\
+/home/user/go/bin/goimports: go1.24.7
+        path    golang.org/x/tools/cmd/goimports
+        mod     golang.org/x/tools      (devel)
+";
+  assert_eq!(
+    parse_go_version_m(output),
+    None,
+    "(devel) must degrade to None, never a junk string"
+  );
+}
+
+/// Degradation path 2: output has no `mod` line (e.g. stripped or non-module binary)
+/// degrades cleanly to `None` (so doctor surfaces `(version unprobeable)`) (Fixes #178).
+#[test]
+fn test_parse_go_version_m_degrades_cleanly_without_mod_line() {
+  let output_without_mod = "\
+/home/user/go/bin/goimports: go1.24.7
+        path    golang.org/x/tools/cmd/goimports
+";
+  assert_eq!(
+    parse_go_version_m(output_without_mod),
+    None,
+    "missing mod line must degrade to None"
+  );
+
+  assert_eq!(
+    parse_go_version_m(""),
+    None,
+    "empty output must degrade to None"
+  );
+
+  let output_not_go = "go: /path/to/goimports: not a Go executable\n";
+  assert_eq!(
+    parse_go_version_m(output_not_go),
+    None,
+    "non-Go output must degrade to None"
+  );
+}
+
+/// Tests `render_probe_args` handles Literal and ToolPath cleanly without
+/// requiring goimports on PATH.
+#[test]
+fn test_render_probe_args_resolution() {
+  let literal_args = &[ProbeArg::Literal("version"), ProbeArg::Literal("-m")];
+  let rendered = render_probe_args("any-binary", literal_args)
+    .expect("literal args should always render");
+  assert_eq!(
+    rendered,
+    vec![
+      std::ffi::OsString::from("version"),
+      std::ffi::OsString::from("-m")
+    ]
+  );
+
+  // Missing binary with ToolPath must return None (clean degradation).
+  let tool_path_args = &[ProbeArg::ToolPath];
+  assert_eq!(
+    render_probe_args("fml-nonexistent-binary-for-testing-xyz", tool_path_args),
+    None
+  );
+
+  // Existing binary (cargo) with ToolPath resolves to its location.
+  if let Ok(cargo_path) = which::which("cargo") {
+    let mixed_args = &[ProbeArg::Literal("check"), ProbeArg::ToolPath];
+    let rendered = render_probe_args("cargo", mixed_args)
+      .expect("cargo should resolve on PATH");
+    assert_eq!(rendered.len(), 2);
+    assert_eq!(rendered[0], "check");
+    assert_eq!(rendered[1], cargo_path.into_os_string());
+  }
+}
+
+/// Live uncached probe test: when both `go` and `goimports` are on PATH,
+/// goimports reports a real, parseable module version sourced from `go version -m <path>`;
+/// when either is absent it returns `None` (doctor renders `(version unprobeable)`) (Fixes #178).
+#[test]
+fn test_probe_raw_goimports_sources_module_version_or_reports_nothing() {
+  let raw = probe_raw_tool_version_uncached("goimports");
+  if which::which("go").is_ok() && which::which("goimports").is_ok() {
+    let raw = raw.expect("go and goimports on PATH: version should probe");
+    assert!(
+      raw.starts_with('v') || raw.starts_with('V'),
+      "goimports version should be a module version starting with v, got: {raw:?}"
+    );
+    assert!(
+      normalize_probed_version("goimports", &raw).is_some(),
+      "probed goimports version should parse, got: {raw:?}"
+    );
+  } else {
+    assert_eq!(
+      raw, None,
+      "go or goimports absent: goimports must be unprobeable"
+    );
+  }
+}
+
+#[test]
+fn test_version_extract_raw_and_extract_with_raw() {
+  assert_eq!(
+    Version::extract_raw("clang-tidy version 14.0.0-1ubuntu1"),
+    Some("14.0.0-1ubuntu1")
+  );
+  assert_eq!(
+    Version::extract_with_raw("clang-tidy version 14.0.0-1ubuntu1"),
+    Some((Version::new(14, 0, 0), "14.0.0-1ubuntu1"))
+  );
+  assert_eq!(
+    Version::extract_raw("Ubuntu clang-tidy version 18.1.8-0ubuntu1~22.04.1"),
+    Some("18.1.8-0ubuntu1~22.04.1")
+  );
+  assert_eq!(
+    Version::extract_raw("yamllint 1.35.1.post1"),
+    Some("1.35.1.post1")
+  );
+  assert_eq!(Version::extract_raw("ruff 0.9.6.dev0"), Some("0.9.6.dev0"));
+  assert_eq!(
+    Version::extract_raw("rustfmt 1.7.0-nightly"),
+    Some("1.7.0-nightly")
+  );
+  assert_eq!(Version::extract_raw("rustfmt 1.8.0"), Some("1.8.0"));
+  assert_eq!(Version::extract_raw("rustfmt v1.8.0"), Some("1.8.0"));
+  assert_eq!(
+    Version::extract_raw("clippy 0.1.65 (commit abc)"),
+    Some("0.1.65")
+  );
+  assert_eq!(Version::extract_raw("no version here"), None);
+}
+
+#[test]
+fn test_reported_raw_version_if_differing() {
+  // Distro suffix differs from normalized version
+  assert_eq!(
+    reported_raw_version_if_differing(
+      &Version::new(14, 0, 0),
+      Some("clang-tidy version 14.0.0-1ubuntu1")
+    ),
+    Some("14.0.0-1ubuntu1")
+  );
+  assert_eq!(
+    reported_raw_version_if_differing(
+      &Version::new(18, 1, 8),
+      Some("Ubuntu clang-tidy version 18.1.8-0ubuntu1~22.04.1")
+    ),
+    Some("18.1.8-0ubuntu1~22.04.1")
+  );
+  // Post/dev suffix differs
+  assert_eq!(
+    reported_raw_version_if_differing(
+      &Version::new(1, 35, 1),
+      Some("yamllint 1.35.1.post1")
+    ),
+    Some("1.35.1.post1")
+  );
+
+  // Clippy remapping: normalized 1.65.0 differs from reported 0.1.65
+  assert_eq!(
+    reported_raw_version_if_differing(
+      &Version::new(1, 65, 0),
+      Some("clippy 0.1.65 (commit abc)")
+    ),
+    Some("0.1.65")
+  );
+
+  // Identical versions: returns None
+  assert_eq!(
+    reported_raw_version_if_differing(
+      &Version::new(14, 0, 0),
+      Some("clang-tidy version 14.0.0")
+    ),
+    None
+  );
+  assert_eq!(
+    reported_raw_version_if_differing(
+      &Version::new(14, 0, 0),
+      Some("clang-tidy version v14.0.0")
+    ),
+    None
+  );
+  assert_eq!(
+    reported_raw_version_if_differing(
+      &Version::with_prerelease(1, 7, 0, "nightly"),
+      Some("rustfmt 1.7.0-nightly")
+    ),
+    None
+  );
+
+  // Banner without version or None
+  assert_eq!(
+    reported_raw_version_if_differing(&Version::new(14, 0, 0), None),
+    None
+  );
+  assert_eq!(
+    reported_raw_version_if_differing(
+      &Version::new(14, 0, 0),
+      Some("no version string")
+    ),
+    None
   );
 }

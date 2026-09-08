@@ -3,7 +3,7 @@
 
 /// Unified diff generation and rendering.
 pub mod diff;
-/// Execution runner for dispatching formatting and linting actions across surfaces.
+/// Execution runner for dispatching pass plans across surfaces.
 pub mod runner;
 /// Asynchronous self-update checker and release notice renderer.
 pub mod update;
@@ -11,7 +11,7 @@ pub mod update;
 pub mod version;
 
 pub use diff::render_diff;
-pub use runner::{Runner, RunnerAction};
+pub use runner::{Mode, Pass, Plan, Runner};
 pub use update::{UpdateNotifier, print_update_notice, spawn_update_check};
 
 use std::path::PathBuf;

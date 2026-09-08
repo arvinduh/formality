@@ -59,7 +59,9 @@ use tower_lsp::lsp_types::{
 };
 
 use crate::config::FormalityConfig;
-use crate::surfaces::{check_binary_exists, default_registry};
+use crate::surfaces::{
+  check_binary_exists, default_registry, find_manifest_upwards,
+};
 
 // ---------------------------------------------------------------------------
 // Surface detection
@@ -206,16 +208,17 @@ pub fn parse_clippy_json(
 
 /// Runs `cargo clippy --message-format=json` in `root` and returns
 /// `Diagnostic`s for violations touching `file`. Returns `None` — not
-/// `Some(vec![])` — when clippy is missing, there's no `Cargo.toml`, or the
-/// invocation otherwise fails to spawn: those all mean the tool never ran,
-/// so the caller must fall back to `fml lint` rather than publish "no
-/// violations" for a file that was never actually checked (#177 [pre-recreation]).
+/// invocation otherwise fails to spawn or exits with an error status: those all
+/// mean the tool never ran cleanly, so the caller must fall back to `fml lint`
+/// rather than publish "no violations" for a file that was never actually
+/// checked (#177 [pre-recreation], #204).
 fn clippy_diagnostics(
   root: &Path,
   file: &Path,
   _config: Option<&FormalityConfig>,
 ) -> Option<Vec<Diagnostic>> {
-  if !check_binary_exists("cargo") || !root.join("Cargo.toml").exists() {
+  if !check_binary_exists("cargo") || !find_manifest_upwards(root, "Cargo.toml")
+  {
     return None;
   }
 
@@ -224,10 +227,15 @@ fn clippy_diagnostics(
   cmd.current_dir(root);
 
   match cmd.output() {
-    Ok(output) => Some(parse_clippy_json(
-      &String::from_utf8_lossy(&output.stdout),
-      file,
-    )),
+    Ok(output) => {
+      let diagnostics =
+        parse_clippy_json(&String::from_utf8_lossy(&output.stdout), file);
+      if !output.status.success() && diagnostics.is_empty() {
+        None
+      } else {
+        Some(diagnostics)
+      }
+    }
     Err(_) => None,
   }
 }
@@ -918,14 +926,17 @@ pub fn parse_golangci_lint_json(
 /// Runs `golangci-lint run --output.json.path=stdout <file>` in `root` and
 /// returns `Diagnostic`s for `file`'s violations. Returns `None` — not
 /// `Some(vec![])` — when golangci-lint is missing, there's no `go.mod`, or
-/// the invocation otherwise fails to spawn, so the caller falls back to
-/// `fml lint` instead of publishing a false "clean" (#177 [pre-recreation]).
+/// the invocation otherwise fails to spawn or exits with an error status,
+/// so the caller falls back to `fml lint` instead of publishing a false
+/// "clean" (#177 [pre-recreation], #204).
 fn golangci_lint_diagnostics(
   root: &Path,
   file: &Path,
   _config: Option<&FormalityConfig>,
 ) -> Option<Vec<Diagnostic>> {
-  if !check_binary_exists("golangci-lint") || !root.join("go.mod").exists() {
+  if !check_binary_exists("golangci-lint")
+    || !find_manifest_upwards(root, "go.mod")
+  {
     return None;
   }
 
@@ -937,10 +948,24 @@ fn golangci_lint_diagnostics(
   cmd.current_dir(root);
 
   match cmd.output() {
-    Ok(output) => Some(parse_golangci_lint_json(
-      &String::from_utf8_lossy(&output.stdout),
-      file,
-    )),
+    Ok(output) => {
+      // golangci-lint exits 0 for clean and 1 when violations are found;
+      // any other exit status is an execution failure. Furthermore, an
+      // unsuccessful invocation that yielded no parsed diagnostics must
+      // not be reported as a clean result (#177, #204).
+      if !output.status.success() && output.status.code() != Some(1) {
+        return None;
+      }
+      let diagnostics = parse_golangci_lint_json(
+        &String::from_utf8_lossy(&output.stdout),
+        file,
+      );
+      if !output.status.success() && diagnostics.is_empty() {
+        None
+      } else {
+        Some(diagnostics)
+      }
+    }
     Err(_) => None,
   }
 }
@@ -2427,5 +2452,121 @@ mod tests {
     // collapsing it to `None`.
     let diagnostics = parse_clippy_json("", Path::new("/proj/src/main.rs"));
     assert_eq!(Some(diagnostics), Some(Vec::new()));
+  }
+
+  #[test]
+  fn test_clippy_diagnostics_none_when_directory_named_cargo_toml() {
+    // `.is_file()`, not `.exists()` (Fixes #204): a directory named
+    // `Cargo.toml` must not be mistaken for a manifest.
+    let dir = tempfile::tempdir().unwrap();
+    std::fs::create_dir(dir.path().join("Cargo.toml")).unwrap();
+    assert!(
+      clippy_diagnostics(dir.path(), Path::new("main.rs"), None).is_none()
+    );
+  }
+
+  #[test]
+  fn test_clippy_diagnostics_walks_parent_for_cargo_toml() {
+    // A subdirectory of a real crate must find `Cargo.toml` in ancestors
+    // via `find_manifest_upwards` (Fixes #204).
+    if !check_binary_exists("cargo") {
+      return;
+    }
+    let dir = tempfile::tempdir().unwrap();
+    std::fs::write(
+      dir.path().join("Cargo.toml"),
+      "[package]\nname = \"test_clippy_walk\"\nversion = \"0.1.0\"\nedition = \"2021\"\n",
+    )
+    .unwrap();
+    let src = dir.path().join("src");
+    std::fs::create_dir_all(&src).unwrap();
+    let main_rs = src.join("main.rs");
+    std::fs::write(&main_rs, "fn main() {}\n").unwrap();
+
+    let res = clippy_diagnostics(&src, &main_rs, None);
+    assert_eq!(res, Some(vec![]));
+  }
+
+  #[test]
+  fn test_clippy_diagnostics_none_when_cargo_fails_false_clean() {
+    // When cargo clippy exits with an error status (e.g. invalid manifest)
+    // and produces no diagnostics for the file, it must return `None`
+    // instead of reporting clean `Some(vec![])` (Fixes #204).
+    if !check_binary_exists("cargo") {
+      return;
+    }
+    let dir = tempfile::tempdir().unwrap();
+    std::fs::write(dir.path().join("Cargo.toml"), "not valid toml !!!")
+      .unwrap();
+    assert!(
+      clippy_diagnostics(dir.path(), Path::new("main.rs"), None).is_none()
+    );
+  }
+
+  #[test]
+  fn test_golangci_lint_diagnostics_none_when_directory_named_go_mod() {
+    // `.is_file()`, not `.exists()` (Fixes #204): a directory named `go.mod`
+    // must not be mistaken for a manifest.
+    let dir = tempfile::tempdir().unwrap();
+    std::fs::create_dir(dir.path().join("go.mod")).unwrap();
+    assert!(
+      golangci_lint_diagnostics(dir.path(), Path::new("main.go"), None)
+        .is_none()
+    );
+  }
+
+  #[test]
+  fn test_golangci_lint_diagnostics_walks_parent_for_go_mod() {
+    // A subdirectory of a Go module must find `go.mod` in ancestors via
+    // `find_manifest_upwards` (Fixes #204).
+    if !check_binary_exists("golangci-lint") {
+      return;
+    }
+    let _guard = crate::surfaces::go::tests::golangci_lint_lock();
+    let dir = tempfile::tempdir().unwrap();
+    std::fs::write(
+      dir.path().join("go.mod"),
+      "module test_go_lsp_walk\n\ngo 1.21\n",
+    )
+    .unwrap();
+    let pkg = dir.path().join("pkg");
+    std::fs::create_dir_all(&pkg).unwrap();
+    let main_go = pkg.join("main.go");
+    std::fs::write(&main_go, "package pkg\n").unwrap();
+
+    let res = golangci_lint_diagnostics(&pkg, &main_go, None);
+    assert!(res.is_some());
+  }
+
+  #[test]
+  fn test_golangci_lint_diagnostics_none_when_command_fails_false_clean() {
+    // When golangci-lint exits with an error status (e.g. invalid go.mod)
+    // and produces no diagnostics, it must return `None` instead of
+    // reporting clean `Some(vec![])` (Fixes #204).
+    if !check_binary_exists("golangci-lint") {
+      return;
+    }
+    let _guard = crate::surfaces::go::tests::golangci_lint_lock();
+    let dir = tempfile::tempdir().unwrap();
+    std::fs::write(dir.path().join("go.mod"), "not valid go.mod !!!").unwrap();
+    assert!(
+      golangci_lint_diagnostics(dir.path(), Path::new("main.go"), None)
+        .is_none()
+    );
+  }
+
+  #[test]
+  fn test_diagnostics_for_file_none_when_directory_named_manifest() {
+    // End-to-end check via public entry point: directories named like
+    // manifests must not fool diagnostics_for_file into reporting clean.
+    let dir = tempfile::tempdir().unwrap();
+    std::fs::create_dir(dir.path().join("Cargo.toml")).unwrap();
+    assert!(diagnostics_for_file(dir.path(), Path::new("main.rs")).is_none());
+
+    let dir_go = tempfile::tempdir().unwrap();
+    std::fs::create_dir(dir_go.path().join("go.mod")).unwrap();
+    assert!(
+      diagnostics_for_file(dir_go.path(), Path::new("main.go")).is_none()
+    );
   }
 }
