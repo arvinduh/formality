@@ -52,7 +52,7 @@ mind:
 8. **Deterministic Exit Codes**:
    - `0`: All clean / passed.
    - `1`: Formatting or lint violations found, or config drift detected.
-   - `2`: Missing tool or underlying execution error.
+   - `2`: Underlying execution error or operational failure.
 
 ---
 

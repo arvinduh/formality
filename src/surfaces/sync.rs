@@ -3,7 +3,7 @@
 //! used by in-place formatters during `fml fmt --check`.
 
 use super::tooling::merge_tool_streams;
-use super::{ExitClass, SurfaceResult, SurfaceStatus};
+use super::{ExitClass, SurfaceResult, SurfaceStatus, SyncedConfigFile};
 use crate::engine::diff::render_diff;
 use rayon::prelude::*;
 use std::path::{Path, PathBuf};
@@ -112,8 +112,7 @@ pub fn sync_file_helper(
       Ok(()) => SurfaceResult {
         surface_name,
         status: SurfaceStatus::ConfigSynced {
-          file: file_name.to_string(),
-          created: !exists,
+          files: vec![SyncedConfigFile::new(file_name, !exists)],
         },
         duration: start.elapsed(),
       },
@@ -125,6 +124,66 @@ pub fn sync_file_helper(
         duration: start.elapsed(),
       },
     }
+  }
+}
+
+/// Folds the per-file results of a surface that syncs more than one native
+/// config file into the single [`SurfaceResult`] the runner renders for it.
+///
+/// Before #130 such a surface simply returned its *last* successful result
+/// and dropped the rest, so `fml sync` could write `.markdownlint.json` and
+/// then report only what prettier did — a file created on disk and named
+/// nowhere in the output. Merging keeps every filename.
+///
+/// Semantics:
+///
+/// - The first non-success (drift, manual config, execution error) is
+///   returned as-is. It already names the file it is about, and a surface
+///   stops at its first failure rather than writing the remaining files, so
+///   there is nothing further to report.
+/// - Otherwise every [`SurfaceStatus::ConfigSynced`] file list is
+///   concatenated in call order. If nothing was written — every file was
+///   already correct — the merged status is [`SurfaceStatus::Passed`].
+/// - Durations sum, so the reported time covers all the work done. Callers
+///   must therefore time each file from its own [`Instant`] rather than
+///   sharing one start.
+///
+/// # Panics
+///
+/// Panics on an empty slice in debug builds; a surface that syncs no file at
+/// all reports [`SurfaceStatus::Skipped`] directly and never calls this.
+#[must_use]
+pub fn merge_sync_results(results: Vec<SurfaceResult>) -> SurfaceResult {
+  debug_assert!(
+    !results.is_empty(),
+    "merge_sync_results called with no results"
+  );
+  let surface_name = results.first().map_or("", |r| r.surface_name);
+  let duration = results.iter().map(|r| r.duration).sum();
+
+  if let Some(failed) = results.iter().find(|r| !r.is_success()) {
+    return SurfaceResult {
+      surface_name,
+      status: failed.status.clone(),
+      duration,
+    };
+  }
+
+  let files: Vec<SyncedConfigFile> = results
+    .iter()
+    .flat_map(|r| r.status.synced_files().iter().cloned())
+    .collect();
+
+  let status = if files.is_empty() {
+    SurfaceStatus::Passed
+  } else {
+    SurfaceStatus::ConfigSynced { files }
+  };
+
+  SurfaceResult {
+    surface_name,
+    status,
+    duration,
   }
 }
 
@@ -444,10 +503,7 @@ mod tests {
       "rust",
     );
 
-    assert!(matches!(
-      res.status,
-      SurfaceStatus::ConfigSynced { created: true, .. }
-    ));
+    assert_eq!(res.status.created_file_names(), [".rustfmt.toml"]);
     assert!(path.is_file());
     assert_eq!(
       std::fs::read_to_string(&path).unwrap(),
@@ -496,10 +552,8 @@ mod tests {
       "rust",
     );
 
-    assert!(matches!(
-      res.status,
-      SurfaceStatus::ConfigSynced { created: false, .. }
-    ));
+    assert_eq!(res.status.synced_file_names(), [".rustfmt.toml"]);
+    assert!(res.status.created_file_names().is_empty());
     assert!(
       std::fs::read_to_string(&path)
         .unwrap()
@@ -1120,5 +1174,72 @@ mod tests {
       }
       other => panic!("expected ViolationsFound, got {other:?}"),
     }
+  }
+
+  fn synced(name: &str, created: bool, ms: u64) -> SurfaceResult {
+    SurfaceResult {
+      surface_name: "test",
+      status: SurfaceStatus::ConfigSynced {
+        files: vec![SyncedConfigFile::new(name, created)],
+      },
+      duration: std::time::Duration::from_millis(ms),
+    }
+  }
+
+  #[test]
+  fn test_merge_sync_results_keeps_every_filename() {
+    // Fixes #130: a surface that syncs two files used to return only the
+    // second result, so the first file was created on disk and named
+    // nowhere in the output.
+    let merged = merge_sync_results(vec![
+      synced(".markdownlint.json", true, 3),
+      synced(".prettierrc.json", false, 4),
+    ]);
+
+    assert_eq!(
+      merged.status.synced_file_names(),
+      [".markdownlint.json", ".prettierrc.json"]
+    );
+    assert_eq!(merged.status.created_file_names(), [".markdownlint.json"]);
+    assert_eq!(merged.surface_name, "test");
+    // Durations sum: the row's time covers all the work the surface did.
+    assert_eq!(merged.duration, std::time::Duration::from_millis(7));
+  }
+
+  #[test]
+  fn test_merge_sync_results_all_already_in_sync_is_passed() {
+    let already = |ms| SurfaceResult {
+      surface_name: "test",
+      status: SurfaceStatus::Passed,
+      duration: std::time::Duration::from_millis(ms),
+    };
+    let merged = merge_sync_results(vec![already(1), already(2)]);
+    assert!(matches!(merged.status, SurfaceStatus::Passed));
+    assert!(merged.status.synced_file_names().is_empty());
+    assert_eq!(merged.duration, std::time::Duration::from_millis(3));
+  }
+
+  #[test]
+  fn test_merge_sync_results_reports_the_first_failure_verbatim() {
+    // A failure already names its own file and the surface stops before
+    // writing the rest, so it is surfaced as-is rather than merged.
+    let drifted = SurfaceResult {
+      surface_name: "test",
+      status: SurfaceStatus::ConfigDrifted {
+        file: ".clang-tidy".to_string(),
+        diff: "--- a
++++ b
+"
+        .to_string(),
+      },
+      duration: std::time::Duration::from_millis(5),
+    };
+    let merged =
+      merge_sync_results(vec![synced(".clang-format", true, 2), drifted]);
+    assert!(matches!(
+      merged.status,
+      SurfaceStatus::ConfigDrifted { ref file, .. } if file == ".clang-tidy"
+    ));
+    assert_eq!(merged.duration, std::time::Duration::from_millis(7));
   }
 }

@@ -52,9 +52,12 @@ committed `CHANGELOG.md`.
    cargo test --lib -q
    cargo clippy -q
    cargo run -q -- fmt --check
-   cargo run -q -- sync --check
    cargo run -q -- lint
    ```
+
+   `sync --check` is excluded from the root because the repo root carries only
+   `formality.toml` without native config files (`.rustfmt.toml`, `.prettierrc`,
+   etc.).
 
 2. **Bump the version.**
 
@@ -210,3 +213,70 @@ Keeping PR titles in Conventional Commits form
 and is what the manual semver decision in step 2 is based on. Adding a
 `.github/release.yml` would let GitHub group those PRs into labelled sections;
 no such file exists today, so the notes use GitHub's default grouping.
+
+## Regenerating `release.yml` and local edits
+
+The release workflow (`.github/workflows/release.yml`) is generated from
+`[workspace.metadata.dist]` in `Cargo.toml` via
+`dist generate --mode=ci --allow-dirty`. However, it carries three hand-applied
+local edits marked with `# LOCAL EDIT (issue #134)` comments:
+
+1. **Tag glob constrained to a leading `v`** (`- 'v[0-9]+.[0-9]+.[0-9]+*'`) so
+   independent schema releases (`s*` tags handled by `schema-release.yml`)
+   cannot trigger binary release builds.
+2. **`fetch-depth: 0` on the `host` job checkout** to ensure full tag history is
+   available for `--notes-start-tag`.
+3. **`gh release create --generate-notes --notes-start-tag`** instead of dist's
+   default `--notes-file` changelog body. Because this repository has no
+   committed `CHANGELOG.md`, reverting to `--notes-file` would silently publish
+   releases with an empty body.
+
+### Reversion risk and drift detection
+
+`Cargo.toml` specifies `allow-dirty = ["ci"]` so cargo-dist tolerates local
+modifications to the generated workflow. Because of this setting,
+`dist generate --mode=ci --check` refuses to run rather than reporting drift.
+Consequently, re-running `dist generate --mode=ci --allow-dirty` after upgrading
+`cargo-dist-version` silently reverts all three edits to cargo-dist's default
+templates.
+
+### Regeneration procedure
+
+When bumping `cargo-dist-version`:
+
+1. Update `cargo-dist-version` in `Cargo.toml`.
+2. Regenerate the release workflow:
+
+   ```sh
+   dist generate --mode=ci --allow-dirty
+   ```
+
+3. Re-apply the three local edits to `.github/workflows/release.yml` using the
+   `# LOCAL EDIT (issue #134)` comments as a guide (or inspect
+   `git log -p -- .github/workflows/release.yml` if comments were lost).
+4. Run the guard test to verify that the edits are intact:
+
+   ```sh
+   cargo test --test release_workflow_local_edits
+   ```
+
+### The local-edits guard test
+
+`tests/release_workflow_local_edits.rs` guards against accidental reversion. It
+asserts that:
+
+- All required substrings are present on live (non-comment) lines in
+  `release.yml`.
+- Reverted dist-generated defaults (such as `--notes-file` or prefix-less globs)
+  are absent.
+- The number of `# LOCAL EDIT (issue #134)` marker comments matches the expected
+  edit count, ensuring each edit remains documented with re-application
+  instructions.
+
+The guard runs in the `Library Tests` CI job (`cargo test --verbose`), the
+repository's required status check, ensuring that any regeneration dropping a
+local edit fails PR checks rather than surfacing at release time.
+
+If a future cargo-dist version makes an edit unnecessary, delete the edit from
+`release.yml` and drop its corresponding entry from `EDITS` in
+`tests/release_workflow_local_edits.rs` in the same commit.

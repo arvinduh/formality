@@ -21,6 +21,10 @@
 //! **If a future cargo-dist version makes one of these edits unnecessary,
 //! deleting the edit is one commit: drop its `LocalEdit` entry below and its
 //! `# LOCAL EDIT` comment from the workflow.** Nothing else references them.
+//!
+//! Additionally, this test suite guards the tag filter glob alignment between
+//! `.github/workflows/release.yml` and `.github/workflows/release-extras.yml`
+//! (issue #165).
 
 use std::fs;
 use std::path::PathBuf;
@@ -99,6 +103,55 @@ fn read_workflow() -> String {
     .expect("Failed to read .github/workflows/release.yml")
 }
 
+fn read_release_extras_workflow() -> String {
+  let path = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+    .join(".github")
+    .join("workflows")
+    .join("release-extras.yml");
+  assert!(
+    path.exists(),
+    ".github/workflows/release-extras.yml not found; if the release pipeline \
+     has moved, update this test's path accordingly."
+  );
+  fs::read_to_string(&path)
+    .expect("Failed to read .github/workflows/release-extras.yml")
+}
+
+/// Extracts the list of tag filter globs under `on.push.tags` from a workflow YAML string.
+fn extract_push_tags(workflow_yaml: &str, file_name: &str) -> Vec<String> {
+  let val: serde_yaml::Value = serde_yaml::from_str(workflow_yaml)
+    .unwrap_or_else(|e| panic!("Failed to parse {file_name} as YAML: {e}"));
+  let on = val
+    .get("on")
+    .or_else(|| val.get(serde_yaml::Value::Bool(true)))
+    .unwrap_or_else(|| panic!("{file_name} missing top-level `on` trigger"));
+  let push = on
+    .get("push")
+    .unwrap_or_else(|| panic!("{file_name} missing `push` trigger under `on`"));
+  let tags = push.get("tags").unwrap_or_else(|| {
+    panic!("{file_name} missing `tags` filter under `push`")
+  });
+  if let Some(seq) = tags.as_sequence() {
+    seq
+      .iter()
+      .map(|item| {
+        item
+          .as_str()
+          .unwrap_or_else(|| {
+            panic!("{file_name} tag filter element is not a string: {item:?}")
+          })
+          .to_string()
+      })
+      .collect()
+  } else if let Some(s) = tags.as_str() {
+    vec![s.to_string()]
+  } else {
+    panic!(
+      "{file_name} `tags` filter under `push` is neither a sequence nor a string: {tags:?}"
+    );
+  }
+}
+
 #[test]
 fn test_release_yml_local_edits_survive() {
   let workflow = read_workflow();
@@ -157,5 +210,43 @@ fn test_release_yml_local_edits_are_each_documented() {
     found,
     MARKER,
     EDITS.len()
+  );
+}
+
+/// Asserts that `.github/workflows/release.yml` and
+/// `.github/workflows/release-extras.yml` define identical tag filter globs.
+///
+/// Both workflows are triggered by release tags, with `release.yml` creating
+/// the release and `release-extras.yml` polling for it to attach additional
+/// assets (VS Code extension and JSON schema). If their tag filters diverge,
+/// tags matching `release-extras.yml` but not `release.yml` would cause
+/// `release-extras.yml` to burn its full 30-minute runner budget waiting for
+/// a release that will never exist (see issue #165).
+#[test]
+fn test_release_extras_and_release_yml_tag_filters_match() {
+  let release_yml = read_workflow();
+  let release_extras_yml = read_release_extras_workflow();
+
+  let release_tags =
+    extract_push_tags(&release_yml, ".github/workflows/release.yml");
+  let release_extras_tags = extract_push_tags(
+    &release_extras_yml,
+    ".github/workflows/release-extras.yml",
+  );
+
+  assert!(
+    !release_tags.is_empty(),
+    ".github/workflows/release.yml has no tag filters under push.tags"
+  );
+
+  assert_eq!(
+    release_tags, release_extras_tags,
+    "\n\nTag filter drift detected between release workflows!\n\
+     .github/workflows/release.yml has: {:?}\n\
+     .github/workflows/release-extras.yml has: {:?}\n\n\
+     These must match exactly so that release-extras.yml does not trigger on tags \
+     that cargo-dist ignores (which would burn a 30-minute runner timeout polling for \
+     a release that is never created; see issue #165).\n",
+    release_tags, release_extras_tags
   );
 }

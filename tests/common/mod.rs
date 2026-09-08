@@ -96,8 +96,9 @@ pub fn fmt_cmd(check: bool, lang: &[&str]) -> Commands {
 }
 
 /// Helper to create a standard `Commands::Fix` command.
-pub fn fix_cmd(lang: &[&str]) -> Commands {
+pub fn fix_cmd(check: bool, lang: &[&str]) -> Commands {
   Commands::Fix {
+    check,
     staged: false,
     changed: false,
     lang: lang.iter().map(|s| (*s).to_string()).collect(),
@@ -110,6 +111,7 @@ pub fn fix_cmd(lang: &[&str]) -> Commands {
 pub fn lint_cmd(fix: bool, lang: &[&str]) -> Commands {
   Commands::Lint {
     fix,
+    check: false,
     staged: false,
     changed: false,
     lang: lang.iter().map(|s| (*s).to_string()).collect(),
