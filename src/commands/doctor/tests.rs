@@ -402,7 +402,7 @@ fn test_needs_install_false_for_unknown_version_tool() {
 #[test]
 fn test_scan_tools_and_build_table_surfaces_unprobeable_status_not_ready() {
   // Use a system binary that exists on PATH but does not produce semver on `--version`
-  let binary_name: &'static str = if cfg!(windows) { "where" } else { "false" };
+  let binary_name: &'static str = if cfg!(windows) { "where" } else { "test" };
   if which::which(binary_name).is_err() {
     return;
   }
