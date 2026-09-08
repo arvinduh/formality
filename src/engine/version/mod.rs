@@ -248,8 +248,9 @@ where
       if !output.status.success() {
         return None;
       }
-      parse_go_version_m(&String::from_utf8_lossy(&output.stdout))
-        .or_else(|| parse_go_version_m(&String::from_utf8_lossy(&output.stderr)))
+      parse_go_version_m(&String::from_utf8_lossy(&output.stdout)).or_else(
+        || parse_go_version_m(&String::from_utf8_lossy(&output.stderr)),
+      )
     }
   }
 }
