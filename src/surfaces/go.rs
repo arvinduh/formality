@@ -120,7 +120,7 @@ pub fn build_golangci_lint_args(
 }
 
 /// Builds argument vector for a machine-readable `golangci-lint run`
-/// invocation, used by the LSP server (`fml lsp`, Fixes #159, #165) to
+/// invocation, used by the LSP server (`fml lsp`, Fixes #159 [pre-recreation], #165 [pre-recreation]) to
 /// translate individual violations into per-file `Diagnostic`s instead of
 /// one generic warning. Mirrors [`build_golangci_lint_args`] but requests
 /// `--output.json.path=stdout` output instead of `--fix`. Verified against
@@ -149,7 +149,7 @@ pub fn build_golangci_lint_json_args(
 /// Renders the resolved linter set as the `--enable-only <comma-list>` flag
 /// golangci-lint v2 accepts inline, so `fml lint` can apply
 /// formality.toml's configured linter set without writing `.golangci.yml`
-/// to disk (Fixes #157). Unlike `--enable`/`--disable` (which toggle
+/// to disk (Fixes #157 [pre-recreation]). Unlike `--enable`/`--disable` (which toggle
 /// individual linters against whatever the active config, or the tool's own
 /// default set, already enables), `--enable-only` *replaces* the active
 /// linter set outright — verified with golangci-lint v2.12.2 to produce
@@ -451,7 +451,7 @@ impl LanguageSurface for GoSurface {
 
     // Inline `--enable-only linter1,linter2,...` instead of relying on
     // `.golangci.yml` being present on disk — see
-    // `build_golangci_lint_inline_args` (Fixes #157). `fml sync` remains the
+    // `build_golangci_lint_inline_args` (Fixes #157 [pre-recreation]). `fml sync` remains the
     // only path that materializes the file.
     let linters = ctx
       .lang_config
@@ -465,7 +465,7 @@ impl LanguageSurface for GoSurface {
       cmd.args(build_golangci_lint_inline_args(&linters));
     }
     // Older golangci-lint v1 installs (no `--enable-only`, see above) fall
-    // through here with no inline linter-set flag, same as before #157 —
+    // through here with no inline linter-set flag, same as before #157 [pre-recreation] —
     // they still respect a synced `.golangci.yml` if one is on disk.
     cmd.args(build_golangci_lint_args(
       &files_to_pass,
@@ -486,10 +486,10 @@ impl LanguageSurface for GoSurface {
     )
   }
 
-  // `fml lint` no longer goes through this path (Fixes #157): it passes the
+  // `fml lint` no longer goes through this path (Fixes #157 [pre-recreation]): it passes the
   // resolved linter set to golangci-lint inline via `--enable-only
   // linter1,linter2,...` (see `build_golangci_lint_inline_args`, used in
-  // `lint()` above). Unlike `--enable`/`--disable` (which the #151-era
+  // `lint()` above). Unlike `--enable`/`--disable` (which the #151 [pre-recreation]-era
   // comment here correctly noted only toggle individual linters against
   // whatever's already active), golangci-lint v2's `--enable-only` *replaces*
   // the active linter set outright — verified with golangci-lint v2.12.2
@@ -802,7 +802,7 @@ mod tests {
 
   #[test]
   fn test_go_lint_does_not_write_golangci_yml() {
-    // Fixes #157: `fml lint` must not write `.golangci.yml` as a side
+    // Fixes #157 [pre-recreation]: `fml lint` must not write `.golangci.yml` as a side
     // effect; only `fml sync` should materialize the native config file.
     if !check_binary_exists("golangci-lint") {
       return;
@@ -835,7 +835,7 @@ mod tests {
   fn test_go_lint_respects_configured_linter_set() {
     // Verifies `--enable-only` actually drives which linters run, matching
     // the resolved `[lang.go] linters` set, without any `.golangci.yml` on
-    // disk (Fixes #157).
+    // disk (Fixes #157 [pre-recreation]).
     if !check_binary_exists("golangci-lint") {
       return;
     }

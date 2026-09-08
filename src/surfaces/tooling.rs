@@ -252,7 +252,7 @@ impl InstallMethod {
 // two otherwise-identical CI runs. That made CI nondeterministic: a commit
 // that was green today could turn red tomorrow with zero code changes,
 // purely because an upstream tool shipped a release that formats or lints
-// something differently (concretely reproduced in #191: `docs/table-spec.md`
+// something differently (concretely reproduced in #191 [pre-recreation]: `docs/table-spec.md`
 // passed locally against prettier 3.8.1 but failed on a CI runner that
 // resolved 3.9.6).
 //
@@ -324,7 +324,7 @@ const TYPSTYLE_CHAIN: &[InstallMethod] = &[
 // to a real published package (404 on npm; the whole `@myriaddreamin` scope
 // only publishes Typst.ts WASM bindings, not this CLI, and the unscoped
 // `tinymist` package is likewise a WASM analyzer module) -- confirmed by
-// direct registry lookup while fixing #195. Dropped rather than pinned: no
+// direct registry lookup while fixing #195 [pre-recreation]. Dropped rather than pinned: no
 // npm distribution of this CLI exists to pin a version of. cargo-binstall
 // (first below) and the plain `cargo install` fallback already cover it.
 const TINYMIST_CHAIN: &[InstallMethod] = &[
@@ -413,7 +413,7 @@ const CLANG_TIDY_CHAIN: &[InstallMethod] = &[
 // `invertase/nodejs-google-java-format` npm wrapper, pinned) and is pinned
 // like any other npm entry. A `Pipx("google-java-format")` entry used to sit
 // below it but never corresponded to a real PyPI distribution -- confirmed
-// by direct registry lookup while fixing #195 (no `google-java-format` on
+// by direct registry lookup while fixing #195 [pre-recreation] (no `google-java-format` on
 // PyPI; the closest name match, `gjf`, is an unrelated GeoJSON-fixing tool).
 // Dropped rather than pinned: the working `Npm` entry above already covers
 // this tool, and no PyPI wrapper exists to pin a version of.
@@ -424,7 +424,7 @@ const GOOGLE_JAVA_FORMAT_CHAIN: &[InstallMethod] = &[
 
 // An `Npm("checkstyle")` entry used to sit here but never corresponded to a
 // real published package (404 on npm, confirmed by direct registry lookup
-// while fixing #195; searching npm for "checkstyle" turns up only adapters
+// while fixing #195 [pre-recreation]; searching npm for "checkstyle" turns up only adapters
 // that consume some *other* tool's output and reformat it as Checkstyle XML,
 // not a wrapper that installs the actual `checkstyle` Java tool). Dropped
 // rather than pinned: no npm distribution of this tool exists, and the
@@ -458,9 +458,9 @@ const GOLANGCI_LINT_CHAIN: &[InstallMethod] = &[
 // version at all) whose preinstall script shells out to `curl` a *hardcoded*
 // `shyiko/ktlint` 0.29.0 binary straight from GitHub, bypassing npm's
 // registry entirely -- so pinning its npm arg wouldn't have pinned its
-// actual behavior, the whole point of the #191/#194 pinning convention.
+// actual behavior, the whole point of the #191/#194 [pre-recreation] pinning convention.
 // Confirmed by extracting the published tarball and reading its
-// preinstall.js while fixing #195. Replaced with `@naturalcycles/ktlint`, a
+// preinstall.js while fixing #195 [pre-recreation]. Replaced with `@naturalcycles/ktlint`, a
 // maintained npm wrapper (23 published versions, tracking upstream) that
 // republishes the actual `com.pinterest.ktlint` self-executable jar under
 // `resources/ktlint` (verified by extracting the published tarball and
@@ -1464,7 +1464,7 @@ mod tests {
   #[test]
   fn test_pinned_chain_command_shapes() {
     // A handful of concrete, exact assertions (not just "is it pinned") for
-    // the tools #191 called out by name, so a future accidental revert back
+    // the tools #191 [pre-recreation] called out by name, so a future accidental revert back
     // to an unversioned package string fails loudly and specifically.
     let prettier = install_chain_for("prettier").unwrap();
     assert_eq!(
@@ -1679,7 +1679,7 @@ mod tests {
   #[test]
   fn test_pinned_version_none_for_unversioned_package_spec() {
     // A package spec with no `@`/`==` at all (e.g. the unpinned npm entries
-    // #195 documents as deliberately left bare) must not be misparsed --
+    // #195 [pre-recreation] documents as deliberately left bare) must not be misparsed --
     // None, not a crash or a bogus version.
     assert_eq!(
       InstallMethod::Npm("@myriaddreamin/tinymist").pinned_version(),
@@ -1709,7 +1709,7 @@ mod tests {
   #[test]
   fn test_go_install_never_appends_implicit_latest() {
     // GoInstall used to always append "@latest" itself, which is exactly
-    // the floating-version behavior #191 is about; command() must now pass
+    // the floating-version behavior #191 [pre-recreation] is about; command() must now pass
     // the package spec through unchanged so the chain constants are the
     // only place a version (pinned or "@latest") gets decided.
     assert_eq!(
@@ -1733,8 +1733,8 @@ mod tests {
     //
     // This test used to also carry an `is_known_dead_package` escape hatch
     // for chain entries that didn't correspond to a real package at all
-    // under a given install method (#195) -- pinning a version of a
-    // nonexistent package wouldn't make it exist. #195 fixed or dropped
+    // under a given install method (#195 [pre-recreation]) -- pinning a version of a
+    // nonexistent package wouldn't make it exist. #195 [pre-recreation] fixed or dropped
     // every entry that needed it, so the exemption list emptied out; it was
     // removed rather than left as permanently-unused dead code. Re-add the
     // same mechanism if a future audit finds another dead chain entry that

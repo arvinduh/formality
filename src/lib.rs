@@ -203,12 +203,12 @@ mod tests {
   // Tier-2 enforcement for the module/file hierarchy rule documented in
   // docs/style-guide.md ("`*_tests.rs` vs `#[cfg(test)] mod tests`"): a
   // `#[test]` walking the filesystem, same mechanism `registry.rs`'s fleet
-  // side-table checks established (#113) — reused here, not reinvented.
+  // side-table checks established (#113 [pre-recreation]) — reused here, not reinvented.
   //
   // The rule: test modules live inline (`#[cfg(test)] mod tests { ... }`) in
   // the file under test. The one sanctioned exception is a directory module
   // (`some/mod.rs`) large enough that its tests live in a sibling `tests.rs`
-  // declared via `mod tests;` — never any other `*_tests.rs` name. #120
+  // declared via `mod tests;` — never any other `*_tests.rs` name. #120 [pre-recreation]
   // deliberately collapsed every previous `<name>_tests.rs` file back inline;
   // this test keeps that convention from silently drifting back.
   #[test]
@@ -257,7 +257,7 @@ mod tests {
 
   // Tier-2 enforcement for the naming-conventions predicate-method rule
   // documented in docs/style-guide.md §2 ("a pure getter or predicate ...
-  // carries #[must_use]"), promoted from tier 3 during #133's sweep.
+  // carries #[must_use]"), promoted from tier 3 during #133 [pre-recreation]'s sweep.
   //
   // Normalizes the signature before matching: strips a leading `pub` /
   // `pub(crate)` / `pub(super)` / `pub(in ...)` visibility modifier and any
@@ -391,7 +391,7 @@ mod tests {
   // Tier-2 enforcement for the `//!` module-doc rule documented in
   // docs/style-guide.md §3 ("Every file with meaningful crate-level content
   // ... opens with a `//!` module-level doc comment"), promoted from tier 3
-  // during #201's QA follow-up: a QA review of #201 found the rule was
+  // during #201's QA follow-up [pre-recreation]: a QA review of #201 [pre-recreation] found the rule was
   // ~80% unmet across the tree (41 of 50 files at the time) despite the PR
   // claiming a clean style-guide sweep, precisely because nothing mechanical
   // was checking it. Exempts `tests.rs` sibling files (the §1 directory-
@@ -631,6 +631,126 @@ mod tests {
     assert!(
       violations.is_empty(),
       "canonical module path violation(s) — see docs/style-guide.md §1:\n{}",
+      violations.join("\n")
+    );
+  }
+
+  // Tier-2 enforcement for pre-recreation issue citations documented in
+  // docs/INDEX.md ("Note on pre-recreation issue/PR numbers"): source comments
+  // citing issue numbers from before the 2026-08-26 repository recreation
+  // must be explicitly disambiguated (e.g. `(Fixes #151 [pre-recreation])` or
+  // `#120 [pre-recreation]`) so they cannot be mistaken for current issue
+  // numbers that have since climbed past them and now resolve to real,
+  // unrelated issues.
+  #[test]
+  fn test_source_files_do_not_contain_bare_pre_recreation_issue_citations() {
+    let manifest_dir = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+    let src_dir = manifest_dir.join("src");
+
+    const PRE_RECREATION_NUMBERS: &[u32] = &[
+      68, 76, 82, 100, 113, 119, 120, 121, 126, 128, 133, 151, 157, 158, 159,
+      165, 177, 191, 192, 194, 195, 201,
+    ];
+
+    let mut violations = Vec::new();
+    for entry in ignore::WalkBuilder::new(&src_dir)
+      .standard_filters(false)
+      .build()
+      .filter_map(Result::ok)
+      .filter(|e| e.file_type().is_some_and(|ft| ft.is_file()))
+      .filter(|e| e.path().extension().is_some_and(|ext| ext == "rs"))
+    {
+      let path = entry.path();
+      let Ok(content) = std::fs::read_to_string(path) else {
+        continue;
+      };
+
+      let is_lib_rs = path == src_dir.join("lib.rs");
+      let rel_path = path
+        .strip_prefix(&manifest_dir)
+        .unwrap_or(path)
+        .to_string_lossy()
+        .replace('\\', "/");
+
+      let mut in_citation_test = false;
+      for (i, line) in content.lines().enumerate() {
+        if is_lib_rs {
+          if line.contains("fn test_source_files_do_not_contain_bare_pre_recreation_issue_citations") {
+            in_citation_test = true;
+          }
+          if in_citation_test {
+            if line.starts_with("  }") {
+              in_citation_test = false;
+            }
+            continue;
+          }
+        }
+
+        // Scan for `#<digits>` pattern in the line.
+        let bytes = line.as_bytes();
+        let mut idx = 0;
+        while idx < bytes.len() {
+          if bytes[idx] == b'#' {
+            let start = idx + 1;
+            let mut end = start;
+            while end < bytes.len() && bytes[end].is_ascii_digit() {
+              end += 1;
+            }
+            if end > start {
+              if let Ok(num) = line[start..end].parse::<u32>()
+                && PRE_RECREATION_NUMBERS.contains(&num)
+              {
+                // Must be marked as pre-recreation unless it's a known post-recreation reference.
+                let is_marked = line.contains("pre-recreation");
+
+                // Sanctioned post-recreation references that legitimately share an old number:
+                let is_sanctioned_post_recreation = match num {
+                  // Post-recreation #113 is markdownlint-cli2 exit code classification in markdown.rs
+                  113 => rel_path == "src/surfaces/markdown.rs",
+                  // Post-recreation #157 is path relativization in ui/paths.rs and surfaces/markdown.rs
+                  157 => {
+                    rel_path == "src/ui/paths.rs"
+                      || rel_path == "src/surfaces/markdown.rs"
+                  }
+                  // Post-recreation #177 is version probing model in engine/version/
+                  177 => rel_path.starts_with("src/engine/version/"),
+                  // Post-recreation #191 is PR #191 review regression in ui/paths.rs
+                  191 => rel_path == "src/ui/paths.rs",
+                  // Post-recreation #195 is PR #195 version probing in engine/version/
+                  195 => rel_path.starts_with("src/engine/version/"),
+                  // Post-recreation #151 is prettier-driven --check exit-code classification
+                  151 => {
+                    line.contains("ExecutionError")
+                      || line.contains("--check")
+                      || line.contains("Fixes #155")
+                      || line.contains("ktlint `-F`")
+                      || line.contains("Same reasoning applies")
+                  }
+                  _ => false,
+                };
+
+                if !is_marked && !is_sanctioned_post_recreation {
+                  violations.push(format!(
+                    "{}:{}: unmarked pre-recreation citation `#{}` — mark with `[pre-recreation]` per docs/INDEX.md: `{}`",
+                    path.display(),
+                    i + 1,
+                    num,
+                    line.trim()
+                  ));
+                }
+              }
+              idx = end;
+              continue;
+            }
+          }
+          idx += 1;
+        }
+      }
+    }
+
+    assert!(
+      violations.is_empty(),
+      "bare pre-recreation issue citation(s) — see docs/INDEX.md:\n{}",
       violations.join("\n")
     );
   }

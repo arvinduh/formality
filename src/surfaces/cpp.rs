@@ -161,7 +161,7 @@ impl DeclaresFacets for CppSurface {
 /// `.clang-format` to disk. Only `fml sync` writes that file now (see
 /// [`CppSurface::sync_config`]). Verified byte-identical against the
 /// file-based path for both the LLVM/2-space defaults and a custom
-/// Google/4-space/Allman configuration (Fixes #157).
+/// Google/4-space/Allman configuration (Fixes #157 [pre-recreation]).
 #[must_use]
 pub fn build_clang_format_inline_style(cfg: &ClangFormatConfig) -> String {
   let mut style = format!(
@@ -188,7 +188,7 @@ pub fn build_clang_format_inline_style(cfg: &ClangFormatConfig) -> String {
 /// string accepted by clang-tidy's `--config=` flag, so `fml lint` can apply
 /// the resolved checks without writing `.clang-tidy` to disk. Only `fml
 /// sync` writes that file now (see [`CppSurface::sync_config`]). Verified
-/// byte-identical against the file-based path (Fixes #157).
+/// byte-identical against the file-based path (Fixes #157 [pre-recreation]).
 #[must_use]
 pub fn build_clang_tidy_inline_config(cfg: &ClangTidyConfig) -> String {
   format!(
@@ -440,7 +440,7 @@ impl LanguageSurface for CppSurface {
     }
 
     // Inline `-style='{...}'` instead of writing `.clang-format` to disk —
-    // see `build_clang_format_inline_style` (Fixes #157). `fml sync` remains
+    // see `build_clang_format_inline_style` (Fixes #157 [pre-recreation]). `fml sync` remains
     // the only path that materializes the file.
     let inline_style =
       build_clang_format_inline_style(&ClangFormatConfig::from_context(ctx));
@@ -550,7 +550,7 @@ impl LanguageSurface for CppSurface {
         .collect();
 
     // Inline `--config='{...}'` instead of reading `.clang-tidy` off disk —
-    // see `build_clang_tidy_inline_config` (Fixes #157). `fml sync` remains
+    // see `build_clang_tidy_inline_config` (Fixes #157 [pre-recreation]). `fml sync` remains
     // the only path that materializes the file.
     let inline_config =
       build_clang_tidy_inline_config(&ClangTidyConfig::from_context(ctx));
@@ -624,11 +624,11 @@ impl LanguageSurface for CppSurface {
     }
   }
 
-  // `fml fmt`/`fml lint` no longer go through this path (Fixes #157): they
+  // `fml fmt`/`fml lint` no longer go through this path (Fixes #157 [pre-recreation]): they
   // pass the resolved config to clang-format/clang-tidy inline via
   // `-style='{...}'`/`--config='{...}'` (see `build_clang_format_inline_style`
   // and `build_clang_tidy_inline_config`, used in `format()`/`lint()`
-  // above). This was left as a documented exception in #151 because neither
+  // above). This was left as a documented exception in #151 [pre-recreation] because neither
   // tool was installed in that pass's environment to verify byte-identical
   // output — verified here with LLVM 22.1.8 (clang-format/clang-tidy)
   // actually installed and invoked: both the LLVM/2-space default style and
@@ -1041,7 +1041,7 @@ mod tests {
 
   #[test]
   fn test_cpp_format_does_not_write_clang_format() {
-    // Fixes #157: `fml fmt` must not write `.clang-format` as a side
+    // Fixes #157 [pre-recreation]: `fml fmt` must not write `.clang-format` as a side
     // effect; only `fml sync` should materialize the native config file.
     if !check_binary_exists("clang-format") {
       return;
@@ -1065,7 +1065,7 @@ mod tests {
 
   #[test]
   fn test_cpp_lint_does_not_write_clang_tidy() {
-    // Fixes #157: `fml lint` must not write `.clang-tidy` as a side effect;
+    // Fixes #157 [pre-recreation]: `fml lint` must not write `.clang-tidy` as a side effect;
     // only `fml sync` should materialize the native config file.
     if !check_binary_exists("clang-tidy") {
       return;

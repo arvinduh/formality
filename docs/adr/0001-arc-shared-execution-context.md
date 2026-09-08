@@ -1,18 +1,18 @@
 # 0001 — Arc-shared `ExecutionContext` fields
 
-> `#N` citations below predate the 2026-08-26 repo recreation and no longer
-> resolve — see
+> `#N` citations below predate the 2026-08-26 repo recreation and resolve to
+> unrelated new issues — see
 > [`docs/INDEX.md`](../INDEX.md#note-on-pre-recreation-issuepr-numbers).
 
-**Status:** Accepted **Decided in:** `#50` ("perf(engine): memory & runtime
-efficiency optimizer"), landed via PR `#105`.
+**Status:** Accepted **Decided in:** `#50 [pre-recreation]` ("perf(engine):
+memory & runtime efficiency optimizer"), landed via PR `#105 [pre-recreation]`.
 
 ## Context
 
 `Runner::run` (`src/engine/runner/mod.rs`) builds one `ExecutionContext` per
 matched `LanguageSurface` and dispatches all of them in parallel via
-`rayon::par_iter`. Before `#105`, two of `ExecutionContext`'s fields —
-`paths: Vec<PathBuf>` (the candidate file list) and
+`rayon::par_iter`. Before `#105 [pre-recreation]`, two of `ExecutionContext`'s
+fields — `paths: Vec<PathBuf>` (the candidate file list) and
 `global_config: ResolvedGlobalConfig` — were deep-cloned into every per-surface
 context (`paths.to_vec()`, `global_config.clone()`), even though every surface
 in that parallel dispatch sees the _same_ values. On a repo with N surfaces and

@@ -1,4 +1,4 @@
-//! Structured per-violation lint diagnostics for `fml lsp` (Fixes #159).
+//! Structured per-violation lint diagnostics for `fml lsp` (Fixes #159 [pre-recreation]).
 //!
 //! `fml lint`'s CLI output is human-readable free text (see
 //! [`crate::surfaces::LanguageSurface::lint`] — its `SurfaceStatus::ViolationsFound`
@@ -16,7 +16,7 @@
 //! `yaml` (yamllint), `markdown` (markdownlint-cli2/markdownlint), `cpp`
 //! (clang-tidy), `go` (golangci-lint), `java` (checkstyle), `kotlin`
 //! (ktlint), `toml` (taplo), and `typst` (typst compile) are wired up to
-//! structured diagnostics (Fixes #159, #165). `json` has no linter at all
+//! structured diagnostics (Fixes #159 [pre-recreation], #165 [pre-recreation]). `json` has no linter at all
 //! (prettier-only, format-only surface), so it has nothing to add structured
 //! diagnostics for — every other surface this crate supports now has a
 //! parser here.
@@ -35,7 +35,7 @@
 //! fall back on that would match formality.toml's — see that function's
 //! doc comment for why `--config` was the only inline mechanism available.
 //!
-//! `None` vs. `Some(vec![])` (Fixes #177)
+//! `None` vs. `Some(vec![])` (Fixes #177 [pre-recreation])
 //! =======================================
 //! Every `*_diagnostics` function here returns `Option<Vec<Diagnostic>>`,
 //! and the two cases mean very different things to the caller
@@ -209,7 +209,7 @@ pub fn parse_clippy_json(
 /// `Some(vec![])` — when clippy is missing, there's no `Cargo.toml`, or the
 /// invocation otherwise fails to spawn: those all mean the tool never ran,
 /// so the caller must fall back to `fml lint` rather than publish "no
-/// violations" for a file that was never actually checked (#177).
+/// violations" for a file that was never actually checked (#177 [pre-recreation]).
 fn clippy_diagnostics(
   root: &Path,
   file: &Path,
@@ -294,7 +294,7 @@ pub fn parse_ruff_json(
 /// `Diagnostic`s for `file`'s violations. Returns `None` — not `Some(vec![])`
 /// — when ruff is missing or the invocation otherwise fails to spawn, so the
 /// caller falls back to `fml lint` instead of publishing a false "clean"
-/// (#177).
+/// (#177 [pre-recreation]).
 fn ruff_diagnostics(
   root: &Path,
   file: &Path,
@@ -404,7 +404,7 @@ pub fn parse_biome_json(
 /// `Diagnostic`s for `file`'s violations. Returns `None` — not
 /// `Some(vec![])` — when biome is missing or the invocation otherwise fails
 /// to spawn, so the caller falls back to `fml lint` instead of publishing a
-/// false "clean" (#177).
+/// false "clean" (#177 [pre-recreation]).
 fn biome_diagnostics(
   root: &Path,
   file: &Path,
@@ -499,7 +499,7 @@ pub fn parse_yamllint_parsable(
 /// for `file`'s violations. Returns `None` — not `Some(vec![])` — when
 /// yamllint is missing or the invocation otherwise fails to spawn, so the
 /// caller falls back to `fml lint` instead of publishing a false "clean"
-/// (#177).
+/// (#177 [pre-recreation]).
 fn yamllint_diagnostics(
   root: &Path,
   file: &Path,
@@ -638,7 +638,7 @@ pub fn parse_markdownlint_text(
 /// own stderr-first message selection). Returns `None` — not `Some(vec![])`
 /// — when neither binary is present or the invocation otherwise fails to
 /// spawn, so the caller falls back to `fml lint` instead of publishing a
-/// false "clean" (#177).
+/// false "clean" (#177 [pre-recreation]).
 ///
 /// Resolves formality.toml's markdown settings the same way `fml lint`
 /// does (`FormalityConfig::load_layered` + `resolve_for_lang("markdown")`)
@@ -789,7 +789,7 @@ pub fn parse_clang_tidy_plain(
 /// rather than the resolved `formality.toml` checks list. Returns `None` —
 /// not `Some(vec![])` — when clang-tidy is missing or the invocation
 /// otherwise fails to spawn, so the caller falls back to `fml lint` instead
-/// of publishing a false "clean" (#177).
+/// of publishing a false "clean" (#177 [pre-recreation]).
 fn clang_tidy_diagnostics(
   root: &Path,
   file: &Path,
@@ -919,7 +919,7 @@ pub fn parse_golangci_lint_json(
 /// returns `Diagnostic`s for `file`'s violations. Returns `None` — not
 /// `Some(vec![])` — when golangci-lint is missing, there's no `go.mod`, or
 /// the invocation otherwise fails to spawn, so the caller falls back to
-/// `fml lint` instead of publishing a false "clean" (#177).
+/// `fml lint` instead of publishing a false "clean" (#177 [pre-recreation]).
 fn golangci_lint_diagnostics(
   root: &Path,
   file: &Path,
@@ -1050,7 +1050,7 @@ pub fn parse_checkstyle_plain(
 /// self-heal a missing `checkstyle.xml` by generating one — doing so needs
 /// a full [`crate::surfaces::ExecutionContext`] (for `indent_size` etc.)
 /// that this file/root-only entry point doesn't have, and is explicitly out
-/// of scope for #177 (falling back, not self-healing, is the right size fix
+/// of scope for #177 [pre-recreation] (falling back, not self-healing, is the right size fix
 /// here). Run `fml lint` or `fml sync` once first to materialize
 /// `checkstyle.xml`; until then this returns `None` — not `Some(vec![])` —
 /// same as when checkstyle itself is missing, so the caller falls back to
@@ -1174,7 +1174,7 @@ pub fn parse_ktlint_json(
 /// for `file`'s violations. Returns `None` — not `Some(vec![])` — when
 /// ktlint is missing or the invocation otherwise fails to spawn, so the
 /// caller falls back to `fml lint` instead of publishing a false "clean"
-/// (#177).
+/// (#177 [pre-recreation]).
 fn ktlint_diagnostics(
   root: &Path,
   file: &Path,
@@ -1305,7 +1305,7 @@ pub fn parse_taplo_lint_plain(
 /// `Diagnostic`s for `file`'s violations. Returns `None` — not
 /// `Some(vec![])` — when taplo is missing or the invocation otherwise fails
 /// to spawn, so the caller falls back to `fml lint` instead of publishing a
-/// false "clean" (#177).
+/// false "clean" (#177 [pre-recreation]).
 fn taplo_diagnostics(
   root: &Path,
   file: &Path,
@@ -1404,7 +1404,7 @@ pub fn parse_typst_short(
 /// `None` — not `Some(vec![])` — when typst is missing, the temp directory
 /// can't be created, or the invocation otherwise fails to spawn, so the
 /// caller falls back to `fml lint` instead of publishing a false "clean"
-/// (#177).
+/// (#177 [pre-recreation]).
 fn typst_diagnostics(
   root: &Path,
   file: &Path,
@@ -1444,7 +1444,7 @@ fn typst_diagnostics(
 /// `*_diagnostics` function in this module. `None` means the tool could not
 /// be run at all (binary missing, no project marker file, spawn failure,
 /// required config missing) and the caller must fall back to `fml lint`;
-/// `Some(vec![])` means the tool ran successfully and found nothing (#177).
+/// `Some(vec![])` means the tool ran successfully and found nothing (#177 [pre-recreation]).
 type DiagnosticsRunner =
   fn(&Path, &Path, Option<&FormalityConfig>) -> Option<Vec<Diagnostic>>;
 
@@ -1478,7 +1478,7 @@ fn diagnostics_runner_for_surface(surface: &str) -> Option<DiagnosticsRunner> {
 /// Returns structured per-violation `Diagnostic`s for `file` if its surface
 /// has a structured-output parser wired up here *and that parser actually
 /// ran*, or `None` otherwise — the caller falls back to `fml lint`'s
-/// generic single-warning diagnostic in the `None` case (#177). `None`
+/// generic single-warning diagnostic in the `None` case (#177 [pre-recreation]). `None`
 /// covers two distinct reasons, both requiring the same fallback: the
 /// surface has no structured parser at all (see module docs for coverage),
 /// or it does but the underlying tool/config couldn't be run this time
@@ -2375,7 +2375,7 @@ mod tests {
   }
 
   // ---------------------------------------------------------------------
-  // #177 — a runner that can't run at all must return `None`, not
+  // #177 [pre-recreation] — a runner that can't run at all must return `None`, not
   // `Some(vec![])`, so the caller falls back to `fml lint` instead of
   // publishing a false "clean" for a file the tool never looked at.
   // ---------------------------------------------------------------------

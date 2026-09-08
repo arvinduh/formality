@@ -42,14 +42,16 @@ re-derive is already written down.
 
 This repository was deleted and recreated on **2026-08-26** to scrub a leaked
 personal email from early git history. Issue and PR numbering restarted from
-`#1` in the recreated repo, and some of the reused low numbers now point at
-unrelated new issues. Any `#N` citation in the docs below that predates
-2026-08-26 is a **historical reference only** — it names the issue/PR where a
-decision was actually made in the old repo, but the number does not resolve to
-that content anymore (it may 404, or point at something else entirely). Do not
-follow these as live links; treat them the same as a citation to a commit hash
-that's no longer reachable. Files that cite pre-recreation numbers point back
-here instead of repeating this explanation at every citation.
+`#1` in the recreated repo, and the counter has now climbed past old issue
+numbers, so those citations now resolve to real, unrelated new issues. Any `#N`
+citation in source comments or docs that predates 2026-08-26 is a **historical
+reference only** — it names the issue/PR where a decision was actually made in
+the old repo, but the number does not resolve to that content anymore. To
+prevent confusion with active issues, historical citations are explicitly
+disambiguated (e.g. `[pre-recreation]`). Do not follow these as live links;
+treat them the same as a citation to a commit hash from a previous history.
+Files that cite pre-recreation numbers point back here instead of repeating this
+explanation at every citation.
 
 ## Outside this index
 

@@ -734,7 +734,7 @@ fn command_ran_successfully(
 /// clippy fallback) — a bare `which` presence check is not enough, because
 /// `clippy-driver` is a rustup shim that exists on disk whenever rustup is
 /// installed, regardless of whether the `clippy` component itself is (see
-/// #192). Parameterized over the binary names so tests can substitute a
+/// #192 [pre-recreation]). Parameterized over the binary names so tests can substitute a
 /// real stand-in binary (e.g. `false`) for a broken shim without mutating
 /// `PATH`.
 #[must_use]

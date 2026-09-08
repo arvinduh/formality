@@ -55,7 +55,7 @@ impl NativeConfig for PrettierConfig {
 /// Renders the resolved [`PrettierConfig`] as the inline `--tab-width`/
 /// `--print-width`/etc. flags `prettier` accepts on the CLI, so `fml fmt`
 /// can apply formality.toml's settings without writing `.prettierrc.json`
-/// to disk (Fixes #151). Shared by the Markdown, YAML, and JSON surfaces,
+/// to disk (Fixes #151 [pre-recreation]). Shared by the Markdown, YAML, and JSON surfaces,
 /// which all format via prettier. Only `fml sync` writes that file now.
 #[must_use]
 pub fn build_prettier_inline_args(cfg: &PrettierConfig) -> Vec<String> {

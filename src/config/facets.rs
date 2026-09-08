@@ -540,7 +540,7 @@ mod tests {
 
   /// Golden-value coverage for every cell of the facet rosetta table in
   /// `docs/facet-rosetta.md`: all 12 language surfaces x all 9 canonical
-  /// facets. This is the audit fixture for issue #100 — the previous version
+  /// facets. This is the audit fixture for issue #100 [pre-recreation] — the previous version
   /// of this test spot-checked only 8 of the 12 surfaces and only a handful of
   /// facets per surface, silently trusting the `Unsupported` default arms for
   /// everything else. Every `(surface, facet)` cell below is asserted

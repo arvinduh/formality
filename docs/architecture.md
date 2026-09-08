@@ -15,15 +15,15 @@ subcommand dispatch (`run_command_inner` — the single `match args.command` tha
 routes every `Commands` variant to its handler, after loading and merging
 config), and re-exports two crate-root items reached that way by this crate's
 own integration tests (`SCHEMA_VERSION`, `generate_schema`) — see
-[style-guide.md](style-guide.md) §1 for why those two survived the `#133`
-alias-minimization sweep while the rest of the old `DEPRECATED / STALE ALIAS`
-block did not: new code always uses the canonical structural path, never a
-crate-root shortcut. `src/cli.rs` defines the `clap`-based argument parser only
-(`Cli`, `Commands`, `MigrateCommands`) — it parses, it does not dispatch.
-`src/errors.rs` is the crate-wide error hierarchy — `FormalityError` and its
-per-subsystem inner enums (`ConfigError`, `GitError`, `ToolMissingError`,
-`SurfaceError`, `IoError`) — with no `anyhow`/`thiserror` dependency; see
-[style-guide.md](style-guide.md) §5 for the full convention.
+[style-guide.md](style-guide.md) §1 for why those two survived the
+`#133 [pre-recreation]` alias-minimization sweep while the rest of the old
+`DEPRECATED / STALE ALIAS` block did not: new code always uses the canonical
+structural path, never a crate-root shortcut. `src/cli.rs` defines the
+`clap`-based argument parser only (`Cli`, `Commands`, `MigrateCommands`) — it
+parses, it does not dispatch. `src/errors.rs` is the crate-wide error hierarchy
+— `FormalityError` and its per-subsystem inner enums (`ConfigError`, `GitError`,
+`ToolMissingError`, `SurfaceError`, `IoError`) — with no `anyhow`/`thiserror`
+dependency; see [style-guide.md](style-guide.md) §5 for the full convention.
 
 ## `src/config`
 
@@ -72,8 +72,8 @@ canonical-name/alias lookup, and fleet-consistency tests), `glob.rs`
 `NativeConfig` trait for reading/writing a tool's own dotfile config), `sync.rs`
 (`fml sync`'s generate-and-verify logic), `tooling.rs` (shared
 subprocess/tool-invocation helpers), and `editorconfig.rs` (`.editorconfig`
-generation, its own small domain sub-package per issue `#120`). See
-[language-surfaces.md](language-surfaces.md) for what each surface wraps and
+generation, its own small domain sub-package per issue `#120 [pre-recreation]`).
+See [language-surfaces.md](language-surfaces.md) for what each surface wraps and
 [new-surface-guide.md](new-surface-guide.md) for how to add a 13th.
 
 ## `src/ui`
@@ -94,9 +94,9 @@ lint-fix-then-format pipeline — see [style-guide.md](style-guide.md) §4's
 schema-reference migration), `schema.rs` (`fml schema`, JSON Schema generation),
 `surfaces.rs` (`fml list-surfaces`), `table.rs` (`fml table`), `lsp.rs` and
 `lsp_diagnostics.rs` (the `fml lsp` Language Server Protocol passthrough and its
-structured per-violation diagnostics, `#159`), and `doctor/` (a directory module
-— `mod.rs`, `gitignore.rs`, `venv.rs` — implementing `fml doctor`'s
-workspace/toolchain verification checks). The exception to
+structured per-violation diagnostics, `#159 [pre-recreation]`), and `doctor/` (a
+directory module — `mod.rs`, `gitignore.rs`, `venv.rs` — implementing
+`fml doctor`'s workspace/toolchain verification checks). The exception to
 one-file-per-subcommand is `fml install`, which has no file of its own: it
 dispatches to `doctor::run_doctor(..., install: true)`, the same handler as
 `fml doctor --install`, so tool installation lives in `doctor/mod.rs`

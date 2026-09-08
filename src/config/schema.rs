@@ -17,7 +17,7 @@ use std::path::{Path, PathBuf};
 /// distinction (there's no such thing as a schema patch that changes
 /// nothing schema-relevant), and it's tracked independently of the binary
 /// version rather than mirroring it, since the two change at different
-/// rates (see #126).
+/// rates (see #126 [pre-recreation]).
 #[derive(
   Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize,
 )]
