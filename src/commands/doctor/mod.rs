@@ -21,6 +21,7 @@ use crate::config::FormalityConfig;
 use crate::engine::version::{
   ToolStatus, Version, evaluate_tool_status, get_raw_tool_version,
   minimum_supported_tool_version, normalize_probed_version, probe_tool_version,
+  reported_raw_version_if_differing,
 };
 use crate::surfaces::{
   LanguageSurface, ToolInfo, all_surfaces, check_binary_exists,
@@ -555,6 +556,25 @@ pub fn format_stale_tool_warning(
   )
 }
 
+/// Formats a version info string for a doctor table row, appending `— reported <raw>`
+/// whenever the raw banner version differs from the normalized version.
+#[must_use]
+pub(crate) fn format_version_details(
+  current: &Version,
+  detail: Option<&str>,
+  raw_banner: Option<&str>,
+) -> String {
+  let raw_reported = reported_raw_version_if_differing(current, raw_banner);
+  let raw_suffix = match raw_reported {
+    Some(r) => format!(" — reported {r}"),
+    None => String::new(),
+  };
+  match detail {
+    Some(d) => format!(" (v{current} {d}{raw_suffix})"),
+    None => format!(" (v{current}{raw_suffix})"),
+  }
+}
+
 /// Pure helper that collects stale tool warning messages for a sequence of
 /// (tool_binary_name, status) pairs, deduplicating tool names.
 #[must_use]
@@ -988,7 +1008,11 @@ fn scan_tools_and_build_table(
           match &lookup.status {
             Some(ToolStatus::Outdated { current, minimum }) => {
               outdated_unique_tools.insert(tool.binary);
-              let v_info = format!(" (v{current} < MSTV v{minimum})");
+              let v_info = format_version_details(
+                current,
+                Some(&format!("< MSTV v{minimum}")),
+                lookup.raw_version.as_deref(),
+              );
               let row = Row::new(vec![
                 Cell::styled("[WARN] ", Style::Warn),
                 Cell::styled(tool.binary, Style::Warn),
@@ -1004,7 +1028,11 @@ fn scan_tools_and_build_table(
               if !stale_unique_tools.iter().any(|t| t.binary == tool.binary) {
                 stale_unique_tools.push(tool.clone());
               }
-              let v_info = format!(" (v{current} != pinned v{pinned})");
+              let v_info = format_version_details(
+                current,
+                Some(&format!("!= pinned v{pinned}")),
+                lookup.raw_version.as_deref(),
+              );
               let row = Row::new(vec![
                 Cell::styled("[STALE]", Style::Warn),
                 Cell::styled(tool.binary, Style::Warn),
@@ -1017,7 +1045,11 @@ fn scan_tools_and_build_table(
               doctor_table.add_row(row);
             }
             Some(ToolStatus::Compatible { current, .. }) => {
-              let v_info = format!(" (v{current})");
+              let v_info = format_version_details(
+                current,
+                None,
+                lookup.raw_version.as_deref(),
+              );
               let row = Row::new(vec![
                 Cell::styled("[READY]", Style::Ok),
                 Cell::styled(tool.binary, Style::Tool),
@@ -1049,7 +1081,7 @@ fn scan_tools_and_build_table(
             }
             _ => {
               let v_info = if let Some(ref v) = lookup.parsed_version {
-                format!(" (v{v})")
+                format_version_details(v, None, lookup.raw_version.as_deref())
               } else if let Some(ref v) = lookup.raw_version {
                 format!(" ({})", v.trim())
               } else {

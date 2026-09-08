@@ -1599,3 +1599,107 @@ fn test_probe_raw_goimports_sources_module_version_or_reports_nothing() {
     );
   }
 }
+
+#[test]
+fn test_version_extract_raw_and_extract_with_raw() {
+  assert_eq!(
+    Version::extract_raw("clang-tidy version 14.0.0-1ubuntu1"),
+    Some("14.0.0-1ubuntu1")
+  );
+  assert_eq!(
+    Version::extract_with_raw("clang-tidy version 14.0.0-1ubuntu1"),
+    Some((Version::new(14, 0, 0), "14.0.0-1ubuntu1"))
+  );
+  assert_eq!(
+    Version::extract_raw("Ubuntu clang-tidy version 18.1.8-0ubuntu1~22.04.1"),
+    Some("18.1.8-0ubuntu1~22.04.1")
+  );
+  assert_eq!(
+    Version::extract_raw("yamllint 1.35.1.post1"),
+    Some("1.35.1.post1")
+  );
+  assert_eq!(Version::extract_raw("ruff 0.9.6.dev0"), Some("0.9.6.dev0"));
+  assert_eq!(
+    Version::extract_raw("rustfmt 1.7.0-nightly"),
+    Some("1.7.0-nightly")
+  );
+  assert_eq!(Version::extract_raw("rustfmt 1.8.0"), Some("1.8.0"));
+  assert_eq!(Version::extract_raw("rustfmt v1.8.0"), Some("1.8.0"));
+  assert_eq!(
+    Version::extract_raw("clippy 0.1.65 (commit abc)"),
+    Some("0.1.65")
+  );
+  assert_eq!(Version::extract_raw("no version here"), None);
+}
+
+#[test]
+fn test_reported_raw_version_if_differing() {
+  // Distro suffix differs from normalized version
+  assert_eq!(
+    reported_raw_version_if_differing(
+      &Version::new(14, 0, 0),
+      Some("clang-tidy version 14.0.0-1ubuntu1")
+    ),
+    Some("14.0.0-1ubuntu1")
+  );
+  assert_eq!(
+    reported_raw_version_if_differing(
+      &Version::new(18, 1, 8),
+      Some("Ubuntu clang-tidy version 18.1.8-0ubuntu1~22.04.1")
+    ),
+    Some("18.1.8-0ubuntu1~22.04.1")
+  );
+  // Post/dev suffix differs
+  assert_eq!(
+    reported_raw_version_if_differing(
+      &Version::new(1, 35, 1),
+      Some("yamllint 1.35.1.post1")
+    ),
+    Some("1.35.1.post1")
+  );
+
+  // Clippy remapping: normalized 1.65.0 differs from reported 0.1.65
+  assert_eq!(
+    reported_raw_version_if_differing(
+      &Version::new(1, 65, 0),
+      Some("clippy 0.1.65 (commit abc)")
+    ),
+    Some("0.1.65")
+  );
+
+  // Identical versions: returns None
+  assert_eq!(
+    reported_raw_version_if_differing(
+      &Version::new(14, 0, 0),
+      Some("clang-tidy version 14.0.0")
+    ),
+    None
+  );
+  assert_eq!(
+    reported_raw_version_if_differing(
+      &Version::new(14, 0, 0),
+      Some("clang-tidy version v14.0.0")
+    ),
+    None
+  );
+  assert_eq!(
+    reported_raw_version_if_differing(
+      &Version::with_prerelease(1, 7, 0, "nightly"),
+      Some("rustfmt 1.7.0-nightly")
+    ),
+    None
+  );
+
+  // Banner without version or None
+  assert_eq!(
+    reported_raw_version_if_differing(&Version::new(14, 0, 0), None),
+    None
+  );
+  assert_eq!(
+    reported_raw_version_if_differing(
+      &Version::new(14, 0, 0),
+      Some("no version string")
+    ),
+    None
+  );
+}
