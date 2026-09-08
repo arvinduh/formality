@@ -184,6 +184,54 @@ fn simple_esc_start(b: &[u8], end: usize) -> Option<usize> {
   (k >= 1 && b[k - 1] == 0x1b).then_some(k - 1)
 }
 
+/// The byte length of a complete, terminated ANSI escape sequence starting
+/// exactly at the beginning of `b`, or `None` if no such sequence begins at
+/// index 0. Recognizes the same three shapes [`escape_seq_start`] and
+/// [`strip_ansi_escapes`] do — CSI (`\x1b[` params/intermediates `final`,
+/// final in `0x40..=0x7e`), OSC (`\x1b]` payload terminated by BEL `\x07` or
+/// ST `\x1b` + `\`), and a bare two-byte `ESC final` (`final` in
+/// `0x30..=0x7e`) or ESC intermediate (`0x20..=0x2f`* `final`).
+#[must_use]
+fn escape_seq_len(b: &[u8]) -> Option<usize> {
+  if b.len() < 2 || b[0] != 0x1b {
+    return None;
+  }
+  match b[1] {
+    b'[' => {
+      let mut i = 2;
+      while i < b.len() && (0x20..=0x3f).contains(&b[i]) {
+        i += 1;
+      }
+      (i < b.len() && (0x40..=0x7e).contains(&b[i])).then_some(i + 1)
+    }
+    b']' => {
+      let mut i = 2;
+      while i < b.len() {
+        if b[i] == 0x07 {
+          return Some(i + 1);
+        }
+        if b[i] == 0x1b && i + 1 < b.len() && b[i + 1] == b'\\' {
+          return Some(i + 2);
+        }
+        if b[i] == b'\n' || b[i] == b'\r' {
+          return None;
+        }
+        i += 1;
+      }
+      None
+    }
+    0x20..=0x2f => {
+      let mut i = 2;
+      while i < b.len() && (0x20..=0x2f).contains(&b[i]) {
+        i += 1;
+      }
+      (i < b.len() && (0x30..=0x7e).contains(&b[i])).then_some(i + 1)
+    }
+    0x30..=0x7e => Some(2),
+    _ => None,
+  }
+}
+
 /// The character immediately preceding `idx` in `s`, skipping back over any
 /// complete ANSI escape sequence(s) that end exactly at `idx` (see
 /// [`escape_seq_start`]). Unlike stripping ANSI from the whole prefix, this
@@ -249,6 +297,40 @@ fn occurrence_is_rewritable(
   }
 }
 
+/// Strip `prefix` from the start of `line`, matching through any ANSI escape
+/// sequences that land before or inside `prefix` and preserving those escape
+/// sequences in the output.
+///
+/// Returns `Some(rewritten)` if `line`'s leading plain text characters match
+/// `prefix` in its entirety, or `None` if `line` does not begin with `prefix`.
+#[must_use]
+fn strip_leading_prefix(line: &str, prefix: &str) -> Option<String> {
+  let line_bytes = line.as_bytes();
+  let prefix_bytes = prefix.as_bytes();
+  let mut line_idx = 0;
+  let mut prefix_idx = 0;
+  let mut out = String::with_capacity(line.len());
+
+  while prefix_idx < prefix_bytes.len() && line_idx < line_bytes.len() {
+    if let Some(esc_len) = escape_seq_len(&line_bytes[line_idx..]) {
+      out.push_str(&line[line_idx..line_idx + esc_len]);
+      line_idx += esc_len;
+    } else if line_bytes[line_idx] == prefix_bytes[prefix_idx] {
+      line_idx += 1;
+      prefix_idx += 1;
+    } else {
+      return None;
+    }
+  }
+
+  if prefix_idx == prefix_bytes.len() {
+    out.push_str(&line[line_idx..]);
+    Some(out)
+  } else {
+    None
+  }
+}
+
 /// Strip a leading `root/` from the occurrences in `line` that `scope` allows
 /// and that begin at a real token boundary (see [`occurrence_is_rewritable`]).
 ///
@@ -268,16 +350,27 @@ fn occurrence_is_rewritable(
 /// It only ever skips a complete, terminated escape sequence that ends
 /// exactly at the position being checked.
 ///
-/// Scoped to escapes immediately *before* the matched prefix — an escape
-/// sequence landing *inside* the root path itself (splitting `root` across
-/// two SGR spans) is not handled: `find` requires the prefix to be
-/// contiguous in the raw text, so a split prefix never matches at all and
-/// the line silently ships absolute. Tracked as #203, not fixed here.
+/// Under [`RewriteScope::LeadingTokenOnly`], ANSI escape sequences landing
+/// *inside* the root prefix itself (splitting it across styled spans) are
+/// handled by [`strip_leading_prefix`]: the prefix characters are stripped
+/// while preserving the interleaved escape sequences so that styling on the
+/// remainder of the path remains intact (#203). Under
+/// [`RewriteScope::WholeLine`] (unified diff headers), prefixes are matched
+/// contiguously in raw text.
 fn relativize_line(
   line: &str,
   prefixes: &[String],
   scope: RewriteScope,
 ) -> String {
+  if scope == RewriteScope::LeadingTokenOnly {
+    for prefix in prefixes {
+      if let Some(rewritten) = strip_leading_prefix(line, prefix) {
+        return rewritten;
+      }
+    }
+    return line.to_string();
+  }
+
   let mut out = line.to_string();
   for prefix in prefixes {
     let mut from = 0;
@@ -285,20 +378,8 @@ fn relativize_line(
       let idx = from + rel;
       if occurrence_is_rewritable(&out, idx, scope) {
         out.replace_range(idx..idx + prefix.len(), "");
-        if scope == RewriteScope::LeadingTokenOnly {
-          // The leading token is rewritten at most once per line, and the
-          // prefixes are ordered longest-first, so the most specific
-          // spelling has already won — nothing left to look at.
-          return out;
-        }
         from = idx;
       } else {
-        // Under `LeadingTokenOnly` the scan deliberately keeps going rather
-        // than stopping at the first rejected occurrence: an earlier match
-        // can sit *inside* a complete escape sequence's payload (an OSC-8
-        // hyperlink URI wrapping the very path being reported), and
-        // `char_before_ansi` skips that whole sequence, so the line's
-        // leading token can legitimately come after it.
         from = idx + prefix.len();
       }
     }
@@ -374,10 +455,13 @@ const RELATIVIZE_LINE_PREFIXES: [&str; 4] =
 /// longer superpath is left alone.
 ///
 /// Escapes *around* a matched path — before, or wrapping it — are handled;
-/// an escape sequence landing *inside* the root prefix itself, splitting it
-/// across two styled spans, is not: the prefix search requires the root's
-/// text to be contiguous in the raw line, so a split prefix simply never
-/// matches and that line ships absolute, un-rewritten. Tracked as #203.
+/// on leading-path diagnostic lines ([`RewriteScope::LeadingTokenOnly`]),
+/// escape sequences landing *inside* the root prefix itself, splitting it
+/// across two styled spans (e.g. a tool styling directory and basename
+/// separately), are also handled by preserving the interleaved escapes while
+/// stripping the prefix characters (#203). On diff headers
+/// ([`RewriteScope::WholeLine`]), prefixes are matched contiguously in raw
+/// text.
 #[must_use]
 pub fn relativize_text(root: &Path, text: &str) -> String {
   let prefixes = root_prefixes(root);
@@ -621,6 +705,58 @@ mod tests {
       "\x1b[31mREADME.md\x1b[0m:3:1 MD044 \
        [Context: \"see /home/u/proj/secret/notes.txt\"]"
     );
+  }
+
+  /// Regression for #203: a colored leading-path line where an ANSI escape
+  /// sequence splits the root prefix itself (e.g. a tool coloring directory
+  /// and basename separately). The prefix characters are stripped while
+  /// preserving all interleaved ANSI escapes, so downstream styling on the
+  /// relativized path remains intact.
+  #[test]
+  fn relativize_text_rewrites_a_mid_prefix_colored_leading_path_line() {
+    let root = Path::new("/home/u/proj");
+    let text = "\x1b[31m/home/u/\x1b[1mproj/x.rs\x1b[0m:1:1 error";
+    assert_eq!(
+      relativize_text(root, text),
+      "\x1b[31m\x1b[1mx.rs\x1b[0m:1:1 error"
+    );
+  }
+
+  /// Same as above, but with multiple escape sequences splitting the prefix,
+  /// an escape directly abutting the separator, and echoed content later in the
+  /// line that must remain untouched (#183).
+  #[test]
+  fn relativize_text_mid_prefix_escapes_with_echoed_content() {
+    let root = Path::new("/home/u/proj");
+    let text = "\x1b[31m/home/\x1b[32mu/\x1b[1mproj\x1b[4m/x.rs\x1b[0m:1:1 error \
+                [Context: \"/home/u/proj/y.rs\"]";
+    assert_eq!(
+      relativize_text(root, text),
+      "\x1b[31m\x1b[32m\x1b[1m\x1b[4mx.rs\x1b[0m:1:1 error \
+       [Context: \"/home/u/proj/y.rs\"]"
+    );
+  }
+
+  /// Forward escape-sequence scanner recognizes the three standard ANSI shapes
+  /// (CSI, OSC, simple ESC) and rejects non-escapes.
+  #[test]
+  fn escape_seq_len_recognizes_ansi_shapes() {
+    // CSI
+    assert_eq!(escape_seq_len(b"\x1b[31m"), Some(5));
+    assert_eq!(escape_seq_len(b"\x1b[1m"), Some(4));
+    assert_eq!(escape_seq_len(b"\x1b[m"), Some(3));
+    assert_eq!(escape_seq_len(b"\x1b[38;2;255;0;0m"), Some(15));
+    // OSC
+    assert_eq!(escape_seq_len(b"\x1b]8;;file:///x\x1b\\rest"), Some(16));
+    assert_eq!(escape_seq_len(b"\x1b]0;title\x07rest"), Some(10));
+    // Simple ESC
+    assert_eq!(escape_seq_len(b"\x1b="), Some(2));
+    assert_eq!(escape_seq_len(b"\x1b (B"), Some(4));
+    // Non-escapes / incomplete
+    assert_eq!(escape_seq_len(b"hello"), None);
+    assert_eq!(escape_seq_len(b"\x1b"), None);
+    assert_eq!(escape_seq_len(b"\x1b["), None);
+    assert_eq!(escape_seq_len(b"\x1b[31"), None);
   }
 
   /// The counterpart of #183's restriction: the `--- `/`+++ `/`diff --git `
