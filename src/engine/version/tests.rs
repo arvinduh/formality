@@ -226,6 +226,60 @@ fn test_distro_revision_vs_genuine_prerelease() {
       Version::with_prerelease(1, 2, 3, "rc1"),
       true,
     ),
+    // #171: inverted alphabetic-leading branch defaults unknown alphabetic
+    // prefixes to genuine prereleases (Maven milestones, npm next, devel, etc.).
+    ("1.2.3-m1", Version::with_prerelease(1, 2, 3, "m1"), true),
+    ("1.2.3-M1", Version::with_prerelease(1, 2, 3, "M1"), true),
+    ("1.2.3-a1", Version::with_prerelease(1, 2, 3, "a1"), true),
+    ("1.2.3-b2", Version::with_prerelease(1, 2, 3, "b2"), true),
+    (
+      "1.2.3-next",
+      Version::with_prerelease(1, 2, 3, "next"),
+      true,
+    ),
+    (
+      "1.2.3-next.5",
+      Version::with_prerelease(1, 2, 3, "next.5"),
+      true,
+    ),
+    (
+      "1.2.3-experimental",
+      Version::with_prerelease(1, 2, 3, "experimental"),
+      true,
+    ),
+    (
+      "1.2.3-unstable",
+      Version::with_prerelease(1, 2, 3, "unstable"),
+      true,
+    ),
+    (
+      "1.2.3-insiders",
+      Version::with_prerelease(1, 2, 3, "insiders"),
+      true,
+    ),
+    (
+      "1.2.3-devel",
+      Version::with_prerelease(1, 2, 3, "devel"),
+      true,
+    ),
+    (
+      "1.2.3-milestone1",
+      Version::with_prerelease(1, 2, 3, "milestone1"),
+      true,
+    ),
+    // #171: packaging blocklist entries are recognized and stripped to bare core.
+    ("1.2.3-deb1", Version::new(1, 2, 3), false),
+    ("1.2.3-el8", Version::new(1, 2, 3), false),
+    ("1.2.3-fc39", Version::new(1, 2, 3), false),
+    ("1.2.3-build5", Version::new(1, 2, 3), false),
+    ("1.2.3-alt1", Version::new(1, 2, 3), false),
+    ("1.2.3-mga8", Version::new(1, 2, 3), false),
+    ("1.2.3-bp1", Version::new(1, 2, 3), false),
+    ("1.2.3-lp152", Version::new(1, 2, 3), false),
+    ("1.2.3-ga", Version::new(1, 2, 3), false),
+    ("1.2.3-final", Version::new(1, 2, 3), false),
+    ("1.2.3-FINAL", Version::new(1, 2, 3), false),
+    ("1.2.3-release", Version::new(1, 2, 3), false),
   ];
 
   for (input, expected, is_prerelease) in cases {
