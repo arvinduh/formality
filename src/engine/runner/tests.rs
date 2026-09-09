@@ -177,19 +177,86 @@ fn test_combine_pass_results_execution_error_precedence() {
 
 #[test]
 fn test_normalize_diagnostics_keeps_error_signal_lines() {
-  // Issue #146: normalization must de-noise (trailing whitespace, blank lines,
-  // formatter banners) but never truncate or drop lines an ExecutionError
-  // message needs -- the synthesized "Command failed" line and every stack
-  // frame have to survive.
+  // Issue #146, #179: normalization must de-noise (trailing whitespace,
+  // consecutive blank lines, formatter banners) while preserving structural
+  // single blank lines and error signals needed by ExecutionError messages.
   let raw = "Checking formatting...\n\n  panic: runtime error   \n\ngoroutine 1 [running]:\nmain.main()\n\tmain.go:7 +0x1d\n\nCommand failed with exit code 2\n";
   let normalized = normalize_diagnostics(raw);
   assert_eq!(
     normalized,
-    "  panic: runtime error\ngoroutine 1 [running]:\nmain.main()\n\tmain.go:7 +0x1d\nCommand failed with exit code 2"
+    "  panic: runtime error\n\ngoroutine 1 [running]:\nmain.main()\n\tmain.go:7 +0x1d\n\nCommand failed with exit code 2"
   );
   assert!(normalized.contains("Command failed with exit code 2"));
   assert!(normalized.contains("main.go:7 +0x1d"));
   assert!(!normalized.contains("Checking formatting..."));
+}
+
+#[test]
+fn test_normalize_diagnostics_preserves_multierror_execution_error_grouping() {
+  // Issue #179: multi-error diagnostics (e.g. rustc error blocks or Go panics)
+  // use blank lines as structural grouping. normalize_diagnostics must preserve
+  // single blank lines between error blocks while collapsing consecutive blank
+  // lines and trimming leading/trailing blank noise.
+  let rustc_output = "\
+\n\nChecking formatting...\n\n\
+error[E0425]: cannot find value `x` in this scope\n \
+ --> src/main.rs:2:5\n  \
+  |\n\
+2 |     x + 1;\n  \
+  |     ^ not found in this scope\n\n\n\
+error[E0425]: cannot find value `y` in this scope\n \
+ --> src/main.rs:3:5\n  \
+  |\n\
+3 |     y + 2;\n  \
+  |     ^ not found in this scope\n\n\
+error: aborting due to 2 previous errors\n\n\
+Command failed with exit code 101\n\n";
+
+  let normalized = normalize_diagnostics(rustc_output);
+  let expected = "\
+error[E0425]: cannot find value `x` in this scope\n \
+ --> src/main.rs:2:5\n  \
+  |\n\
+2 |     x + 1;\n  \
+  |     ^ not found in this scope\n\n\
+error[E0425]: cannot find value `y` in this scope\n \
+ --> src/main.rs:3:5\n  \
+  |\n\
+3 |     y + 2;\n  \
+  |     ^ not found in this scope\n\n\
+error: aborting due to 2 previous errors\n\n\
+Command failed with exit code 101";
+
+  assert_eq!(normalized, expected);
+}
+
+#[test]
+fn test_normalize_diagnostics_blank_line_collapsing_and_trimming() {
+  // Issue #179: edge cases in blank-line collapsing:
+  // - runs of 2+ blank lines collapse to 1
+  // - whitespace-only lines are treated as blank
+  // - leading and trailing blank lines are stripped
+  // - completely empty or banner-only inputs return empty string
+  let raw_collapsing = "line 1\n\n\n   \n\t \nline 2\n\nline 3";
+  assert_eq!(
+    normalize_diagnostics(raw_collapsing),
+    "line 1\n\nline 2\n\nline 3"
+  );
+
+  let raw_leading_trailing = "\n\n   \n\t\nline 1\nline 2\n\n   \n";
+  assert_eq!(
+    normalize_diagnostics(raw_leading_trailing),
+    "line 1\nline 2"
+  );
+
+  assert_eq!(normalize_diagnostics(""), "");
+  assert_eq!(normalize_diagnostics("   \n\t\n\n"), "");
+  assert_eq!(
+    normalize_diagnostics(
+      "Checking formatting...\n   \n\nAll checks passed!\n"
+    ),
+    ""
+  );
 }
 
 #[test]
@@ -207,7 +274,7 @@ fn test_execution_error_and_violations_render_detail_identically() {
 
   assert_eq!(
     exec_error_detail,
-    "src/x.js: error\n  2:1  Delete `;`\nCommand failed with exit code 2"
+    "src/x.js: error\n  2:1  Delete `;`\n\nCommand failed with exit code 2"
   );
 }
 
@@ -261,10 +328,57 @@ fn test_collect_diagnostics_execution_error_arm_normalizes() {
   assert_eq!(diags[0].0, "go");
   assert_eq!(
     diags[0].1,
-    "  fatal: crashed\nCommand failed with exit code 2"
+    "  fatal: crashed\n\nCommand failed with exit code 2"
   );
   assert!(!diags[0].1.contains("Checking formatting..."));
   assert!(!diags[0].1.contains("All checks passed!"));
+}
+
+#[test]
+fn test_collect_diagnostics_execution_error_preserves_go_panic_goroutine_grouping()
+ {
+  // Issue #179: Go panics separate distinct goroutine stack traces with
+  // blank lines. These must remain grouped and readable in ExecutionError
+  // diagnostics rather than collapsing into an undifferentiated wall of frames.
+  let raw = "\
+Checking formatting...
+
+panic: runtime error: index out of range [2] with length 1
+
+goroutine 1 [running]:
+main.main()
+\t/app/main.go:8 +0x54
+
+goroutine 2 [select]:
+main.worker(0xc00008e000)
+\t/app/worker.go:14 +0x22
+
+Command failed with exit code 2
+";
+  let exec_result = SurfaceResult {
+    surface_name: "go",
+    status: SurfaceStatus::ExecutionError {
+      message: raw.to_string(),
+    },
+    duration: Duration::from_millis(10),
+  };
+
+  let diags = collect_diagnostics(&[exec_result]);
+  assert_eq!(diags.len(), 1);
+  assert_eq!(diags[0].0, "go");
+  let expected = "\
+panic: runtime error: index out of range [2] with length 1
+
+goroutine 1 [running]:
+main.main()
+\t/app/main.go:8 +0x54
+
+goroutine 2 [select]:
+main.worker(0xc00008e000)
+\t/app/worker.go:14 +0x22
+
+Command failed with exit code 2";
+  assert_eq!(diags[0].1, expected);
 }
 
 #[test]
@@ -287,7 +401,7 @@ fn test_collect_diagnostics_violations_found_arm_normalizes() {
   assert_eq!(diags[0].0, "javascript");
   assert_eq!(
     diags[0].1,
-    "src/x.js: error\n  2:1  Delete `;`\nCommand failed with exit code 2\n- old\n+ new"
+    "src/x.js: error\n  2:1  Delete `;`\n\nCommand failed with exit code 2\n- old\n+ new"
   );
   assert!(!diags[0].1.contains("Checking formatting..."));
   assert!(!diags[0].1.contains("All checks passed!"));
@@ -331,7 +445,7 @@ fn test_collect_diagnostics_execution_error_and_violations_parity() {
   assert_eq!(violations_diags[0].1, exec_error_diags[0].1);
   assert_eq!(
     violations_diags[0].1,
-    "src/x.js: error\n  2:1  Delete `;`\nCommand failed with exit code 2"
+    "src/x.js: error\n  2:1  Delete `;`\n\nCommand failed with exit code 2"
   );
 }
 
