@@ -419,3 +419,6 @@ export function runFmlCommand(
     return task();
   }
 }
+
+// Trigger vscode-check.yml paths filter to verify the vsce packaging step
+// added in #250 actually runs under CI node 22. This branch is throwaway.
