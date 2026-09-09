@@ -208,9 +208,16 @@ fn run_command_inner(
       commands::table::run_table(json)
     }
 
-    Commands::Migrate { command } => match command {
-      MigrateCommands::Schema => commands::migrate::run_migrate_schema(root),
-    },
+    Commands::Migrate { command } => {
+      crate::ui::deprecation::warn_deprecated_spelling(
+        "fml migrate schema",
+        "fml init",
+        Some("it initializes or updates the schema pin in formality.toml"),
+      );
+      match command {
+        MigrateCommands::Schema => commands::migrate::run_migrate_schema(root),
+      }
+    }
   }
 }
 

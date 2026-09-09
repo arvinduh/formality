@@ -303,13 +303,13 @@ indent_size = 2
 line_length = 80
 ```
 
-Run `fml migrate schema` to rewrite an existing `#:schema` line to point at the
-current release's schema tag (or insert one if it's missing). It only touches
-that single line — it does not attempt to rewrite config content for a breaking
+Run `fml init` to rewrite an existing `#:schema` line to point at the current
+release's schema tag (or insert one if it's missing). It only touches that
+single line — it does not attempt to rewrite config content for a breaking
 schema change, since that's a human decision.
 
 ```text
-$ fml migrate schema
+$ fml init
 [OK] Updated formality.toml schema reference: s0.9 -> s1.0
 ```
 

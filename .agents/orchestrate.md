@@ -313,7 +313,7 @@ and now resolves to an unrelated issue — see
 An issue introducing new user-facing CLI surface (a command, flags, an output
 format) requires presenting the concrete proposal — example invocation, example
 output — to the user for confirmation before finalizing. Never
-build-then-reveal. (`fml migrate schema`, `fml stat`.)
+build-then-reveal. (`fml stat`.)
 
 ## 11. Issue conventions
 
