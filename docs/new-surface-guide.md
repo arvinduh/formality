@@ -29,8 +29,6 @@ repository:
 - [ ] **4. Registry wiring**: `src/surfaces/registry.rs`
       (`SurfaceRegistry::default()` registration call).
 - [ ] **5. Soft / optional tables**:
-  - `src/commands/lsp.rs`: `CHILD_LSP_REGISTRY` entry for child language server
-    (if applicable).
   - `src/commands/lsp_diagnostics.rs`: a `parse_<tool>_*` / `<tool>_diagnostics`
     pair plus a `diagnostics_runner_for_surface()` arm, so `fml lsp` publishes
     one `Diagnostic` per violation rather than a single generic warning. This is
@@ -338,18 +336,6 @@ nothing for that file. See "Shared config files" in
 ---
 
 ## 6. Soft / Optional Integrations
-
-- **LSP Child Server (`src/commands/lsp.rs`)**: If the ecosystem provides a
-  language server, add an entry to `CHILD_LSP_REGISTRY`:
-
-  ```rust
-  ChildLsp {
-    surface: "foo",
-    binary: "foo-lsp",
-    args: &["--stdio"],
-    install_hint: "npm install -g foo-lsp  OR  brew install foo-lsp",
-  },
-  ```
 
 - **EditorConfig Generation (`src/surfaces/editorconfig.rs`)**:
   - Add section glob to `glob_for_surface()`:

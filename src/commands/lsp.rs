@@ -1,44 +1,24 @@
-//! `fml lsp` — Language Server Protocol passthrough server.
+//! `fml lsp` — document formatter and diagnostics publisher.
 //!
 //! Architecture
 //! ============
 //! The formality LSP server runs as a single process that:
 //!
 //! 1. **Accepts** LSP requests from the editor (via stdio).
-//! 2. **Detects** which language surfaces are active in the workspace.
-//! 3. **Spawns** the appropriate child LSP processes (rust-analyzer, pyright,
-//!    clangd, …) lazily, on demand.
-//! 4. **Routes** each incoming request to the correct child server and
-//!    multiplexes responses back to the editor.
-//! 5. **Intercepts** formatting requests to route them through `fml fmt`
-//!    instead of the child LSP's formatter, ensuring formality's unified config
-//!    is always respected.
-//! 6. **Injects** `fml lint` diagnostics alongside any diagnostics published
-//!    by child servers.
-//! 7. **Watches** `formality.toml` / `.formality.toml` and runs `fml sync`
-//!    when the canonical config changes, then notifies the editor to reload
-//!    affected file diagnostics.
+//! 2. **Handles** `textDocument/formatting` by running `fml fmt` in-process
+//!    against the requested file and returning the resulting edits.
+//! 3. **Publishes diagnostics** on `did_save` / `did_open` by running
+//!    `fml lint` (or a structured per-surface parser, see
+//!    `lsp_diagnostics.rs`) in-process against the changed file.
+//! 4. **Watches** `formality.toml` / `.formality.toml` via
+//!    `did_change_watched_files` and invalidates the cached configuration
+//!    when the canonical config changes.
 //!
-//! Child LSP discovery
-//! ===================
-//! | Surface  | Child LSP binary          | Install source          |
-//! |----------|---------------------------|-------------------------|
-//! | rust     | `rust-analyzer`           | rustup component add    |
-//! | python   | `pyright-langserver`      | npm / pip               |
-//! | cpp      | `clangd`                  | apt / brew / llvm.org   |
-//! | go       | `gopls`                   | go install               |
-//! | typst    | `tinymist` / `typst-lsp`  | cargo / npm             |
-//! | markdown | none (diagnostics only)   | —                       |
-//! | yaml     | `yaml-language-server`    | npm                     |
-//! | json     | `vscode-json-languageserver` | npm                  |
-//! | toml     | `taplo lsp`               | cargo / npm             |
-//! | javascript | `typescript-language-server` | npm                 |
-//!
-//! The routing layer is the core of this module. Each child server runs as a
-//! subprocess with its own stdin/stdout JSON-RPC channel. The multiplexer
-//! assigns monotonically increasing request IDs per-child (to avoid ID
-//! collisions across servers) and maps response IDs back to the originating
-//! editor request ID.
+//! This server is a formatting and diagnostics provider, meant to run
+//! *alongside* the user's existing language servers (rust-analyzer, pyright,
+//! clangd, …) — it does not spawn, proxy, or route requests to them. See
+//! `README.md`'s "Editor setup" section for how to wire `fml lsp` in
+//! alongside a primary language server.
 use colored::Colorize;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
@@ -55,97 +35,9 @@ use tower_lsp::{Client, LanguageServer, LspService, Server};
 
 use crate::config::FormalityConfig;
 
-/// Capabilities that the formality LSP layer adds or overrides on top of what
-/// child servers provide. Formatting is always handled by `fml fmt`; all other
-/// capabilities are delegated.
+/// Server identity reported in `initialize`'s `ServerInfo`.
 const SERVER_NAME: &str = "formality";
 const SERVER_VERSION: &str = env!("CARGO_PKG_VERSION");
-
-// ---------------------------------------------------------------------------
-// Child LSP registry
-// ---------------------------------------------------------------------------
-
-/// A description of a child LSP server for one language surface.
-#[derive(Debug, Clone)]
-pub struct ChildLsp {
-  /// Human-readable surface name (matches `LanguageSurface::name()`).
-  pub surface: &'static str,
-  /// Binary to spawn. Checked with `which` before attempting to start.
-  pub binary: &'static str,
-  /// Arguments to pass to the child server (e.g. `["--stdio"]`).
-  pub args: &'static [&'static str],
-  /// Install hint shown in doctor output when the binary is missing.
-  pub install_hint: &'static str,
-}
-
-/// The canonical set of child LSP servers formality knows about.
-///
-/// Entries are tried in order; the first binary that exists on PATH wins.
-/// Extend this list as new surfaces are added.
-pub const CHILD_LSP_REGISTRY: &[ChildLsp] = &[
-  ChildLsp {
-    surface: "rust",
-    binary: "rust-analyzer",
-    args: &[],
-    install_hint: "rustup component add rust-analyzer",
-  },
-  ChildLsp {
-    surface: "python",
-    binary: "pyright-langserver",
-    args: &["--stdio"],
-    install_hint: "npm install -g pyright  OR  pip install pyright",
-  },
-  ChildLsp {
-    surface: "cpp",
-    binary: "clangd",
-    args: &[],
-    install_hint: "sudo apt install clangd  OR  brew install llvm",
-  },
-  ChildLsp {
-    surface: "go",
-    binary: "gopls",
-    args: &[],
-    install_hint: "go install golang.org/x/tools/gopls@latest",
-  },
-  ChildLsp {
-    surface: "typst",
-    binary: "tinymist",
-    args: &[],
-    install_hint: "cargo binstall tinymist  OR  brew install tinymist",
-  },
-  ChildLsp {
-    surface: "yaml",
-    binary: "yaml-language-server",
-    args: &["--stdio"],
-    install_hint: "npm install -g yaml-language-server",
-  },
-  ChildLsp {
-    surface: "json",
-    binary: "vscode-json-languageserver",
-    args: &["--stdio"],
-    install_hint: "npm install -g vscode-langservers-extracted",
-  },
-  ChildLsp {
-    surface: "toml",
-    binary: "taplo",
-    args: &["lsp", "stdio"],
-    install_hint: "cargo binstall taplo-cli  OR  npm install -g @taplo/cli  OR  brew install taplo",
-  },
-  ChildLsp {
-    surface: "javascript",
-    binary: "typescript-language-server",
-    args: &["--stdio"],
-    install_hint: "npm install -g typescript-language-server typescript",
-  },
-];
-
-/// Returns the child LSP descriptor for a given surface, if one is registered.
-#[must_use]
-pub fn child_lsp_for_surface(surface: &str) -> Option<&'static ChildLsp> {
-  CHILD_LSP_REGISTRY
-    .iter()
-    .find(|c| c.surface.eq_ignore_ascii_case(surface))
-}
 
 /// Returns whether the specified path points to a formality configuration file (`formality.toml` or `.formality.toml`).
 #[must_use]
@@ -160,12 +52,11 @@ pub fn is_formality_config_file(path: &Path) -> bool {
 // LSP server backend
 // ---------------------------------------------------------------------------
 
-/// The formality LSP backend.
+/// The formality LSP backend: a document formatter and diagnostics publisher.
 ///
-/// The `routing_root` is the workspace root used to detect active surfaces and
-/// locate `formality.toml`. The actual child-process management and JSON-RPC
-/// multiplexing live behind a `Mutex<RouterState>` so that the async handler
-/// methods can mutate shared state safely under `tower-lsp`'s runtime.
+/// `root` is the workspace root, resolved at `initialize` time and used to
+/// locate `formality.toml` and to run `fml fmt` / `fml lint` in-process
+/// against the correct working directory.
 pub struct FormalityLsp {
   client: Client,
   /// Workspace root detected at `initialize` time.
@@ -244,17 +135,19 @@ impl LanguageServer for FormalityLsp {
         version: Some(SERVER_VERSION.to_string()),
       }),
       capabilities: ServerCapabilities {
-        // formality always handles formatting itself via `fml fmt`.
+        // formality handles formatting itself via `fml fmt` — no child
+        // server is spawned or delegated to.
         document_formatting_provider: Some(OneOf::Left(true)),
-        // Range formatting delegates to the child LSP (not yet implemented).
+        // Not implemented — formality only formats whole documents.
         document_range_formatting_provider: None,
         // Document sync capability: NONE matches disk-reading behavior.
         text_document_sync: Some(TextDocumentSyncCapability::Kind(
           TextDocumentSyncKind::NONE,
         )),
-        // Everything else (hover, completion, go-to-definition, …) is
-        // handled by child LSPs. The routing layer (not yet wired) will
-        // merge and forward those capabilities.
+        // Nothing else is provided. Hover, completion, go-to-definition,
+        // and every other language-intelligence capability are left to
+        // whatever primary language server the editor already runs
+        // alongside `fml lsp`.
         ..Default::default()
       },
     })
@@ -269,54 +162,22 @@ impl LanguageServer for FormalityLsp {
       )
       .await;
 
-    // Detect active surfaces and log which child LSPs are available.
+    // Detect active surfaces and log which ones formality will format and
+    // lint in this workspace.
     let root = self.root.lock().await.clone();
     let config = self.get_or_load_config(root.as_deref()).await;
 
     if let Some(ref root_path) = root {
       let detected = crate::surfaces::detect_surfaces_smart(root_path, &config);
-      for surface in &detected {
-        match child_lsp_for_surface(surface.name()) {
-          Some(child) if which::which(child.binary).is_ok() => {
-            self
-              .client
-              .log_message(
-                MessageType::INFO,
-                format!(
-                  "[formality] surface '{}' → child LSP '{}'",
-                  surface.name(),
-                  child.binary
-                ),
-              )
-              .await;
-          }
-          Some(child) => {
-            self
-              .client
-              .log_message(
-                MessageType::WARNING,
-                format!(
-                  "[formality] surface '{}': child LSP '{}' not found — {}",
-                  surface.name(),
-                  child.binary,
-                  child.install_hint
-                ),
-              )
-              .await;
-          }
-          None => {
-            self
-              .client
-              .log_message(
-                MessageType::LOG,
-                format!(
-                  "[formality] surface '{}': no child LSP registered (diagnostics only)",
-                  surface.name()
-                ),
-              )
-              .await;
-          }
-        }
+      let names: Vec<&str> = detected.iter().map(|s| s.name()).collect();
+      if !names.is_empty() {
+        self
+          .client
+          .log_message(
+            MessageType::INFO,
+            format!("[formality] active surfaces: {}", names.join(", ")),
+          )
+          .await;
       }
     }
   }

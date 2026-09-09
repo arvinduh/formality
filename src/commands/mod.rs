@@ -10,7 +10,7 @@ pub mod fmt;
 pub mod init;
 /// Code linting CLI command handler.
 pub mod lint;
-/// Language Server Protocol passthrough server implementation.
+/// Language Server Protocol server: document formatting and lint diagnostics.
 pub mod lsp;
 /// Structured per-violation lint diagnostics for `fml lsp` (Fixes #159 [pre-recreation]).
 pub mod lsp_diagnostics;
