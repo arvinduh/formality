@@ -103,7 +103,16 @@ fn run_command_inner(
   warn_unrecognized_lang_sections(&config);
 
   match args.command {
-    Commands::Schema { output } => commands::schema::run_schema(output),
+    Commands::Schema { output } => {
+      crate::ui::deprecation::warn_deprecated_spelling(
+        "fml schema",
+        "cargo test --test schema_drift",
+        Some(
+          "or `UPDATE_SCHEMA=1 cargo test --test schema_drift` to regenerate",
+        ),
+      );
+      commands::schema::run_schema(output)
+    }
 
     Commands::Doctor { all, install } => {
       commands::doctor::run_doctor(root, all, install, &config)
@@ -190,7 +199,14 @@ fn run_command_inner(
       ExitStatus::Clean
     }
 
-    Commands::Table { json } => commands::table::run_table(json),
+    Commands::Table { json } => {
+      crate::ui::deprecation::warn_deprecated_spelling(
+        "fml table",
+        "fml::ui::table",
+        None,
+      );
+      commands::table::run_table(json)
+    }
 
     Commands::Migrate { command } => {
       crate::ui::deprecation::warn_deprecated_spelling(

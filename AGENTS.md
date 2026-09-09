@@ -40,8 +40,10 @@ is not run against this repository's root.
      `cargo clippy --all-targets -- -D warnings` and full unit/integration test
      suite (`cargo test --verbose`).
    - `Formality Dogfooding` (**required status check**): `fml fmt --check` and
-     `fml lint` against this repo, plus `fml schema` drift check and schema
-     version progression enforcement.
+     `fml lint` against this repo, plus schema drift check
+     (`cargo test --test schema_drift`; regenerate via
+     `UPDATE_SCHEMA=1 cargo test -j 2 --test schema_drift`) and schema version
+     progression enforcement.
    - `Security Audit`: `cargo audit` against Rust advisory database.
 
 ## Conventions

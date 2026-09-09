@@ -169,7 +169,11 @@ pub enum Commands {
   #[command(name = "list-surfaces", alias = "surfaces")]
   ListSurfaces,
 
-  /// Output the JSON Schema for formality.toml to stdout or file
+  /// Deprecated: use `cargo test --test schema_drift` (or `UPDATE_SCHEMA=1 cargo test --test schema_drift`).
+  ///
+  /// Output the JSON Schema for formality.toml to stdout or file. Hidden from
+  /// `--help`; still parses for 1 minor release.
+  #[command(hide = true)]
   Schema {
     /// Optional file path to write the JSON schema to (defaults to stdout)
     #[arg(short = 'o', long, value_name = "FILE")]
@@ -189,7 +193,11 @@ pub enum Commands {
   /// LSP processes for languages present in the workspace.
   Lsp,
 
-  /// Render an opinionated semantic terminal table from JSON specification
+  /// Deprecated: use `fml::ui::table` library API.
+  ///
+  /// Render an opinionated semantic terminal table from JSON specification.
+  /// Hidden from `--help`; still parses for 1 minor release.
+  #[command(hide = true)]
   Table {
     /// Table specification JSON string (reads from stdin if omitted)
     #[arg(long)]
@@ -368,6 +376,44 @@ mod tests {
       !help.contains("migrate"),
       "a deprecated command should not be advertised in --help, got:
 {help}"
+    );
+  }
+
+  #[test]
+  fn test_deprecated_schema_and_table_still_parse_but_are_hidden_from_help() {
+    let cli = Cli::try_parse_from(["fml", "schema"]).unwrap();
+    assert!(matches!(cli.command, Commands::Schema { output: None }));
+
+    let cli =
+      Cli::try_parse_from(["fml", "schema", "-o", "schema.json"]).unwrap();
+    assert!(matches!(
+      cli.command,
+      Commands::Schema {
+        output: Some(ref p)
+      } if p == std::path::Path::new("schema.json")
+    ));
+
+    let cli = Cli::try_parse_from(["fml", "table"]).unwrap();
+    assert!(matches!(cli.command, Commands::Table { json: None }));
+
+    let cli = Cli::try_parse_from(["fml", "table", "--json", "{}"]).unwrap();
+    assert!(matches!(
+      cli.command,
+      Commands::Table {
+        json: Some(ref s)
+      } if s == "{}"
+    ));
+
+    let mut cmd = Cli::command();
+    cmd.build();
+    let help = cmd.render_help().to_string();
+    assert!(
+      !help.lines().any(|l| l.trim_start().starts_with("schema ")),
+      "deprecated `schema` subcommand should not be advertised in --help, got:\n{help}"
+    );
+    assert!(
+      !help.lines().any(|l| l.trim_start().starts_with("table ")),
+      "deprecated `table` subcommand should not be advertised in --help, got:\n{help}"
     );
   }
 

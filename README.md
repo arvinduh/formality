@@ -274,12 +274,16 @@ reformat under `fml fix` because their linter is diagnostics-only (e.g. Java's
 
 ### Deprecated spellings
 
-| deprecated       | use instead | removed in |
-| ---------------- | ----------- | ---------- |
-| `fml lint --fix` | `fml fix`   | `v0.4.0`   |
+| deprecated       | use instead                                                                            | removed in |
+| ---------------- | -------------------------------------------------------------------------------------- | ---------- |
+| `fml lint --fix` | `fml fix`                                                                              | `v0.4.0`   |
+| `fml schema`     | `cargo test --test schema_drift` (or `UPDATE_SCHEMA=1 cargo test --test schema_drift`) | `v0.4.0`   |
+| `fml table`      | `fml::ui::table`                                                                       | `v0.4.0`   |
 
 `fml lint --fix` still works and now runs the full `fml fix` pipeline — lint
-fixes _and_ formatting — after printing a notice to stderr.
+fixes _and_ formatting — after printing a notice to stderr. `fml schema` and
+`fml table` also remain temporarily available as deprecated CLI commands that
+print a notice to stderr before executing.
 
 ---
 
@@ -357,9 +361,7 @@ Commands:
   install        Auto-install missing toolchains using system package managers
   init           Scaffold a new formality.toml configuration
   list-surfaces  List all supported surfaces and detection status
-  schema         Print the JSON Schema for formality.toml
   lsp            Start the formality LSP server (stdio transport)
-  table          Render an opinionated semantic terminal table from JSON specification
   migrate        Migrate project files to match the current formality release
   help           Print this message or the help of the given subcommand(s)
 
