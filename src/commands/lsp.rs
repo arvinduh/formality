@@ -170,13 +170,15 @@ impl LanguageServer for FormalityLsp {
     if let Some(ref root_path) = root {
       let detected = crate::surfaces::detect_surfaces_smart(root_path, &config);
       let names: Vec<&str> = detected.iter().map(|s| s.name()).collect();
-      self
-        .client
-        .log_message(
-          MessageType::INFO,
-          format!("[formality] active surfaces: {}", names.join(", ")),
-        )
-        .await;
+      if !names.is_empty() {
+        self
+          .client
+          .log_message(
+            MessageType::INFO,
+            format!("[formality] active surfaces: {}", names.join(", ")),
+          )
+          .await;
+      }
     }
   }
 

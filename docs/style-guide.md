@@ -464,6 +464,19 @@ by unit tests, in the very PR meant to eliminate inert machinery. It was
 reverted, leaving `#178` to introduce the parameter alongside its real
 production consumer and extractor.
 
+**Speculative documentation (tier 3):** The same rule applies to prose, not just
+code. Doc comments, `--help` text, and `docs/` files must describe behavior that
+exists today; a planned capability belongs in an issue, written in future tense,
+not in present-tense documentation for behavior that has no implementation.
+Speculative prose is worse than speculative code because the compiler cannot
+flag it — nothing forces stale claims back into sync once the described behavior
+changes or never ships. It must never be propped up by a CI-enforced check (a
+drift test, a generated table, a schema pin) that has no production consumer of
+its own; that check just teaches reviewers to trust the prose instead of the
+code. **Motivating case:** `#123` — `fml lsp`'s docs described a child-LSP
+router that was never built, kept plausible only by a `--help` string and a
+table with no reader but the docs themselves.
+
 ### `Runner` dispatch
 
 `Runner::run` (`src/engine/runner/mod.rs`) is the single dispatch point for
