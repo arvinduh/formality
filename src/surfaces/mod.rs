@@ -77,12 +77,12 @@ pub use tooling::{
   classify_all_nonzero_as_error, classify_exit_one_as_violation,
   create_tool_command, ensure_cargo_binstall, extra_args_set_flag,
   forget_binary, has_cargo_binstall, install_chain_for, lint_fix_unsupported,
-  pinned_installer_for, pinned_version_for, refresh_go_install_path,
-  refresh_path_after_install, refresh_windows_path_from_registry,
-  resolve_binary_path, run_tool_command, run_tool_command_classified,
-  selected_install_method_for, selected_pinned_version_for,
-  set_binary_path_for_test, tool_missing_guard, tool_missing_result,
-  tool_would_benefit_from_cargo_binstall_bootstrap,
+  merge_tool_streams, pinned_installer_for, pinned_version_for,
+  refresh_go_install_path, refresh_path_after_install,
+  refresh_windows_path_from_registry, resolve_binary_path, run_tool_command,
+  run_tool_command_classified, selected_install_method_for,
+  selected_pinned_version_for, set_binary_path_for_test, tool_missing_guard,
+  tool_missing_result, tool_would_benefit_from_cargo_binstall_bootstrap,
 };
 
 /// Execution context shared with every [`LanguageSurface`] invocation for a
