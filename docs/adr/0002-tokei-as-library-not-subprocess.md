@@ -11,8 +11,8 @@ issue `#131 [pre-recreation]`.
 ## Context
 
 A future `fml stat` command (referenced as an example of new user-facing CLI
-surface in `.agents/orchestrate.md` §10's "Applied-feature checkpoint" rule,
-alongside `fml migrate schema`) would need to count lines of code per language.
+surface in `.agents/orchestrate.md` §10's "Applied-feature checkpoint" rule)
+would need to count lines of code per language.
 [`tokei`](https://github.com/XAMPPRocky/tokei) already does this and is the
 natural tool to reach for. The choice is between shelling out to a `tokei`
 binary the way `fml` shells out to per-surface tools (`rustfmt`, `ruff`,
