@@ -31,8 +31,8 @@ Depend on `tokei` as a library crate, not invoke it as a subprocess.
   them. Line counting is different: it isn't delegating to a separate
   ecosystem's authoritative tool the way `cargo fmt` is authoritative for Rust
   formatting, so there's no equivalent reason to require a `tokei` binary be
-  installed and discovered on `PATH` the way `fml install` handles the other 12
-  surfaces' tools.
+  installed and discovered on `PATH` the way `fml doctor --install` handles the
+  other 12 surfaces' tools.
 - A library call returns structured Rust data directly, which fits `fml`'s
   existing pattern of consuming structured output (JSON where a subprocess tool
   supports it) rather than parsing free-form CLI text — see

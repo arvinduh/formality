@@ -186,7 +186,7 @@ impl fmt::Display for SurfaceError {
     match self {
       SurfaceError::UnknownSurface(name) => write!(
         f,
-        "Unknown language surface: '{name}'. Run 'fml list-surfaces' to see supported languages."
+        "Unknown language surface: '{name}'. Run 'fml doctor' to see supported languages."
       ),
       SurfaceError::SerializationFailed { surface, message } => {
         write!(f, "Failed to serialize {surface} config: {message}")

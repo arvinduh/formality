@@ -29,10 +29,10 @@ and behavior) · [Adding a New Surface](docs/new-surface-guide.md) ·
 - **Config sync engine (`fml sync`)**: Generates and provably verifies native
   tool configs from canonical globals. Detects manually written config files and
   warns instead of overwriting them.
-- **Automated tool installer (`fml install`)**: Detects missing binaries and
-  auto-installs them via system package managers (`cargo`, `npm`, `pip`, `brew`,
-  `rustup`). Pass `--install` / `-i` to `fml fmt` or `fml lint` to install
-  on-demand before the run — no separate setup step needed.
+- **Automated tool installer (`fml doctor --install`)**: Detects missing
+  binaries and auto-installs them via system package managers (`cargo`, `npm`,
+  `pip`, `brew`, `rustup`). Pass `--install` / `-i` to `fml fmt` or `fml lint`
+  to install on-demand before the run — no separate setup step needed.
 - **Blazing parallel runner**: Runs independent language surfaces concurrently
   using multi-threaded execution (`rayon`).
 - **Fine-grained targeting**: Target specific files, directories, Git staged
@@ -177,7 +177,7 @@ fml init --hidden
 fml doctor
 
 # Auto-install missing tools for active surfaces
-fml install
+fml doctor --install
 ```
 
 ### 3. Sync tool configs
@@ -274,16 +274,20 @@ reformat under `fml fix` because their linter is diagnostics-only (e.g. Java's
 
 ### Deprecated spellings
 
-| deprecated       | use instead                                                                            | removed in |
-| ---------------- | -------------------------------------------------------------------------------------- | ---------- |
-| `fml lint --fix` | `fml fix`                                                                              | `v0.4.0`   |
-| `fml schema`     | `cargo test --test schema_drift` (or `UPDATE_SCHEMA=1 cargo test --test schema_drift`) | `v0.4.0`   |
-| `fml table`      | `fml::ui::table`                                                                       | `v0.4.0`   |
+| deprecated          | use instead                                                                            | removed in |
+| ------------------- | -------------------------------------------------------------------------------------- | ---------- |
+| `fml lint --fix`    | `fml fix`                                                                              | `v0.4.0`   |
+| `fml install`       | `fml doctor --install`                                                                 | `v0.4.0`   |
+| `fml list-surfaces` | `fml doctor`                                                                           | `v0.4.0`   |
+| `fml surfaces`      | `fml doctor`                                                                           | `v0.4.0`   |
+| `fml schema`        | `cargo test --test schema_drift` (or `UPDATE_SCHEMA=1 cargo test --test schema_drift`) | `v0.4.0`   |
+| `fml table`         | `fml::ui::table`                                                                       | `v0.4.0`   |
 
 `fml lint --fix` still works and now runs the full `fml fix` pipeline — lint
-fixes _and_ formatting — after printing a notice to stderr. `fml schema` and
-`fml table` also remain temporarily available as deprecated CLI commands that
-print a notice to stderr before executing.
+fixes _and_ formatting — after printing a notice to stderr. `fml install`,
+`fml list-surfaces` / `fml surfaces`, `fml schema`, and `fml table` also remain
+temporarily available as deprecated CLI commands that print a notice to stderr
+before executing.
 
 ---
 
@@ -353,17 +357,15 @@ prose_wrap = "always"
 Usage: fml [OPTIONS] <COMMAND>
 
 Commands:
-  fmt            Format source files. Writes changes; --check reports without writing
-  lint           Lint source files. Never writes -- use `fml fix` to apply fixes
-  fix            Apply lint fixes, then reformat. Writes changes; --check reports without writing
-  sync           Sync native tool configs from canonical globals
-  doctor         Diagnose installed toolchains with install hints
-  install        Auto-install missing toolchains using system package managers
-  init           Scaffold a new formality.toml configuration
-  list-surfaces  List all supported surfaces and detection status
-  lsp            Start the formality LSP server (stdio transport)
-  migrate        Migrate project files to match the current formality release
-  help           Print this message or the help of the given subcommand(s)
+  fmt      Format source files. Writes changes; --check reports without writing
+  lint     Lint source files. Never writes -- use `fml fix` to apply fixes
+  fix      Apply lint fixes, then reformat. Writes changes; --check reports without writing
+  sync     Sync native tool configs from canonical globals
+  doctor   Diagnose installed toolchains with install hints
+  init     Scaffold a new formality.toml configuration
+  lsp      Start the formality LSP server (stdio transport)
+  migrate  Migrate project files to match the current formality release
+  help     Print this message or the help of the given subcommand(s)
 
 Options:
   -c, --config <FILE>  Custom path to formality config
@@ -394,7 +396,6 @@ Options:
 | `fml sync`    | `--lang`    | Filter to a specific surface                                                                   |
 | `fml doctor`  | `--all`     | Show all surfaces, not just active ones                                                        |
 | `fml doctor`  | `--install` | Auto-install all missing toolchains                                                            |
-| `fml install` | `--all`     | Install tools for all supported language surfaces                                              |
 | `fml init`    | `--force`   | Overwrite an existing config file                                                              |
 | `fml init`    | `--hidden`  | Write `.formality.toml` instead of `formality.toml`                                            |
 | `fml table`   | `--json`    | Table spec JSON string (reads stdin if omitted) — see [docs/table-spec.md](docs/table-spec.md) |
@@ -447,9 +448,10 @@ generated output rather than derive it from `formality.toml`.
 
 ### GitHub Actions
 
-The only prerequisite is `fml` itself. Once it's on `PATH`, `fml install`
-handles every downstream tool (`ruff`, `prettier`, `markdownlint-cli2`, `taplo`,
-…) — no extra `setup-ruff`, `setup-node`, or `npm install` steps required.
+The only prerequisite is `fml` itself. Once it's on `PATH`,
+`fml doctor --install` handles every downstream tool (`ruff`, `prettier`,
+`markdownlint-cli2`, `taplo`, …) — no extra `setup-ruff`, `setup-node`, or
+`npm install` steps required.
 
 ```yaml
 - name: Install fml
@@ -459,7 +461,7 @@ handles every downstream tool (`ruff`, `prettier`, `markdownlint-cli2`, `taplo`,
     | sh
 
 - name: Install tool dependencies
-  run: fml install
+  run: fml doctor --install
 
 - name: Verify config sync
   run: fml sync --check
@@ -472,7 +474,7 @@ handles every downstream tool (`ruff`, `prettier`, `markdownlint-cli2`, `taplo`,
 ```
 
 Rust-heavy projects that already have a Rust toolchain step can combine
-`fml install` and the format/lint check into a single flag:
+`fml doctor --install` and the format/lint check into a single flag:
 
 ```yaml
 - name: Check formatting

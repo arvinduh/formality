@@ -735,7 +735,7 @@ pub enum ToolStatus {
   /// Tool version string could not be parsed into semver.
   UnknownVersion(String),
   /// Installed tool version is present, executable, and at/above the MSTV
-  /// floor, but does not match the exact version `fml install` pins for
+  /// floor, but does not match the exact version `fml doctor --install` pins for
   /// this tool (`src/surfaces/tooling.rs`'s install chains) — e.g. a stale
   /// system-wide install that predates the pin. Distinct from `Outdated`:
   /// an `Outdated` tool may not even work; a `Stale` one works, it's just
@@ -744,7 +744,7 @@ pub enum ToolStatus {
   Stale {
     /// Currently installed version.
     current: Version,
-    /// Exact version `fml install` pins this tool to.
+    /// Exact version `fml doctor --install` pins this tool to.
     pinned: Version,
   },
 }

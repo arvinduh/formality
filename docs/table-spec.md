@@ -191,20 +191,19 @@ fml table --json '{
 ```
 
 This is the same rendering path formality's own commands use internally — e.g.
-`fml list-surfaces` builds a `Table` value in `src/commands/surfaces.rs` and
-renders it through `fml::ui::table` exactly as `render_json` does from
-equivalent JSON.
+`fml doctor` builds a `Table` value in `src/commands/doctor/mod.rs` and renders
+it through `fml::ui::table` exactly as `render_json` does from equivalent JSON.
 
 ## Framing (`fml`'s own output)
 
-`fml doctor`, `fml fmt` / `fml lint` (the `Runner`), `fml install`, and
-`fml list-surfaces` never hand-assemble their own header/rule lines. Each
-command builds one `ui::table::Frame` (`src/ui/table/frame.rs`) from its primary
-rendered table and renders every block — the table, follow-up notice sections,
-the diagnostics block, the install summary — through `Frame::section`, which is
-the single definition of the `header → rule → body → rule` shape. One `Frame`
-per command means every rule that command prints is the same width: the table's
-content width, capped at 80 columns (or a genuinely narrower terminal).
+`fml doctor` and `fml fmt` / `fml lint` / `fml fix` (the `Runner`) never
+hand-assemble their own header/rule lines. Each command builds one
+`ui::table::Frame` (`src/ui/table/frame.rs`) from its primary rendered table and
+renders every block — the table, follow-up notice sections, the diagnostics
+block, the install summary — through `Frame::section`, which is the single
+definition of the `header → rule → body → rule` shape. One `Frame` per command
+means every rule that command prints is the same width: the table's content
+width, capped at 80 columns (or a genuinely narrower terminal).
 `Frame::wrap_body` wraps free-form notice/diagnostic prose to that same width on
 the same token boundaries as the table renderer. Run-root paths in both table
 cells and the diagnostics block are rendered relative via `ui::paths`

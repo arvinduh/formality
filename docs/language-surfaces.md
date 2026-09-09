@@ -266,8 +266,8 @@ exit-code contract _as `fml` invokes it_. An `extra_args` entry that
 reintroduces a "ran fine, and found/changed something" exit code makes that
 decision wrong, and a lint finding gets reported as an execution error.
 
-The flags known to do this, each reproduced against the version `fml install`
-pins:
+The flags known to do this, each reproduced against the version
+`fml doctor --install` pins:
 
 | Surface        | Flag                     | Status                           | What you'll see                                                                                                                                                                                                                          |
 | -------------- | ------------------------ | -------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
@@ -342,8 +342,8 @@ Each surface's `detect(&self, root: &Path) -> bool` decides whether it's
 "active" for a workspace when `languages` isn't set explicitly in
 `formality.toml` — generally: does at least one file with the surface's
 `file_extensions()` exist under `root` (excluding common ignore directories).
-`fml list-surfaces` shows detection status for every surface in the fleet,
-active or not; `fml doctor --all` does the same for tool installation status.
+`fml doctor` shows detection and tool status for active surfaces, and
+`fml doctor --all` shows both for every surface in the fleet.
 
 ## Adding a 13th surface
 

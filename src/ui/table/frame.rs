@@ -49,7 +49,7 @@ impl Frame {
   }
 
   /// A frame with no body to size against — just the [`Frame::cap`] width.
-  /// Used by `fml install`'s live progress output, which streams before any
+  /// Used by `fml doctor --install`'s live progress output, which streams before any
   /// table exists.
   #[must_use]
   pub fn capped() -> Self {

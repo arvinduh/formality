@@ -147,7 +147,13 @@ pub enum Commands {
     install: bool,
   },
 
-  /// Automatically install missing toolchains for detected surfaces
+  /// Deprecated: use `fml doctor --install`. Kept working for one minor release.
+  ///
+  /// Hidden from `--help` deliberately: it is on its way out, so help
+  /// advertises only the spelling we want adopted. It still parses, and
+  /// dispatches to `fml doctor --install` after printing the shared
+  /// deprecation notice.
+  #[command(hide = true)]
   Install {
     /// Install tools for all supported language surfaces
     #[arg(short = 'a', long)]
@@ -165,8 +171,12 @@ pub enum Commands {
     hidden: bool,
   },
 
-  /// List all supported surfaces and indicate which are detected in this project
-  #[command(name = "list-surfaces", alias = "surfaces")]
+  /// Deprecated: use `fml doctor`. Kept working for one minor release.
+  ///
+  /// Hidden from `--help` deliberately: it is on its way out, so help
+  /// advertises only the spelling we want adopted. It still parses, and
+  /// dispatches to `fml doctor` after printing the shared deprecation notice.
+  #[command(name = "list-surfaces", alias = "surfaces", hide = true)]
   ListSurfaces,
 
   /// Deprecated: use `cargo test --test schema_drift` (or `UPDATE_SCHEMA=1 cargo test --test schema_drift`).
@@ -391,6 +401,68 @@ mod tests {
     assert!(
       !help.lines().any(|l| l.trim_start().starts_with("table ")),
       "deprecated `table` subcommand should not be advertised in --help, got:\n{help}"
+    );
+  }
+
+  #[test]
+  fn test_deprecated_install_and_surfaces_commands_parse_and_are_hidden_from_help(
+  ) {
+    let cli_install = Cli::try_parse_from(["fml", "install"]).unwrap();
+    assert!(matches!(
+      cli_install.command,
+      Commands::Install { all: false }
+    ));
+    assert!(cli_install.validate().is_ok());
+
+    let cli_install_all =
+      Cli::try_parse_from(["fml", "install", "-a"]).unwrap();
+    assert!(matches!(
+      cli_install_all.command,
+      Commands::Install { all: true }
+    ));
+    assert!(cli_install_all.validate().is_ok());
+
+    let cli_list_surfaces =
+      Cli::try_parse_from(["fml", "list-surfaces"]).unwrap();
+    assert!(matches!(cli_list_surfaces.command, Commands::ListSurfaces));
+    assert!(cli_list_surfaces.validate().is_ok());
+
+    let cli_surfaces = Cli::try_parse_from(["fml", "surfaces"]).unwrap();
+    assert!(matches!(cli_surfaces.command, Commands::ListSurfaces));
+    assert!(cli_surfaces.validate().is_ok());
+
+    let mut cmd = Cli::command();
+    cmd.build();
+    let help = cmd.render_help().to_string();
+
+    let visible_subcommands: Vec<&str> = cmd
+      .get_subcommands()
+      .filter(|c| !c.is_hide_set())
+      .map(|c| c.get_name())
+      .collect();
+    assert!(
+      !visible_subcommands.contains(&"install"),
+      "deprecated `install` should be hidden from subcommand list"
+    );
+    assert!(
+      !visible_subcommands.contains(&"list-surfaces"),
+      "deprecated `list-surfaces` should be hidden from subcommand list"
+    );
+    assert!(
+      !help.lines().any(|l| l.trim_start().starts_with("install ")),
+      "deprecated `install` should not appear in --help, got:\n{help}"
+    );
+    assert!(
+      !help
+        .lines()
+        .any(|l| l.trim_start().starts_with("list-surfaces ")),
+      "deprecated `list-surfaces` should not appear in --help, got:\n{help}"
+    );
+    assert!(
+      !help
+        .lines()
+        .any(|l| l.trim_start().starts_with("surfaces ")),
+      "deprecated alias `surfaces` should not appear in --help, got:\n{help}"
     );
   }
 

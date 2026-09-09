@@ -269,7 +269,7 @@ fn test_lookup_tool_info_clippy_live_probe() {
   assert_eq!(result.is_installed, clippy_functional);
 }
 
-/// Regression coverage for #5 and #11: `fml install`'s "already satisfied, skip"
+/// Regression coverage for #5 and #11: `fml doctor --install`'s "already satisfied, skip"
 /// decision (`preflight_install`, and `fml doctor`'s auto-install path) must
 /// treat a `[STALE]` tool as needing reinstall *only* if the selected installer
 /// carries a matching inline pin. A stale tool with an unpinned selected installer
@@ -298,7 +298,7 @@ fn test_needs_install_true_for_stale_tool_with_matching_pin() {
 #[test]
 fn test_needs_install_false_for_stale_tool_with_unpinned_selected_installer() {
   // Fixes #11: When the selected installer has no inline pin (e.g. `brew`),
-  // running `fml install` cannot produce the pinned version — reinstall is skipped.
+  // running `fml doctor --install` cannot produce the pinned version — reinstall is skipped.
   let stale = ToolStatus::Stale {
     current: Version::new(3, 8, 1),
     pinned: Version::new(3, 9, 6),
@@ -334,7 +334,7 @@ fn test_needs_install_false_for_version_matched_ready_tool() {
 #[test]
 fn test_needs_install_false_for_outdated_tool() {
   // Below the MSTV floor is a real problem `fml doctor` already surfaces as
-  // `[WARN]`, but it is not what `fml install`'s missing/stale reinstall
+  // `[WARN]`, but it is not what `fml doctor --install`'s missing/stale reinstall
   // path is for -- unaffected by this change, same as before.
   let outdated = ToolStatus::Outdated {
     current: Version::new(1, 0, 0),
@@ -1039,7 +1039,7 @@ fn test_tool_tally_apply_install_run_is_idempotent() {
 }
 
 /// An empty install run (nothing left to install) leaves the tally untouched,
-/// so a second `fml install` still reports the scan's own numbers.
+/// so a second `fml doctor --install` still reports the scan's own numbers.
 #[test]
 fn test_tool_tally_empty_install_run_leaves_tally_untouched() {
   let mut tally = pre_install_tally(&["rustfmt", "ruff"], &[], &[], 1);
@@ -1080,8 +1080,77 @@ fn test_tool_tally_render_install_hint() {
 
   assert_eq!(
     strip_ansi_escapes(&tally.render(true)).trim(),
-    "1 installed, 1 missing (run 'fml install' to install missing/stale tools)"
+    "1 installed, 1 missing\n  (run 'fml doctor --install' to install missing/stale tools)"
   );
+}
+
+#[test]
+fn test_doctor_table_shows_detected_vs_undetected_status_for_surfaces() {
+  let temp = tempdir().unwrap();
+  let cargo_toml = temp.path().join("Cargo.toml");
+  std::fs::write(
+    &cargo_toml,
+    "[package]\nname = \"doc_test\"\nversion = \"0.1.0\"\nedition = \"2024\"\n",
+  )
+  .unwrap();
+  let src_dir = temp.path().join("src");
+  std::fs::create_dir_all(&src_dir).unwrap();
+  std::fs::write(src_dir.join("main.rs"), "fn main() {}\n").unwrap();
+
+  let config = FormalityConfig::default();
+  let surfaces = all_surfaces();
+  let scan = scan_tools_and_build_table(temp.path(), &surfaces, &config);
+
+  let rendered = strip_ansi_escapes(&render(&scan.table, &Palette::none()));
+
+  // In this workspace, rust is detected; other languages (e.g. python, go) are not.
+  assert!(
+    rendered.contains("rust"),
+    "table should contain rust surface, got:\n{rendered}"
+  );
+  assert!(
+    rendered.contains("detected"),
+    "table should contain 'detected' status, got:\n{rendered}"
+  );
+  assert!(
+    rendered.contains("undetected"),
+    "table should contain 'undetected' status, got:\n{rendered}"
+  );
+
+  // Filter for primary row lines (which start with '[') so wrapped cell continuations are ignored
+  let row_lines: Vec<&str> = rendered
+    .lines()
+    .filter(|l| l.trim_start().starts_with('['))
+    .collect();
+
+  let rust_rows: Vec<&str> = row_lines
+    .iter()
+    .copied()
+    .filter(|line| line.contains("rust"))
+    .collect();
+  assert!(!rust_rows.is_empty(), "expected at least one rust row");
+  for line in &rust_rows {
+    assert!(
+      line.contains("detected") && !line.contains("undetected"),
+      "rust row should be marked detected, got: {line}"
+    );
+  }
+
+  let undetected_rows: Vec<&str> = row_lines
+    .iter()
+    .copied()
+    .filter(|line| line.contains("python"))
+    .collect();
+  assert!(
+    !undetected_rows.is_empty(),
+    "expected at least one undetected row"
+  );
+  for line in &undetected_rows {
+    assert!(
+      line.contains("undetected"),
+      "undetected surface line should be marked undetected, got: {line}"
+    );
+  }
 }
 
 #[test]

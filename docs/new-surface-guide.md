@@ -136,10 +136,11 @@ Key implementation notes drawn from the existing fleet of surfaces:
 - **`check_binary_exists("<binary>")` and `tool_missing_result(...)`**: guard
   tool invocations with `check_binary_exists("<binary>")`. If missing, return
   `tool_missing_result(self.name(), start, "<binary>", install_hint)`.
-- **`tool_info()`**: feeds `fml doctor` and `fml install` — list every binary
-  the surface depends on (formatter and linter separately if they are different
-  binaries), each with `is_required_for_fmt`/`is_required_for_lint` set
-  accurately so `fml doctor --all` reports gaps precisely.
+- **`tool_info()`**: feeds `fml doctor` (including `fml doctor --install`) —
+  list every binary the surface depends on (formatter and linter separately if
+  they are different binaries), each with
+  `is_required_for_fmt`/`is_required_for_lint` set accurately so
+  `fml doctor --all` reports gaps precisely.
 - **Diff-check temp files**: if `format()` needs to check "would this change
   anything" without mutating the real file (used by `fmt --check`), route
   through the shared `diff_check_via_tempcopy` helper in `src/surfaces/sync.rs`
@@ -150,8 +151,9 @@ Key implementation notes drawn from the existing fleet of surfaces:
 
 ## 2. Tooling & Installer Chains (`src/surfaces/tooling.rs`)
 
-`fml install` and `ToolInfo::get_auto_install_cmd()` discover how to install
-missing CLI tools via preference chains defined in `src/surfaces/tooling.rs`.
+`fml doctor --install` and `ToolInfo::get_auto_install_cmd()` discover how to
+install missing CLI tools via preference chains defined in
+`src/surfaces/tooling.rs`.
 
 Add an ordered slice of [`InstallMethod`](../src/surfaces/tooling.rs) variants
 (preferring prebuilt binary managers first, falling back to source compilation
