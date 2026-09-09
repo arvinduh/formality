@@ -33,7 +33,7 @@ impl DeclaresFacets for TypstSurface {
 const TYPST_EXTENSIONS: &[&str] = &["typ"];
 
 /// Builds argument vector for a `typst compile` invocation whose stderr is
-/// safe to parse for the LSP server (`fml lsp`, Fixes #159, #165). Typst has
+/// safe to parse for the LSP server (`fml lsp`, Fixes #159 [pre-recreation], #165 [pre-recreation]). Typst has
 /// no dedicated `check`/`lint` subcommand distinct from `compile` — this
 /// surface's own [`TypstSurface::lint`] already delegates to `typstyle`'s
 /// format-check for that reason. `typst compile` itself does carry real

@@ -183,7 +183,7 @@ pub fn build_ruff_check_args(
 }
 
 /// Builds argument vector for a machine-readable `ruff check` invocation,
-/// used by the LSP server (`fml lsp`, Fixes #159) to translate individual
+/// used by the LSP server (`fml lsp`, Fixes #159 [pre-recreation]) to translate individual
 /// violations into per-file `Diagnostic`s instead of one generic warning.
 /// Mirrors [`build_ruff_check_args`] but requests `--output-format=json`
 /// output instead of `--fix`.
@@ -207,7 +207,7 @@ pub fn build_ruff_check_json_args(
 /// Renders the resolved [`RuffConfig`] as the inline `--config "<key> =
 /// <value>"` overrides `ruff format`/`ruff check` accept, so `fml
 /// fmt`/`fml lint` can apply formality.toml's settings without writing
-/// `ruff.toml` to disk (Fixes #151). Only `fml sync` writes that file now
+/// `ruff.toml` to disk (Fixes #151 [pre-recreation]). Only `fml sync` writes that file now
 /// (see [`PythonSurface::sync_config`]).
 #[must_use]
 pub fn build_ruff_inline_config_args(cfg: &RuffConfig) -> Vec<String> {
@@ -231,7 +231,7 @@ pub fn build_ruff_inline_config_args(cfg: &RuffConfig) -> Vec<String> {
 }
 
 /// Renders the resolved [`RuffConfig`]'s lint-relevant settings as inline
-/// `--config` overrides for `ruff check` (Fixes #151, sibling of
+/// `--config` overrides for `ruff check` (Fixes #151 [pre-recreation], sibling of
 /// [`build_ruff_inline_config_args`] above).
 #[must_use]
 pub fn build_ruff_inline_lint_config_args(cfg: &RuffConfig) -> Vec<String> {
@@ -323,7 +323,7 @@ impl LanguageSurface for PythonSurface {
     }
 
     // Inline `--config key=value` instead of writing `ruff.toml` to disk —
-    // see `build_ruff_inline_config_args` (Fixes #151). `fml sync` remains
+    // see `build_ruff_inline_config_args` (Fixes #151 [pre-recreation]). `fml sync` remains
     // the only path that materializes the file.
     let inline_config =
       build_ruff_inline_config_args(&RuffConfig::from_context(ctx));
@@ -472,7 +472,7 @@ impl LanguageSurface for PythonSurface {
     run_tool_command(self.name(), &mut cmd)
   }
 
-  // `fml fmt`/`fml lint` no longer go through this path (Fixes #151): they
+  // `fml fmt`/`fml lint` no longer go through this path (Fixes #151 [pre-recreation]): they
   // pass the resolved config to ruff inline via repeated `--config key=val`
   // flags (see `build_ruff_inline_config_args` /
   // `build_ruff_inline_lint_config_args`, used in `format()`/`lint()`
@@ -740,7 +740,7 @@ mod tests {
 
   #[test]
   fn test_python_format_and_lint_do_not_write_ruff_toml() {
-    // Fixes #151: `fml fmt`/`fml lint` must not write `ruff.toml` as a side
+    // Fixes #151 [pre-recreation]: `fml fmt`/`fml lint` must not write `ruff.toml` as a side
     // effect; only `fml sync` should materialize the native config file.
     if !check_binary_exists("ruff") {
       return;

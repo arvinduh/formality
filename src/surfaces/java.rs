@@ -203,8 +203,8 @@ impl DeclaresFacets for JavaSurface {
 pub const JAVA_EXTENSIONS: &[&str] = &["java"];
 
 /// Builds argument vector for a `checkstyle -f plain` invocation whose
-/// output is safe to parse for the LSP server (`fml lsp`, Fixes #159,
-/// #165). Checkstyle has both an `-f xml` and `-f plain` machine-readable
+/// output is safe to parse for the LSP server (`fml lsp`, Fixes #159 [pre-recreation],
+/// #165 [pre-recreation]). Checkstyle has both an `-f xml` and `-f plain` machine-readable
 /// mode; `plain` is used here since it needs no XML-parsing crate and its
 /// shape — `[LEVEL] path:line[:col]: message [RuleName]` (verified against
 /// a real checkstyle 10.20.2 run) — is a single line per violation, like
@@ -494,7 +494,7 @@ impl LanguageSurface for JavaSurface {
     }
   }
 
-  // Left as a documented exception, verified not feasible for #157:
+  // Left as a documented exception, verified not feasible for #157 [pre-recreation]:
   // checkstyle's config is an XML *module tree* (see
   // `CheckstyleConfig::render` above), not a flat key=value map. Confirmed
   // against checkstyle 10.20.2's own `-h` output (actually installed and

@@ -408,7 +408,7 @@ impl LanguageSurface for MarkdownSurface {
 
     // Inline `--tab-width`/`--print-width`/etc. instead of writing
     // `.prettierrc.json` to disk — see `build_prettier_inline_args` (Fixes
-    // #151). `fml sync` remains the only path that materializes the file.
+    // #151 [pre-recreation]). `fml sync` remains the only path that materializes the file.
     let inline_config =
       build_prettier_inline_args(&PrettierConfig::from_context(ctx));
 
@@ -612,7 +612,7 @@ impl LanguageSurface for MarkdownSurface {
   // three threads on one path (#130). The shared pass
   // (`sync_shared_prettier_config`) owns it; `uses_prettier` above is this
   // surface's declaration that it consumes it. `fml fmt` is unaffected — it
-  // passes prettier's settings inline (Fixes #151).
+  // passes prettier's settings inline (Fixes #151 [pre-recreation]).
   fn sync_config(&self, ctx: &ExecutionContext, check: bool) -> SurfaceResult {
     sync_native_config::<MarkdownlintConfig>(
       ctx,
@@ -975,7 +975,7 @@ README.md:7 error MD025/single-title/single-h1 Multiple top-level headings";
 
   #[test]
   fn test_markdown_format_does_not_write_prettierrc() {
-    // Fixes #151: `fml fmt` must not write `.prettierrc.json` as a side
+    // Fixes #151 [pre-recreation]: `fml fmt` must not write `.prettierrc.json` as a side
     // effect; only `fml sync` should materialize the native config file.
     if !check_binary_exists("prettier") {
       return;

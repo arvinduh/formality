@@ -8,7 +8,7 @@ reviewer who finds an uncovered violation promotes the rule here, or files a
 follow-up to encode it, rather than fixing one PR and moving on).
 
 > The `#N` citations throughout this document predate the 2026-08-26 repo
-> recreation and no longer resolve — see
+> recreation and resolve to unrelated new issues — see
 > [`docs/INDEX.md`](INDEX.md#note-on-pre-recreation-issuepr-numbers).
 
 ## Base and scope
@@ -33,17 +33,18 @@ or 2 should be.
    (`cargo clippy --all-targets -- -D warnings`), which is `fml` dogfooding
    itself in the `Formality Dogfooding` / `Library Tests` jobs of
    `.github/workflows/pr-check.yml` (`ci.yml` re-runs the same checks on `main`
-   as a post-merge safety net — see #184).
+   as a post-merge safety net — see #184 [pre-recreation]).
 2. **Repo-local test assertion** — a `#[test]` (part of the full test suite that
    runs in the `Library Tests` PR check, gating every PR before merge) that
    walks the filesystem, the surface registry, or another in-crate side-table
    and fails if the rule is violated. The established pattern is
-   `src/surfaces/registry.rs`'s fleet-consistency tests from `#113`
-   (`test_all_fleet_surfaces_present`, alias/case-insensitive lookup) — reuse
-   that mechanism for a new mechanically-checkable rule rather than inventing
-   another one. `test_no_stray_test_files_outside_sanctioned_pattern` in
-   `src/lib.rs` (added alongside this document) is the same pattern applied to
-   the module/file hierarchy rule in §1 below.
+   `src/surfaces/registry.rs`'s fleet-consistency tests from
+   `#113 [pre-recreation]` (`test_all_fleet_surfaces_present`,
+   alias/case-insensitive lookup) — reuse that mechanism for a new
+   mechanically-checkable rule rather than inventing another one.
+   `test_no_stray_test_files_outside_sanctioned_pattern` in `src/lib.rs` (added
+   alongside this document) is the same pattern applied to the module/file
+   hierarchy rule in §1 below.
 3. **Documented, reviewer-checked** — prose, cited by section number in review.
    Smallest tier by design. **Every rule in this tier carries an explicit
    "promote to tier 2 if a mechanical check is found" note** — that note is not
@@ -82,11 +83,11 @@ src/engine/runner/
 No other `*_tests.rs` naming (`registry_tests.rs`, `mod_tests.rs`,
 `facets_tests.rs`, etc.) is sanctioned, even though names like that appear in
 this repo's own history. This was a deliberate, then-reversed convention: issue
-`#82`'s
+`#82 [pre-recreation]`'s
 `refactor(surfaces): split src/surfaces/mod.rs into cohesive sub-modules` commit
 introduced the sibling `<name>_tests.rs` files (`glob_tests.rs`, `mod_tests.rs`,
 `registry_tests.rs`, `sync_tests.rs`, `tooling_tests.rs`;
-`config/facets_tests.rs` predates it); issue `#120`'s
+`config/facets_tests.rs` predates it); issue `#120 [pre-recreation]`'s
 `refactor(structure): relocate editorconfig into domain sub-package` commit then
 explicitly collapsed every one of them back inline, and a survey of the current
 tree confirms which way the codebase actually settled — 25 files use inline
@@ -114,11 +115,11 @@ Per `AGENTS.md`:
 
 `src/lib.rs` no longer carries the `DEPRECATED / STALE ALIAS` block of top-level
 module re-exports (`pub use commands::doctor;` and similar) that used to
-preserve pre-reorganization `crate::foo::*` paths. It was removed in `#133`'s
-sweep once an audit confirmed nothing used it: no internal call site referenced
-the short form, and this crate's own integration tests (`tests/*.rs`) already
-addressed everything through the canonical structural path
-(`fml::surfaces::editorconfig::generate_editorconfig`, not
+preserve pre-reorganization `crate::foo::*` paths. It was removed in
+`#133 [pre-recreation]`'s sweep once an audit confirmed nothing used it: no
+internal call site referenced the short form, and this crate's own integration
+tests (`tests/*.rs`) already addressed everything through the canonical
+structural path (`fml::surfaces::editorconfig::generate_editorconfig`, not
 `fml::generate_editorconfig`) except the two items kept below. **Tier 2
 (enforced by `test_internal_code_uses_canonical_module_paths` in
 `src/lib.rs`):** new internal code always spells out the canonical, structural
@@ -162,18 +163,18 @@ Extracted from what all 12 language surfaces already do consistently — see
   returning `bool` carries `#[must_use]` (`SurfaceResult::is_success`,
   `is_violation`, `is_error`; `ExitStatus::is_clean`, `is_violations`,
   `is_error`; `FacetSupport::is_configurable`, `is_fixed`, `is_unsupported`).
-  Promoted from tier 3 during `#133`'s sweep: a text-scan `#[test]`, the same
-  filesystem-walk mechanism as
+  Promoted from tier 3 during `#133 [pre-recreation]`'s sweep: a text-scan
+  `#[test]`, the same filesystem-walk mechanism as
   `test_no_stray_test_files_outside_sanctioned_pattern`, is enough to check
   every `is_*` predicate with a `-> bool` signature in the tree — the sweep's
   own audit turned up two real misses (`DeclaresFacets::is_facet_configurable`,
-  `surfaces::java::is_aosp_style`), both fixed in the same PR. A `#201` QA
-  review then proved the first version of this scan didn't actually check the
-  rule it claimed to: it matched only a single-line `pub fn is_*(...) -> bool`
-  signature, so it stayed green with `#[must_use]` deleted from
-  `ExitStatus::is_clean` (a `pub const fn`, and this rule's own named exemplar)
-  and was blind to `pub(crate)`/`pub(super)` visibility and multi-line
-  signatures — missing three more real violations
+  `surfaces::java::is_aosp_style`), both fixed in the same PR. A
+  `#201 [pre-recreation]` QA review then proved the first version of this scan
+  didn't actually check the rule it claimed to: it matched only a single-line
+  `pub fn is_*(...) -> bool` signature, so it stayed green with `#[must_use]`
+  deleted from `ExitStatus::is_clean` (a `pub const fn`, and this rule's own
+  named exemplar) and was blind to `pub(crate)`/`pub(super)` visibility and
+  multi-line signatures — missing three more real violations
   (`surfaces::tooling::is_available`,
   `config::facets::is_value_compatible_with_fixed`,
   `surfaces::glob::is_excluded_normalized`) in the process. The scan now
@@ -194,7 +195,8 @@ Extracted from what all 12 language surfaces already do consistently — see
 
 Tier 1 already governs the bulk of this: `src/lib.rs` sets
 `#![warn(missing_docs, clippy::missing_errors_doc, clippy::missing_panics_doc)]`
-crate-wide (landed via `#121`, this issue's blocker). That means:
+crate-wide (landed via `#121 [pre-recreation]`, this issue's blocker). That
+means:
 
 - Every public item needs a `///` doc comment, or the build warns (`-D warnings`
   in CI makes that a hard failure).
@@ -226,10 +228,11 @@ On top of that tier-1 floor, this codebase's own convention:
   content already opted out of the doc lints by the bullet above, the same way
   an inline `mod tests` block carries no `//!` of its own. **Tier 2, enforced by
   `test_files_carry_module_doc_comment` in `src/lib.rs`.** Promoted from tier 3
-  during `#201`'s QA follow-up to `#133`'s sweep: that PR's own audit omitted §3
-  entirely, and a QA review found the rule ~80% unmet across the tree (41 of 50
-  files at the time) — the exact silent-drift failure mode tier 2 exists to
-  prevent, so this was pushed up rather than re-documented as still tier 3.
+  during `#201 [pre-recreation]`'s QA follow-up to `#133 [pre-recreation]`'s
+  sweep: that PR's own audit omitted §3 entirely, and a QA review found the rule
+  ~80% unmet across the tree (41 of 50 files at the time) — the exact
+  silent-drift failure mode tier 2 exists to prevent, so this was pushed up
+  rather than re-documented as still tier 3.
 - A non-obvious architectural choice gets a comment explaining _why_, not just
   _what_ — e.g. the `Arc`-sharing rationale on `ExecutionContext` (§4 below), or
   the comment above `src/lib.rs`'s two remaining crate-root re-exports
@@ -315,9 +318,10 @@ rather than special-casing to `Arc<Path>`. `lang_config`, by contrast, is a
 plain owned `ResolvedLangConfig` — it's genuinely per-surface
 (`config.resolve_for_lang(surface.name())`), so there's nothing shared to `Arc`
 there. (`root` was converted from a plain `PathBuf` to `Arc<PathBuf>` during
-`#133`'s sweep, once an audit confirmed it fit this exact pattern — every
-production read is `Path`-like usage reached through `Deref`/`AsRef`, so call
-sites needed only `ctx.root.as_path()` in place of `&ctx.root`.)
+`#133 [pre-recreation]`'s sweep, once an audit confirmed it fit this exact
+pattern — every production read is `Path`-like usage reached through
+`Deref`/`AsRef`, so call sites needed only `ctx.root.as_path()` in place of
+`&ctx.root`.)
 
 **Tier 3 (promote to tier 2 if a mechanical check is found):** a new field on
 `ExecutionContext` (or a similarly fanned-out per-invocation struct) that holds
@@ -483,9 +487,10 @@ loop.
 
 ## 5. Error handling conventions
 
-Landed via `#119` ("crate-wide error type hierarchy & standardized exit code /
-diagnostic pipeline"), this issue's other blocker having already resolved by the
-time this document was written. `src/errors.rs` is the single source of truth:
+Landed via `#119 [pre-recreation]` ("crate-wide error type hierarchy &
+standardized exit code / diagnostic pipeline"), this issue's other blocker
+having already resolved by the time this document was written. `src/errors.rs`
+is the single source of truth:
 
 - No `anyhow`/`thiserror` — this crate hand-rolls its error hierarchy. Neither
   is a dependency (see `Cargo.toml`); don't add one for a new error site.

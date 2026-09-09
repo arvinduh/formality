@@ -315,7 +315,7 @@ impl FormalityConfig {
   /// each surface detected in the workspace.
   ///
   /// The stubs stay commented out deliberately: `fml` auto-detects and
-  /// formats every surface with sane defaults out of the box (see #68), so
+  /// formats every surface with sane defaults out of the box (see #68 [pre-recreation]), so
   /// `generate_sample()`'s `[global]` block alone is a fully working config.
   /// The per-language stubs exist purely as discoverable, ready-to-uncomment
   /// starting points that show users *which* languages were found and *what*

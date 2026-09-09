@@ -103,7 +103,7 @@ pub fn build_clippy_args(fix: bool, extra_args: &[String]) -> Vec<String> {
 }
 
 /// Builds argument vector for a machine-readable `cargo clippy` invocation,
-/// used by the LSP server (`fml lsp`, Fixes #159) to translate individual
+/// used by the LSP server (`fml lsp`, Fixes #159 [pre-recreation]) to translate individual
 /// violations into per-file `Diagnostic`s instead of one generic warning.
 /// Mirrors [`build_clippy_args`] but requests `--message-format=json` output
 /// instead of `--fix`, since autofixing and machine parsing are mutually
@@ -251,7 +251,7 @@ impl LanguageSurface for RustSurface {
     };
 
     // Inline `--config key=val,...` instead of writing `.rustfmt.toml` to
-    // disk — see `build_rustfmt_inline_config` (Fixes #151). `fml sync`
+    // disk — see `build_rustfmt_inline_config` (Fixes #151 [pre-recreation]). `fml sync`
     // remains the only path that materializes the file, for users who want
     // it on disk (e.g. for editor integrations that don't go through `fml`).
     let inline_config =
@@ -337,7 +337,7 @@ impl LanguageSurface for RustSurface {
     run_tool_command(self.name(), &mut cmd)
   }
 
-  // `fml fmt`/`fml lint` no longer go through this path (Fixes #151): they
+  // `fml fmt`/`fml lint` no longer go through this path (Fixes #151 [pre-recreation]): they
   // pass the resolved config to rustfmt inline via `--config` (see
   // `build_rustfmt_inline_config`, used in `format()` above). This method is
   // now reached only by `fml sync`, for users who explicitly want
@@ -645,7 +645,7 @@ mod tests {
 
   #[test]
   fn test_rust_format_does_not_write_rustfmt_toml() {
-    // Fixes #151: `fml fmt` must not write `.rustfmt.toml` as a side effect;
+    // Fixes #151 [pre-recreation]: `fml fmt` must not write `.rustfmt.toml` as a side effect;
     // only `fml sync` should materialize the native config file.
     if !check_binary_exists("rustfmt") && !check_binary_exists("cargo") {
       return;

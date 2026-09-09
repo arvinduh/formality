@@ -1,12 +1,13 @@
 # 0004 — Per-issue `status:*` labels instead of a shared hand-edited tracking document
 
-> `#N` citations below predate the 2026-08-26 repo recreation and no longer
-> resolve — see
+> `#N` citations below predate the 2026-08-26 repo recreation and resolve to
+> unrelated new issues — see
 > [`docs/INDEX.md`](../INDEX.md#note-on-pre-recreation-issuepr-numbers).
 
 **Status:** Accepted **Decided in:** repo-original design (per-issue `status:*`
 labels, `.agents/orchestrate.md` §11), reaffirmed and the last remnant of the
-alternative removed via PR `#167` (closing tracking issue `#134`).
+alternative removed via PR `#167 [pre-recreation]` (closing tracking issue
+`#134 [pre-recreation]`).
 
 ## Context
 
@@ -17,14 +18,15 @@ now-only approach), and — for a period — _also_ a pinned master tracking iss
 that regenerated a summary of those labels for humans skimming on GitHub's web
 UI.
 
-The pinned tracking issue was removed on 2026-08-24 (PR `#167`). Its
-regeneration was manual, not automated, so it went stale between sessions with
-nothing forcing a refresh. That made it a second, cacheable source of truth that
-could — and did — silently disagree with the real one (the labels themselves).
-The same PR also folded in a related finding: two issues (`#128`, `#55`) had
-stale `status:blocked` labels whose named `Blocked-by` target had already
-closed, with nothing catching the drift — the general version of the same
-staleness problem, just narrower in blast radius.
+The pinned tracking issue was removed on 2026-08-24 (PR
+`#167 [pre-recreation]`). Its regeneration was manual, not automated, so it went
+stale between sessions with nothing forcing a refresh. That made it a second,
+cacheable source of truth that could — and did — silently disagree with the real
+one (the labels themselves). The same PR also folded in a related finding: two
+issues (`#128 [pre-recreation]`, `#55 [pre-recreation]`) had stale
+`status:blocked` labels whose named `Blocked-by` target had already closed, with
+nothing catching the drift — the general version of the same staleness problem,
+just narrower in blast radius.
 
 ## Decision
 
@@ -52,9 +54,10 @@ self-assignment) — narrow per-issue writes over any shared aggregate.
   before trusting a `status:blocked` label, check whether its named blocker(s)
   are actually still closed, and unblock explicitly (remove `status:blocked`,
   add the next status, leave a comment explaining why) rather than leaving a
-  label that's lying about real state. This issue's own `#131` history is a live
-  example: it carried a stale `status:blocked` until a worker checked
-  `#122`/`#128` and flipped it, per the comment on this issue.
+  label that's lying about real state. This issue's own `#131 [pre-recreation]`
+  history is a live example: it carried a stale `status:blocked` until a worker
+  checked `#122 [pre-recreation]`/`#128 [pre-recreation]` and flipped it, per
+  the comment on this issue.
 - No single GitHub page gives a human a one-glance snapshot of repo state
   anymore — `gh issue list --label status:ready` (or the equivalent search in
   the web UI) is the only view, not a substitute human-readable digest.

@@ -409,9 +409,9 @@ impl LanguageServer for FormalityLsp {
     // project marker file, spawn failure, required config missing) — either
     // way this falls back to running in-process `fml lint` and, on non-zero
     // exit, a single generic warning pointing at the output channel — the
-    // same behavior this module had before #159. This is what keeps a file
+    // same behavior this module had before #159 [pre-recreation]. This is what keeps a file
     // from being published "clean" when the structured tool never actually
-    // ran (#177).
+    // ran (#177 [pre-recreation]).
     let diagnostics = if let Some(diags) =
       crate::commands::lsp_diagnostics::diagnostics_for_file_with_config(
         &root,

@@ -212,7 +212,7 @@ pub const JS_TS_EXTENSIONS: &[&str] =
 /// Renders the resolved [`BiomeConfig`]'s formatting-layout settings as the
 /// inline `--indent-style`/`--line-width`/etc. flags `biome check`/`biome
 /// format` accept, so `fml fmt` can apply formality.toml's settings without
-/// writing `biome.json` to disk (Fixes #151). Only `fml sync` writes that
+/// writing `biome.json` to disk (Fixes #151 [pre-recreation]). Only `fml sync` writes that
 /// file now (see [`JavaScriptSurface::sync_config`]). This covers the
 /// formatting-layout options only — the linter preset and the
 /// `assist.actions.source.organizeImports` toggle have no equivalent
@@ -325,7 +325,7 @@ pub fn build_biome_lint_args(
 }
 
 /// Builds the argument vector for `biome lint --reporter=json <file>`, used
-/// by `fml lsp`'s structured-diagnostics path (Fixes #165) to get
+/// by `fml lsp`'s structured-diagnostics path (Fixes #165 [pre-recreation]) to get
 /// machine-readable per-violation output instead of parsing biome's
 /// human-readable terminal report. `--reporter=json` is marked experimental
 /// by biome as of 2.x but its diagnostic shape (`diagnostics[].location.path`
@@ -422,7 +422,7 @@ impl LanguageSurface for JavaScriptSurface {
 
     // Inline `--indent-style`/`--line-width`/etc. instead of writing
     // `biome.json` to disk — see `build_biome_inline_format_args` (Fixes
-    // #151). `fml sync` remains the only path that materializes the file.
+    // #151 [pre-recreation]). `fml sync` remains the only path that materializes the file.
     let inline_config =
       build_biome_inline_format_args(&BiomeConfig::from_context(ctx));
 
@@ -503,7 +503,7 @@ impl LanguageSurface for JavaScriptSurface {
   }
 
   // `fml fmt` no longer goes through this path for the formatting-layout
-  // options (Fixes #151): it passes them to biome inline (see
+  // options (Fixes #151 [pre-recreation]): it passes them to biome inline (see
   // `build_biome_inline_format_args`, used in `format()` above). The
   // linter preset and `organizeImports` toggle have no equivalent
   // single-action CLI flag (see that function's doc comment for why), so
@@ -741,7 +741,7 @@ mod tests {
 
   #[test]
   fn test_javascript_format_does_not_write_biome_json() {
-    // Fixes #151: `fml fmt` must not write `biome.json` as a side effect;
+    // Fixes #151 [pre-recreation]: `fml fmt` must not write `biome.json` as a side effect;
     // only `fml sync` should materialize the native config file.
     if !check_binary_exists("biome") {
       return;

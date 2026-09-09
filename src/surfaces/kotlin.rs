@@ -86,7 +86,7 @@ pub fn build_ktlint_lint_args(
 }
 
 /// Builds argument vector for a machine-readable `ktlint` invocation, used
-/// by the LSP server (`fml lsp`, Fixes #159, #165) to translate individual
+/// by the LSP server (`fml lsp`, Fixes #159 [pre-recreation], #165 [pre-recreation]) to
 /// violations into per-file `Diagnostic`s instead of one generic warning.
 /// Mirrors [`build_ktlint_lint_args`] but requests `--reporter=json` output
 /// instead of `-F` (this is a read-only diagnostics pass, never a fix).

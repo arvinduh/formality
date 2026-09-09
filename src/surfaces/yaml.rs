@@ -104,8 +104,8 @@ impl NativeConfig for YamllintConfig {
 /// Renders a [`YamllintConfig`] as the inline YAML source text yamllint's
 /// `-d`/`--config-data` flag accepts, so `fml lint` can apply
 /// formality.toml's settings without writing `.yamllint.yaml` to disk
-/// (Fixes #151). `fml sync` still writes that file for users who want it
-/// materialized on disk (see [`YamlSurface::sync_config`], Fixes #158).
+/// (Fixes #151 [pre-recreation]). `fml sync` still writes that file for users who want it
+/// materialized on disk (see [`YamlSurface::sync_config`], Fixes #158 [pre-recreation]).
 #[must_use]
 pub fn build_yamllint_inline_config(cfg: &YamllintConfig) -> String {
   // yamllint's `-d` takes a literal YAML document, so this just reuses the
@@ -115,7 +115,7 @@ pub fn build_yamllint_inline_config(cfg: &YamllintConfig) -> String {
 }
 
 /// Builds the argument vector for `yamllint -f parsable <file>`, used by
-/// `fml lsp`'s structured-diagnostics path (Fixes #165). `parsable` is
+/// `fml lsp`'s structured-diagnostics path (Fixes #165 [pre-recreation]). `parsable` is
 /// yamllint's long-stable gcc-style line format —
 /// `path:line:col: [level] message (rule)` — verified against a locally
 /// installed yamllint. Like the existing clippy/ruff diagnostics paths, this
@@ -219,7 +219,7 @@ impl LanguageSurface for YamlSurface {
 
     // Inline `--tab-width`/`--print-width`/etc. instead of writing
     // `.prettierrc.json` to disk — see `build_prettier_inline_args` (Fixes
-    // #151). `fml sync` remains the only path that materializes the file.
+    // #151 [pre-recreation]). `fml sync` remains the only path that materializes the file.
     let inline_config =
       build_prettier_inline_args(&PrettierConfig::from_context(ctx));
 
@@ -289,7 +289,7 @@ impl LanguageSurface for YamlSurface {
     }
 
     // Inline `-d <yaml source>` instead of writing `.yamllint.yaml` to disk
-    // — see `build_yamllint_inline_config` (Fixes #151). `fml sync` remains
+    // — see `build_yamllint_inline_config` (Fixes #151 [pre-recreation]). `fml sync` remains
     // the only path that materializes the file.
     let inline_config =
       build_yamllint_inline_config(&YamllintConfig::from_context(ctx));
@@ -317,12 +317,12 @@ impl LanguageSurface for YamlSurface {
     true
   }
 
-  // `fml fmt`/`fml lint` no longer go through this path (Fixes #151): they
+  // `fml fmt`/`fml lint` no longer go through this path (Fixes #151 [pre-recreation]): they
   // pass the resolved config to prettier/yamllint inline (see
   // `build_prettier_inline_args` and `build_yamllint_inline_config`, used in
   // `format()`/`lint()` above). This method is now reached only by `fml
   // sync`, for users who explicitly want `.yamllint.yaml` materialized on
-  // disk (Fixes #158: previously this never called
+  // disk (Fixes #158 [pre-recreation]: previously this never called
   // `sync_native_config::<YamllintConfig>`, so `.yamllint.yaml` was never
   // actually written by `fml sync`).
   //
@@ -445,7 +445,7 @@ mod tests {
     assert!(surface.uses_prettier());
     assert!(!temp.path().join(".prettierrc.json").exists());
 
-    // Fixes #158: `fml sync` must also materialize `.yamllint.yaml`.
+    // Fixes #158 [pre-recreation]: `fml sync` must also materialize `.yamllint.yaml`.
     let yamllint_path = temp.path().join(".yamllint.yaml");
     assert!(yamllint_path.is_file());
     let content = std::fs::read_to_string(&yamllint_path).unwrap();
@@ -480,9 +480,9 @@ mod tests {
 
   #[test]
   fn test_yaml_format_and_lint_do_not_write_native_files() {
-    // Fixes #151: `fml fmt`/`fml lint` must not write `.prettierrc.json` or
+    // Fixes #151 [pre-recreation]: `fml fmt`/`fml lint` must not write `.prettierrc.json` or
     // `.yamllint.yaml` as a side effect; only `fml sync` writes those files
-    // (see `sync_config`, Fixes #158).
+    // (see `sync_config`, Fixes #158 [pre-recreation]).
     let temp = TempDir::new().unwrap();
     std::fs::write(temp.path().join("a.yaml"), "a: 1\n").unwrap();
 

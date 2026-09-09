@@ -212,7 +212,7 @@ fn test_command_ran_successfully_false_on_spawn_error() {
   assert!(!command_ran_successfully(&output));
 }
 
-/// Regression test for #192: `clippy_probe_succeeds` (what `lookup_tool_info`
+/// Regression test for #192 [pre-recreation]: `clippy_probe_succeeds` (what `lookup_tool_info`
 /// gates `is_installed` on for every alias clippy can be registered under —
 /// `"clippy"`, `"clippy-driver"`, `"cargo-clippy"`) must require an actual
 /// successful invocation, not just presence on `PATH`. Parameterized over
@@ -223,7 +223,7 @@ fn test_command_ran_successfully_false_on_spawn_error() {
 #[test]
 fn test_clippy_probe_succeeds_requires_functional_driver() {
   // Both the driver and the cargo fallback are broken (`false` always exits
-  // 1) — this is the shim-present-but-component-missing case from #192, and
+  // 1) — this is the shim-present-but-component-missing case from #192 [pre-recreation], and
   // must be reported as NOT installed.
   assert!(!clippy_probe_succeeds("false", "false"));
 
@@ -240,7 +240,7 @@ fn test_clippy_probe_succeeds_requires_functional_driver() {
   ));
 }
 
-/// Regression test for #192: `lookup_tool_info` must dispatch to the
+/// Regression test for #192 [pre-recreation]: `lookup_tool_info` must dispatch to the
 /// functional clippy probe for the actual binary name production code
 /// passes it (`src/surfaces/rust.rs` registers the tool as
 /// `"clippy-driver"`, never the bare string `"clippy"`) — a guard that only

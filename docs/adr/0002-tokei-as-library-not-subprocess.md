@@ -1,12 +1,12 @@
 # 0002 — `tokei` as a library dependency, not a subprocess, for a future `fml stat`
 
-> `#N` citations below predate the 2026-08-26 repo recreation and no longer
-> resolve — see
+> `#N` citations below predate the 2026-08-26 repo recreation and resolve to
+> unrelated new issues — see
 > [`docs/INDEX.md`](../INDEX.md#note-on-pre-recreation-issuepr-numbers).
 
 **Status:** Proposed — `fml stat` does not exist in the codebase yet; this ADR
 backfills a decision made in design conversation ahead of implementation, per
-issue `#131`.
+issue `#131 [pre-recreation]`.
 
 ## Context
 
@@ -61,13 +61,14 @@ Depend on `tokei` as a library crate, not invoke it as a subprocess.
 ## Note on sourcing
 
 Unlike the other three ADRs in this directory, this one is cited from exactly
-one place: issue `#131`'s own body, which names "tokei-as-library-not-subprocess
-(for a future `fml stat`)" as one of four decisions "made in this session's
-design conversation that currently exist nowhere durable." That is a real record
-that the choice was made, by the repo owner, and it is why this ADR exists — but
-it records the _conclusion_ without the reasoning, and nothing else in this
-repository mentions `tokei` at all (verified against `git log --all -S tokei`, a
-tree-wide grep, and GitHub issue/PR search: zero hits outside this directory).
+one place: issue `#131 [pre-recreation]`'s own body, which names
+"tokei-as-library-not-subprocess (for a future `fml stat`)" as one of four
+decisions "made in this session's design conversation that currently exist
+nowhere durable." That is a real record that the choice was made, by the repo
+owner, and it is why this ADR exists — but it records the _conclusion_ without
+the reasoning, and nothing else in this repository mentions `tokei` at all
+(verified against `git log --all -S tokei`, a tree-wide grep, and GitHub
+issue/PR search: zero hits outside this directory).
 
 The **Rationale** section above is therefore reconstructed from `fml`'s existing
 conventions (see [language-surfaces.md](../language-surfaces.md) and

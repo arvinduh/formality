@@ -77,7 +77,7 @@ impl NativeConfig for TaploConfig {
 
 /// Renders a [`TaploConfig`] as the `-o key=value` flags taplo's `format`
 /// subcommand accepts inline, so `fml fmt` can apply formality.toml's
-/// settings without writing `taplo.toml` to disk (Fixes #151). Only `fml
+/// settings without writing `taplo.toml` to disk (Fixes #151 [pre-recreation]). Only `fml
 /// sync` writes that file now (see [`TomlSurface::sync_config`]). taplo's
 /// `lint` subcommand has no equivalent inline-override flag (only `-c/--config
 /// <path>`), but lint doesn't consume these formatting-layout options anyway.
@@ -100,7 +100,7 @@ pub fn build_taplo_inline_config_args(cfg: &TaploConfig) -> Vec<String> {
 }
 
 /// Builds argument vector for a `taplo lint` invocation whose output is
-/// safe to parse for the LSP server (`fml lsp`, Fixes #159, #165). taplo has
+/// safe to parse for the LSP server (`fml lsp`, Fixes #159 [pre-recreation], #165 [pre-recreation]). taplo has
 /// no JSON/structured reporter reachable by CLI flag — only a
 /// codespan-reporting-style human diagnostic block (`error: <message>` then
 /// a `┌─ path:line:col` location line, verified against a real taplo v0.10.0
@@ -202,7 +202,7 @@ impl LanguageSurface for TomlSurface {
     }
 
     // Inline `-o key=value` instead of writing `taplo.toml` to disk — see
-    // `build_taplo_inline_config_args` (Fixes #151). `fml sync` remains the
+    // `build_taplo_inline_config_args` (Fixes #151 [pre-recreation]). `fml sync` remains the
     // only path that materializes the file.
     let inline_config =
       build_taplo_inline_config_args(&TaploConfig::from_context(ctx));
@@ -272,7 +272,7 @@ impl LanguageSurface for TomlSurface {
     run_tool_command(self.name(), &mut cmd)
   }
 
-  // `fml fmt` no longer goes through this path (Fixes #151): it passes the
+  // `fml fmt` no longer goes through this path (Fixes #151 [pre-recreation]): it passes the
   // resolved config to taplo inline via repeated `-o key=value` flags (see
   // `build_taplo_inline_config_args`, used in `format()` above). This method
   // is now reached only by `fml sync`, for users who explicitly want
@@ -412,7 +412,7 @@ mod tests {
 
   #[test]
   fn test_toml_format_does_not_write_taplo_toml() {
-    // Fixes #151: `fml fmt` must not write `taplo.toml` as a side effect;
+    // Fixes #151 [pre-recreation]: `fml fmt` must not write `taplo.toml` as a side effect;
     // only `fml sync` should materialize the native config file.
     if !check_binary_exists("taplo") {
       return;

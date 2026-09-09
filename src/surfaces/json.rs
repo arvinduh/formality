@@ -92,7 +92,7 @@ impl LanguageSurface for JsonSurface {
 
     // Inline `--tab-width`/`--print-width`/etc. instead of writing
     // `.prettierrc.json` to disk — see `build_prettier_inline_args` (Fixes
-    // #151). `fml sync` remains the only path that materializes the file.
+    // #151 [pre-recreation]). `fml sync` remains the only path that materializes the file.
     let inline_config =
       build_prettier_inline_args(&PrettierConfig::from_context(ctx));
 
@@ -367,7 +367,7 @@ mod tests {
 
   #[test]
   fn test_json_format_does_not_write_prettierrc() {
-    // Fixes #151: `fml fmt` must not write `.prettierrc.json` as a side
+    // Fixes #151 [pre-recreation]: `fml fmt` must not write `.prettierrc.json` as a side
     // effect; only `fml sync` should materialize the native config file.
     if !check_binary_exists("prettier") {
       return;
