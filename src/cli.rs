@@ -160,7 +160,7 @@ pub enum Commands {
     all: bool,
   },
 
-  /// Scaffold a new formality.toml configuration in the current directory
+  /// Scaffold a new formality.toml or update the schema pin in an existing one
   Init {
     /// Overwrite existing configuration file if it already exists
     #[arg(short = 'f', long)]
@@ -214,7 +214,8 @@ pub enum Commands {
     json: Option<String>,
   },
 
-  /// Migrate project files to match the current formality release
+  /// Deprecated: use `fml init`. Kept working for one minor release.
+  #[command(hide = true)]
   Migrate {
     /// Which migration to run.
     #[command(subcommand)]
@@ -277,6 +278,7 @@ impl Cli {
 
 /// Subcommands of `fml migrate`.
 #[derive(Subcommand, Debug)]
+#[command(hide = true)]
 pub enum MigrateCommands {
   /// Rewrite the `#:schema` directive in formality.toml / .formality.toml to
   /// point at the current release's schema URL, leaving the rest of the file
@@ -362,6 +364,27 @@ mod tests {
     assert!(
       !help.contains("--check"),
       "`fml lint` has no mode flag to advertise, got:
+{help}"
+    );
+  }
+
+  #[test]
+  fn test_deprecated_migrate_still_parses_but_is_hidden_from_help() {
+    let cli = Cli::try_parse_from(["fml", "migrate", "schema"]).unwrap();
+    assert!(matches!(
+      cli.command,
+      Commands::Migrate {
+        command: MigrateCommands::Schema
+      }
+    ));
+    assert!(cli.validate().is_ok());
+
+    let mut cmd = Cli::command();
+    cmd.build();
+    let help = cmd.render_help().to_string();
+    assert!(
+      !help.contains("migrate"),
+      "a deprecated command should not be advertised in --help, got:
 {help}"
     );
   }

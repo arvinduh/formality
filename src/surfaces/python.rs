@@ -2,10 +2,10 @@
 //! sort, and lint), syncing the managed `ruff.toml` from `formality.toml`.
 
 use super::{
-  DeclaresFacets, ExecutionContext, Facet, FacetSupport, LanguageSurface,
-  NativeConfig, SurfaceResult, SurfaceStatus, ToolInfo,
+  DeclaresFacets, ExecutionContext, ExitClass, Facet, FacetSupport,
+  LanguageSurface, NativeConfig, SurfaceResult, SurfaceStatus, ToolInfo,
   classify_all_nonzero_as_error, create_tool_command,
-  diff_check_via_tempcopy_classified, find_files_with_ext,
+  diff_check_via_tempcopy_classified, find_files_with_ext, merge_tool_streams,
   render_native_config, run_tool_command, run_tool_command_classified,
   sync_native_config, tool_missing_guard,
 };
@@ -136,6 +136,62 @@ impl DeclaresFacets for PythonSurface {
 
 /// Standard file extensions recognized for Python source files.
 pub const PYTHON_EXTENSIONS: &[&str] = &["py", "pyi"];
+
+/// Returns true if `extra_args` includes flags that widen or override rule
+/// selection in Ruff (e.g. `--extend-select` or `--select`).
+#[must_use]
+pub fn extra_args_widen_selection(extra_args: &[String]) -> bool {
+  extra_args.iter().any(|arg| {
+    arg == "--extend-select"
+      || arg.starts_with("--extend-select=")
+      || arg == "--select"
+      || arg.starts_with("--select=")
+  })
+}
+
+/// Returns true if Ruff output indicates lint rule violations rather than
+/// purely an operational syntax error (`invalid-syntax:` or `E999`).
+#[must_use]
+pub fn ruff_output_has_lint_findings(stdout: &str, stderr: &str) -> bool {
+  if !stderr.trim().is_empty() && stdout.trim().is_empty() {
+    return false;
+  }
+  let has_syntax_error =
+    stdout.contains("invalid-syntax:") || stdout.contains("E999");
+  let has_findings = stdout.lines().any(|line| {
+    let trimmed = line.trim();
+    !trimmed.starts_with("invalid-syntax:")
+      && !trimmed.starts_with("error:")
+      && !trimmed.is_empty()
+      && (trimmed.starts_with("Found ")
+        || trimmed.split_once(' ').is_some_and(|(code, _)| {
+          code.chars().all(|c| c.is_ascii_alphanumeric())
+        }))
+  });
+  !has_syntax_error && has_findings
+}
+
+/// Classifies non-zero exit from `ruff check --select I --fix`.
+///
+/// Exit 1 represents lint violations found if rule selection was widened
+/// (e.g. via `--extend-select` in `extra_args`, Fixes #208) or if the tool
+/// output contains lint findings. Otherwise (e.g. syntax errors or exit 2
+/// operational errors), it represents an operational failure.
+#[must_use]
+pub fn is_ruff_import_sort_violation(
+  code: Option<i32>,
+  stdout: &str,
+  stderr: &str,
+  extra_args: &[String],
+) -> bool {
+  if code != Some(1) {
+    return false;
+  }
+  if extra_args_widen_selection(extra_args) {
+    return true;
+  }
+  ruff_output_has_lint_findings(stdout, stderr)
+}
 
 /// Builds argument vector for ruff import sorting invocation (`ruff check --select I --fix`).
 #[must_use]
@@ -328,6 +384,9 @@ impl LanguageSurface for PythonSurface {
     let inline_config =
       build_ruff_inline_config_args(&RuffConfig::from_context(ctx));
 
+    let widens_selection =
+      extra_args_widen_selection(&ctx.lang_config.extra_args);
+
     if ctx.check_only {
       return diff_check_via_tempcopy_classified(
         &files,
@@ -355,17 +414,21 @@ impl LanguageSurface for PythonSurface {
         },
         self.name(),
         start,
-        // Neither pass has an exit code that means "ran fine, found
-        // formatting drift": the isort pass runs `ruff check --select I
-        // --fix`, so any drift is fixed in place and a non-zero exit means
-        // violations ruff could not fix under an import-only selection —
-        // in practice an `E999` syntax error (ruff always reports those) or,
-        // at exit 2, ruff itself erroring. `ruff format` (no `--check`) exits
-        // 0 formatted-or-not and only exits 2 on a parse/IO/config error.
-        // Every non-zero exit on this path is therefore an operational
-        // failure, not a lint result (Fixes #151). Same reasoning applies
-        // verbatim to the non-`--check` write branch below (Fixes #155).
-        classify_all_nonzero_as_error,
+        // The isort pass runs `ruff check --select I --fix`. Drift is fixed
+        // in place. A non-zero exit means either violations ruff could not fix
+        // or an operational failure. Without widened selection, exit 1 indicates an
+        // operational failure (e.g. an `invalid-syntax` or `E999` syntax error, which
+        // prevents formatting). However, when `extra_args` widens selection (e.g.
+        // `--extend-select`), exit 1 indicates leftover lint violations and must be
+        // classified as `ViolationsFound`, not `ExecutionError` (Fixes #208).
+        // Exit 2 from ruff erroring always remains `ExecutionError`.
+        move |code| {
+          if widens_selection && code == Some(1) {
+            ExitClass::ViolationsFound
+          } else {
+            ExitClass::ExecutionError
+          }
+        },
       );
     }
 
@@ -384,23 +447,34 @@ impl LanguageSurface for PythonSurface {
         if !output.status.success() {
           let stderr = String::from_utf8_lossy(&output.stderr).to_string();
           let stdout = String::from_utf8_lossy(&output.stdout).to_string();
-          let msg = if !stderr.trim().is_empty() {
-            stderr
-          } else if !stdout.trim().is_empty() {
-            stdout
-          } else {
-            "Import sorting issues found in Python files".to_string()
-          };
+          let msg = merge_tool_streams(
+            &stdout,
+            &stderr,
+            "Import sorting issues found in Python files",
+          );
 
           // `ruff check --select I --fix` fixes any import-sort drift in
-          // place and only exits non-zero on a violation it could not fix
-          // (in practice an `E999` syntax error) or ruff itself erroring
-          // (exit 2) — never to report drift it already corrected. Same
-          // reasoning as the `--check` path's classifier above: an
-          // operational failure, not a lint result (Fixes #155).
+          // place. When `extra_args` widens selection (e.g. `--extend-select`)
+          // or the output contains lint findings, exit 1 represents lint violations
+          // found, not an execution failure (Fixes #208). Otherwise (e.g. syntax
+          // errors or exit 2 operational errors), classify as `ExecutionError` (Fixes #155).
+          let is_violation = is_ruff_import_sort_violation(
+            output.status.code(),
+            &stdout,
+            &stderr,
+            &ctx.lang_config.extra_args,
+          );
+
           return SurfaceResult {
             surface_name: self.name(),
-            status: SurfaceStatus::ExecutionError { message: msg },
+            status: if is_violation {
+              SurfaceStatus::ViolationsFound {
+                message: msg,
+                diff: None,
+              }
+            } else {
+              SurfaceStatus::ExecutionError { message: msg }
+            },
             duration: start.elapsed(),
           };
         }
@@ -846,6 +920,110 @@ mod tests {
     assert!(
       matches!(res.status, SurfaceStatus::ExecutionError { .. }),
       "a ruff format failure on the write path must be ExecutionError, got: {:?}",
+      res.status
+    );
+    assert!(!res.is_success());
+  }
+
+  #[test]
+  fn test_extra_args_widen_selection() {
+    assert!(!extra_args_widen_selection(&[]));
+    assert!(!extra_args_widen_selection(&[
+      "--ignore".to_string(),
+      "E501".to_string(),
+    ]));
+    assert!(extra_args_widen_selection(&[
+      "--extend-select".to_string(),
+      "F821".to_string(),
+    ]));
+    assert!(extra_args_widen_selection(&[
+      "--extend-select=F".to_string(),
+    ]));
+    assert!(extra_args_widen_selection(&[
+      "--select".to_string(),
+      "ALL".to_string(),
+    ]));
+    assert!(extra_args_widen_selection(&["--select=ALL".to_string(),]));
+  }
+
+  #[test]
+  fn test_ruff_output_has_lint_findings() {
+    // Pure syntax error output should not be treated as lint findings.
+    let syntax_err = "invalid-syntax: Expected an identifier\n --> test.py:1:5\nFound 1 error.\n";
+    assert!(!ruff_output_has_lint_findings(syntax_err, ""));
+
+    let e999_err = "test.py:1:1: E999 SyntaxError: Expected an identifier\n";
+    assert!(!ruff_output_has_lint_findings(e999_err, ""));
+
+    // Lint findings (e.g. F821) should be recognized.
+    let lint_finding =
+      "F821 Undefined name `undefined_var`\n --> test.py:1:5\nFound 1 error.\n";
+    assert!(ruff_output_has_lint_findings(lint_finding, ""));
+
+    // Stderr-only tool failure should not be treated as lint findings.
+    assert!(!ruff_output_has_lint_findings(
+      "",
+      "error: unexpected argument"
+    ));
+  }
+
+  #[test]
+  fn test_python_write_extend_select_reports_violations_not_execution_error() {
+    // Fixes #208: `--extend-select <rule>` in extra_args widens rule selection during
+    // the `ruff check --select I --fix` import pass. When violations are found, ruff exits 1.
+    // This must be classified as `ViolationsFound` (`[FAIL]`), not `ExecutionError` (`[ERR]`).
+    if !check_binary_exists("ruff") {
+      return;
+    }
+    let temp = TempDir::new().unwrap();
+    // Valid Python syntax, but triggers F821 Undefined name
+    std::fs::write(temp.path().join("naming.py"), "x = undefined_var\n")
+      .unwrap();
+
+    let surface = PythonSurface;
+    let mut config = ResolvedLangConfig::new("python");
+    config.extra_args = vec!["--extend-select".to_string(), "F".to_string()];
+    let ctx = test_ctx(temp.path(), config);
+
+    let res = surface.format(&ctx);
+    assert!(
+      !matches!(res.status, SurfaceStatus::ExecutionError { .. }),
+      "ruff exit 1 with --extend-select must not be ExecutionError, got: {:?}",
+      res.status
+    );
+    assert!(
+      matches!(res.status, SurfaceStatus::ViolationsFound { .. }),
+      "ruff exit 1 with --extend-select must be ViolationsFound, got: {:?}",
+      res.status
+    );
+    assert!(!res.is_success());
+  }
+
+  #[test]
+  fn test_python_check_extend_select_reports_violations_not_execution_error() {
+    // Fixes #208: Same reproduction on the `--check` path (`ctx.check_only = true`).
+    if !check_binary_exists("ruff") {
+      return;
+    }
+    let temp = TempDir::new().unwrap();
+    std::fs::write(temp.path().join("naming.py"), "x = undefined_var\n")
+      .unwrap();
+
+    let surface = PythonSurface;
+    let mut config = ResolvedLangConfig::new("python");
+    config.extra_args = vec!["--extend-select".to_string(), "F".to_string()];
+    let mut ctx = test_ctx(temp.path(), config);
+    ctx.check_only = true;
+
+    let res = surface.format(&ctx);
+    assert!(
+      !matches!(res.status, SurfaceStatus::ExecutionError { .. }),
+      "ruff exit 1 with --extend-select on --check must not be ExecutionError, got: {:?}",
+      res.status
+    );
+    assert!(
+      matches!(res.status, SurfaceStatus::ViolationsFound { .. }),
+      "ruff exit 1 with --extend-select on --check must be ViolationsFound, got: {:?}",
       res.status
     );
     assert!(!res.is_success());

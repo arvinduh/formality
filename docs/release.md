@@ -117,9 +117,9 @@ committed `CHANGELOG.md`.
 
    If anything (docs, `#:schema` directives in example `formality.toml` files,
    install instructions) references a specific release URL or version number,
-   update those references to point at the new tag. Users can run
-   `fml migrate schema` to rewrite their own project's `#:schema` directive to
-   the new tag without hand-editing it.
+   update those references to point at the new tag. Users can run `fml init` to
+   rewrite their own project's `#:schema` directive to the new tag without
+   hand-editing it.
 
 ## Schema Releases (`s*` tags)
 
@@ -196,7 +196,7 @@ Releases space, workflow configuration enforces a strict invariant:
    Update [compatibility.md](compatibility.md) and example `#:schema` directives
    in documentation if a new schema version (e.g. `s1.1` or `s2.0`) was cut.
    Individual users don't need to hand-edit their own `formality.toml` —
-   `fml migrate schema` rewrites their `#:schema` line to the current tag.
+   `fml init` rewrites their `#:schema` line to the current tag.
 
 ## Release notes
 

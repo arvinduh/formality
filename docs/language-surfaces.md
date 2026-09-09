@@ -44,9 +44,10 @@ machine-generated shape.
 - **Facets**: `indent_tabs`/`indent_width`/`line_length`/`quote_style`/
   `import_sort` configurable; `trailing_comma`, `prose_wrap`, `edition`,
   `standard` unsupported.
-- **`extra_args` caveat**: `--extend-select` on the import pass makes `fml fmt`
-  report a lint finding as `[ERR] Execution error` — a known bug
-  ([#208](https://github.com/arvinduh/formality/issues/208)), not guarded; see
+- **`extra_args` handling**: `--extend-select` on the import pass is
+  discriminated so exit 1 with findings reports as `[FAIL] Violations found`
+  rather than `[ERR] Execution error` (Fixes
+  [#208](https://github.com/arvinduh/formality/issues/208)); see
   [`extra_args` and exit-code contracts](#extra_args-and-exit-code-contracts).
 
 ## C / C++
@@ -271,16 +272,17 @@ The flags known to do this, each reproduced against the version
 
 | Surface        | Flag                     | Status                           | What you'll see                                                                                                                                                                                                                          |
 | -------------- | ------------------------ | -------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| **python**     | `--extend-select <rule>` | **Unguarded — known bug #208**   | On the `ruff check --select I --fix` import pass, a violation the widened selection surfaces exits 1 and is reported as `[ERR] Execution error` with process exit 2, not `[FAIL]`. Verified on `ruff 0.16.4`.                            |
+| **python**     | `--extend-select <rule>` | **Handled (Fixes #208)**         | On the `ruff check --select I --fix` import pass, exit 1 when selection is widened or findings are present is classified as `[FAIL] Violations found` with process exit 1, not `[ERR] Execution error`. Verified on `ruff 0.16.4`.       |
 | **java**       | `--set-exit-if-changed`  | **Unguarded — known limitation** | `google-java-format --replace` still rewrites the file, then exits 1 because it changed something; reported as `[ERR] Execution error` rather than a successful format. Verified on `google-java-format@2.3.0` (upstream 1.35.0).        |
 | **javascript** | `--linter-enabled`       | **Refused** with an explanation  | Not actually an instance of the above: `fml fmt` passes this flag itself and biome rejects it given twice, so the format pass fails either way. `fml` now says so instead of surfacing biome's opaque error. Verified on `biome@2.5.10`. |
 
-**The python and java rows are live bugs, not benign caveats.** If you set
-either flag, `fml` will report a real result as an execution failure and exit 2.
-Neither is guarded, because neither flag contradicts anything `fml` passes —
-detecting them would mean maintaining an enumeration of each tool's flag
-vocabulary, which goes stale every time a tool adds one. #208 tracks the python
-case.
+**The java row remains a live bug and known limitation.** If you set
+`--set-exit-if-changed`, `fml` will report a real result as an execution failure
+and exit 2. It is not guarded, because the flag does not contradict anything
+`fml` passes — detecting it would mean maintaining an enumeration of each tool's
+flag vocabulary, which goes stale every time a tool adds one. The python case
+was resolved in #208 by discriminating exit 1 when `extra_args` widens selection
+or the output contains lint findings.
 
 The javascript row is guarded only because `fml fmt` runs
 `biome check --write --linter-enabled=false` and biome rejects a duplicated
