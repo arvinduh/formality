@@ -843,20 +843,63 @@ fn combine_pass_results(
   }
 }
 
-/// Cleans and standardizes raw CLI tool diagnostics into uniform indented lines
+/// Cleans and standardizes raw CLI tool diagnostics into uniform lines.
+///
+/// Trailing whitespace is trimmed from each line, and known non-diagnostic
+/// banner noise (e.g. `"Checking formatting..."`, `"All checks passed!"`) is
+/// suppressed.
+///
+/// ### Blank-Line Policy & Rationale
+///
+/// Single blank lines are preserved, while runs of two or more consecutive
+/// blank lines are collapsed to a single blank line. Leading and trailing blank
+/// lines are trimmed from the overall output.
+///
+/// Blank lines are frequently structural rather than noise — for example:
+/// - `rustc` separates individual diagnostic blocks with blank lines.
+/// - Go panics separate distinct goroutine stack traces with blank lines.
+/// - Multi-error outputs and stack traces rely on blank lines as their primary
+///   visual grouping mechanism.
+///
+/// Collapsing all blank lines turns multi-error dumps and stack traces into an
+/// undifferentiated wall of text. Collapsing runs of 2+ blank lines suppresses
+/// excess spacing and banner-removal padding while preserving grouping in both
+/// `ExecutionError` and `ViolationsFound` messages.
 fn normalize_diagnostics(raw: &str) -> String {
-  let cleaned_lines: Vec<&str> = raw
+  let lines: Vec<&str> = raw
     .lines()
-    .map(str::trim_end)
-    .filter(|l| {
+    .filter_map(|l| {
       let trimmed = l.trim();
-      !trimmed.is_empty()
-        && !trimmed.starts_with("Checking formatting...")
-        && !trimmed.starts_with("All checks passed!")
+      if trimmed.starts_with("Checking formatting...")
+        || trimmed.starts_with("All checks passed!")
+      {
+        None
+      } else {
+        Some(l.trim_end())
+      }
     })
     .collect();
 
-  cleaned_lines.join("\n")
+  let Some(first_non_empty) = lines.iter().position(|l| !l.is_empty()) else {
+    return String::new();
+  };
+  let last_non_empty = lines.iter().rposition(|l| !l.is_empty()).unwrap();
+
+  let mut result = Vec::new();
+  let mut prev_was_empty = false;
+  for &line in &lines[first_non_empty..=last_non_empty] {
+    if line.is_empty() {
+      if !prev_was_empty {
+        result.push("");
+        prev_was_empty = true;
+      }
+    } else {
+      result.push(line);
+      prev_was_empty = false;
+    }
+  }
+
+  result.join("\n")
 }
 
 /// Shared diagnostic-detail computation for the two `SurfaceStatus` arms that
@@ -877,7 +920,7 @@ fn normalize_diagnostics(raw: &str) -> String {
 /// message, so a plain `fml fmt --check` renders byte-identically to before.
 ///
 /// A diff deliberately bypasses [`normalize_diagnostics`]: that function
-/// trims line ends and drops blank lines, which in a diff body are file
+/// trims line ends and normalizes blank lines, which in a diff body are file
 /// *contents* — exactly the drift a whitespace diff exists to show. Path
 /// relativization is not lost by the bypass; it runs over every detail at
 /// the diagnostics-render step, after this function.
