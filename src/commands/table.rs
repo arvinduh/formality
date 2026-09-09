@@ -1,5 +1,7 @@
 //! `fml table` command: renders a JSON table spec to formatted terminal
 //! output, useful for scripting or debugging [`crate::ui::table`] layouts.
+//!
+//! Deprecated: use the library API [`crate::ui::table`].
 
 use colored::Colorize;
 
