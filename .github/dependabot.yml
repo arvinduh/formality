@@ -17,6 +17,19 @@ updates:
     groups:
       npm-dependencies:
         patterns: ["*"]
+    ignore:
+      # Held at/below engines.vscode's ^1.91.0 floor: even after raising the
+      # floor to 1.91, a newer @types/vscode (dependabot last proposed
+      # ^1.136.0) still hard-fails the @vscode/vsce packaging guard. See #247.
+      - dependency-name: "@types/vscode"
+        update-types:
+          - "version-update:semver-major"
+          - "version-update:semver-minor"
+      # Held at ~5.8.2: typescript-eslint doesn't support TS 7 yet. See #246.
+      - dependency-name: "typescript"
+        update-types:
+          - "version-update:semver-major"
+          - "version-update:semver-minor"
 
   # GitHub Actions used in workflows
   - package-ecosystem: "github-actions"
