@@ -1344,7 +1344,7 @@ pub fn classify_all_nonzero_as_error(_code: Option<i32>) -> ExitClass {
 /// that print a banner to stdout and their actual diagnostics to stderr. When
 /// only one stream is non-empty it is returned trimmed; when neither is,
 /// `fallback` is used verbatim.
-pub(crate) fn merge_tool_streams(
+pub fn merge_tool_streams(
   stdout: &str,
   stderr: &str,
   fallback: &str,

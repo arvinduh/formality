@@ -19,17 +19,20 @@ reintroduces a "ran fine, and found/changed something" exit code makes that
 static choice wrong, and the result is a lint finding rendered as
 `[ERR] Execution error` with process exit 2.
 
-**The verified instance is python.** Reproduced against `ruff 0.16.4`:
+**The verified instance was python.** Reproduced against `ruff 0.16.4`:
 
 ```console
 ruff check --select I --fix a.py                      # exit 0, "All checks passed!"
 ruff check --select I --fix a.py --extend-select F    # exit 1, F821 Undefined name
 ```
 
-`ruff` accepts `--select` and `--extend-select` together, and
-`src/surfaces/python.rs` classifies every non-zero exit on that import pass as
-`ExecutionError`. That is #173's failure mode, reproducible today, and it is
-**not** guarded — see [Consequences](#consequences).
+`ruff` accepts `--select` and `--extend-select` together. Previously,
+`src/surfaces/python.rs` classified every non-zero exit on that import pass as
+`ExecutionError` (the failure mode in #173). In #208, python resolves this by
+discriminating exit 1: when `extra_args` widens rule selection (or when output
+contains lint findings), exit 1 is treated as `ViolationsFound`, while syntax
+errors (`invalid-syntax:` / `E999`) and exit 2 tool errors remain
+`ExecutionError`.
 
 **java behaves the same way**, verified against the pinned
 `google-java-format@2.3.0` (upstream 1.35.0):
@@ -100,14 +103,13 @@ that same bar.** A flag that merely _happens_ to alter the contract
 - **Coverage is partial, and partial in an uncomfortable direction.** Option 2's
   bar selects for flags `fml` passes, not for flags that actually cause the
   misclassification — and on current evidence those sets do not overlap at all.
-  Both verified instances of the hazard (`--extend-select`,
-  `--set-exit-if-changed`) are unguarded, documented only, in
+  One verified instance of the hazard (`--set-exit-if-changed` on java) remains
+  unguarded, documented only, in
   [language-surfaces.md](../language-surfaces.md#extra_args-and-exit-code-contracts).
-  The guard rule is not what protects users from this class of bug; option 3
-  would have been, and it was rejected on cost. State that plainly rather than
-  letting the guard imply coverage it does not have.
-  [#208](https://github.com/arvinduh/formality/issues/208) tracks the python
-  case.
+  The python case was resolved in
+  [#208](https://github.com/arvinduh/formality/issues/208) by discriminating
+  exit 1 on the import-sort pass when `extra_args` widens selection or output
+  carries lint findings.
 - **Exactly one flag clears the bar today**: biome's `--linter-enabled` on the
   javascript format path, detected by `extra_args_set_flag` in
   `src/surfaces/tooling.rs`. What that guard buys is replacing an opaque tool
@@ -122,5 +124,11 @@ that same bar.** A flag that merely _happens_ to alter the contract
 - **Revisit option 3** only if the documented, unguarded cases are reported as
   actually biting users, or if a cheaper approximation appears — for example a
   surface discriminating on the tool's output shape (a lint finding and an
-  `E999` do not look alike on stdout) instead of on its flags. The rejection
-  here is on cost, not on principle.
+  `E999` do not look alike on stdout) instead of on its flags. That
+  approximation was adopted for python in
+  [#208](https://github.com/arvinduh/formality/issues/208):
+  `src/surfaces/python.rs` discriminates exit 1 from
+  `ruff check --select I --fix` when `extra_args` widens rule selection or
+  output contains lint findings, mapping exit 1 to `ViolationsFound` while
+  preserving `ExecutionError` for syntax errors (`invalid-syntax:` / `E999`) and
+  exit 2 tool errors.
