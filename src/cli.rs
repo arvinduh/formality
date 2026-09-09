@@ -428,8 +428,8 @@ mod tests {
   }
 
   #[test]
-  fn test_deprecated_install_and_surfaces_commands_parse_and_are_hidden_from_help(
-  ) {
+  fn test_deprecated_install_and_surfaces_commands_parse_and_are_hidden_from_help()
+   {
     let cli_install = Cli::try_parse_from(["fml", "install"]).unwrap();
     assert!(matches!(
       cli_install.command,
