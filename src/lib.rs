@@ -682,8 +682,8 @@ mod tests {
     let src_dir = manifest_dir.join("src");
 
     const PRE_RECREATION_NUMBERS: &[u32] = &[
-      68, 76, 82, 100, 113, 119, 120, 121, 126, 128, 133, 151, 157, 158, 159,
-      165, 177, 191, 192, 194, 195, 201,
+      68, 76, 82, 100, 113, 119, 120, 121, 126, 133, 151, 157, 158, 159, 165,
+      177, 191, 192, 194, 195, 201,
     ];
 
     let mut violations = Vec::new();
@@ -752,6 +752,8 @@ mod tests {
                   191 => rel_path == "src/ui/paths.rs",
                   // Post-recreation #195 is PR #195 version probing in engine/version/
                   195 => rel_path.starts_with("src/engine/version/"),
+                  // Post-recreation #201 is go lint test runner flakiness fix in go.rs
+                  201 => rel_path == "src/surfaces/go.rs",
                   // Post-recreation #151 is prettier-driven --check exit-code classification
                   151 => {
                     line.contains("ExecutionError")

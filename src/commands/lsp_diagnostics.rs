@@ -952,7 +952,7 @@ fn golangci_lint_diagnostics(
       // golangci-lint exits 0 for clean and 1 when violations are found;
       // any other exit status is an execution failure. Furthermore, an
       // unsuccessful invocation that yielded no parsed diagnostics must
-      // not be reported as a clean result (#177, #204).
+      // not be reported as a clean result (#177 [pre-recreation], #204).
       if !output.status.success() && output.status.code() != Some(1) {
         return None;
       }
