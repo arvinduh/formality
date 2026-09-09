@@ -192,15 +192,19 @@ pub enum Commands {
 
   /// Start formality as an LSP server (stdio transport)
   ///
-  /// Acts as a passthrough Language Server that delegates to the underlying
-  /// per-language LSP servers (rust-analyzer, pyright, clangd, …) while
-  /// adding formality's own capabilities on top: unified formatting via
-  /// `fml fmt`, cross-language diagnostics via `fml lint`, and config-sync
-  /// notifications when formality.toml changes.
+  /// A document formatter and diagnostics publisher: `textDocument/formatting`
+  /// runs `fml fmt` on the requested file, and `did_save` / `did_open` /
+  /// `did_change_watched_files` run `fml lint` (or a structured per-surface
+  /// parser) to publish diagnostics and pick up `formality.toml` changes.
+  ///
+  /// This is not a replacement for your language server — it does not spawn,
+  /// proxy, or route requests to rust-analyzer, pyright, clangd, or any other
+  /// LSP. Run it alongside your existing language server, with formality
+  /// owning formatting and lint diagnostics and the other server owning
+  /// everything else (hover, completion, go-to-definition, …). See
+  /// README.md's "Editor setup" section for per-editor wiring.
   ///
   /// Editors connect via stdio (the default transport for most editors).
-  /// The server auto-discovers the active surfaces and only spawns child
-  /// LSP processes for languages present in the workspace.
   Lsp,
 
   /// Deprecated: use `fml::ui::table` library API.

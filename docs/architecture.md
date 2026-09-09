@@ -93,7 +93,8 @@ lint-fix-then-format pipeline — see [style-guide.md](style-guide.md) §4's
 `Runner` dispatch section), `sync.rs`, `init.rs`, `migrate.rs` (config
 schema-reference migration), `schema.rs` (`fml schema`, JSON Schema generation),
 `table.rs` (`fml table`), `lsp.rs` and `lsp_diagnostics.rs` (the `fml lsp`
-Language Server Protocol passthrough and its structured per-violation
+Language Server — document formatting via `fml fmt` plus diagnostics publishing
+via `fml lint`, with `lsp_diagnostics.rs` providing structured per-violation
 diagnostics, `#159 [pre-recreation]`), and `doctor/` (a directory module —
 `mod.rs`, `gitignore.rs`, `venv.rs` — implementing `fml doctor`'s
 workspace/toolchain verification checks). Tool installation lives in
