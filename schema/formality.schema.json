@@ -415,6 +415,10 @@
       "description": "Typed formatting and linting options for Markdown.",
       "type": "object",
       "properties": {
+        "no_inline_html": {
+          "description": "Whether markdownlint's `MD033`/`no-inline-html` rule is enabled.\nShipped default is `false` (disabled) — it is a house-style rule, not\na correctness one, and there is no markdown equivalent for centered\nbadge blocks or `<details>` disclosure widgets. Set to `true` in\n`formality.toml` to opt back in.",
+          "type": ["boolean", "null"]
+        },
         "prose_wrap": {
           "description": "Prose wrapping strategy string (`\"always\"`, `\"never\"`, or `\"preserve\"`).",
           "type": ["string", "null"]

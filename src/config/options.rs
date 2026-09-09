@@ -196,9 +196,16 @@ pub struct MarkdownOptions {
   /// Prose wrapping strategy string (`"always"`, `"never"`, or `"preserve"`).
   #[serde(skip_serializing_if = "Option::is_none")]
   pub prose_wrap: Option<String>,
+  /// Whether markdownlint's `MD033`/`no-inline-html` rule is enabled.
+  /// Shipped default is `false` (disabled) — it is a house-style rule, not
+  /// a correctness one, and there is no markdown equivalent for centered
+  /// badge blocks or `<details>` disclosure widgets. Set to `true` in
+  /// `formality.toml` to opt back in.
+  #[serde(skip_serializing_if = "Option::is_none")]
+  pub no_inline_html: Option<bool>,
 }
 
-impl_options_methods!(MarkdownOptions, prose_wrap);
+impl_options_methods!(MarkdownOptions, prose_wrap, no_inline_html);
 
 /// Typed formatting and linting options for YAML.
 #[derive(
@@ -317,6 +324,7 @@ mod tests {
     assert!(md.is_empty());
     md.merge(MarkdownOptions {
       prose_wrap: Some("always".to_string()),
+      no_inline_html: None,
     });
     assert!(!md.is_empty());
     assert_eq!(md.prose_wrap.as_deref(), Some("always"));
