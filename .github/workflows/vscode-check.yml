@@ -44,3 +44,10 @@ jobs:
 
       - name: Run unit and integration tests
         run: xvfb-run -a npm test
+
+      - name: Package extension (.vsix)
+        # Proves packaging succeeds (e.g. catches engines.vscode/@types/vscode
+        # drift like #245) before release time, not at it. The .vsix is not
+        # uploaded anywhere and is gitignored (editors/vscode/*.vsix) -- this
+        # step exists only for its exit code.
+        run: npx --yes @vscode/vsce package --no-git-tag-version --allow-missing-repository
