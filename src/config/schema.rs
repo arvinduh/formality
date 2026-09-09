@@ -6,6 +6,7 @@
 //! [`schema_notice_for`]).
 
 use crate::config::FormalityConfig;
+use crate::errors::{ExitStatus, FormalityError, IoError};
 use colored::Colorize;
 use serde::{Deserialize, Serialize};
 use std::path::{Path, PathBuf};
@@ -205,8 +206,139 @@ pub fn print_schema_notice(notifier: Option<SchemaNotifier>) {
     filename.bold(),
     version.to_string().yellow().bold(),
     expected.to_string().green().bold(),
-    format!("https://github.com/arvinduh/formality/releases/download/s{expected}/formality.schema.json").cyan()
+    schema_url(expected).cyan()
   );
+}
+
+/// Builds the canonical schema release download URL for a given
+/// `s{major}.{minor}` tag.
+#[must_use]
+pub fn schema_url(version: SchemaVersion) -> String {
+  format!(
+    "https://github.com/arvinduh/formality/releases/download/s{version}/formality.schema.json"
+  )
+}
+
+/// Rewrites (or inserts) the `#:schema` directive line in `content` to point
+/// at `new_version`'s schema URL.
+///
+/// Only the first line containing `#:schema` is replaced; every other line is
+/// preserved exactly, including the file's existing line-ending style (LF or
+/// CRLF) — `content.lines()` strips `\r`, so naively rejoining with `\n`
+/// would silently normalize a CRLF file to LF; the original separator is
+/// detected and reused to avoid that. If no `#:schema` line exists, a fresh
+/// one is inserted as the first line of the file, since `#:schema` directives
+/// conventionally appear at the top.
+#[must_use]
+pub fn rewrite_schema_line(
+  content: &str,
+  new_version: SchemaVersion,
+) -> String {
+  let new_line = format!("#:schema {}", schema_url(new_version));
+  let separator = if content.contains("\r\n") {
+    "\r\n"
+  } else {
+    "\n"
+  };
+
+  let mut found = false;
+  let mut lines: Vec<String> = content
+    .lines()
+    .map(|line| {
+      if !found && line.trim_start().contains("#:schema") {
+        found = true;
+        new_line.clone()
+      } else {
+        line.to_string()
+      }
+    })
+    .collect();
+
+  if !found {
+    lines.insert(0, new_line);
+  }
+
+  let mut result = lines.join(separator);
+  result.push_str(separator);
+  result
+}
+
+/// Applies the schema pin directive to the configuration file at `config_path`:
+/// rewrites its `#:schema` directive to the current [`SCHEMA_VERSION`], reporting
+/// what changed (old version -> new version, a no-op if already current, or an
+/// inserted directive if none was present).
+pub fn apply_schema_pin(config_path: &Path) -> ExitStatus {
+  let content = match std::fs::read_to_string(config_path) {
+    Ok(c) => c,
+    Err(e) => {
+      FormalityError::Io(IoError::new(Some(config_path.to_path_buf()), e))
+        .print_diagnostic();
+      return ExitStatus::Error;
+    }
+  };
+
+  let filename = config_path
+    .file_name()
+    .and_then(|n| n.to_str())
+    .unwrap_or("formality.toml")
+    .to_string();
+
+  match check_schema_version_content(&content) {
+    SchemaStatus::UpToDate { version } => {
+      println!(
+        "{} {} already references the current schema version {}.",
+        "[OK]".green().bold(),
+        filename.bold(),
+        format!("s{version}").cyan()
+      );
+      ExitStatus::Clean
+    }
+    SchemaStatus::Stale { version, expected } => {
+      let updated = rewrite_schema_line(&content, expected);
+      write_and_report(
+        config_path,
+        &updated,
+        &format!(
+          "{} Updated {} schema reference: {} -> {}",
+          "[OK]".green().bold(),
+          filename.bold(),
+          format!("s{version}").yellow(),
+          format!("s{expected}").green().bold()
+        ),
+      )
+    }
+    SchemaStatus::Missing => {
+      let updated = rewrite_schema_line(&content, SCHEMA_VERSION);
+      write_and_report(
+        config_path,
+        &updated,
+        &format!(
+          "{} Inserted #:schema directive into {} pointing at {}.",
+          "[OK]".green().bold(),
+          filename.bold(),
+          format!("s{SCHEMA_VERSION}").green().bold()
+        ),
+      )
+    }
+  }
+}
+
+fn write_and_report(
+  config_path: &Path,
+  updated: &str,
+  message: &str,
+) -> ExitStatus {
+  match std::fs::write(config_path, updated) {
+    Ok(()) => {
+      println!("{message}");
+      ExitStatus::Clean
+    }
+    Err(e) => {
+      FormalityError::Io(IoError::new(Some(config_path.to_path_buf()), e))
+        .print_diagnostic();
+      ExitStatus::Error
+    }
+  }
 }
 
 #[cfg(test)]
@@ -359,5 +491,143 @@ mod tests {
       "a config with no #:schema directive at all has no version to be \
        behind"
     );
+  }
+
+  #[test]
+  fn test_rewrite_schema_line_replaces_stale_directive() {
+    let content = "#:schema https://github.com/arvinduh/formality/releases/download/s0.9/formality.schema.json\n[global]\nindent_size = 2\n";
+    let updated =
+      rewrite_schema_line(content, SchemaVersion { major: 1, minor: 0 });
+    assert_eq!(
+      updated,
+      "#:schema https://github.com/arvinduh/formality/releases/download/s1.0/formality.schema.json\n[global]\nindent_size = 2\n"
+    );
+  }
+
+  #[test]
+  fn test_rewrite_schema_line_preserves_rest_of_file() {
+    let content = "# a leading comment\n#:schema s0.9\n[global]\nindent_size = 2\n\n[lang.rust]\nline_width = 100\n";
+    let updated =
+      rewrite_schema_line(content, SchemaVersion { major: 3, minor: 1 });
+    assert!(updated.contains("# a leading comment\n"));
+    assert!(updated.contains("[lang.rust]\nline_width = 100\n"));
+    assert!(updated.contains(
+      "#:schema https://github.com/arvinduh/formality/releases/download/s3.1/formality.schema.json"
+    ));
+    // Only the schema line changed.
+    assert_eq!(updated.lines().count(), content.lines().count());
+  }
+
+  #[test]
+  fn test_rewrite_schema_line_inserts_when_missing() {
+    let content = "[global]\nindent_size = 2\n";
+    let updated =
+      rewrite_schema_line(content, SchemaVersion { major: 1, minor: 0 });
+    let mut lines = updated.lines();
+    assert_eq!(
+      lines.next(),
+      Some(
+        "#:schema https://github.com/arvinduh/formality/releases/download/s1.0/formality.schema.json"
+      )
+    );
+    assert_eq!(lines.next(), Some("[global]"));
+    assert_eq!(lines.next(), Some("indent_size = 2"));
+  }
+
+  #[test]
+  fn test_rewrite_schema_line_preserves_crlf_line_endings() {
+    let content = "#:schema s0.9\r\n[global]\r\nindent_size = 2\r\n";
+    let updated =
+      rewrite_schema_line(content, SchemaVersion { major: 1, minor: 0 });
+    assert!(
+      !updated.contains('\n') || updated.matches("\r\n").count() == 3,
+      "CRLF file must stay CRLF throughout: {updated:?}"
+    );
+    assert!(updated.contains("[global]\r\nindent_size = 2\r\n"));
+    assert!(!updated.contains("\n[global]\n"), "must not degrade to LF");
+  }
+
+  #[test]
+  fn test_rewrite_schema_line_only_touches_first_match() {
+    let content = "#:schema s0.9\n#:schema s5.2\n[global]\n";
+    let updated =
+      rewrite_schema_line(content, SchemaVersion { major: 2, minor: 0 });
+    let mut lines = updated.lines();
+    assert_eq!(
+      lines.next(),
+      Some(
+        "#:schema https://github.com/arvinduh/formality/releases/download/s2.0/formality.schema.json"
+      )
+    );
+    assert_eq!(lines.next(), Some("#:schema s5.2"));
+  }
+
+  #[test]
+  fn test_apply_schema_pin_already_up_to_date() {
+    let temp = tempfile::TempDir::new().unwrap();
+    let config_path = temp.path().join("formality.toml");
+    let content = format!(
+      "#:schema https://github.com/arvinduh/formality/releases/download/s{SCHEMA_VERSION}/formality.schema.json\n[global]\n"
+    );
+    std::fs::write(&config_path, &content).unwrap();
+
+    let status = apply_schema_pin(&config_path);
+    let after = std::fs::read_to_string(&config_path).unwrap();
+
+    assert_eq!(status, ExitStatus::Clean);
+    assert_eq!(content, after, "no-op must not modify the file");
+  }
+
+  #[test]
+  fn test_apply_schema_pin_rewrites_stale_version() {
+    let temp = tempfile::TempDir::new().unwrap();
+    let config_path = temp.path().join("formality.toml");
+    std::fs::write(
+      &config_path,
+      "#:schema https://github.com/arvinduh/formality/releases/download/s0/formality.schema.json\n[global]\nindent_size = 4\n",
+    )
+    .unwrap();
+
+    let status = apply_schema_pin(&config_path);
+    let after = std::fs::read_to_string(&config_path).unwrap();
+
+    assert_eq!(status, ExitStatus::Clean);
+    assert!(
+      after.contains(&format!("s{SCHEMA_VERSION}/formality.schema.json"))
+    );
+    assert!(after.contains("[global]\nindent_size = 4\n"));
+  }
+
+  #[test]
+  fn test_apply_schema_pin_inserts_missing_directive() {
+    let temp = tempfile::TempDir::new().unwrap();
+    let config_path = temp.path().join("formality.toml");
+    std::fs::write(&config_path, "[global]\nindent_size = 2\n").unwrap();
+
+    let status = apply_schema_pin(&config_path);
+    let after = std::fs::read_to_string(&config_path).unwrap();
+
+    assert_eq!(status, ExitStatus::Clean);
+    assert!(after.starts_with("#:schema "));
+    assert!(
+      after.contains(&format!("s{SCHEMA_VERSION}/formality.schema.json"))
+    );
+    assert!(after.contains("[global]\nindent_size = 2\n"));
+  }
+
+  #[test]
+  fn test_apply_schema_pin_is_idempotent() {
+    let temp = tempfile::TempDir::new().unwrap();
+    let config_path = temp.path().join("formality.toml");
+    std::fs::write(&config_path, "[global]\nindent_size = 2\n").unwrap();
+
+    let status1 = apply_schema_pin(&config_path);
+    let after1 = std::fs::read_to_string(&config_path).unwrap();
+    assert_eq!(status1, ExitStatus::Clean);
+
+    let status2 = apply_schema_pin(&config_path);
+    let after2 = std::fs::read_to_string(&config_path).unwrap();
+    assert_eq!(status2, ExitStatus::Clean);
+    assert_eq!(after1, after2, "second run must produce identical content");
   }
 }

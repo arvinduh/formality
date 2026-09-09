@@ -47,8 +47,8 @@ schema-version compatibility matrix this split makes necessary.
 - A schema-only fix (new optional field, docs correction) can ship as an `s*`
   tag without waiting for or forcing an unrelated binary release.
 - Users pin `#:schema` directives to a specific `s{major}.{minor}` release asset
-  URL rather than a raw branch file; `fml migrate schema` rewrites a project's
-  `#:schema` line to the current tag without hand-editing.
+  URL rather than a raw branch file; `fml init` rewrites a project's `#:schema`
+  line to the current tag without hand-editing.
 - The extension stays coupled to the binary's `v*` tag — adding a genuinely
   independent extension release cadence later would be a new decision, not a
   natural extension of this one, since `#126 [pre-recreation]` explicitly

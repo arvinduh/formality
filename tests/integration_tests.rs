@@ -5,6 +5,7 @@ use common::{
   temp_repo,
 };
 use fml::cli::{Commands, MigrateCommands};
+use fml::config::SCHEMA_VERSION;
 use fml::errors::ExitStatus;
 use fml::surfaces::{
   SurfaceRegistry, all_surfaces, detect_surfaces, get_surface_by_name,
@@ -185,6 +186,80 @@ fn test_init_command() {
   // 2. Test --hidden creates .formality.toml with --force
   assert_eq!(run_cli(root, init_cmd(true, true)), 0);
   assert!(root.join(".formality.toml").is_file());
+}
+
+#[test]
+fn test_init_applies_schema_pin_when_config_exists_stale() {
+  let temp = temp_repo(&[(
+    "formality.toml",
+    "#:schema https://github.com/arvinduh/formality/releases/download/s0.9/formality.schema.json\n[global]\nindent_size = 4\n",
+  )]);
+  let root = temp.path();
+
+  // Run fml init without --force: updates schema pin in existing config
+  assert_eq!(run_cli(root, init_cmd(false, false)), 0);
+
+  let content = fs::read_to_string(root.join("formality.toml")).unwrap();
+  assert!(
+    content.contains(&format!("s{SCHEMA_VERSION}/formality.schema.json"))
+  );
+  assert!(content.contains("[global]\nindent_size = 4"));
+
+  // Idempotent: running a second time does not modify file and succeeds cleanly
+  assert_eq!(run_cli(root, init_cmd(false, false)), 0);
+  let content_second = fs::read_to_string(root.join("formality.toml")).unwrap();
+  assert_eq!(content, content_second);
+}
+
+#[test]
+fn test_init_inserts_schema_pin_when_config_missing_schema() {
+  let temp = temp_repo(&[("formality.toml", "[global]\nindent_size = 4\n")]);
+  let root = temp.path();
+
+  // Run fml init without --force: inserts schema pin at top of existing config
+  assert_eq!(run_cli(root, init_cmd(false, false)), 0);
+
+  let content = fs::read_to_string(root.join("formality.toml")).unwrap();
+  assert!(content.starts_with("#:schema "));
+  assert!(
+    content.contains(&format!("s{SCHEMA_VERSION}/formality.schema.json"))
+  );
+  assert!(content.contains("[global]\nindent_size = 4"));
+
+  // Idempotent: running a second time does not modify file and succeeds cleanly
+  assert_eq!(run_cli(root, init_cmd(false, false)), 0);
+  let content_second = fs::read_to_string(root.join("formality.toml")).unwrap();
+  assert_eq!(content, content_second);
+}
+
+#[test]
+fn test_deprecated_migrate_schema_prints_notice_and_succeeds() {
+  let temp = temp_repo(&[(
+    "formality.toml",
+    "#:schema https://github.com/arvinduh/formality/releases/download/s0.9/formality.schema.json\n[global]\nindent_size = 2\n",
+  )]);
+  let out = std::process::Command::new(env!("CARGO_BIN_EXE_fml"))
+    .args([
+      "migrate",
+      "schema",
+      "--root",
+      &temp.path().to_string_lossy(),
+    ])
+    .env("NO_COLOR", "1")
+    .output()
+    .expect("failed to run fml");
+
+  assert!(out.status.success());
+  let stderr = String::from_utf8_lossy(&out.stderr);
+  assert!(
+    stderr.contains("`fml migrate schema` is deprecated and will be removed in v0.4.0. Use `fml init` instead — it initializes or updates the schema pin in formality.toml"),
+    "stderr should contain deprecation notice, got:\n{stderr}"
+  );
+
+  let content = fs::read_to_string(temp.path().join("formality.toml")).unwrap();
+  assert!(
+    content.contains(&format!("s{SCHEMA_VERSION}/formality.schema.json"))
+  );
 }
 
 #[test]

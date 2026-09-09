@@ -63,5 +63,10 @@ mod tests {
       "fml fix",
       Some("it applies the same lint fixes and then reformats"),
     );
+    warn_deprecated_spelling(
+      "fml migrate schema",
+      "fml init",
+      Some("it initializes or updates the schema pin in formality.toml"),
+    );
   }
 }
