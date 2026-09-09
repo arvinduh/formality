@@ -427,6 +427,14 @@ impl Runner {
         }
         SurfaceStatus::ToolMissing { binary, .. } => {
           tool_missing_count += 1;
+          // An unmet precondition, not an operational fault (#252) — the
+          // surface correctly determined it could not proceed. Exit 1
+          // (`ExitStatus::Violations`), the same as a real violation, so a
+          // missing tool never lets the process exit clean; reserve 2 for
+          // `ExecutionError`, which still wins if one occurs elsewhere.
+          if exit_code < 1 {
+            exit_code = 1;
+          }
           runner_table.add_row(crate::ui::table::Row::new(vec![
             crate::ui::table::Cell::styled(
               "[MISS] ",

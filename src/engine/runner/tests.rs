@@ -763,7 +763,13 @@ impl LanguageSurface for MockMissingSurface {
 }
 
 #[test]
-fn test_runner_missing_tool_exit_code_is_clean() {
+fn test_runner_missing_tool_exit_code_is_violations() {
+  // #252: a missing tool is an unmet precondition, not a clean run — it must
+  // not let the process exit 0. It is also not `ExitStatus::Error`: the tool
+  // correctly determined it could not proceed, which is the same severity as
+  // a real violation, not an operational fault. Exercised across `lint` and
+  // `fmt`, staged and unstaged, and both `--check`/write forms, since the
+  // fix is unconditional on mode.
   let root = PathBuf::from(".");
   let config = FormalityConfig::default();
   let staged_paths = vec![PathBuf::from("test.mock")];
@@ -776,7 +782,7 @@ fn test_runner_missing_tool_exit_code_is_clean() {
     &Plan::lint(),
     &config,
   );
-  assert_eq!(unstaged_lint, ExitStatus::Clean);
+  assert_eq!(unstaged_lint, ExitStatus::Violations);
 
   let staged_lint = Runner::run(
     vec![Box::new(MockMissingSurface)],
@@ -785,10 +791,10 @@ fn test_runner_missing_tool_exit_code_is_clean() {
     &Plan::lint(),
     &config,
   );
-  assert_eq!(staged_lint, ExitStatus::Clean);
+  assert_eq!(staged_lint, ExitStatus::Violations);
   assert_eq!(unstaged_lint, staged_lint);
 
-  // Fmt unstaged & staged
+  // Fmt unstaged & staged, write mode
   let unstaged_fmt = Runner::run(
     vec![Box::new(MockMissingSurface)],
     &root,
@@ -796,7 +802,7 @@ fn test_runner_missing_tool_exit_code_is_clean() {
     &Plan::fmt(false),
     &config,
   );
-  assert_eq!(unstaged_fmt, ExitStatus::Clean);
+  assert_eq!(unstaged_fmt, ExitStatus::Violations);
 
   let staged_fmt = Runner::run(
     vec![Box::new(MockMissingSurface)],
@@ -805,8 +811,29 @@ fn test_runner_missing_tool_exit_code_is_clean() {
     &Plan::fmt(false),
     &config,
   );
-  assert_eq!(staged_fmt, ExitStatus::Clean);
+  assert_eq!(staged_fmt, ExitStatus::Violations);
   assert_eq!(unstaged_fmt, staged_fmt);
+
+  // Fmt --check (Mode::Report) — the fix is unconditional on mode, so this
+  // must also be non-zero, not just the write form above.
+  let check_fmt = Runner::run(
+    vec![Box::new(MockMissingSurface)],
+    &root,
+    &[],
+    &Plan::fmt(true),
+    &config,
+  );
+  assert_eq!(check_fmt, ExitStatus::Violations);
+
+  // Fix (Lint + Format) — a plan neither prior case exercises directly.
+  let fix = Runner::run(
+    vec![Box::new(MockMissingSurface)],
+    &root,
+    &[],
+    &Plan::fix(false),
+    &config,
+  );
+  assert_eq!(fix, ExitStatus::Violations);
 }
 
 #[test]
