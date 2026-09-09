@@ -989,13 +989,13 @@ fn test_missing_tool_exit_code_parity_staged_vs_unstaged() {
 
   assert_eq!(
     lint_staged_status,
-    ExitStatus::Clean,
-    "fml lint --staged must exit 0 on missing tool"
+    ExitStatus::Violations,
+    "fml lint --staged must not exit clean on missing tool (Fixes #252)"
   );
   assert_eq!(
     lint_unstaged_status,
-    ExitStatus::Clean,
-    "fml lint must exit 0 on missing tool"
+    ExitStatus::Violations,
+    "fml lint must not exit clean on missing tool (Fixes #252)"
   );
   assert_eq!(
     lint_staged_status, lint_unstaged_status,
@@ -1027,13 +1027,13 @@ fn test_missing_tool_exit_code_parity_staged_vs_unstaged() {
 
   assert_eq!(
     fmt_staged_status,
-    ExitStatus::Clean,
-    "fml fmt --staged must exit 0 on missing tool"
+    ExitStatus::Violations,
+    "fml fmt --staged must not exit clean on missing tool (Fixes #252)"
   );
   assert_eq!(
     fmt_unstaged_status,
-    ExitStatus::Clean,
-    "fml fmt must exit 0 on missing tool"
+    ExitStatus::Violations,
+    "fml fmt must not exit clean on missing tool (Fixes #252)"
   );
   assert_eq!(
     fmt_staged_status, fmt_unstaged_status,
