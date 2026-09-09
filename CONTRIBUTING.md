@@ -40,10 +40,10 @@ mind:
 4. **Config Sync Engine (`fml sync`)**: Generates native tool configurations
    from canonical globals while detecting configuration drift. Native configs
    are verified and never overwritten without explicit confirmation.
-5. **Automated Tool Management (`fml install`)**: Missing binary dependencies
-   are detected and can be auto-installed via package managers (`cargo`, `npm`,
-   `pip`, `brew`, `rustup`). `fml fmt -i` and `fml lint -i` support on-demand
-   installations.
+5. **Automated Tool Management (`fml doctor --install`)**: Missing binary
+   dependencies are detected and can be auto-installed via package managers
+   (`cargo`, `npm`, `pip`, `brew`, `rustup`). `fml fmt -i` and `fml lint -i`
+   support on-demand installations.
 6. **Blazing Parallel Runner**: Multi-threaded execution (`rayon`) runs
    independent language surfaces concurrently.
 7. **Always Dogfood**: Always test and verify with the freshly built binary

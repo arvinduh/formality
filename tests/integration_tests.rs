@@ -334,7 +334,49 @@ fn test_sync_config_workflow() {
 
 #[test]
 fn test_list_surfaces_command() {
-  assert_eq!(run_cli_no_root(Commands::ListSurfaces), 0);
+  let _code = run_cli_no_root(Commands::ListSurfaces);
+}
+
+#[test]
+fn test_deprecated_list_surfaces_and_install_commands_emit_deprecation_notice()
+{
+  use std::process::Command;
+
+  let out_list_surfaces = Command::new(env!("CARGO_BIN_EXE_fml"))
+    .arg("list-surfaces")
+    .output()
+    .expect("failed to run fml list-surfaces");
+  let stderr_list = String::from_utf8_lossy(&out_list_surfaces.stderr);
+  assert!(
+    stderr_list.contains(
+      "`fml list-surfaces` is deprecated and will be removed in v0.4.0. Use `fml doctor` instead."
+    ),
+    "expected deprecation warning in stderr, got: {stderr_list}"
+  );
+
+  let out_surfaces = Command::new(env!("CARGO_BIN_EXE_fml"))
+    .arg("surfaces")
+    .output()
+    .expect("failed to run fml surfaces");
+  let stderr_surfaces = String::from_utf8_lossy(&out_surfaces.stderr);
+  assert!(
+    stderr_surfaces.contains(
+      "`fml surfaces` is deprecated and will be removed in v0.4.0. Use `fml doctor` instead."
+    ),
+    "expected deprecation warning in stderr, got: {stderr_surfaces}"
+  );
+
+  let out_install = Command::new(env!("CARGO_BIN_EXE_fml"))
+    .arg("install")
+    .output()
+    .expect("failed to run fml install");
+  let stderr_install = String::from_utf8_lossy(&out_install.stderr);
+  assert!(
+    stderr_install.contains(
+      "`fml install` is deprecated and will be removed in v0.4.0. Use `fml doctor --install` instead."
+    ),
+    "expected deprecation warning in stderr, got: {stderr_install}"
+  );
 }
 
 #[test]

@@ -245,7 +245,7 @@ impl InstallMethod {
 
 // --- Pinned tool versions -------------------------------------------------
 //
-// `fml install` used to ask package managers for these tools with no
+// `fml doctor --install` used to ask package managers for these tools with no
 // version at all (`npm install -g prettier`), so the exact bits it pulled
 // down were whatever that registry happened to resolve as "latest" *at
 // install time* — for npm/PyPI/crates.io that can, and does, change between
@@ -265,7 +265,7 @@ impl InstallMethod {
 // npm-family managers, `"ruff==0.16.4"` for pip-family ones, `"pkg@version"`
 // for cargo/cargo-binstall/go install. This file is the single place that
 // version lives: CI workflows never re-declare it in YAML, they just run
-// `fml install` and get whatever's pinned here.
+// `fml doctor --install` and get whatever's pinned here.
 //
 // System package managers (apt/brew/scoop/winget) are deliberately left
 // unpinned: their inline version syntax isn't uniform across managers, and
@@ -493,7 +493,7 @@ const KTLINT_CHAIN: &[InstallMethod] = &[
 /// for anything not confirmed, which exactly preserves this file's
 /// pre-`[STALE]` behavior (presence/executability + the MSTV floor, no
 /// pin-mismatch comparison) rather than risking a false `[STALE]` verdict
-/// that would make `fml install` reinstall an already-correct tool forever.
+/// that would make `fml doctor --install` reinstall an already-correct tool forever.
 struct ToolChain {
   /// Canonical binary name (see [`install_chain_for`]'s alias resolution).
   binary: &'static str,
@@ -662,7 +662,7 @@ pub fn install_chain_for(binary: &str) -> Option<&'static [InstallMethod]> {
 }
 
 /// The version `<binary> --version` is expected to report when it's
-/// installed to the pin `fml install` currently uses, per [`ALL_CHAINS`]'s
+/// installed to the pin `fml doctor --install` currently uses, per [`ALL_CHAINS`]'s
 /// `expected_binary_version` field. Returns `None` — a "no known pin to
 /// compare against" result, not an error — when the tool has no registered
 /// chain row, or (deliberately, for most rows — see the doc comment above
@@ -996,7 +996,7 @@ pub fn ensure_cargo_binstall() -> bool {
 /// (`typstyle` 0.15.0 vs. the pinned 0.15.1). Installing via that lagging
 /// Homebrew formula then trips `install_missing_tools`' post-install
 /// convergence guard -- a spurious `[WARN]` + non-clean exit on every macOS
-/// `fml install` until the bottle catches up. Bootstrapping `cargo-binstall`
+/// `fml doctor --install` until the bottle catches up. Bootstrapping `cargo-binstall`
 /// up front lets the already-first, pin-carrying prebuilt win instead;
 /// Homebrew stays in the chain as the fallback if the bootstrap fails.
 ///
@@ -1785,7 +1785,7 @@ mod tests {
         assert!(
           has_version_pin(pkg_arg),
           "{binary}: {method:?} resolves package {pkg_arg:?} with no \
-           version pin -- fml install would float on \"latest\""
+           version pin -- fml doctor --install would float on \"latest\""
         );
       }
     }

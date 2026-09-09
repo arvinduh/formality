@@ -82,8 +82,8 @@ Terminal UI rendering, currently just semantic table formatting
 (`ui/table/mod.rs`, `render.rs`): width policies, wrapping/truncation,
 terminal-width clamping, and semantic color roles. This is the same machinery
 both `fml table`'s public JSON-spec renderer and `fml`'s own internal output
-(`fml doctor`, `fml list-surfaces`) render through — see
-[table-spec.md](table-spec.md) for the JSON specification it consumes.
+(`fml doctor`) render through — see [table-spec.md](table-spec.md) for the JSON
+specification it consumes.
 
 ## `src/commands`
 
@@ -92,18 +92,17 @@ in `src/lib.rs`: `fmt.rs`, `lint.rs`, `fix.rs` (the composite
 lint-fix-then-format pipeline — see [style-guide.md](style-guide.md) §4's
 `Runner` dispatch section), `sync.rs`, `init.rs`, `migrate.rs` (config
 schema-reference migration), `schema.rs` (`fml schema`, JSON Schema generation),
-`surfaces.rs` (`fml list-surfaces`), `table.rs` (`fml table`), `lsp.rs` and
-`lsp_diagnostics.rs` (the `fml lsp` Language Server Protocol passthrough and its
-structured per-violation diagnostics, `#159 [pre-recreation]`), and `doctor/` (a
-directory module — `mod.rs`, `gitignore.rs`, `venv.rs` — implementing
-`fml doctor`'s workspace/toolchain verification checks). The exception to
-one-file-per-subcommand is `fml install`, which has no file of its own: it
-dispatches to `doctor::run_doctor(..., install: true)`, the same handler as
-`fml doctor --install`, so tool installation lives in `doctor/mod.rs`
-(`install_missing_tools`, `preflight_install` — the latter also called by
-`fmt`/`lint`/`fix` for their `--install` flag). `mod.rs` at the top of this
-directory also holds shared helpers used by more than one command handler (e.g.
-the missing-tool warning printer).
+`table.rs` (`fml table`), `lsp.rs` and `lsp_diagnostics.rs` (the `fml lsp`
+Language Server Protocol passthrough and its structured per-violation
+diagnostics, `#159 [pre-recreation]`), and `doctor/` (a directory module —
+`mod.rs`, `gitignore.rs`, `venv.rs` — implementing `fml doctor`'s
+workspace/toolchain verification checks). Tool installation lives in
+`doctor/mod.rs` (`install_missing_tools`, `preflight_install` — the latter also
+called by `fmt`/`lint`/`fix` for their `--install` flag). The deprecated
+`fml install` and `fml list-surfaces` / `fml surfaces` dispatch directly to
+`doctor::run_doctor`. `mod.rs` at the top of this directory also holds shared
+helpers used by more than one command handler (e.g. the missing-tool warning
+printer).
 
 ## Cross-cutting: process and release docs
 

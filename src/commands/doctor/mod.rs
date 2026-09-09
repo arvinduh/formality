@@ -1,4 +1,4 @@
-//! `fml doctor` / `fml install` command: probes every surface's required
+//! `fml doctor` command: probes every surface's required
 //! tools against the resolved config, reports version compatibility, and
 //! (with `install`) installs whatever's missing, plus workspace hygiene
 //! checks ([`gitignore`], [`venv`]).
@@ -25,7 +25,8 @@ use crate::engine::version::{
 };
 use crate::surfaces::{
   LanguageSurface, ToolInfo, all_surfaces, check_binary_exists,
-  create_tool_command, detect_surfaces_smart, pinned_version_for,
+  create_tool_command, default_registry, detect_surfaces_smart,
+  pinned_version_for,
 };
 use crate::ui::paths::display_path;
 use crate::ui::table::{
@@ -853,7 +854,7 @@ struct DoctorScanResult {
 /// The scan is a snapshot of the world *before* `--install` runs; this is the
 /// running tally the footer is actually rendered from, so a successful
 /// install has a place to land. Rendering the footer directly off the scan is
-/// what made `fml install` report tools as missing in the same breath as the
+/// what made `fml doctor --install` report tools as missing in the same breath as the
 /// Install Summary table listing them `[OK]` (#106) — the counts were
 /// structurally the pre-install snapshot and could not have been anything
 /// else.
@@ -927,7 +928,7 @@ impl ToolTally {
   }
 
   /// The footer line itself. `offer_install_hint` appends the "run
-  /// 'fml install'" nudge, which only makes sense on a run that found work to
+  /// 'fml doctor --install'" nudge, which only makes sense on a run that found work to
   /// do and wasn't already `--install`.
   fn render(&self, offer_install_hint: bool) -> String {
     let qualifier = |count: usize, label: &str| {
@@ -938,8 +939,8 @@ impl ToolTally {
       }
     };
 
-    format!(
-      "  {} installed{}{}{}, {} missing{}",
+    let counts = format!(
+      "  {} installed{}{}{}, {} missing",
       self.installed.len().to_string().green().bold(),
       qualifier(self.outdated, "outdated"),
       qualifier(self.stale.len(), "stale"),
@@ -949,14 +950,16 @@ impl ToolTally {
       } else {
         self.missing.len().to_string().yellow().bold().to_string()
       },
-      if offer_install_hint {
-        " (run 'fml install' to install missing/stale tools)"
-          .dimmed()
-          .to_string()
-      } else {
-        String::new()
-      }
-    )
+    );
+
+    if offer_install_hint {
+      format!(
+        "{counts}\n  {}",
+        "(run 'fml doctor --install' to install missing/stale tools)".dimmed()
+      )
+    } else {
+      counts
+    }
   }
 }
 
@@ -970,23 +973,39 @@ fn scan_tools_and_build_table(
   let mut installed_unique_tools = HashSet::new();
   let mut outdated_unique_tools = HashSet::new();
   // Tools that are present and executable, but whose installed version
-  // doesn't match the exact pin `fml install` would install — [`ToolStatus::
+  // doesn't match the exact pin `fml doctor --install` would install — [`ToolStatus::
   // Stale`]. Kept as a `Vec<ToolInfo>` (not just a name set, like
-  // `installed_unique_tools`/`outdated_unique_tools`) because `fml install`
+  // `installed_unique_tools`/`outdated_unique_tools`) because `fml doctor --install`
   // needs the full `ToolInfo` to reinstall it, same as `missing_unique_tools`.
   let mut stale_unique_tools: Vec<ToolInfo> = Vec::new();
   let mut unknown_unique_tools = HashSet::new();
   let global = config.resolve_global();
 
+  let detected = detect_surfaces_smart(root, config);
+  let detected_names: HashSet<&str> =
+    detected.iter().map(|s| s.name()).collect();
+
   let mut doctor_table = Table::new(vec![
     Column::new(Cell::text("")).width(WidthPolicy::Fixed(10)),
     Column::new(Cell::text("")).width(WidthPolicy::Fixed(20)),
-    Column::new(Cell::text("")).width(WidthPolicy::Fixed(10)),
+    Column::new(Cell::text("")).width(WidthPolicy::Fixed(11)),
+    Column::new(Cell::text("")).width(WidthPolicy::Fixed(11)),
     Column::new(Cell::text("")).width(WidthPolicy::Auto),
   ])
   .layout(Layout::compact().indent(2).padding(0, 1).max_width(80));
 
   for surface in surfaces {
+    let is_detected = detected_names.contains(surface.name())
+      || (default_registry()
+        .get_surface_by_name(surface.name())
+        .is_none()
+        && surface.detect(root));
+    let detected_cell = if is_detected {
+      Cell::styled("detected", Style::Ok)
+    } else {
+      Cell::styled("undetected", Style::Dim)
+    };
+
     let resolved = config.resolve_for_lang_with_global(surface.name(), &global);
     let tools = surface.tool_info(&resolved);
 
@@ -1017,6 +1036,7 @@ fn scan_tools_and_build_table(
                 Cell::styled("[WARN] ", Style::Warn),
                 Cell::styled(tool.binary, Style::Warn),
                 Cell::styled(surface.name(), Style::Dim),
+                detected_cell.clone(),
                 Cell::new(vec![
                   Span::styled(path_str, Style::Dim),
                   Span::styled(v_info, Style::Warn),
@@ -1037,6 +1057,7 @@ fn scan_tools_and_build_table(
                 Cell::styled("[STALE]", Style::Warn),
                 Cell::styled(tool.binary, Style::Warn),
                 Cell::styled(surface.name(), Style::Dim),
+                detected_cell.clone(),
                 Cell::new(vec![
                   Span::styled(path_str, Style::Dim),
                   Span::styled(v_info, Style::Warn),
@@ -1054,6 +1075,7 @@ fn scan_tools_and_build_table(
                 Cell::styled("[READY]", Style::Ok),
                 Cell::styled(tool.binary, Style::Tool),
                 Cell::styled(surface.name(), Style::Dim),
+                detected_cell.clone(),
                 Cell::new(vec![
                   Span::styled(path_str, Style::Dim),
                   Span::styled(v_info, Style::Info),
@@ -1072,6 +1094,7 @@ fn scan_tools_and_build_table(
                 Cell::styled("[UNKNOWN]", Style::Warn),
                 Cell::styled(tool.binary, Style::Warn),
                 Cell::styled(surface.name(), Style::Dim),
+                detected_cell.clone(),
                 Cell::new(vec![
                   Span::styled(path_str, Style::Dim),
                   Span::styled(v_info, Style::Warn),
@@ -1091,6 +1114,7 @@ fn scan_tools_and_build_table(
                 Cell::styled("[READY]", Style::Ok),
                 Cell::styled(tool.binary, Style::Tool),
                 Cell::styled(surface.name(), Style::Dim),
+                detected_cell.clone(),
                 Cell::new(vec![
                   Span::styled(path_str, Style::Dim),
                   Span::styled(v_info, Style::Info),
@@ -1107,6 +1131,7 @@ fn scan_tools_and_build_table(
           Cell::styled("[MISS] ", Style::Warn),
           Cell::styled(tool.binary, Style::Warn),
           Cell::styled(surface.name(), Style::Dim),
+          detected_cell.clone(),
           Cell::styled(tool.description, Style::Dim),
         ]);
         doctor_table.add_row(row);

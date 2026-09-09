@@ -18,8 +18,6 @@ pub mod lsp_diagnostics;
 pub mod migrate;
 /// JSON Schema generator CLI command handler.
 pub mod schema;
-/// Language surfaces inspector CLI command handler.
-pub mod surfaces;
 /// Native configuration synchronization CLI command handler.
 pub mod sync;
 /// Output table formatting helper CLI command.

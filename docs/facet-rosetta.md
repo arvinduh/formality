@@ -116,9 +116,8 @@ resolved value, so they can never disagree.
   settings, …) — a `Configurable` facet with a value set becomes an explicit key
   in the generated file; an `Unsupported` or non-matching `Fixed` facet produces
   a diagnostic instead.
-- **`fml doctor`** and **`fml list-surfaces`** can surface facet support
-  alongside tool detection so users can see at a glance what's tunable for each
-  active surface.
+- **`fml doctor`** can surface facet support alongside tool detection so users
+  can see at a glance what's tunable for each active surface.
 
 ## Extending the rosetta
 

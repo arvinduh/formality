@@ -633,7 +633,7 @@ fn test_evaluate_tool_status_pin_match_is_compatible() {
 #[test]
 fn test_evaluate_tool_status_pin_mismatch_is_stale() {
   // The #5 repro: a stale system-wide prettier 3.8.1 with pin 3.9.6 -- above
-  // MSTV (so it "works"), but not the exact bits `fml install` would pin.
+  // MSTV (so it "works"), but not the exact bits `fml doctor --install` would pin.
   let current = Version::new(3, 8, 1);
   let minimum = Version::new(2, 0, 0);
   let pinned = Version::new(3, 9, 6);

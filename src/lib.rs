@@ -119,6 +119,11 @@ fn run_command_inner(
     }
 
     Commands::Install { all } => {
+      crate::ui::deprecation::warn_deprecated_spelling(
+        "fml install",
+        "fml doctor --install",
+        None,
+      );
       commands::doctor::run_doctor(root, all, true, &config)
     }
 
@@ -126,7 +131,19 @@ fn run_command_inner(
       commands::init::run_init(root, &config, force, hidden)
     }
 
-    Commands::ListSurfaces => commands::surfaces::run_surfaces(root, &config),
+    Commands::ListSurfaces => {
+      let spelling = if std::env::args().any(|a| a == "surfaces") {
+        "fml surfaces"
+      } else {
+        "fml list-surfaces"
+      };
+      crate::ui::deprecation::warn_deprecated_spelling(
+        spelling,
+        "fml doctor",
+        None,
+      );
+      commands::doctor::run_doctor(root, false, false, &config)
+    }
 
     Commands::Fmt {
       check,
@@ -247,7 +264,7 @@ fn warn_unrecognized_lang_sections(config: &FormalityConfig) {
        languages.",
       "[WARN]".yellow().bold(),
       name.bold(),
-      "fml list-surfaces".cyan()
+      "fml doctor".cyan()
     );
   }
 }
