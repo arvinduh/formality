@@ -1,17 +1,51 @@
-# `fml table` — Semantic JSON Table Specification
+# Table Specification & Library API (`fml::ui::table`)
 
-`fml table` renders an opinionated, terminal-aware table from a JSON
-specification. It exists so any script or tool (not just `fml`'s own internal
-output — see `fml doctor` / `fml list-surfaces`, which render via the same
-`src/ui/table` machinery) can get formality's table styling (semantic color
-roles, width policies, wrapping/truncation, terminal-width clamping) without
-reimplementing a table renderer.
+Formality's table engine renders opinionated, terminal-aware tables from Rust
+structures or JSON specifications. It exists so any tool or consumer can get
+formality's table styling (semantic color roles, width policies,
+wrapping/truncation, terminal-width clamping) without reimplementing a table
+renderer.
+
+## Library Usage (`fml::ui::table`)
+
+The primary interface for table rendering is the `fml::ui::table` library
+module:
+
+```rust
+use fml::ui::table::{render_json, render, Table, Column, Row, Cell, Span, Style, WidthPolicy};
+
+// 1. Render from a JSON specification string:
+let json_str = r#"{
+  "columns": [{"header": {"spans": [{"text": "Surface"}]}}],
+  "rows": [{"cells": [{"spans": [{"text": "Rust"}]}]}]
+}"#;
+let rendered = render_json(json_str).expect("Valid table JSON");
+print!("{rendered}");
+
+// 2. Or construct programmatically in Rust:
+let mut table = Table::new();
+table.add_column(Column::new(Cell::text("Surface")).width(WidthPolicy::Fixed(12)));
+table.add_column(Column::new(Cell::text("Status")).width(WidthPolicy::Fixed(10)));
+
+table.add_row(Row::new(vec![
+  Cell::text("rust"),
+  Cell::styled("OK", Style::Ok),
+]));
+
+let rendered = render(&table);
+print!("{rendered}");
+```
+
+## CLI Usage (Deprecated)
+
+> [!NOTE] The `fml table` CLI command is deprecated as of `v0.3.0` and will be
+> removed in `v0.4.0`. Use the `fml::ui::table` library API directly instead.
 
 ```bash
-# From a JSON string argument:
+# From a JSON string argument (deprecated):
 fml table --json '{"columns": [...], "rows": [...]}'
 
-# From stdin (no --json flag):
+# From stdin (deprecated):
 echo '{"columns": [...], "rows": [...]}' | fml table
 ```
 
@@ -158,7 +192,8 @@ fml table --json '{
 
 This is the same rendering path formality's own commands use internally — e.g.
 `fml list-surfaces` builds a `Table` value in `src/commands/surfaces.rs` and
-renders it exactly as `fml table` would from equivalent JSON.
+renders it through `fml::ui::table` exactly as `render_json` does from
+equivalent JSON.
 
 ## Framing (`fml`'s own output)
 

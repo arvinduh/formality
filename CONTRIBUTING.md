@@ -133,6 +133,21 @@ cargo run -q -- fmt
 > `formality.toml` inline, so `cargo run -q -- sync --check` is not run against
 > this repository's root.
 
+### Schema Drift & Regeneration
+
+If you modify configuration structures in `src/config`, verify that the JSON
+Schema has no drift:
+
+```bash
+cargo test -j 2 --test schema_drift
+```
+
+To regenerate the committed `schema/formality.schema.json`:
+
+```bash
+UPDATE_SCHEMA=1 cargo test -j 2 --test schema_drift
+```
+
 ---
 
 ## Git Pre-Commit Hook
@@ -196,9 +211,10 @@ When triggered on `git commit`, the hook:
      `cargo clippy --all-targets -- -D warnings` and the full unit/integration
      test suite (`cargo test --verbose`).
    - **`Formality Dogfooding`**: Runs `fml fmt --check` and `fml lint` against
-     this repository's live tree, verifies schema drift (`fml schema` vs.
-     `schema/formality.schema.json`), and enforces forward `SCHEMA_VERSION`
-     progression in `src/config/schema.rs`.
+     this repository's live tree, verifies schema drift
+     (`cargo test --test schema_drift` vs. `schema/formality.schema.json`;
+     regenerate via `UPDATE_SCHEMA=1 cargo test -j 2 --test schema_drift`), and
+     enforces forward `SCHEMA_VERSION` progression in `src/config/schema.rs`.
    - **`Security Audit`**: Runs `cargo audit` against the Rust advisory
      database.
 
