@@ -158,6 +158,7 @@ impl FormalityConfig {
         if lang_name == "markdown" {
           Some(MarkdownOptions {
             prose_wrap: prose_wrap.clone(),
+            no_inline_html: None,
           })
         } else {
           None

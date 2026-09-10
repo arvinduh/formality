@@ -118,7 +118,12 @@ machine-generated shape.
 - **Managed config**: `.markdownlint.json`, plus the shared `.prettierrc.json`
   (see below).
 - **`[lang.markdown]` options**: `prose_wrap` (`"always"` / `"never"` /
-  `"preserve"`).
+  `"preserve"`); `no_inline_html` (bool, default `false`) — controls
+  markdownlint's `MD033`/`no-inline-html` rule. Ships **disabled** by default:
+  it is a house-style rule, not a correctness one, and there is no markdown
+  equivalent for centered badge blocks (`<p align="center">` + `<img>`) or
+  `<details>`/`<summary>` disclosure widgets. Set `no_inline_html = true` to opt
+  back in.
 - **Facets**: `indent_tabs`/`indent_width`/`line_length`/`prose_wrap`
   configurable; `quote_style`, `trailing_comma`, `import_sort`, `edition`,
   `standard` unsupported.
