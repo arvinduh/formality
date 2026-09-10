@@ -906,12 +906,6 @@ fn test_parse_str_malformed_toml_yields_parse_error() {
 }
 
 #[test]
-fn test_config_error_invalid_display() {
-  let err = ConfigError::Invalid("something is wrong".to_string());
-  assert_eq!(err.to_string(), "Invalid config: something is wrong");
-}
-
-#[test]
 fn test_java_aosp_style_defaults_indent_width_to_four() {
   // Java's indent_width is conditionally Fixed: google-java-format's
   // --aosp flag pins it to 4 spaces (vs. 2 for the default Google style),

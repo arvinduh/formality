@@ -32,18 +32,6 @@ impl ExitStatus {
   pub const fn is_clean(self) -> bool {
     matches!(self, Self::Clean)
   }
-
-  /// Returns `true` if the status is [`ExitStatus::Violations`].
-  #[must_use]
-  pub const fn is_violations(self) -> bool {
-    matches!(self, Self::Violations)
-  }
-
-  /// Returns `true` if the status is [`ExitStatus::Error`].
-  #[must_use]
-  pub const fn is_error(self) -> bool {
-    matches!(self, Self::Error)
-  }
 }
 
 impl From<ExitStatus> for i32 {
@@ -88,8 +76,6 @@ pub enum GitError {
   ExecutionFailed(String),
   /// Git command returned a non-zero status.
   CommandFailed(String),
-  /// Generic git error message.
-  Other(String),
 }
 
 impl fmt::Display for GitError {
@@ -103,55 +89,11 @@ impl fmt::Display for GitError {
         write!(f, "Failed to execute git: {msg}")
       }
       GitError::CommandFailed(msg) => write!(f, "Git command failed: {msg}"),
-      GitError::Other(msg) => write!(f, "{msg}"),
     }
   }
 }
 
 impl std::error::Error for GitError {}
-
-/// Error indicating a required binary tool for a surface is missing.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct ToolMissingError {
-  /// Name of the missing executable binary.
-  pub binary: String,
-  /// Name of the associated language surface.
-  pub surface: String,
-  /// Optional installation hint/instruction for installing the missing binary.
-  pub install_hint: Option<String>,
-}
-
-impl ToolMissingError {
-  /// Constructs a new [`ToolMissingError`].
-  #[must_use]
-  pub fn new(
-    binary: impl Into<String>,
-    surface: impl Into<String>,
-    install_hint: Option<impl Into<String>>,
-  ) -> Self {
-    Self {
-      binary: binary.into(),
-      surface: surface.into(),
-      install_hint: install_hint.map(Into::into),
-    }
-  }
-}
-
-impl fmt::Display for ToolMissingError {
-  fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-    write!(
-      f,
-      "Missing tool binary '{}' for surface '{}'",
-      self.binary, self.surface
-    )?;
-    if let Some(ref hint) = self.install_hint {
-      write!(f, " (install hint: {hint})")?;
-    }
-    Ok(())
-  }
-}
-
-impl std::error::Error for ToolMissingError {}
 
 /// Errors related to language surfaces or native configuration rendering.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -160,20 +102,6 @@ pub enum SurfaceError {
   UnknownSurface(String),
   /// Serialization of native surface configuration failed.
   SerializationFailed {
-    /// Surface name.
-    surface: String,
-    /// Detailed failure message.
-    message: String,
-  },
-  /// Execution of tool within surface failed.
-  ExecutionFailed {
-    /// Surface name.
-    surface: String,
-    /// Detailed failure message.
-    message: String,
-  },
-  /// Generic surface error message.
-  Other {
     /// Surface name.
     surface: String,
     /// Detailed failure message.
@@ -190,12 +118,6 @@ impl fmt::Display for SurfaceError {
       ),
       SurfaceError::SerializationFailed { surface, message } => {
         write!(f, "Failed to serialize {surface} config: {message}")
-      }
-      SurfaceError::ExecutionFailed { surface, message } => {
-        write!(f, "Execution error for {surface}: {message}")
-      }
-      SurfaceError::Other { surface, message } => {
-        write!(f, "Surface error ({surface}): {message}")
       }
     }
   }
@@ -243,8 +165,6 @@ pub enum FormalityError {
   Config(ConfigError),
   /// Git repository or path resolution errors.
   Git(GitError),
-  /// Missing binary toolchain errors.
-  ToolMissing(ToolMissingError),
   /// Language surface resolution or serialization errors.
   Surface(SurfaceError),
   /// Standard file system or stream IO errors.
@@ -254,12 +174,6 @@ pub enum FormalityError {
 }
 
 impl FormalityError {
-  /// Map error to corresponding exit status.
-  #[must_use]
-  pub fn exit_status(&self) -> ExitStatus {
-    ExitStatus::Error
-  }
-
   /// Renders standardized red bold diagnostic string for stdout/stderr.
   #[must_use]
   pub fn render_diagnostic(&self) -> String {
@@ -277,7 +191,6 @@ impl fmt::Display for FormalityError {
     match self {
       FormalityError::Config(e) => write!(f, "{e}"),
       FormalityError::Git(e) => write!(f, "{e}"),
-      FormalityError::ToolMissing(e) => write!(f, "{e}"),
       FormalityError::Surface(e) => write!(f, "{e}"),
       FormalityError::Io(e) => write!(f, "{e}"),
       FormalityError::InvalidCli(msg) => write!(f, "{msg}"),
@@ -290,7 +203,6 @@ impl std::error::Error for FormalityError {
     match self {
       FormalityError::Config(e) => Some(e),
       FormalityError::Git(e) => Some(e),
-      FormalityError::ToolMissing(e) => Some(e),
       FormalityError::Surface(e) => Some(e),
       FormalityError::Io(e) => Some(e),
       FormalityError::InvalidCli(_) => None,
@@ -307,12 +219,6 @@ impl From<ConfigError> for FormalityError {
 impl From<GitError> for FormalityError {
   fn from(err: GitError) -> Self {
     FormalityError::Git(err)
-  }
-}
-
-impl From<ToolMissingError> for FormalityError {
-  fn from(err: ToolMissingError) -> Self {
-    FormalityError::ToolMissing(err)
   }
 }
 
@@ -370,8 +276,6 @@ mod tests {
     assert!(ExitStatus::try_from(99).is_err());
 
     assert!(ExitStatus::Clean.is_clean());
-    assert!(ExitStatus::Violations.is_violations());
-    assert!(ExitStatus::Error.is_error());
 
     assert_eq!(ExitStatus::Clean, 0);
     assert_eq!(0, ExitStatus::Clean);
@@ -384,16 +288,7 @@ mod tests {
     let git_err = FormalityError::Git(GitError::MutuallyExclusiveFlags);
     assert!(git_err.to_string().contains("--staged and --changed"));
     assert!(git_err.render_diagnostic().contains("[ERR]"));
-    assert_eq!(git_err.exit_status(), ExitStatus::Error);
     assert_eq!(ExitStatus::from(&git_err), ExitStatus::Error);
-
-    let tool_err = FormalityError::ToolMissing(ToolMissingError::new(
-      "ruff",
-      "python",
-      Some("pip install ruff"),
-    ));
-    assert!(tool_err.to_string().contains("Missing tool binary 'ruff'"));
-    assert!(tool_err.to_string().contains("pip install ruff"));
 
     let surface_err =
       FormalityError::Surface(SurfaceError::UnknownSurface("foo".into()));
@@ -414,7 +309,6 @@ mod tests {
     assert_error::<FormalityError>();
     assert_error::<ConfigError>();
     assert_error::<GitError>();
-    assert_error::<ToolMissingError>();
     assert_error::<SurfaceError>();
     assert_error::<IoError>();
   }

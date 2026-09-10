@@ -477,8 +477,6 @@ pub enum ConfigError {
     /// Underlying TOML error.
     source: toml::de::Error,
   },
-  /// Logical or validation configuration error.
-  Invalid(String),
 }
 
 impl std::fmt::Display for ConfigError {
@@ -500,7 +498,6 @@ impl std::fmt::Display for ConfigError {
           source
         )
       }
-      ConfigError::Invalid(msg) => write!(f, "Invalid config: {msg}"),
     }
   }
 }
