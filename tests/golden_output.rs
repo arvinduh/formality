@@ -233,6 +233,40 @@ fn golden_hard_cap_width_policies_are_not_softened_by_a_long_token() {
 }
 
 #[test]
+fn golden_unbreakable_token_in_prose_hard_splits_instead_of_overflowing() {
+  // #269: prose (`Frame::wrap_body`) previously had no hard-split path, so an
+  // over-long unbreakable token (a long path/URL a linter emits inside a
+  // Diagnostics block) overflowed the frame instead of wrapping — the same
+  // input already hard-split cleanly inside a table cell (see
+  // `golden_unbreakable_token_wider_than_table_hard_splits_to_stay_within_80`
+  // above). Unifying both wrappers on one tokenizer closes that gap: prose
+  // now hard-splits the same unbreakable token, staying within the frame.
+  let giant = "x".repeat(140);
+  let body = format!("error: unresolved reference to {giant}");
+  let frame = Frame::capped();
+  let wrapped_body = frame.wrap_body(&body);
+  let framed = frame.section(
+    "Diagnostics & Suggestions:",
+    &wrapped_body,
+    &Palette::none(),
+  );
+
+  for line in framed.lines() {
+    assert!(
+      max_line_display_width(line) <= frame.width(),
+      "prose line exceeded the frame width ({}): {line:?}",
+      frame.width()
+    );
+  }
+  // Present in full, just spread across continuation lines, same as the
+  // table-cell case.
+  let joined: String =
+    framed.lines().map(str::trim).collect::<Vec<_>>().join("");
+  assert!(joined.contains(&"x".repeat(20)));
+  assert!(joined.contains(&giant));
+}
+
+#[test]
 fn golden_failing_fml_lint_process_output_is_framed_within_80() {
   let dir = tempfile::tempdir().expect("tempdir");
   // Pass the canonicalized root so it matches what the linters echo back:
