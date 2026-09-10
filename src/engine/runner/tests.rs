@@ -898,6 +898,67 @@ impl LanguageSurface for MockViolatingSurface {
   }
 }
 
+/// A surface whose format/lint pass always reports an operational fault --
+/// distinct from [`MockMissingSurface`] (`ToolMissing`) and
+/// [`MockViolatingSurface`] (`ViolationsFound`).
+#[derive(Debug, Clone)]
+struct MockErroringSurface;
+
+impl crate::surfaces::DeclaresFacets for MockErroringSurface {
+  fn facet_support(
+    &self,
+    _: crate::surfaces::Facet,
+  ) -> crate::surfaces::FacetSupport {
+    crate::surfaces::FacetSupport::Unsupported
+  }
+}
+
+impl LanguageSurface for MockErroringSurface {
+  fn name(&self) -> &'static str {
+    "mock_erroring"
+  }
+  fn file_extensions(&self) -> &[&'static str] {
+    &["mock3"]
+  }
+  fn detect(&self, _: &Path) -> bool {
+    true
+  }
+  fn tool_info(
+    &self,
+    _: &crate::config::ResolvedLangConfig,
+  ) -> Vec<crate::surfaces::ToolInfo> {
+    vec![]
+  }
+  fn format(&self, _: &ExecutionContext) -> SurfaceResult {
+    SurfaceResult {
+      surface_name: self.name(),
+      status: SurfaceStatus::ExecutionError {
+        message: "tool crashed".to_string(),
+      },
+      duration: Duration::from_millis(1),
+    }
+  }
+  fn lint(&self, _: &ExecutionContext, _: bool) -> SurfaceResult {
+    SurfaceResult {
+      surface_name: self.name(),
+      status: SurfaceStatus::ExecutionError {
+        message: "tool crashed".to_string(),
+      },
+      duration: Duration::from_millis(1),
+    }
+  }
+  fn sync_config(&self, _: &ExecutionContext, _: bool) -> SurfaceResult {
+    SurfaceResult {
+      surface_name: self.name(),
+      status: SurfaceStatus::Passed,
+      duration: Duration::from_millis(1),
+    }
+  }
+  fn clone_box(&self) -> Box<dyn LanguageSurface> {
+    Box::new(self.clone())
+  }
+}
+
 #[test]
 fn test_runner_allow_missing_silences_tool_missing_but_not_violations() {
   // #252 / #163: `--allow-missing` must silence a missing tool's
@@ -939,6 +1000,18 @@ fn test_runner_allow_missing_silences_tool_missing_but_not_violations() {
     &config,
   );
   assert_eq!(missing_and_violating, ExitStatus::Violations);
+
+  // A missing tool AND an execution error (on a different surface): exit 2
+  // even with --allow-missing -- the flag only silences the ToolMissing arm,
+  // never an operational fault, which outranks a plain violation too.
+  let missing_and_erroring = Runner::run(
+    vec![Box::new(MockMissingSurface), Box::new(MockErroringSurface)],
+    &root,
+    &[],
+    &Plan::fmt(false, true),
+    &config,
+  );
+  assert_eq!(missing_and_erroring, ExitStatus::Error);
 }
 
 #[test]
