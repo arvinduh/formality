@@ -4,11 +4,17 @@ fml: polyglot format/lint/config orchestrator, 12 language surfaces.
 
 ## Commands
 
+Before committing, run the full suite — it's what CI actually runs:
+
 ```bash
-cargo test --lib -q
+cargo test
 cargo clippy --all-targets -- -D warnings
 cargo run -q -- fmt
 ```
+
+While iterating, `cargo test --lib -q` is a faster inner loop, but it only runs
+the library's unit tests — it skips every file under `tests/` (9 integration
+test files as of this writing), so it is not sufficient before committing.
 
 Activate the staged pre-commit hook:
 
@@ -56,8 +62,10 @@ is not run against this repository's root.
 
 ## Always
 
-- Run `cargo test --lib -q && cargo clippy --all-targets -- -D warnings` before
-  any commit.
+- Run `cargo test && cargo clippy --all-targets -- -D warnings` before any
+  commit — `cargo test --lib -q` is fine for a fast inner loop while iterating,
+  but it skips everything under `tests/` and is not sufficient before
+  committing.
 - Check `docs/INDEX.md` before reading source to understand structure or
   conventions already documented there.
 

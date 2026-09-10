@@ -94,11 +94,15 @@ or merge.
        `SCHEMA_VERSION` progression enforcement in `src/config/schema.rs`.
     3. `Security Audit`: `cargo audit`.
 - Before every commit: standard presubmit command suite:
-  `cargo test --lib -q && cargo clippy --all-targets -- -D warnings`, dogfooded
-  with the freshly built binary (`cargo run -q -- fmt`), never a stale global
-  `fml`. The staged pre-commit gate enforces dogfooding on staged files — expect
-  it to block a commit that fails its own dogfooding, and treat that as working
-  as intended, not a bug to route around.
+  `cargo test && cargo clippy --all-targets -- -D warnings`, dogfooded with the
+  freshly built binary (`cargo run -q -- fmt`), never a stale global `fml`.
+  `cargo test --lib -q` is a faster inner loop while iterating, but it only runs
+  the library's unit tests — it skips every file under `tests/` (9 integration
+  test files as of this writing) — so it is not the gate to run before
+  committing; use the full `cargo test` above. The staged pre-commit gate
+  enforces dogfooding on staged files — expect it to block a commit that fails
+  its own dogfooding, and treat that as working as intended, not a bug to route
+  around.
 
 ## 3. CI / branch-protection changes need the orchestrator, not a worker
 
@@ -195,9 +199,10 @@ more than it saves.
      implementation subject to the full §4 gate again, and say so explicitly
      rather than quietly merging a guess.
 3. Re-run the full presubmit
-   (`cargo test --lib -q && cargo clippy --all-targets -- -D warnings`,
-   dogfooded fmt/lint) on the resolved state before pushing — a conflict
-   resolution that compiles is not the same as one that's correct.
+   (`cargo test && cargo clippy --all-targets -- -D warnings`, dogfooded
+   fmt/lint) on the resolved state before pushing — a conflict resolution that
+   compiles is not the same as one that's correct. `cargo test --lib -q` is not
+   enough here either — see §2.
 4. Push, wait for CI to go green again, then merge per the steps above.
 
 ## 4.6. Post-merge cleanup — leave nothing behind, every time

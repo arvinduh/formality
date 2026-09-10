@@ -49,7 +49,7 @@ committed `CHANGELOG.md`.
    ```sh
    git checkout main
    git pull
-   cargo test --lib -q
+   cargo test
    cargo clippy -q
    cargo run -q -- fmt --check
    cargo run -q -- lint
