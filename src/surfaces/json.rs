@@ -1,9 +1,10 @@
 //! JSON language surface: formats and lints via `prettier`, reusing the same
 //! `.prettierrc.json` config machinery as the Markdown surface.
 
+use super::tooling::no_native_config;
 use super::{
   DeclaresFacets, ExecutionContext, Facet, FacetSupport, LanguageSurface,
-  NativeConfig, PrettierConfig, SurfaceResult, SurfaceStatus, ToolInfo,
+  NativeConfig, PrettierConfig, SurfaceResult, ToolInfo,
   build_prettier_inline_args, classify_all_nonzero_as_error,
   create_tool_command, diff_check_via_tempcopy_classified, find_files_with_ext,
   lint_fix_unsupported, run_tool_command_classified, tool_missing_guard,
@@ -174,16 +175,13 @@ impl LanguageSurface for JsonSurface {
     _ctx: &ExecutionContext,
     _check: bool,
   ) -> SurfaceResult {
-    SurfaceResult {
-      surface_name: self.name(),
-      status: SurfaceStatus::Skipped {
-        reason: format!(
-          "No config of its own (shares {})",
-          PrettierConfig::FILE_NAME
-        ),
-      },
-      duration: std::time::Duration::default(),
-    }
+    no_native_config(
+      self.name(),
+      &format!(
+        "No config of its own (shares {})",
+        PrettierConfig::FILE_NAME
+      ),
+    )
   }
 }
 

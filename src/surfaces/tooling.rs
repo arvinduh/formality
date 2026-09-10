@@ -875,6 +875,23 @@ pub fn lint_fix_unsupported(
   }
 }
 
+/// Builds the `SurfaceResult` a surface's `sync_config` returns when it has
+/// no native config file of its own to generate or verify — e.g. it's
+/// configured entirely via CLI flags, or its settings live in a file shared
+/// with other surfaces and synced elsewhere. Always [`SurfaceStatus::Skipped`]:
+/// having nothing to sync isn't the same as having verified something is
+/// correct, so it must not report [`SurfaceStatus::Passed`].
+#[must_use]
+pub fn no_native_config(name: &'static str, reason: &str) -> SurfaceResult {
+  SurfaceResult {
+    surface_name: name,
+    status: SurfaceStatus::Skipped {
+      reason: reason.to_string(),
+    },
+    duration: std::time::Duration::default(),
+  }
+}
+
 /// Returns whether `cargo binstall` is usable: both `cargo` and
 /// `cargo-binstall` must be on `PATH`. This is a pure `PATH` lookup (via
 /// [`check_binary_exists`]/`which`) for both binaries -- it never spawns a
