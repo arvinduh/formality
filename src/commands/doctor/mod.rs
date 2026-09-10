@@ -467,39 +467,22 @@ pub fn preflight_install(
   for_fmt: bool,
   for_lint: bool,
 ) -> bool {
-  let mut seen: HashSet<&'static str> = HashSet::new();
   let mut to_install: Vec<ToolInfo> = Vec::new();
-  let global = config.resolve_global();
 
-  for surface in surfaces {
-    let resolved = config.resolve_for_lang_with_global(surface.name(), &global);
-    for tool in surface.tool_info(&resolved) {
-      if seen.contains(tool.binary) {
-        continue;
-      }
-      let needed = (for_fmt && tool.is_required_for_fmt)
-        || (for_lint && tool.is_required_for_lint);
-      if !needed {
-        continue;
-      }
-      seen.insert(tool.binary);
-
-      let lookup = lookup_tool_info(tool.binary);
-      let selected_pin =
-        crate::surfaces::selected_pinned_version_for(tool.binary);
-      if needs_install(
-        lookup.is_installed,
-        lookup.status.as_ref(),
-        selected_pin.as_ref(),
-      ) {
-        to_install.push(tool);
-      } else if lookup.is_installed
-        && let Some(ToolStatus::Stale { current, pinned }) =
-          lookup.status.as_ref()
-      {
-        let expl = stale_unpinnable_explanation(tool.binary, current, pinned);
-        println!("  {} {}", "[WARN] ".yellow().bold(), expl);
-      }
+  for (tool, lookup) in required_tools(surfaces, config, for_fmt, for_lint) {
+    let selected_pin =
+      crate::surfaces::selected_pinned_version_for(tool.binary);
+    if needs_install(
+      lookup.is_installed,
+      lookup.status.as_ref(),
+      selected_pin.as_ref(),
+    ) {
+      to_install.push(tool);
+    } else if lookup.is_installed
+      && let Some(ToolStatus::Stale { current, pinned }) = lookup.status.as_ref()
+    {
+      let expl = stale_unpinnable_explanation(tool.binary, current, pinned);
+      println!("  {} {}", "[WARN] ".yellow().bold(), expl);
     }
   }
 
@@ -516,7 +499,30 @@ pub fn preflight_warn_stale_tools(
   for_fmt: bool,
   for_lint: bool,
 ) {
+  for (tool, lookup) in required_tools(surfaces, config, for_fmt, for_lint) {
+    if lookup.is_installed
+      && let Some(ToolStatus::Stale { current, pinned }) = lookup.status.as_ref()
+    {
+      let warning = format_stale_tool_warning(tool.binary, current, pinned);
+      eprintln!("{} {warning}", "[WARN]".yellow().bold());
+    }
+  }
+}
+
+/// Collects the deduplicated set of tools that `surfaces` requires for the
+/// given actions (format and/or lint), each paired with its resolved
+/// [`ToolLookupResult`]. Shared by [`preflight_install`] and
+/// [`preflight_warn_stale_tools`], which both need "which tools does this run
+/// require" answered identically: same dedup-by-binary rule, same
+/// fmt/lint requirement predicate, same lookup call per tool.
+fn required_tools(
+  surfaces: &[Box<dyn LanguageSurface>],
+  config: &FormalityConfig,
+  for_fmt: bool,
+  for_lint: bool,
+) -> Vec<(ToolInfo, ToolLookupResult)> {
   let mut seen: HashSet<&'static str> = HashSet::new();
+  let mut result = Vec::new();
   let global = config.resolve_global();
 
   for surface in surfaces {
@@ -533,15 +539,11 @@ pub fn preflight_warn_stale_tools(
       seen.insert(tool.binary);
 
       let lookup = lookup_tool_info(tool.binary);
-      if lookup.is_installed
-        && let Some(ToolStatus::Stale { current, pinned }) =
-          lookup.status.as_ref()
-      {
-        let warning = format_stale_tool_warning(tool.binary, current, pinned);
-        eprintln!("{} {warning}", "[WARN]".yellow().bold());
-      }
+      result.push((tool, lookup));
     }
   }
+
+  result
 }
 
 /// Formats a preflight warning message for a tool whose installed version is
