@@ -479,10 +479,11 @@ pub fn preflight_install(
     ) {
       to_install.push(tool);
     } else if lookup.is_installed
-      && let Some(ToolStatus::Stale { current, pinned }) = lookup.status.as_ref()
+      && let Some(ToolStatus::Stale { current, pinned }) =
+        lookup.status.as_ref()
     {
       let expl = stale_unpinnable_explanation(tool.binary, current, pinned);
-      println!("  {} {}", "[WARN] ".yellow().bold(), expl);
+      eprintln!("  {} {}", "[WARN] ".yellow().bold(), expl);
     }
   }
 
@@ -501,7 +502,8 @@ pub fn preflight_warn_stale_tools(
 ) {
   for (tool, lookup) in required_tools(surfaces, config, for_fmt, for_lint) {
     if lookup.is_installed
-      && let Some(ToolStatus::Stale { current, pinned }) = lookup.status.as_ref()
+      && let Some(ToolStatus::Stale { current, pinned }) =
+        lookup.status.as_ref()
     {
       let warning = format_stale_tool_warning(tool.binary, current, pinned);
       eprintln!("{} {warning}", "[WARN]".yellow().bold());
