@@ -46,6 +46,11 @@ pub struct MarkdownlintConfig {
   /// MD013 line length rule settings.
   #[serde(rename = "MD013")]
   pub md013: MarkdownlintMd013,
+  /// MD033 (no-inline-html) rule enablement. Shipped default is `false` —
+  /// see [`crate::config::MarkdownOptions::no_inline_html`] for why, and
+  /// how to opt back in from `formality.toml`.
+  #[serde(rename = "MD033")]
+  pub md033: bool,
 }
 
 impl NativeConfig for MarkdownlintConfig {
@@ -69,6 +74,18 @@ impl NativeConfig for MarkdownlintConfig {
 fn markdownlint_config_for_lang(
   lang_config: &ResolvedLangConfig,
 ) -> MarkdownlintConfig {
+  // MD033/no-inline-html is a house-style rule, not a correctness one —
+  // there is no markdown equivalent for centered badge blocks
+  // (`<p align="center">` + `<img>`) or `<details>`/`<summary>` disclosure
+  // widgets, so it ships disabled by default. Opt back in via
+  // `[lang.markdown] no_inline_html = true` in `formality.toml` (see
+  // `MarkdownOptions::no_inline_html`, issue #120).
+  let no_inline_html = lang_config
+    .markdown
+    .as_ref()
+    .and_then(|m| m.no_inline_html)
+    .unwrap_or(false);
+
   MarkdownlintConfig {
     comment: MarkdownlintComment {
       description: AUTO_GENERATED_JSON_COMMENT.to_string(),
@@ -79,6 +96,7 @@ fn markdownlint_config_for_lang(
       code_blocks: false,
       tables: false,
     },
+    md033: no_inline_html,
   }
 }
 
@@ -662,6 +680,7 @@ mod tests {
         code_blocks: false,
         tables: false,
       },
+      md033: false,
     };
     let rendered = cfg.render().unwrap();
     assert!(rendered.contains("\"$comment\":"));
@@ -669,6 +688,7 @@ mod tests {
     assert!(rendered.contains("\"default\": true"));
     assert!(rendered.contains("\"MD013\":"));
     assert!(rendered.contains("\"line_length\": 120"));
+    assert!(rendered.contains("\"MD033\": false"));
   }
 
   #[test]
@@ -757,6 +777,106 @@ mod tests {
     assert_eq!(parsed["MD013"]["line_length"], 100);
     assert_eq!(parsed["MD013"]["code_blocks"], false);
     assert_eq!(parsed["MD013"]["tables"], false);
+  }
+
+  #[test]
+  fn test_markdownlint_config_for_lang_disables_md033_by_default() {
+    // Issue #120: MD033/no-inline-html fires unfixably on ordinary README
+    // idioms (centered badge blocks, `<details>` disclosure widgets), so the
+    // shipped default must disable it.
+    let lang_cfg = ResolvedLangConfig::new("markdown");
+    let cfg = markdownlint_config_for_lang(&lang_cfg);
+    assert!(!cfg.md033, "MD033 must be disabled by default");
+  }
+
+  #[test]
+  fn test_markdownlint_config_for_lang_reenables_md033_from_formality_toml() {
+    // Issue #120 acceptance criterion: MD033 must be re-enablable, not just
+    // removed — `[lang.markdown] no_inline_html = true`.
+    let mut lang_cfg = ResolvedLangConfig::new("markdown");
+    lang_cfg.markdown = Some(crate::config::MarkdownOptions {
+      prose_wrap: None,
+      no_inline_html: Some(true),
+    });
+    let cfg = markdownlint_config_for_lang(&lang_cfg);
+    assert!(cfg.md033, "MD033 must be re-enabled when opted back in");
+  }
+
+  /// Fixture README containing a centered badge block and a `<details>`
+  /// disclosure widget — the exact ordinary README idioms that trip
+  /// MD033/no-inline-html unfixably. This repo's own README has zero inline
+  /// HTML, which is exactly why CI dogfooding never caught issue #120; this
+  /// fixture deliberately breaks that coupling.
+  const README_WITH_INLINE_HTML: &str = "# Project\n\n\
+<p align=\"center\">\n\
+  <img src=\"badge.png\" alt=\"badge\">\n\
+</p>\n\n\
+Some ordinary prose.\n\n\
+<details>\n\
+<summary>More info</summary>\n\n\
+Extra detail text.\n\n\
+</details>\n";
+
+  #[test]
+  fn test_lint_md033_does_not_fire_by_default_on_readme_with_inline_html() {
+    // Issue #120 acceptance criterion: a README fixture with real inline
+    // HTML must lint clean by default now that MD033 ships disabled.
+    if !check_binary_exists("markdownlint-cli2")
+      && !check_binary_exists("markdownlint")
+    {
+      return;
+    }
+
+    let temp = TempDir::new().unwrap();
+    std::fs::write(temp.path().join("README.md"), README_WITH_INLINE_HTML)
+      .unwrap();
+    assert!(!temp.path().join(".markdownlint.json").exists());
+
+    let surface = MarkdownSurface;
+    let ctx = test_ctx(temp.path(), ResolvedLangConfig::new("markdown"));
+
+    let res = surface.lint(&ctx, false);
+    assert!(
+      res.is_success(),
+      "expected MD033 not to fire by default, got: {:?}",
+      res.status
+    );
+  }
+
+  #[test]
+  fn test_lint_md033_fires_when_reenabled_on_readme_with_inline_html() {
+    // Issue #120 acceptance criterion: opting back in via
+    // `[lang.markdown] no_inline_html = true` must restore MD033
+    // enforcement on the very same fixture that lints clean by default.
+    if !check_binary_exists("markdownlint-cli2")
+      && !check_binary_exists("markdownlint")
+    {
+      return;
+    }
+
+    let temp = TempDir::new().unwrap();
+    std::fs::write(temp.path().join("README.md"), README_WITH_INLINE_HTML)
+      .unwrap();
+
+    let mut lang_cfg = ResolvedLangConfig::new("markdown");
+    lang_cfg.markdown = Some(crate::config::MarkdownOptions {
+      prose_wrap: None,
+      no_inline_html: Some(true),
+    });
+    let surface = MarkdownSurface;
+    let ctx = test_ctx(temp.path(), lang_cfg);
+
+    let res = surface.lint(&ctx, false);
+    assert!(
+      !res.is_success(),
+      "expected MD033 to fire once re-enabled, got: {:?}",
+      res.status
+    );
+    let combined = format!("{:?}", res.status);
+    assert!(
+      combined.contains("MD033"),
+      "expected an MD033 violation in the lint output, got: {combined}"
+    );
   }
 
   #[test]

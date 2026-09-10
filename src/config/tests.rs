@@ -318,7 +318,8 @@ fn test_layout_facet_direct_and_inheritance() {
   assert_eq!(
     md.markdown,
     Some(MarkdownOptions {
-      prose_wrap: Some("always".to_string())
+      prose_wrap: Some("always".to_string()),
+      no_inline_html: None,
     })
   );
 }
@@ -396,6 +397,7 @@ fn test_typed_options_deserialization_from_toml() {
     md.markdown,
     Some(MarkdownOptions {
       prose_wrap: Some("never".to_string()),
+      no_inline_html: None,
     })
   );
 

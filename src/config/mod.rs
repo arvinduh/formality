@@ -336,12 +336,14 @@ impl LangConfig {
       if let Some(ref pw) = self.prose_wrap {
         opts = Some(MarkdownOptions {
           prose_wrap: Some(pw.clone()),
+          no_inline_html: None,
         });
       } else if let Some(ref l) = self.layout
         && let Some(ref pw) = l.prose_wrap
       {
         opts = Some(MarkdownOptions {
           prose_wrap: Some(pw.clone()),
+          no_inline_html: None,
         });
       }
     }

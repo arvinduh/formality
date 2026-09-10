@@ -781,6 +781,10 @@ mod tests {
                 let is_sanctioned_post_recreation = match num {
                   // Post-recreation #113 is markdownlint-cli2 exit code classification in markdown.rs
                   113 => rel_path == "src/surfaces/markdown.rs",
+                  // Post-recreation #120 is disabling MD033/no-inline-html by
+                  // default in markdown.rs (this fix, not the pre-recreation
+                  // issue of the same number)
+                  120 => rel_path == "src/surfaces/markdown.rs",
                   // Post-recreation #157 is path relativization in ui/paths.rs and surfaces/markdown.rs
                   157 => {
                     rel_path == "src/ui/paths.rs"
