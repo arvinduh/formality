@@ -19,7 +19,8 @@ Fixes / Closes #
 
 Please confirm that all presubmit checks pass before requesting review:
 
-- [ ] `cargo test --lib -q` passed clean
+- [ ] `cargo test` (full suite, matches CI — `--lib` alone skips `tests/`)
+      passed clean
 - [ ] `cargo clippy --all-targets -- -D warnings` passed with zero warnings
 - [ ] `cargo run -q -- fmt` executed to format code
 - [ ] Commit message matches Conventional Commits format: `<type>(<scope>): <description> (Fixes #<issue>)`

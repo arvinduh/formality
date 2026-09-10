@@ -376,10 +376,12 @@ Add tests across the test suites:
      `test_surface_facet_declarations()`.
    - Update `assert_eq!(surfaces.len(), N)` and `assert_eq!(golden.len(), N)`.
 
-Run presubmit verification:
+Run presubmit verification (the full suite — `cargo test --lib -q` alone skips
+every file under `tests/`, which is exactly where a new surface's integration
+coverage lives):
 
 ```bash
-cargo test --lib -q
+cargo test
 cargo clippy -q
 cargo run -q -- fmt --check
 ```
