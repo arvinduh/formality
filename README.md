@@ -39,7 +39,9 @@ and behavior) · [Adding a New Surface](docs/new-surface-guide.md) ·
   (`--staged`), or modified files (`--changed`).
 - **Deterministic exit codes**:
   - `0`: All clean / passed.
-  - `1`: Formatting or lint violations found, or config drift detected.
+  - `1`: Formatting or lint violations found, config drift detected, or a
+    required tool is missing (opt out with `--allow-missing` on `fmt`, `lint`,
+    and `fix`).
   - `2`: Underlying execution error or operational failure.
 
 ---
@@ -227,18 +229,29 @@ fml fix --check
 
 `--check` is the only mode flag. It never writes; its absence writes.
 
-| command            | passes                | writes? | exit 0                         | exit 1                                            |
-| ------------------ | --------------------- | ------- | ------------------------------ | ------------------------------------------------- |
-| `fml fmt`          | format                | yes     | formatted                      | a formatter reported a violation                  |
-| `fml fmt --check`  | format                | no      | already formatted              | a file would be reformatted                       |
-| `fml lint`         | lint                  | never   | no violations                  | violations                                        |
-| `fml fix`          | lint-fix, then format | yes     | clean after both passes        | violations remain after both passes               |
-| `fml fix --check`  | lint, then format     | no      | `fml fix` would change nothing | `fml fix` would change files, or leave violations |
-| `fml sync`         | config sync           | yes     | native configs written         | —                                                 |
-| `fml sync --check` | config sync           | no      | native configs in sync         | a native config has drifted                       |
+| command            | passes                | writes? | exit 0                         | exit 1                                                                                              |
+| ------------------ | --------------------- | ------- | ------------------------------ | --------------------------------------------------------------------------------------------------- |
+| `fml fmt`          | format                | yes     | formatted                      | a formatter reported a violation, or a required tool is missing (`--allow-missing`)                 |
+| `fml fmt --check`  | format                | no      | already formatted              | a file would be reformatted, or a required tool is missing (`--allow-missing`)                      |
+| `fml lint`         | lint                  | never   | no violations                  | violations, or a required tool is missing (`--allow-missing`)                                       |
+| `fml fix`          | lint-fix, then format | yes     | clean after both passes        | violations remain after both passes, or a required tool is missing (`--allow-missing`)              |
+| `fml fix --check`  | lint, then format     | no      | `fml fix` would change nothing | `fml fix` would change files or leave violations, or a required tool is missing (`--allow-missing`) |
+| `fml sync`         | config sync           | yes     | native configs written         | —                                                                                                   |
+| `fml sync --check` | config sync           | no      | native configs in sync         | a native config has drifted                                                                         |
+
+`--allow-missing` (on `fmt`, `lint`, and `fix` only) keeps a _missing_ required
+tool from failing the run on its own — the surface is still reported (a `[MISS]`
+row and a `(allowed)` summary marker, never silently), but the run exits 0 as
+long as nothing else failed. A real violation or an execution error still exits
+non-zero regardless of the flag. `sync` and `doctor` don't expose it: `sync`
+never invokes a formatter/linter binary, so it has no `ToolMissing` precondition
+to opt out of, and `doctor`'s whole purpose is reporting missing tools, so
+silencing that would defeat it.
 
 Exit code `2` means an operational failure for every command — an invalid
-config, or a tool that crashed — never a rule violation or missing tool.
+config, or a tool that crashed. A missing required tool is exit `1`, the same
+severity as a rule violation, not `2` — unless `--allow-missing` is passed, in
+which case it alone does not affect the exit code at all.
 
 `fml lint --check` is rejected rather than accepted as a no-op: `lint` never
 writes, so a mode flag on it would be meaningless clutter.
@@ -376,30 +389,33 @@ Options:
 
 ### Key flags
 
-| Command       | Flag        | Description                                                                                    |
-| :------------ | :---------- | :--------------------------------------------------------------------------------------------- |
-| `fml fmt`     | `--check`   | Exit 1 if any file would be reformatted (CI safe)                                              |
-| `fml fmt`     | `--install` | Auto-install missing tools for active surfaces, then format                                    |
-| `fml fmt`     | `--staged`  | Operate only on `git diff --cached` files                                                      |
-| `fml fmt`     | `--changed` | Operate only on `git diff` (unstaged) files                                                    |
-| `fml fmt`     | `--lang`    | Filter to a specific surface, e.g. `--lang rust`                                               |
-| `fml lint`    | `--install` | Auto-install missing tools for active surfaces, then lint                                      |
-| `fml lint`    | `--staged`  | Operate only on `git diff --cached` files                                                      |
-| `fml lint`    | `--changed` | Operate only on `git diff` (unstaged) files                                                    |
-| `fml lint`    | `--lang`    | Filter to a specific surface                                                                   |
-| `fml fix`     | `--check`   | Exit 1 if `fml fix` would change anything; writes nothing (CI safe)                            |
-| `fml fix`     | `--staged`  | Operate only on `git diff --cached` files                                                      |
-| `fml fix`     | `--changed` | Operate only on `git diff` (unstaged) files                                                    |
-| `fml fix`     | `--lang`    | Filter to a specific surface                                                                   |
-| `fml fix`     | `--install` | Auto-install missing tools for active surfaces, then fix                                       |
-| `fml sync`    | `--check`   | Exit 1 if any native config is out of sync                                                     |
-| `fml sync`    | `--lang`    | Filter to a specific surface                                                                   |
-| `fml doctor`  | `--all`     | Show all surfaces, not just active ones                                                        |
-| `fml doctor`  | `--install` | Auto-install all missing toolchains                                                            |
-| `fml init`    | `--force`   | Overwrite an existing config file                                                              |
-| `fml init`    | `--hidden`  | Write `.formality.toml` instead of `formality.toml`                                            |
-| `fml table`   | `--json`    | Table spec JSON string (reads stdin if omitted) — see [docs/table-spec.md](docs/table-spec.md) |
-| `fml migrate` | `schema`    | Rewrite `#:schema` directive in config to match current release                                |
+| Command       | Flag              | Description                                                                                    |
+| :------------ | :---------------- | :--------------------------------------------------------------------------------------------- |
+| `fml fmt`     | `--check`         | Exit 1 if any file would be reformatted (CI safe)                                              |
+| `fml fmt`     | `--install`       | Auto-install missing tools for active surfaces, then format                                    |
+| `fml fmt`     | `--staged`        | Operate only on `git diff --cached` files                                                      |
+| `fml fmt`     | `--changed`       | Operate only on `git diff` (unstaged) files                                                    |
+| `fml fmt`     | `--lang`          | Filter to a specific surface, e.g. `--lang rust`                                               |
+| `fml fmt`     | `--allow-missing` | A missing required tool alone does not fail the run (still reported)                           |
+| `fml lint`    | `--install`       | Auto-install missing tools for active surfaces, then lint                                      |
+| `fml lint`    | `--staged`        | Operate only on `git diff --cached` files                                                      |
+| `fml lint`    | `--changed`       | Operate only on `git diff` (unstaged) files                                                    |
+| `fml lint`    | `--lang`          | Filter to a specific surface                                                                   |
+| `fml lint`    | `--allow-missing` | A missing required tool alone does not fail the run (still reported)                           |
+| `fml fix`     | `--check`         | Exit 1 if `fml fix` would change anything; writes nothing (CI safe)                            |
+| `fml fix`     | `--staged`        | Operate only on `git diff --cached` files                                                      |
+| `fml fix`     | `--changed`       | Operate only on `git diff` (unstaged) files                                                    |
+| `fml fix`     | `--lang`          | Filter to a specific surface                                                                   |
+| `fml fix`     | `--install`       | Auto-install missing tools for active surfaces, then fix                                       |
+| `fml fix`     | `--allow-missing` | A missing required tool alone does not fail the run (still reported)                           |
+| `fml sync`    | `--check`         | Exit 1 if any native config is out of sync                                                     |
+| `fml sync`    | `--lang`          | Filter to a specific surface                                                                   |
+| `fml doctor`  | `--all`           | Show all surfaces, not just active ones                                                        |
+| `fml doctor`  | `--install`       | Auto-install all missing toolchains                                                            |
+| `fml init`    | `--force`         | Overwrite an existing config file                                                              |
+| `fml init`    | `--hidden`        | Write `.formality.toml` instead of `formality.toml`                                            |
+| `fml table`   | `--json`          | Table spec JSON string (reads stdin if omitted) — see [docs/table-spec.md](docs/table-spec.md) |
+| `fml migrate` | `schema`          | Rewrite `#:schema` directive in config to match current release                                |
 
 ---
 
@@ -496,8 +512,15 @@ command; no extra tooling required:
 git config core.hooksPath .githooks
 ```
 
-The hook (`fmt --staged` → `lint --staged`) runs on every commit. Commit the
-`.githooks/` directory so the whole team gets it on clone.
+The hook (`fmt --staged --allow-missing` → `lint --staged --allow-missing`) runs
+on every commit. Commit the `.githooks/` directory so the whole team gets it on
+clone.
+
+The hook passes `--allow-missing`: a teammate missing one optional linter still
+sees `[MISS]` printed for that surface, but the commit isn't blocked by it —
+only a real formatting/lint violation or an execution error stops the commit.
+Without the flag, a single machine-local missing binary would block every commit
+that stages a file of that type (#163).
 
 #### If your project uses the pre-commit framework
 

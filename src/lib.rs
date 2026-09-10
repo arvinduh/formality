@@ -151,9 +151,18 @@ fn run_command_inner(
       changed,
       lang,
       install,
+      allow_missing,
       paths,
     } => commands::fmt::run_fmt(
-      root, &config, check, staged, changed, lang, install, paths,
+      root,
+      &config,
+      check,
+      staged,
+      changed,
+      lang,
+      install,
+      paths,
+      allow_missing,
     ),
 
     Commands::Fix {
@@ -162,9 +171,18 @@ fn run_command_inner(
       changed,
       lang,
       install,
+      allow_missing,
       paths,
     } => commands::fix::run_fix(
-      root, &config, check, staged, changed, lang, install, paths,
+      root,
+      &config,
+      check,
+      staged,
+      changed,
+      lang,
+      install,
+      paths,
+      allow_missing,
     ),
 
     // `--fix` is the deprecated spelling of `fml fix` and dispatches to it
@@ -181,6 +199,7 @@ fn run_command_inner(
       changed,
       lang,
       install,
+      allow_missing,
       paths,
       ..
     } => {
@@ -192,7 +211,15 @@ fn run_command_inner(
         ),
       );
       commands::fix::run_fix(
-        root, &config, false, staged, changed, lang, install, paths,
+        root,
+        &config,
+        false,
+        staged,
+        changed,
+        lang,
+        install,
+        paths,
+        allow_missing,
       )
     }
 
@@ -201,10 +228,18 @@ fn run_command_inner(
       changed,
       lang,
       install,
+      allow_missing,
       paths,
       ..
     } => commands::lint::run_lint(
-      root, &config, staged, changed, lang, install, paths,
+      root,
+      &config,
+      staged,
+      changed,
+      lang,
+      install,
+      paths,
+      allow_missing,
     ),
 
     Commands::Sync { check, lang } => {

@@ -13,5 +13,5 @@ else
   FML="fml"
 fi
 
-"$FML" fmt --staged
-"$FML" lint --staged
+"$FML" fmt --staged --allow-missing
+"$FML" lint --staged --allow-missing

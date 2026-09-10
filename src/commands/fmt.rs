@@ -20,6 +20,7 @@ pub fn run_fmt(
   lang: Vec<String>,
   install: bool,
   paths: Vec<PathBuf>,
+  allow_missing: bool,
 ) -> ExitStatus {
   dispatch_plan(
     root,
@@ -29,7 +30,7 @@ pub fn run_fmt(
     lang,
     install,
     paths,
-    &Plan::fmt(check),
+    &Plan::fmt(check, allow_missing),
     "formatting",
   )
 }
