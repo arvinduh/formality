@@ -51,7 +51,6 @@
 //! fallback this module exists to enhance, not replace.
 
 use std::path::Path;
-use std::process::Command;
 
 use serde::Deserialize;
 use tower_lsp::lsp_types::{
@@ -222,7 +221,7 @@ fn clippy_diagnostics(
     return None;
   }
 
-  let mut cmd = Command::new("cargo");
+  let mut cmd = crate::surfaces::create_tool_command("cargo");
   cmd.args(crate::surfaces::rust::build_clippy_json_args(&[]));
   cmd.current_dir(root);
 
@@ -312,7 +311,7 @@ fn ruff_diagnostics(
     return None;
   }
 
-  let mut cmd = Command::new("ruff");
+  let mut cmd = crate::surfaces::create_tool_command("ruff");
   cmd.args(crate::surfaces::python::build_ruff_check_json_args(
     &[file.to_path_buf()],
     &[],
@@ -422,7 +421,7 @@ fn biome_diagnostics(
     return None;
   }
 
-  let mut cmd = Command::new("biome");
+  let mut cmd = crate::surfaces::create_tool_command("biome");
   cmd.args(crate::surfaces::javascript::build_biome_lint_json_args(
     file,
   ));
@@ -517,7 +516,7 @@ fn yamllint_diagnostics(
     return None;
   }
 
-  let mut cmd = Command::new("yamllint");
+  let mut cmd = crate::surfaces::create_tool_command("yamllint");
   cmd.args(crate::surfaces::yaml::build_yamllint_parsable_args(file));
   cmd.current_dir(root);
 
@@ -809,7 +808,7 @@ fn clang_tidy_diagnostics(
 
   let std_flag =
     crate::surfaces::cpp::std_flag_for_file(file, &[file.to_path_buf()]);
-  let mut cmd = Command::new("clang-tidy");
+  let mut cmd = crate::surfaces::create_tool_command("clang-tidy");
   cmd.args(crate::surfaces::cpp::build_clang_tidy_args(
     &[file.to_path_buf()],
     false,
@@ -940,7 +939,7 @@ fn golangci_lint_diagnostics(
     return None;
   }
 
-  let mut cmd = Command::new("golangci-lint");
+  let mut cmd = crate::surfaces::create_tool_command("golangci-lint");
   cmd.args(crate::surfaces::go::build_golangci_lint_json_args(
     &[file.to_path_buf()],
     &[],
@@ -1090,7 +1089,7 @@ fn checkstyle_diagnostics(
     return None;
   }
 
-  let mut cmd = Command::new("checkstyle");
+  let mut cmd = crate::surfaces::create_tool_command("checkstyle");
   cmd.arg("-c").arg(&config_path);
   cmd.args(crate::surfaces::java::build_checkstyle_plain_args(
     &[file.to_path_buf()],
@@ -1209,7 +1208,7 @@ fn ktlint_diagnostics(
     return None;
   }
 
-  let mut cmd = Command::new("ktlint");
+  let mut cmd = crate::surfaces::create_tool_command("ktlint");
   cmd.args(crate::surfaces::kotlin::build_ktlint_json_args(
     &[file.to_path_buf()],
     &[],
@@ -1340,7 +1339,7 @@ fn taplo_diagnostics(
     return None;
   }
 
-  let mut cmd = Command::new("taplo");
+  let mut cmd = crate::surfaces::create_tool_command("taplo");
   cmd.args(crate::surfaces::toml::build_taplo_lsp_lint_args(
     &[file.to_path_buf()],
     &[],
@@ -1444,7 +1443,7 @@ fn typst_diagnostics(
   };
   let output_path = scratch_dir.path().join("out.pdf");
 
-  let mut cmd = Command::new("typst");
+  let mut cmd = crate::surfaces::create_tool_command("typst");
   cmd.args(crate::surfaces::typst::build_typst_check_args(
     file,
     &output_path,
