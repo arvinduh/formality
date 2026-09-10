@@ -37,7 +37,7 @@ impl std::fmt::Display for SchemaVersion {
 
 /// The current `s{major}.{minor}` schema version this build of `fml`
 /// expects a project's `#:schema` directive to reference.
-pub const SCHEMA_VERSION: SchemaVersion = SchemaVersion { major: 1, minor: 2 };
+pub const SCHEMA_VERSION: SchemaVersion = SchemaVersion { major: 2, minor: 0 };
 
 /// A config file's schema version status relative to [`SCHEMA_VERSION`].
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -358,7 +358,7 @@ mod tests {
 
   #[test]
   fn test_schema_version_constant() {
-    assert_eq!(SCHEMA_VERSION, SchemaVersion { major: 1, minor: 2 });
+    assert_eq!(SCHEMA_VERSION, SchemaVersion { major: 2, minor: 0 });
   }
 
   #[test]
@@ -415,19 +415,19 @@ mod tests {
       }
     );
 
-    let current_content = "#:schema https://github.com/arvinduh/formality/releases/download/s1.2/formality.schema.json\n[global]\n";
+    let current_content = "#:schema https://github.com/arvinduh/formality/releases/download/s2.0/formality.schema.json\n[global]\n";
     assert_eq!(
       check_schema_version_content(current_content),
       SchemaStatus::UpToDate {
-        version: SchemaVersion { major: 1, minor: 2 }
+        version: SchemaVersion { major: 2, minor: 0 }
       }
     );
 
-    let future_content = "#:schema https://github.com/arvinduh/formality/releases/download/s1.5/formality.schema.json\n[global]\n";
+    let future_content = "#:schema https://github.com/arvinduh/formality/releases/download/s2.5/formality.schema.json\n[global]\n";
     assert_eq!(
       check_schema_version_content(future_content),
       SchemaStatus::UpToDate {
-        version: SchemaVersion { major: 1, minor: 5 }
+        version: SchemaVersion { major: 2, minor: 5 }
       }
     );
 

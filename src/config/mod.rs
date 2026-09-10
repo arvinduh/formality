@@ -6,8 +6,8 @@
 /// Formatting and linting layout facet definitions.
 pub mod facets;
 /// X-macro table generating the repetitive per-language options wiring
-/// shared by `LangConfig`/`resolve_for_lang`/`default_tools_for_lang` —
-/// see its module docs for the design.
+/// shared by `LangConfig`/`resolve_for_lang` — see its module docs for the
+/// design.
 mod lang_table;
 /// Per-language strongly typed formatting options.
 pub mod options;
@@ -177,12 +177,6 @@ where
   Debug, Clone, Default, PartialEq, Serialize, Deserialize, JsonSchema,
 )]
 pub struct LangConfig {
-  /// Custom formatter tool binary or command name override.
-  #[serde(skip_serializing_if = "Option::is_none")]
-  pub format_tool: Option<String>,
-  /// Custom linter tool binary or command name override.
-  #[serde(skip_serializing_if = "Option::is_none")]
-  pub lint_tool: Option<String>,
   /// Per-language indentation size override.
   #[serde(skip_serializing_if = "Option::is_none")]
   pub indent_size: Option<usize>,
@@ -262,12 +256,6 @@ pub struct LangConfig {
 impl LangConfig {
   /// Merges `other` configuration settings into `self`.
   pub fn merge(&mut self, other: LangConfig) {
-    if other.format_tool.is_some() {
-      self.format_tool = other.format_tool;
-    }
-    if other.lint_tool.is_some() {
-      self.lint_tool = other.lint_tool;
-    }
     if other.indent_size.is_some() {
       self.indent_size = other.indent_size;
     }
@@ -402,10 +390,6 @@ impl Default for ResolvedGlobalConfig {
 pub struct ResolvedLangConfig {
   /// Surface identifier name.
   pub name: String,
-  /// Selected formatting tool binary.
-  pub format_tool: Option<String>,
-  /// Selected linting tool binary.
-  pub lint_tool: Option<String>,
   /// Resolved indentation size.
   pub line_length: usize,
   /// Resolved line length.
