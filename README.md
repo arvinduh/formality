@@ -517,11 +517,10 @@ on every commit. Commit the `.githooks/` directory so the whole team gets it on
 clone.
 
 The hook passes `--allow-missing`: a teammate missing one optional linter still
-sees `[MISS]` printed for that surface, but the commit isn't blocked for every
-change that happens to touch it — only a real formatting/lint violation or a
-missing tool on an unrelated surface stops the commit. Without the flag, a
-single machine-local missing binary would block every commit that touches that
-surface, including ones with nothing to do with it (#163).
+sees `[MISS]` printed for that surface, but the commit isn't blocked by it —
+only a real formatting/lint violation or an execution error stops the commit.
+Without the flag, a single machine-local missing binary would block every commit
+that stages a file of that type (#163).
 
 #### If your project uses the pre-commit framework
 

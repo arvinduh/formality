@@ -177,10 +177,10 @@ When triggered on `git commit`, the hook:
 3. Runs semantic linting on staged files: `$FML lint --staged --allow-missing`.
 
 Both steps pass `--allow-missing` so a missing _optional_ linter on your machine
-doesn't block a commit that never touches that surface, or even one that does
-but has no other violation (#163) — the surface still prints `[MISS]`, it just
-doesn't fail the hook on its own. A real formatting or lint violation still
-fails the commit regardless.
+doesn't block a commit that stages files for that surface (#163) — the surface
+still prints `[MISS]`, it just doesn't fail the hook on its own. A real
+formatting/lint violation or an execution error still fails the commit
+regardless.
 
 ---
 
