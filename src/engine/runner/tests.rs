@@ -672,9 +672,9 @@ fn test_passed_detail_reads_as_already_in_sync_for_sync() {
   // matched formality.toml.
   assert_eq!(passed_detail(&Plan::sync(false)), "Already in sync");
   assert_eq!(passed_detail(&Plan::sync(true)), "Already in sync");
-  assert_eq!(passed_detail(&Plan::fmt(false)), "Clean / Formatted");
-  assert_eq!(passed_detail(&Plan::lint()), "Clean / Formatted");
-  assert_eq!(passed_detail(&Plan::fix(false)), "Clean / Formatted");
+  assert_eq!(passed_detail(&Plan::fmt(false, false)), "Clean / Formatted");
+  assert_eq!(passed_detail(&Plan::lint(false)), "Clean / Formatted");
+  assert_eq!(passed_detail(&Plan::fix(false, false)), "Clean / Formatted");
 }
 
 #[test]
@@ -779,7 +779,7 @@ fn test_runner_missing_tool_exit_code_is_violations() {
     vec![Box::new(MockMissingSurface)],
     &root,
     &[],
-    &Plan::lint(),
+    &Plan::lint(false),
     &config,
   );
   assert_eq!(unstaged_lint, ExitStatus::Violations);
@@ -788,7 +788,7 @@ fn test_runner_missing_tool_exit_code_is_violations() {
     vec![Box::new(MockMissingSurface)],
     &root,
     &staged_paths,
-    &Plan::lint(),
+    &Plan::lint(false),
     &config,
   );
   assert_eq!(staged_lint, ExitStatus::Violations);
@@ -799,7 +799,7 @@ fn test_runner_missing_tool_exit_code_is_violations() {
     vec![Box::new(MockMissingSurface)],
     &root,
     &[],
-    &Plan::fmt(false),
+    &Plan::fmt(false, false),
     &config,
   );
   assert_eq!(unstaged_fmt, ExitStatus::Violations);
@@ -808,7 +808,7 @@ fn test_runner_missing_tool_exit_code_is_violations() {
     vec![Box::new(MockMissingSurface)],
     &root,
     &staged_paths,
-    &Plan::fmt(false),
+    &Plan::fmt(false, false),
     &config,
   );
   assert_eq!(staged_fmt, ExitStatus::Violations);
@@ -820,7 +820,7 @@ fn test_runner_missing_tool_exit_code_is_violations() {
     vec![Box::new(MockMissingSurface)],
     &root,
     &[],
-    &Plan::fmt(true),
+    &Plan::fmt(true, false),
     &config,
   );
   assert_eq!(check_fmt, ExitStatus::Violations);
@@ -830,10 +830,115 @@ fn test_runner_missing_tool_exit_code_is_violations() {
     vec![Box::new(MockMissingSurface)],
     &root,
     &[],
-    &Plan::fix(false),
+    &Plan::fix(false, false),
     &config,
   );
   assert_eq!(fix, ExitStatus::Violations);
+}
+
+/// A surface whose format/lint pass always reports a real violation --
+/// distinct from [`MockMissingSurface`], which reports `ToolMissing`.
+#[derive(Debug, Clone)]
+struct MockViolatingSurface;
+
+impl crate::surfaces::DeclaresFacets for MockViolatingSurface {
+  fn facet_support(
+    &self,
+    _: crate::surfaces::Facet,
+  ) -> crate::surfaces::FacetSupport {
+    crate::surfaces::FacetSupport::Unsupported
+  }
+}
+
+impl LanguageSurface for MockViolatingSurface {
+  fn name(&self) -> &'static str {
+    "mock_violating"
+  }
+  fn file_extensions(&self) -> &[&'static str] {
+    &["mock2"]
+  }
+  fn detect(&self, _: &Path) -> bool {
+    true
+  }
+  fn tool_info(
+    &self,
+    _: &crate::config::ResolvedLangConfig,
+  ) -> Vec<crate::surfaces::ToolInfo> {
+    vec![]
+  }
+  fn format(&self, _: &ExecutionContext) -> SurfaceResult {
+    SurfaceResult {
+      surface_name: self.name(),
+      status: SurfaceStatus::ViolationsFound {
+        message: "unformatted".to_string(),
+        diff: None,
+      },
+      duration: Duration::from_millis(1),
+    }
+  }
+  fn lint(&self, _: &ExecutionContext, _: bool) -> SurfaceResult {
+    SurfaceResult {
+      surface_name: self.name(),
+      status: SurfaceStatus::ViolationsFound {
+        message: "lint violation".to_string(),
+        diff: None,
+      },
+      duration: Duration::from_millis(1),
+    }
+  }
+  fn sync_config(&self, _: &ExecutionContext, _: bool) -> SurfaceResult {
+    SurfaceResult {
+      surface_name: self.name(),
+      status: SurfaceStatus::Passed,
+      duration: Duration::from_millis(1),
+    }
+  }
+  fn clone_box(&self) -> Box<dyn LanguageSurface> {
+    Box::new(self.clone())
+  }
+}
+
+#[test]
+fn test_runner_allow_missing_silences_tool_missing_but_not_violations() {
+  // #252 / #163: `--allow-missing` must silence a missing tool's
+  // contribution to the exit code (restoring #163's guarantee) while
+  // leaving a real violation elsewhere fatal, and leaving the missing-tool
+  // row itself visible either way (the whole point is not recreating the
+  // original silent-pass bug).
+  let root = PathBuf::from(".");
+  let config = FormalityConfig::default();
+
+  // A missing tool alone: exit 1 without --allow-missing.
+  let without_flag = Runner::run(
+    vec![Box::new(MockMissingSurface)],
+    &root,
+    &[],
+    &Plan::fmt(false, false),
+    &config,
+  );
+  assert_eq!(without_flag, ExitStatus::Violations);
+
+  // ...and exit 0 with --allow-missing.
+  let with_flag = Runner::run(
+    vec![Box::new(MockMissingSurface)],
+    &root,
+    &[],
+    &Plan::fmt(false, true),
+    &config,
+  );
+  assert_eq!(with_flag, ExitStatus::Clean);
+
+  // A missing tool AND a real violation (on a different surface): still
+  // exit 1 even with --allow-missing -- the flag only silences the
+  // ToolMissing arm, never a genuine violation.
+  let missing_and_violating = Runner::run(
+    vec![Box::new(MockMissingSurface), Box::new(MockViolatingSurface)],
+    &root,
+    &[],
+    &Plan::fmt(false, true),
+    &config,
+  );
+  assert_eq!(missing_and_violating, ExitStatus::Violations);
 }
 
 #[test]

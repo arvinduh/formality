@@ -54,6 +54,12 @@ pub enum Commands {
     #[arg(short = 'i', long)]
     install: bool,
 
+    /// A missing required tool alone does not fail the run (still reported
+    /// in the table and the summary's "(allowed)" marker); a real violation
+    /// or execution error still exits non-zero
+    #[arg(long)]
+    allow_missing: bool,
+
     /// Optional paths or files to target
     #[arg(value_name = "PATH")]
     paths: Vec<PathBuf>,
@@ -93,6 +99,12 @@ pub enum Commands {
     #[arg(short = 'i', long)]
     install: bool,
 
+    /// A missing required tool alone does not fail the run (still reported
+    /// in the table and the summary's "(allowed)" marker); a real violation
+    /// or execution error still exits non-zero
+    #[arg(long)]
+    allow_missing: bool,
+
     /// Optional paths or files to target
     #[arg(value_name = "PATH")]
     paths: Vec<PathBuf>,
@@ -119,6 +131,12 @@ pub enum Commands {
     /// Auto-install any missing tool dependencies first
     #[arg(short = 'i', long)]
     install: bool,
+
+    /// A missing required tool alone does not fail the run (still reported
+    /// in the table and the summary's "(allowed)" marker); a real violation
+    /// or execution error still exits non-zero
+    #[arg(long)]
+    allow_missing: bool,
 
     /// Optional paths or files to target
     #[arg(value_name = "PATH")]

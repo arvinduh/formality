@@ -91,6 +91,7 @@ pub fn fmt_cmd(check: bool, lang: &[&str]) -> Commands {
     changed: false,
     lang: lang.iter().map(|s| (*s).to_string()).collect(),
     install: false,
+    allow_missing: false,
     paths: vec![],
   }
 }
@@ -103,6 +104,7 @@ pub fn fix_cmd(check: bool, lang: &[&str]) -> Commands {
     changed: false,
     lang: lang.iter().map(|s| (*s).to_string()).collect(),
     install: false,
+    allow_missing: false,
     paths: vec![],
   }
 }
@@ -116,6 +118,7 @@ pub fn lint_cmd(fix: bool, lang: &[&str]) -> Commands {
     changed: false,
     lang: lang.iter().map(|s| (*s).to_string()).collect(),
     install: false,
+    allow_missing: false,
     paths: vec![],
   }
 }
