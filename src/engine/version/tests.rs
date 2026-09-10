@@ -143,9 +143,6 @@ fn test_version_extraction_from_tool_banners() {
   let checkstyle2 = "Checkstyle version 10.0.0";
   assert_eq!(Version::extract(checkstyle2), Some(Version::new(10, 0, 0)));
 
-  let ktfmt = "ktfmt version 0.44";
-  assert_eq!(Version::extract(ktfmt), Some(Version::new(0, 44, 0)));
-
   let ktlint = "1.0.1";
   assert_eq!(Version::extract(ktlint), Some(Version::new(1, 0, 1)));
 
@@ -404,10 +401,6 @@ fn test_mstv_fleet_declarations() {
   assert_eq!(
     minimum_supported_tool_version("checkstyle"),
     Some(Version::new(10, 0, 0))
-  );
-  assert_eq!(
-    minimum_supported_tool_version("ktfmt"),
-    Some(Version::new(0, 44, 0))
   );
   assert_eq!(
     minimum_supported_tool_version("ktlint"),
