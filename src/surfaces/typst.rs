@@ -5,9 +5,9 @@
 use super::tooling::no_native_config;
 use super::{
   DeclaresFacets, ExecutionContext, Facet, FacetSupport, LanguageSurface,
-  SurfaceResult, ToolInfo, create_tool_command, diff_check_via_tempcopy,
-  find_files_with_ext, lint_fix_unsupported, run_tool_command,
-  tool_missing_guard,
+  SurfaceResult, SurfaceStatus, ToolInfo, create_tool_command,
+  diff_check_via_tempcopy, find_files_with_ext, lint_fix_unsupported,
+  run_tool_command, tool_missing_guard,
 };
 use std::path::Path;
 use std::time::Instant;
@@ -93,7 +93,116 @@ impl LanguageSurface for TypstSurface {
     }]
   }
 
+  // SPIKE (#135): routed through the linked `typstyle-core` library instead of
+  // the `typstyle` subprocess, for measurement purposes only. Throwaway
+  // branch — not meant to land. The subprocess-driving code above is kept
+  // (dead behind this early return) so the before/after comparison is a
+  // single-file diff instead of a lost baseline.
   fn format(&self, ctx: &ExecutionContext) -> SurfaceResult {
+    let start = Instant::now();
+
+    let files = ctx.matched_files(TYPST_EXTENSIONS);
+    if let Some(res) = ctx.early_out_if_empty(&files, self.name(), start) {
+      return res;
+    }
+
+    let config = typstyle_core::Config::new()
+      .with_width(ctx.lang_config.line_length);
+    let engine = typstyle_core::Typstyle::new(config);
+
+    let mut violations: Vec<String> = Vec::new();
+    for f in &files {
+      let original = match std::fs::read_to_string(f) {
+        Ok(s) => s,
+        Err(e) => {
+          return SurfaceResult {
+            surface_name: self.name(),
+            status: SurfaceStatus::ExecutionError {
+              message: format!("failed to read {}: {e}", f.display()),
+            },
+            duration: start.elapsed(),
+          };
+        }
+      };
+
+      let formatted = match engine.format_text(original.clone()).render() {
+        Ok(s) => s,
+        Err(e) => {
+          return SurfaceResult {
+            surface_name: self.name(),
+            status: SurfaceStatus::ExecutionError {
+              message: format!("{}: {e}", f.display()),
+            },
+            duration: start.elapsed(),
+          };
+        }
+      };
+
+      if formatted != original {
+        if ctx.check_only {
+          violations.push(f.display().to_string());
+        } else if let Err(e) = std::fs::write(f, &formatted) {
+          return SurfaceResult {
+            surface_name: self.name(),
+            status: SurfaceStatus::ExecutionError {
+              message: format!("failed to write {}: {e}", f.display()),
+            },
+            duration: start.elapsed(),
+          };
+        }
+      }
+    }
+
+    if ctx.check_only && !violations.is_empty() {
+      return SurfaceResult {
+        surface_name: self.name(),
+        status: SurfaceStatus::ViolationsFound {
+          message: format!("{} file(s) not formatted", violations.len()),
+          diff: None,
+        },
+        duration: start.elapsed(),
+      };
+    }
+
+    SurfaceResult {
+      surface_name: self.name(),
+      status: SurfaceStatus::Passed,
+      duration: start.elapsed(),
+    }
+  }
+
+  fn lint(&self, ctx: &ExecutionContext, fix: bool) -> SurfaceResult {
+    let start = Instant::now();
+
+    if fix {
+      return lint_fix_unsupported(self.name(), start);
+    }
+
+    // Typstyle check serves as format validation & syntax check
+    let mut check_ctx = ctx.clone();
+    check_ctx.check_only = true;
+    self.format(&check_ctx)
+  }
+
+  fn sync_config(
+    &self,
+    _ctx: &ExecutionContext,
+    _check: bool,
+  ) -> SurfaceResult {
+    // typstyle is configured via CLI flags (--column) at invocation time;
+    // there is no separate config file to generate or verify.
+    no_native_config(
+      self.name(),
+      "No config file (settings applied via CLI flags)",
+    )
+  }
+}
+
+// SPIKE (#135): kept for the before/after subprocess-vs-library comparison,
+// dead outside tests below could reference it — not wired into the trait.
+impl TypstSurface {
+  #[allow(dead_code)]
+  fn format_subprocess(&self, ctx: &ExecutionContext) -> SurfaceResult {
     let start = Instant::now();
 
     if let Some(res) = tool_missing_guard(
@@ -145,32 +254,6 @@ impl LanguageSurface for TypstSurface {
     cmd.current_dir(ctx.root.as_path());
 
     run_tool_command(self.name(), &mut cmd)
-  }
-
-  fn lint(&self, ctx: &ExecutionContext, fix: bool) -> SurfaceResult {
-    let start = Instant::now();
-
-    if fix {
-      return lint_fix_unsupported(self.name(), start);
-    }
-
-    // Typstyle check serves as format validation & syntax check
-    let mut check_ctx = ctx.clone();
-    check_ctx.check_only = true;
-    self.format(&check_ctx)
-  }
-
-  fn sync_config(
-    &self,
-    _ctx: &ExecutionContext,
-    _check: bool,
-  ) -> SurfaceResult {
-    // typstyle is configured via CLI flags (--column) at invocation time;
-    // there is no separate config file to generate or verify.
-    no_native_config(
-      self.name(),
-      "No config file (settings applied via CLI flags)",
-    )
   }
 }
 

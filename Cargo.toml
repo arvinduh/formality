@@ -46,6 +46,7 @@ unicode-width = "0.2"
 which = "8.0.5"
 serde_yaml = "0.9.34"
 semver = "1.0.28"
+typstyle-core = "0.15.1"
 
 [lints.rust]
 unexpected_cfgs = { level = "warn", check-cfg = ['cfg(test)'] }
