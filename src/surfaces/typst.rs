@@ -106,8 +106,8 @@ impl LanguageSurface for TypstSurface {
       return res;
     }
 
-    let config = typstyle_core::Config::new()
-      .with_width(ctx.lang_config.line_length);
+    let config =
+      typstyle_core::Config::new().with_width(ctx.lang_config.line_length);
     let engine = typstyle_core::Typstyle::new(config);
 
     let mut violations: Vec<String> = Vec::new();
