@@ -111,9 +111,45 @@ machine-generated shape.
 ## Markdown
 
 - **Format**: `markdownlint-cli2 --fix` (structural fixes: blank lines, table
-  padding) → `prettier --write` (prose formatting), the Smart Format order that
-  keeps `fml lint`'s markdownlint pass from immediately failing on cosmetic
-  issues `fml fmt` could have fixed.
+  padding) → `prettier --write` (prose formatting) → a third, in-process pass
+  that formats **block-level** embedded HTML (Fixes #253; see below), the Smart
+  Format order that keeps `fml lint`'s markdownlint pass from immediately
+  failing on cosmetic issues `fml fmt` could have fixed.
+- **Block-level embedded HTML formatting**: `#120` ships MD033/no-inline-html
+  disabled by default because ordinary README idioms — a centered badge block
+  (`<p align="center">` + `<img>`), a `<details>`/`<summary>` disclosure
+  section, a `<div>` wrapper — have no markdown equivalent. The condition for
+  being comfortable with that: this embedded HTML must still get _formatted_,
+  not left as a permanent escape hatch. Prettier's `--parser markdown` otherwise
+  treats an HTML block as an opaque string (verified against prettier 3.9.6:
+  `<img src="a.png"     alt="badge">` inside a `<p align="center">` wrapper
+  survives byte-for-byte, quadruple space intact) — there is no prettier flag
+  that changes this, so `fml` extracts every block-level HTML node from the
+  markdown AST (via `pulldown-cmark`, which distinguishes a block-level
+  `Tag::HtmlBlock` from an inline `Event::InlineHtml` in its own event stream),
+  formats each through prettier's **html** parser, and splices the result back
+  in. **Inline HTML spans mid-paragraph** (`<strong>`, `<a>`, `<code>` sitting
+  inside a sentence) are deliberately left byte-identical — whitespace around an
+  inline element is rendering-significant, and normalizing it risks a silent
+  rendering change nobody notices until they look at the rendered page.
+  `--html-whitespace-sensitivity=css` is set explicitly (matching prettier's own
+  default, but pinned rather than left to drift): it formats whitespace by each
+  element's actual CSS `display` value, so a block wrapper's whitespace is
+  treated as insignificant while an inline element nested inside one (e.g. two
+  `<strong>`/`<em>` spans with no space between them) keeps its whitespace
+  exactly as written. A `<details>`/`<summary>…</summary>` opener and its
+  `</details>` closer are two separate HTML-block nodes in the AST — CommonMark
+  ends an HTML block at the first blank line, and the ordinary markdown in
+  between (already normalized by the two passes above) parses as regular
+  markdown content, not HTML. `fml` re-groups these by simulating a single
+  tag-balance stack across the document's HTML-block nodes in order, and bridges
+  a multi-node group through prettier's html parser with the interior markdown
+  content replaced by a placeholder (never itself run through the html parser,
+  which would otherwise collapse it — e.g. a list — into inline text). Whenever
+  the tag balance across a document is inconclusive (a stray closing tag with no
+  match, an unterminated tag, tags left open at EOF), `fml` leaves **every**
+  block-level HTML node in that document untouched rather than guess — this is a
+  conservative, round-trip-safe pass, not a general HTML formatter.
 - **Lint**: `markdownlint-cli2`.
 - **Managed config**: `.markdownlint.json`, plus the shared `.prettierrc.json`
   (see below).
