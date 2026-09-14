@@ -24,9 +24,7 @@ export function readEngineVscodeFloor(
   const range = manifest.engines?.vscode;
 
   if (!range) {
-    throw new Error(
-      `Could not find "engines.vscode" in ${packageJsonPath}`,
-    );
+    throw new Error(`Could not find "engines.vscode" in ${packageJsonPath}`);
   }
 
   const match = /^([\^~]?)(\d+\.\d+\.\d+)$/.exec(range.trim());
