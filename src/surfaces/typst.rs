@@ -2,11 +2,12 @@
 //! managed native config file in this crate today, so this surface only
 //! implements formatting.
 
+use super::tooling::no_native_config;
 use super::{
   DeclaresFacets, ExecutionContext, Facet, FacetSupport, LanguageSurface,
-  SurfaceResult, SurfaceStatus, ToolInfo, create_tool_command,
-  diff_check_via_tempcopy, find_files_with_ext, lint_fix_unsupported,
-  run_tool_command, tool_missing_guard,
+  SurfaceResult, ToolInfo, create_tool_command, diff_check_via_tempcopy,
+  find_files_with_ext, lint_fix_unsupported, run_tool_command,
+  tool_missing_guard,
 };
 use std::path::Path;
 use std::time::Instant;
@@ -166,13 +167,10 @@ impl LanguageSurface for TypstSurface {
   ) -> SurfaceResult {
     // typstyle is configured via CLI flags (--column) at invocation time;
     // there is no separate config file to generate or verify.
-    SurfaceResult {
-      surface_name: self.name(),
-      status: SurfaceStatus::Skipped {
-        reason: "No config file (settings applied via CLI flags)".to_string(),
-      },
-      duration: std::time::Duration::from_millis(0),
-    }
+    no_native_config(
+      self.name(),
+      "No config file (settings applied via CLI flags)",
+    )
   }
 }
 

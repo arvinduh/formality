@@ -229,6 +229,7 @@ impl LanguageServer for FormalityLsp {
       vec![],
       false,
       vec![path.clone()],
+      false,
     );
 
     if status.is_clean() {
@@ -289,6 +290,7 @@ impl LanguageServer for FormalityLsp {
         vec![],
         false,
         vec![path.clone()],
+        false,
       );
 
       if status.is_clean() {

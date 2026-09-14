@@ -1,5 +1,6 @@
 //! Table rendering: the `Table` builder and the comfy-table-backed renderer.
 
+use super::wrap;
 use super::{
   Align, Cell, Column, Layout, Overflow, Palette, Row, RowKind, Span, Style,
   WidthPolicy,
@@ -157,80 +158,6 @@ fn render_cell_to_string(
   buf
 }
 
-/// Characters after which a soft line break is allowed when wrapping a cell:
-/// path separators and list punctuation. A break is also always allowed at a
-/// space. Deliberately excludes `.`/`-`/`_`/`:` so `rustfmt.exe`,
-/// `v1.9.0-stable`, and `C:` stay glued and remain copy/double-click friendly.
-const BREAK_AFTER: [char; 4] = ['/', '\\', ',', ';'];
-
-/// The narrowest inner width `solve_column_widths` will shrink a column to as a
-/// last resort, once respecting every column's widest-token floor would push
-/// the table past its width budget. At this point one token is hard-split.
-const LAST_RESORT_MIN: usize = 3;
-
-/// Splits `text` into wrap tokens: maximal runs that must not be broken across
-/// lines. A trailing [`BREAK_AFTER`] char stays with its token; runs of spaces
-/// each become a single `" "` token so the caller can collapse them at a wrap.
-fn break_into_tokens(text: &str) -> Vec<String> {
-  let mut toks = Vec::new();
-  let mut cur = String::new();
-  for ch in text.chars() {
-    if ch == ' ' {
-      if !cur.is_empty() {
-        toks.push(std::mem::take(&mut cur));
-      }
-      toks.push(" ".to_string());
-      continue;
-    }
-    cur.push(ch);
-    if BREAK_AFTER.contains(&ch) {
-      toks.push(std::mem::take(&mut cur));
-    }
-  }
-  if !cur.is_empty() {
-    toks.push(cur);
-  }
-  toks
-}
-
-/// Display width of the widest single token in `text` — the minimum inner
-/// column width at which `text` can be laid out without splitting a token.
-fn token_display_width(text: &str) -> usize {
-  break_into_tokens(text)
-    .iter()
-    .filter(|t| t.as_str() != " ")
-    .map(|t| t.as_str().width())
-    .max()
-    .unwrap_or(0)
-}
-
-/// Last-resort hard split of a single token genuinely wider than the column.
-///
-/// Reached from [`wrap_spans`] whenever a column's resolved inner width is
-/// below the token's own display width — which happens for a hard-cap policy
-/// (`Max` / `Range` upper / `Pct`) tighter than the token, or for any column
-/// that `solve_column_widths` had to shrink past its widest-token floor to
-/// keep the whole table within its width budget (`LAST_RESORT_MIN`).
-fn hard_split(text: &str, width: usize) -> Vec<String> {
-  let width = width.max(1);
-  let mut out = Vec::new();
-  let mut cur = String::new();
-  let mut w = 0;
-  for ch in text.chars() {
-    let cw = UnicodeWidthChar::width(ch).unwrap_or(0);
-    if w + cw > width && !cur.is_empty() {
-      out.push(std::mem::take(&mut cur));
-      w = 0;
-    }
-    cur.push(ch);
-    w += cw;
-  }
-  if !cur.is_empty() {
-    out.push(cur);
-  }
-  out
-}
-
 /// Wrap `spans` onto lines no wider than `width`, breaking only at spaces and
 /// after path separators / list punctuation so a token is never split across
 /// lines. Span styles are preserved on every fragment.
@@ -240,8 +167,8 @@ pub(super) fn wrap_spans(spans: &[Span], width: usize) -> Vec<Vec<Span>> {
   let mut cur_w = 0usize;
 
   for span in spans {
-    for tok in break_into_tokens(&span.text) {
-      if tok.as_str() == " " {
+    for unit in wrap::units(&span.text) {
+      if unit.is_space {
         if cur_w == 0 || cur_w + 1 > width {
           continue;
         }
@@ -250,9 +177,9 @@ pub(super) fn wrap_spans(spans: &[Span], width: usize) -> Vec<Vec<Span>> {
         continue;
       }
 
-      let tw = tok.as_str().width();
+      let tw = unit.width;
       if tw > width {
-        for piece in hard_split(&tok, width) {
+        for piece in wrap::hard_split(&unit.text, width) {
           if cur_w > 0 {
             lines.push(Vec::new());
           }
@@ -266,7 +193,10 @@ pub(super) fn wrap_spans(spans: &[Span], width: usize) -> Vec<Vec<Span>> {
         lines.push(Vec::new());
         cur_w = 0;
       }
-      lines.last_mut().unwrap().push(Span::new(tok, span.style));
+      lines
+        .last_mut()
+        .unwrap()
+        .push(Span::new(unit.text, span.style));
       cur_w += tw;
     }
   }
@@ -335,7 +265,7 @@ fn solve_column_widths(
     let header_text: String =
       col.header.spans.iter().map(|s| s.text.as_str()).collect();
     natural[i] = natural[i].max(header_text.as_str().width());
-    floor[i] = floor[i].max(token_display_width(&header_text).max(1));
+    floor[i] = floor[i].max(wrap::token_display_width(&header_text).max(1));
     for row in &spec.rows {
       if !matches!(row.kind, RowKind::Data) {
         continue;
@@ -343,7 +273,7 @@ fn solve_column_widths(
       if let Some(cell) = row.cells.get(i) {
         let text: String = cell.spans.iter().map(|s| s.text.as_str()).collect();
         natural[i] = natural[i].max(text.as_str().width());
-        floor[i] = floor[i].max(token_display_width(&text).max(1));
+        floor[i] = floor[i].max(wrap::token_display_width(&text).max(1));
       }
     }
   }
@@ -447,7 +377,7 @@ fn solve_column_widths(
       let emergency: Vec<usize> = (0..n)
         .map(|i| {
           if can_shrink[i] {
-            LAST_RESORT_MIN
+            wrap::LAST_RESORT_MIN
           } else {
             want[i]
           }

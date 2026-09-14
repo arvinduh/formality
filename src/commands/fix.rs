@@ -22,6 +22,7 @@ pub fn run_fix(
   lang: Vec<String>,
   install: bool,
   paths: Vec<PathBuf>,
+  allow_missing: bool,
 ) -> ExitStatus {
   dispatch_plan(
     root,
@@ -31,7 +32,7 @@ pub fn run_fix(
     lang,
     install,
     paths,
-    &Plan::fix(check),
+    &Plan::fix(check, allow_missing),
     "fixes",
   )
 }

@@ -72,46 +72,60 @@ pub struct Plan {
   pub passes: Vec<Pass>,
   /// Whether those passes may write to disk.
   pub mode: Mode,
+  /// Whether a surface reporting [`SurfaceStatus::ToolMissing`] alone should
+  /// keep the run's exit code clean (#252 / #163). Only `fmt`, `lint`, and
+  /// `fix` expose this on the CLI (`--allow-missing`) — `sync` and `doctor`
+  /// don't, so [`Plan::sync`] always leaves it `false`. A real violation or
+  /// an [`SurfaceStatus::ExecutionError`] still exits non-zero regardless of
+  /// this flag; it only silences the "missing tool" precondition itself.
+  pub allow_missing: bool,
 }
 
 impl Plan {
-  /// `fml fmt` / `fml fmt --check`.
+  /// `fml fmt` / `fml fmt --check`, optionally with `--allow-missing`.
   #[must_use]
-  pub fn fmt(check: bool) -> Self {
+  pub fn fmt(check: bool, allow_missing: bool) -> Self {
     Self {
       passes: vec![Pass::Format],
       mode: mode_for(check),
+      allow_missing,
     }
   }
 
-  /// `fml lint`.
+  /// `fml lint`, optionally with `--allow-missing`.
   ///
   /// There is deliberately no writing form: `lint` never writes, which is
   /// why `fml lint --check` is a CLI error rather than a no-op, and why
   /// `fml lint --fix` was removed in favour of [`Plan::fix`].
   #[must_use]
-  pub fn lint() -> Self {
+  pub fn lint(allow_missing: bool) -> Self {
     Self {
       passes: vec![Pass::Lint],
       mode: Mode::Report,
+      allow_missing,
     }
   }
 
-  /// `fml fix` / `fml fix --check`.
+  /// `fml fix` / `fml fix --check`, optionally with `--allow-missing`.
   #[must_use]
-  pub fn fix(check: bool) -> Self {
+  pub fn fix(check: bool, allow_missing: bool) -> Self {
     Self {
       passes: vec![Pass::Lint, Pass::Format],
       mode: mode_for(check),
+      allow_missing,
     }
   }
 
   /// `fml sync` / `fml sync --check`.
+  ///
+  /// No `--allow-missing` form: `sync` never reads formatter/linter
+  /// binaries, so it has no `ToolMissing` precondition to opt out of.
   #[must_use]
   pub fn sync(check: bool) -> Self {
     Self {
       passes: vec![Pass::ConfigSync],
       mode: mode_for(check),
+      allow_missing: false,
     }
   }
 
@@ -427,6 +441,21 @@ impl Runner {
         }
         SurfaceStatus::ToolMissing { binary, .. } => {
           tool_missing_count += 1;
+          // An unmet precondition, not an operational fault (#252) — the
+          // surface correctly determined it could not proceed. Exit 1
+          // (`ExitStatus::Violations`), the same as a real violation, so a
+          // missing tool never lets the process exit clean; reserve 2 for
+          // `ExecutionError`, which still wins if one occurs elsewhere.
+          //
+          // `--allow-missing` (#163) is the one opt-out: a machine missing
+          // an optional linter must not fail *every* commit that touches
+          // that surface. It only silences this arm's contribution to
+          // `exit_code` — a real violation elsewhere still sets it above,
+          // and the row stays visible either way (silence is the original
+          // bug, not the fix).
+          if !plan.allow_missing && exit_code < 1 {
+            exit_code = 1;
+          }
           runner_table.add_row(crate::ui::table::Row::new(vec![
             crate::ui::table::Cell::styled(
               "[MISS] ",
@@ -543,9 +572,10 @@ impl Runner {
     if tool_missing_count > 0 {
       parts.push(
         format!(
-          "{} missing tool{}",
+          "{} missing tool{}{}",
           tool_missing_count,
-          if tool_missing_count == 1 { "" } else { "s" }
+          if tool_missing_count == 1 { "" } else { "s" },
+          if plan.allow_missing { " (allowed)" } else { "" }
         )
         .yellow()
         .bold()

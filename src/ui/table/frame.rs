@@ -4,10 +4,11 @@
 //! rule that command prints is the same width.
 
 use super::render::detect_terminal_width;
+use super::wrap;
 use super::{
   Palette, Style, max_line_display_width, separator_line, strip_ansi_escapes,
 };
-use unicode_width::UnicodeWidthChar;
+use unicode_width::{UnicodeWidthChar, UnicodeWidthStr};
 
 /// The 80-column output target from issue #122, honored unless the real
 /// terminal is genuinely narrower.
@@ -110,74 +111,6 @@ impl Frame {
   }
 }
 
-/// Break chars after which a wrap is allowed (a space always allows one).
-/// Matches `render`'s policy so tables and prose wrap the same way.
-const BREAK_AFTER: [char; 4] = ['/', '\\', ',', ';'];
-
-/// One unit of a prose line: a run of visible text ending at a break point, a
-/// single space, or a zero-width ANSI escape sequence.
-struct Unit {
-  text: String,
-  width: usize,
-  is_space: bool,
-}
-
-/// Split `s` (leading indent already removed) into wrappable [`Unit`]s.
-fn units(s: &str) -> Vec<Unit> {
-  let mut out = Vec::new();
-  let mut cur = String::new();
-  let mut cur_w = 0usize;
-  let mut chars = s.chars().peekable();
-  while let Some(c) = chars.next() {
-    if c == '\x1b' {
-      // Copy the CSI/SGR sequence verbatim onto the current run; it is
-      // zero-width, so it never forces a wrap on its own.
-      cur.push(c);
-      for e in chars.by_ref() {
-        cur.push(e);
-        if e.is_ascii_alphabetic() {
-          break;
-        }
-      }
-      continue;
-    }
-    if c == ' ' {
-      if !cur.is_empty() {
-        out.push(Unit {
-          text: std::mem::take(&mut cur),
-          width: cur_w,
-          is_space: false,
-        });
-        cur_w = 0;
-      }
-      out.push(Unit {
-        text: " ".to_string(),
-        width: 1,
-        is_space: true,
-      });
-      continue;
-    }
-    cur.push(c);
-    cur_w += UnicodeWidthChar::width(c).unwrap_or(0);
-    if BREAK_AFTER.contains(&c) {
-      out.push(Unit {
-        text: std::mem::take(&mut cur),
-        width: cur_w,
-        is_space: false,
-      });
-      cur_w = 0;
-    }
-  }
-  if !cur.is_empty() {
-    out.push(Unit {
-      text: cur,
-      width: cur_w,
-      is_space: false,
-    });
-  }
-  out
-}
-
 /// The continuation ("hanging") indent for a wrapped prose line: its leading
 /// whitespace, plus any list bullet (`•`/`-`/`*`) and `[TAG]` label prefix, so
 /// a wrapped `  • [WARN]  message…` continues aligned under `message`, not back
@@ -233,14 +166,37 @@ fn wrap_prose_line(line: &str, width: usize) -> String {
   let hang = hang_indent(line, width / 2);
   let rest: String = line.chars().skip(lead_len).collect();
 
-  let mut lines: Vec<String> = vec![lead];
+  let mut lines: Vec<String> = vec![lead.clone()];
   let mut cur_w = lines[0].chars().count();
-  for unit in units(&rest) {
+  // Every hard-split piece is capped to fit alongside whichever indent (the
+  // first line's `lead`, or a continuation's `hang`) it lands after — the
+  // larger of the two, so no matter which line a piece falls on, indent +
+  // piece never exceeds `width`.
+  let hard_split_budget = width
+    .saturating_sub(hang.chars().count().max(lead.chars().count()))
+    .max(1);
+  for unit in wrap::units(&rest) {
     let at_line_start = lines.last().is_some_and(|l| l.trim().is_empty());
     if unit.is_space {
       if !at_line_start && cur_w < width {
         lines.last_mut().unwrap().push(' ');
         cur_w += 1;
+      }
+      continue;
+    }
+    if unit.width > width {
+      // An unbreakable token (a long path or URL) wider than the whole
+      // frame: hard-split it rather than let it overflow, the same
+      // last-resort table cells already take (see `wrap::hard_split`).
+      let mut fresh = at_line_start;
+      for piece in wrap::hard_split(&unit.text, hard_split_budget) {
+        if !fresh {
+          lines.push(hang.clone());
+          cur_w = hang.chars().count();
+        }
+        lines.last_mut().unwrap().push_str(&piece);
+        cur_w += piece.as_str().width();
+        fresh = false;
       }
       continue;
     }
@@ -322,5 +278,54 @@ mod tests {
     let frame = Frame { width: 40 };
     let line = "  \u{2022} short enough";
     assert_eq!(frame.wrap_body(line), line);
+  }
+
+  /// #269: `render::wrap_spans` (table cells) and `frame::wrap_prose_line`
+  /// (prose) now share one tokenizer and break-character policy. On text with
+  /// no leading indent / bullet / `[TAG]` (so `wrap_prose_line`'s `lead` and
+  /// `hang` are both empty, making its loop structurally identical to
+  /// `wrap_spans`'s), the two must lay tokens onto lines identically — for
+  /// ordinary prose, a path full of `/`, a comma-separated list, text
+  /// carrying ANSI escapes, and a 200-character unbreakable token that
+  /// neither can break on a separator and both must hard-split the same way.
+  /// A future edit that reintroduces two divergent tokenizers/hard-splitters
+  /// fails this test.
+  #[test]
+  fn table_and_prose_wrap_agree_on_shared_corpus() {
+    use super::super::Span;
+    use super::super::render::wrap_spans;
+
+    let unbreakable = "u".repeat(200);
+    let corpus = format!(
+      "The quick brown fox jumps over the lazy dog then trots down \
+       usr/local/bin/formatter past a/b/c;d/e and hits {unbreakable} head \
+       on with \u{1b}[1mstyled\u{1b}[0m flair, twice, for good measure."
+    );
+
+    for width in [20usize, 40, 80] {
+      let table_lines: Vec<String> =
+        wrap_spans(&[Span::plain(corpus.as_str())], width)
+          .iter()
+          .map(|line| line.iter().map(|s| s.text.as_str()).collect::<String>())
+          .collect();
+
+      let prose_lines: Vec<String> = wrap_prose_line(&corpus, width)
+        .lines()
+        .map(str::to_string)
+        .collect();
+
+      assert_eq!(
+        table_lines, prose_lines,
+        "table and prose wrap diverged at width {width}:\n\
+         table: {table_lines:?}\nprose: {prose_lines:?}"
+      );
+
+      for line in table_lines.iter().chain(prose_lines.iter()) {
+        assert!(
+          max_line_display_width(line) <= width,
+          "line exceeds width {width}: {line:?}"
+        );
+      }
+    }
   }
 }

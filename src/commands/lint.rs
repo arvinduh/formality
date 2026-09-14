@@ -22,6 +22,7 @@ pub fn run_lint(
   lang: Vec<String>,
   install: bool,
   paths: Vec<PathBuf>,
+  allow_missing: bool,
 ) -> ExitStatus {
   dispatch_plan(
     root,
@@ -31,7 +32,7 @@ pub fn run_lint(
     lang,
     install,
     paths,
-    &Plan::lint(),
+    &Plan::lint(allow_missing),
     "linting",
   )
 }

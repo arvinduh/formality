@@ -2,11 +2,12 @@
 //! managed native config file — `ktlint` reads its own `.editorconfig`
 //! conventions directly, so there is no `NativeConfig` to sync here.
 
+use super::tooling::no_native_config;
 use super::{
   DeclaresFacets, ExecutionContext, Facet, FacetSupport, LanguageSurface,
-  SurfaceResult, SurfaceStatus, ToolInfo, classify_exit_one_as_violation,
-  create_tool_command, diff_check_via_tempcopy_classified, find_files_with_ext,
-  run_tool_command, run_tool_command_classified, tool_missing_guard,
+  SurfaceResult, ToolInfo, classify_exit_one_as_violation, create_tool_command,
+  diff_check_via_tempcopy_classified, find_files_with_ext, run_tool_command,
+  run_tool_command_classified, tool_missing_guard,
 };
 use std::path::Path;
 use std::time::Instant;
@@ -263,11 +264,10 @@ impl LanguageSurface for KotlinSurface {
     // which formality already synthesizes centrally for every surface (see
     // `crate::surfaces::editorconfig::sync_editorconfig`). There is no separate
     // native ktlint config file to generate, so this is a no-op.
-    SurfaceResult {
-      surface_name: self.name(),
-      status: SurfaceStatus::Passed,
-      duration: std::time::Duration::default(),
-    }
+    no_native_config(
+      self.name(),
+      "No config of its own (reads layout from .editorconfig)",
+    )
   }
 }
 
@@ -276,7 +276,9 @@ impl LanguageSurface for KotlinSurface {
 mod tests {
   use super::*;
   use crate::config::ResolvedLangConfig;
-  use crate::surfaces::{check_binary_exists, forget_binary, test_ctx};
+  use crate::surfaces::{
+    SurfaceStatus, check_binary_exists, forget_binary, test_ctx,
+  };
   use std::path::PathBuf;
   use std::sync::{Mutex, MutexGuard, PoisonError};
   use tempfile::TempDir;
@@ -527,7 +529,10 @@ mod tests {
     let ctx = test_ctx(temp.path(), ResolvedLangConfig::new("kotlin"));
 
     let res = surface.sync_config(&ctx, false);
-    assert!(matches!(res.status, SurfaceStatus::Passed));
+    // No native config file of its own (ktlint reads layout from
+    // .editorconfig), so this reports Skipped like every other surface
+    // with nothing to sync — not Passed (Fixes #271).
+    assert!(matches!(res.status, SurfaceStatus::Skipped { .. }));
   }
 
   #[test]

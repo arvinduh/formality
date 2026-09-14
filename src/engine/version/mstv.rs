@@ -28,8 +28,6 @@ pub const MSTV_YAMLLINT: Version = Version::new(1, 20, 0);
 pub const MSTV_BIOME: Version = Version::new(1, 5, 0);
 /// MSTV for checkstyle.
 pub const MSTV_CHECKSTYLE: Version = Version::new(10, 0, 0);
-/// MSTV for ktfmt.
-pub const MSTV_KTFMT: Version = Version::new(0, 44, 0);
 /// MSTV for ktlint.
 pub const MSTV_KTLINT: Version = Version::new(1, 0, 0);
 /// MSTV for gofmt.
@@ -204,12 +202,6 @@ pub const TOOL_MSTV_REGISTRY: &[ToolMstvEntry] = &[
     min_version: Some(MSTV_CHECKSTYLE),
     probe: DEFAULT_VERSION_PROBE,
     advice: "Run 'brew install checkstyle' or update your checkstyle jar",
-  },
-  ToolMstvEntry {
-    binary: "ktfmt",
-    min_version: Some(MSTV_KTFMT),
-    probe: DEFAULT_VERSION_PROBE,
-    advice: "Run 'brew install ktfmt'",
   },
   ToolMstvEntry {
     binary: "ktlint",

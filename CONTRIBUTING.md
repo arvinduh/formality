@@ -51,7 +51,9 @@ mind:
    your `PATH`.
 8. **Deterministic Exit Codes**:
    - `0`: All clean / passed.
-   - `1`: Formatting or lint violations found, or config drift detected.
+   - `1`: Formatting or lint violations found, config drift detected, or a
+     required tool is missing (opt out with `--allow-missing` on `fmt`, `lint`,
+     and `fix`).
    - `2`: Underlying execution error or operational failure.
 
 ---
@@ -170,8 +172,15 @@ When triggered on `git commit`, the hook:
 
 1. Builds the local binary fresh with `cargo build -q --bin fml` (exiting with
    failure if the build fails).
-2. Runs mechanical formatting on staged files: `$FML fmt --staged`.
-3. Runs semantic linting on staged files: `$FML lint --staged`.
+2. Runs mechanical formatting on staged files:
+   `$FML fmt --staged --allow-missing`.
+3. Runs semantic linting on staged files: `$FML lint --staged --allow-missing`.
+
+Both steps pass `--allow-missing` so a missing _optional_ linter on your machine
+doesn't block a commit that stages files for that surface (#163) — the surface
+still prints `[MISS]`, it just doesn't fail the hook on its own. A real
+formatting/lint violation or an execution error still fails the commit
+regardless.
 
 ---
 

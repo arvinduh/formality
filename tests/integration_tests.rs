@@ -534,6 +534,7 @@ fn test_targeted_file_and_dir_formatting() {
     changed: false,
     lang: vec!["rust".to_string()],
     install: false,
+    allow_missing: false,
     paths: vec![target_file],
   };
   assert_eq!(run_cli(root, fmt_single), 0);
@@ -545,6 +546,7 @@ fn test_targeted_file_and_dir_formatting() {
     changed: false,
     lang: vec!["rust".to_string()],
     install: false,
+    allow_missing: false,
     paths: vec![sub],
   };
   assert_eq!(run_cli(root, fmt_dir), 0);
@@ -710,6 +712,7 @@ fn test_fmt_fix_lint_doctor_install_flag_paths() {
     changed: false,
     lang: vec!["rust".to_string()],
     install: true,
+    allow_missing: false,
     paths: vec![],
   };
   assert_eq!(run_cli(root, fmt_args), 0);
@@ -721,6 +724,7 @@ fn test_fmt_fix_lint_doctor_install_flag_paths() {
     changed: false,
     lang: vec!["rust".to_string()],
     install: true,
+    allow_missing: false,
     paths: vec![],
   };
   assert_eq!(run_cli(root, fix_args), 0);
@@ -733,6 +737,7 @@ fn test_fmt_fix_lint_doctor_install_flag_paths() {
     changed: false,
     lang: vec!["rust".to_string()],
     install: true,
+    allow_missing: false,
     paths: vec![],
   };
   assert_eq!(run_cli(root, lint_args), 0);
@@ -777,6 +782,7 @@ fn test_fmt_staged_and_changed_with_explicit_paths_filtering() {
     changed: false,
     lang: vec!["toml".to_string()],
     install: false,
+    allow_missing: false,
     paths: vec![file_a.clone()],
   };
   assert_eq!(run_cli(root, fmt_args), 0);
@@ -972,6 +978,7 @@ fn test_missing_tool_exit_code_parity_staged_vs_unstaged() {
     changed: false,
     lang: vec!["markdown".to_string()],
     install: false,
+    allow_missing: false,
     paths: vec![],
   };
   let lint_unstaged = Commands::Lint {
@@ -981,6 +988,7 @@ fn test_missing_tool_exit_code_parity_staged_vs_unstaged() {
     changed: false,
     lang: vec!["markdown".to_string()],
     install: false,
+    allow_missing: false,
     paths: vec![],
   };
 
@@ -989,13 +997,13 @@ fn test_missing_tool_exit_code_parity_staged_vs_unstaged() {
 
   assert_eq!(
     lint_staged_status,
-    ExitStatus::Clean,
-    "fml lint --staged must exit 0 on missing tool"
+    ExitStatus::Violations,
+    "fml lint --staged must not exit clean on missing tool (Fixes #252)"
   );
   assert_eq!(
     lint_unstaged_status,
-    ExitStatus::Clean,
-    "fml lint must exit 0 on missing tool"
+    ExitStatus::Violations,
+    "fml lint must not exit clean on missing tool (Fixes #252)"
   );
   assert_eq!(
     lint_staged_status, lint_unstaged_status,
@@ -1011,6 +1019,7 @@ fn test_missing_tool_exit_code_parity_staged_vs_unstaged() {
     changed: false,
     lang: vec!["markdown".to_string()],
     install: false,
+    allow_missing: false,
     paths: vec![],
   };
   let fmt_unstaged = Commands::Fmt {
@@ -1019,6 +1028,7 @@ fn test_missing_tool_exit_code_parity_staged_vs_unstaged() {
     changed: false,
     lang: vec!["markdown".to_string()],
     install: false,
+    allow_missing: false,
     paths: vec![],
   };
 
@@ -1027,13 +1037,13 @@ fn test_missing_tool_exit_code_parity_staged_vs_unstaged() {
 
   assert_eq!(
     fmt_staged_status,
-    ExitStatus::Clean,
-    "fml fmt --staged must exit 0 on missing tool"
+    ExitStatus::Violations,
+    "fml fmt --staged must not exit clean on missing tool (Fixes #252)"
   );
   assert_eq!(
     fmt_unstaged_status,
-    ExitStatus::Clean,
-    "fml fmt must exit 0 on missing tool"
+    ExitStatus::Violations,
+    "fml fmt must not exit clean on missing tool (Fixes #252)"
   );
   assert_eq!(
     fmt_staged_status, fmt_unstaged_status,

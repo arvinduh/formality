@@ -10,7 +10,7 @@ use super::{
   classify_all_nonzero_as_error, classify_exit_one_as_violation,
   create_tool_command, diff_check_via_tempcopy_classified, find_files_with_ext,
   render_native_config, run_tool_command, run_tool_command_classified,
-  sync_native_config, tool_missing_guard,
+  sync_native_config, tool_missing_guard, tool_missing_result,
 };
 use crate::config::ResolvedLangConfig;
 use serde::{Deserialize, Serialize};
@@ -562,13 +562,12 @@ impl LanguageSurface for MarkdownSurface {
     } else if check_binary_exists("markdownlint") {
       "markdownlint"
     } else {
-      return tool_missing_guard(
+      return tool_missing_result(
         self.name(),
-        "markdownlint-cli2",
         start,
-        Some("npm install -g markdownlint-cli2"),
-      )
-      .unwrap();
+        "markdownlint-cli2",
+        "npm install -g markdownlint-cli2",
+      );
     };
 
     let files = ctx.matched_files(MD_EXTENSIONS);
