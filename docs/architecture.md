@@ -97,13 +97,14 @@ Language Server — document formatting via `fml fmt` plus diagnostics publishin
 via `fml lint`, with `lsp_diagnostics.rs` providing structured per-violation
 diagnostics, `#159 [pre-recreation]`), and `doctor/` (a directory module —
 `mod.rs`, `gitignore.rs`, `venv.rs` — implementing `fml doctor`'s
-workspace/toolchain verification checks). Tool installation lives in
-`doctor/mod.rs` (`install_missing_tools`, `preflight_install` — the latter also
-called by `fmt`/`lint`/`fix` for their `--install` flag). The deprecated
-`fml install` and `fml list-surfaces` / `fml surfaces` dispatch directly to
-`doctor::run_doctor`. `mod.rs` at the top of this directory also holds shared
-helpers used by more than one command handler (e.g. the missing-tool warning
-printer).
+workspace/toolchain verification checks). Tool installation lives entirely in
+`doctor/mod.rs` (`install_missing_tools`, `preflight_install`) — `--install` was
+removed from `fmt`/`lint`/`fix` in v0.3.0 (#282), so `fml doctor --install` is
+its only caller now. `fmt`/`lint`/`fix` instead call
+`preflight_warn_stale_tools`, which only warns about stale tools, never
+installs. The deprecated `fml install` and `fml list-surfaces` / `fml surfaces`
+dispatch directly to `doctor::run_doctor`. `mod.rs` at the top of this directory
+also holds shared helpers used by more than one command handler.
 
 ## Cross-cutting: process and release docs
 

@@ -31,8 +31,8 @@ and behavior) · [Adding a New Surface](docs/new-surface-guide.md) ·
   warns instead of overwriting them.
 - **Automated tool installer (`fml doctor --install`)**: Detects missing
   binaries and auto-installs them via system package managers (`cargo`, `npm`,
-  `pip`, `brew`, `rustup`). Pass `--install` / `-i` to `fml fmt` or `fml lint`
-  to install on-demand before the run — no separate setup step needed.
+  `pip`, `brew`, `rustup`). It is the only install step — run it once before
+  `fml fmt` / `fml lint` / `fml fix`, no separate setup script needed.
 - **Blazing parallel runner**: Runs independent language surfaces concurrently
   using multi-threaded execution (`rayon`).
 - **Fine-grained targeting**: Target specific files, directories, Git staged
@@ -198,8 +198,9 @@ fml sync --check
 # Format all detected surfaces in parallel
 fml fmt
 
-# First run on a fresh clone? Install missing tools then format in one step
-fml fmt --install
+# First run on a fresh clone? Install missing tools, then format
+fml doctor --install
+fml fmt
 
 # Format only Git staged files (pre-commit hook)
 fml fmt --staged
@@ -213,9 +214,6 @@ fml fmt --check
 
 # Run linters across all active surfaces (never writes)
 fml lint
-
-# Install missing tools then lint in one step
-fml lint --install
 
 # Apply lint fixes and reformat, across all active surfaces, in one command
 # (the single "clean everything up" entrypoint)
@@ -392,12 +390,10 @@ Options:
 | Command       | Flag              | Description                                                                                    |
 | :------------ | :---------------- | :--------------------------------------------------------------------------------------------- |
 | `fml fmt`     | `--check`         | Exit 1 if any file would be reformatted (CI safe)                                              |
-| `fml fmt`     | `--install`       | Auto-install missing tools for active surfaces, then format                                    |
 | `fml fmt`     | `--staged`        | Operate only on `git diff --cached` files                                                      |
 | `fml fmt`     | `--changed`       | Operate only on `git diff` (unstaged) files                                                    |
 | `fml fmt`     | `--lang`          | Filter to a specific surface, e.g. `--lang rust`                                               |
 | `fml fmt`     | `--allow-missing` | A missing required tool alone does not fail the run (still reported)                           |
-| `fml lint`    | `--install`       | Auto-install missing tools for active surfaces, then lint                                      |
 | `fml lint`    | `--staged`        | Operate only on `git diff --cached` files                                                      |
 | `fml lint`    | `--changed`       | Operate only on `git diff` (unstaged) files                                                    |
 | `fml lint`    | `--lang`          | Filter to a specific surface                                                                   |
@@ -406,7 +402,6 @@ Options:
 | `fml fix`     | `--staged`        | Operate only on `git diff --cached` files                                                      |
 | `fml fix`     | `--changed`       | Operate only on `git diff` (unstaged) files                                                    |
 | `fml fix`     | `--lang`          | Filter to a specific surface                                                                   |
-| `fml fix`     | `--install`       | Auto-install missing tools for active surfaces, then fix                                       |
 | `fml fix`     | `--allow-missing` | A missing required tool alone does not fail the run (still reported)                           |
 | `fml sync`    | `--check`         | Exit 1 if any native config is out of sync                                                     |
 | `fml sync`    | `--lang`          | Filter to a specific surface                                                                   |
@@ -487,17 +482,6 @@ The only prerequisite is `fml` itself. Once it's on `PATH`,
 
 - name: Lint
   run: fml lint
-```
-
-Rust-heavy projects that already have a Rust toolchain step can combine
-`fml doctor --install` and the format/lint check into a single flag:
-
-```yaml
-- name: Check formatting
-  run: fml fmt --check --install
-
-- name: Lint
-  run: fml lint --install
 ```
 
 > **Tip**: Set `FORMALITY_NO_UPDATE_CHECK=1` in your CI environment to suppress
