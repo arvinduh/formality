@@ -660,19 +660,34 @@ mod tests {
     // the binary's real extension and routes any `.cmd`/`.bat` result
     // through `cmd /C`, which *can* launch it. Every ktlint invocation site
     // must go through that helper -- a bare `Command::new("ktlint")`
-    // creeping back in (here or in `commands::lsp_diagnostics`) would
-    // silently reintroduce the Windows failure the two files above already
-    // guard against source-textually, so pin it here too rather than
-    // relying on catching it by eye in review.
+    // creeping back in anywhere would silently reintroduce the Windows
+    // failure this issue reports, so pin it here rather than relying on
+    // catching it by eye in review.
+    //
+    // Scans every `.rs` file under `src/`, not a hardcoded list of the two
+    // files known to call ktlint today -- a call site added in a new file
+    // would otherwise go unguarded. Reuses the same `ignore::WalkBuilder`
+    // walk `test_no_stray_test_files_outside_sanctioned_pattern` (src/lib.rs)
+    // already establishes for this kind of whole-tree source-textual check.
     let manifest_dir = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"));
-    for rel in ["src/surfaces/kotlin.rs", "src/commands/lsp_diagnostics.rs"] {
-      let path = manifest_dir.join(rel);
-      let content = std::fs::read_to_string(&path).unwrap();
+    let src_dir = manifest_dir.join("src");
+    for entry in ignore::WalkBuilder::new(&src_dir)
+      .standard_filters(false)
+      .build()
+      .filter_map(Result::ok)
+      .filter(|e| e.file_type().is_some_and(|ft| ft.is_file()))
+    {
+      let path = entry.path();
+      if path.extension().and_then(|e| e.to_str()) != Some("rs") {
+        continue;
+      }
+      let content = std::fs::read_to_string(path).unwrap();
       let prod_code = production_code_before_test_module(&content);
       assert!(
         !prod_code.contains("Command::new(\"ktlint\")"),
-        "{rel} must spawn ktlint via create_tool_command, not a bare \
-         Command::new(\"ktlint\") -- see #103"
+        "{} must spawn ktlint via create_tool_command, not a bare \
+         Command::new(\"ktlint\") -- see #103",
+        path.display()
       );
     }
   }
