@@ -649,4 +649,36 @@ mod tests {
       assert!(!res.is_success());
     });
   }
+
+  #[test]
+  fn test_ktlint_call_sites_never_bypass_create_tool_command() {
+    // Fixes #103: on Windows, npm's `ktlint.cmd` shim cannot be spawned by
+    // a bare `Command::new("ktlint")` -- CreateProcess does not perform the
+    // PATHEXT-style `.cmd`/`.bat` resolution that `cmd.exe` does, so the
+    // process fails to start at all ("The system cannot find the path
+    // specified."). `create_tool_command` (`surfaces::tooling`) resolves
+    // the binary's real extension and routes any `.cmd`/`.bat` result
+    // through `cmd /C`, which *can* launch it. Every ktlint invocation site
+    // must go through that helper -- a bare `Command::new("ktlint")`
+    // creeping back in (here or in `commands::lsp_diagnostics`) would
+    // silently reintroduce the Windows failure the two files above already
+    // guard against source-textually, so pin it here too rather than
+    // relying on catching it by eye in review.
+    let manifest_dir = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+    for rel in ["src/surfaces/kotlin.rs", "src/commands/lsp_diagnostics.rs"] {
+      let path = manifest_dir.join(rel);
+      let content = std::fs::read_to_string(&path).unwrap();
+      // Strip the test module so the guard doesn't trip on stub helpers
+      // (e.g. `with_ktlint_stub`) that intentionally spawn plain shell
+      // commands to fake out a `ktlint` binary for testing.
+      let prod_code = content
+        .split_once("#[cfg(test)]")
+        .map_or(content.as_str(), |(prod, _)| prod);
+      assert!(
+        !prod_code.contains("Command::new(\"ktlint\")"),
+        "{rel} must spawn ktlint via create_tool_command, not a bare \
+         Command::new(\"ktlint\") -- see #103"
+      );
+    }
+  }
 }
