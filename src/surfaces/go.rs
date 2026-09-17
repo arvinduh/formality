@@ -228,21 +228,26 @@ impl LanguageSurface for GoSurface {
       ToolInfo {
         binary: "gofmt",
         description: "Go code formatter (simplifies code with -s)",
-        install_hint: "Ships with the Go toolchain: install Go from https://go.dev/dl/",
+        // No ALL_CHAINS row: gofmt ships with the Go toolchain itself
+        // rather than through any package manager, so there is no
+        // install-preference chain to derive advice from.
+        install_hint: Some(
+          "Ships with the Go toolchain: install Go from https://go.dev/dl/",
+        ),
         is_required_for_fmt: true,
         is_required_for_lint: false,
       },
       ToolInfo {
         binary: "goimports",
         description: "Go formatter that also groups and sorts imports",
-        install_hint: "Install via: go install golang.org/x/tools/cmd/goimports@latest",
+        install_hint: None,
         is_required_for_fmt: true,
         is_required_for_lint: false,
       },
       ToolInfo {
         binary: "golangci-lint",
         description: "Fast Go linters runner aggregating multiple static analyzers",
-        install_hint: "Install via: brew install golangci-lint (or go install github.com/golangci/golangci-lint/v2/cmd/golangci-lint@latest)",
+        install_hint: None,
         is_required_for_fmt: false,
         is_required_for_lint: true,
       },
@@ -263,12 +268,8 @@ impl LanguageSurface for GoSurface {
       return res;
     }
 
-    if let Some(res) = tool_missing_guard(
-      self.name(),
-      "goimports",
-      start,
-      Some("go install golang.org/x/tools/cmd/goimports@latest"),
-    ) {
+    if let Some(res) = tool_missing_guard(self.name(), "goimports", start, None)
+    {
       return res;
     }
 
@@ -438,14 +439,9 @@ impl LanguageSurface for GoSurface {
       };
     }
 
-    if let Some(res) = tool_missing_guard(
-      self.name(),
-      "golangci-lint",
-      start,
-      Some(
-        "brew install golangci-lint / go install github.com/golangci/golangci-lint/v2/cmd/golangci-lint@latest",
-      ),
-    ) {
+    if let Some(res) =
+      tool_missing_guard(self.name(), "golangci-lint", start, None)
+    {
       return res;
     }
 

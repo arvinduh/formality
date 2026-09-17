@@ -241,6 +241,60 @@ impl InstallMethod {
       InstallMethod::GoInstall(_) => "go",
     }
   }
+
+  /// Renders the shell command this method runs, for display in an install
+  /// hint. Deliberately **not** [`InstallMethod::command()`]: that method
+  /// probes the local machine (e.g. whether `sudo` is on `PATH` for
+  /// [`InstallMethod::Apt`]) so the *executed* command matches whatever
+  /// machine is running it, but a printed hint has to read the same on every
+  /// machine, including one that hasn't installed anything yet. This is the
+  /// only place that distinction matters — every other variant's rendering
+  /// agrees with `command()` byte-for-byte.
+  fn describe(&self) -> String {
+    match self {
+      InstallMethod::Apt(pkg) => format!("sudo apt-get install -y {pkg}"),
+      other => {
+        let (program, args) = other.command();
+        if args.is_empty() {
+          program
+        } else {
+          format!("{program} {}", args.join(" "))
+        }
+      }
+    }
+  }
+}
+
+/// Renders `binary`'s registered [`ALL_CHAINS`] install-preference chain as a
+/// single human-readable hint string, in the chain's own order — the one
+/// place install guidance is composed from the chain data instead of being
+/// restated by hand per call site (Fixes #264). A tool with no chain row
+/// (one that ships inside a toolchain rather than through a package
+/// manager, e.g. `cargo` or `gofmt`) has no generic advice to give here;
+/// callers for those tools pass their own override instead of relying on
+/// this fallback (see [`crate::surfaces::ToolInfo::install_hint`]).
+#[must_use]
+pub fn install_hint_for(binary: &str) -> String {
+  let Some(chain) = install_chain_for(binary) else {
+    return format!(
+      "No known install method for '{binary}' -- check its own documentation."
+    );
+  };
+  let Some((first, rest)) = chain.split_first() else {
+    return format!(
+      "No known install method for '{binary}' -- check its own documentation."
+    );
+  };
+  if rest.is_empty() {
+    format!("Install via: {}", first.describe())
+  } else {
+    let rest = rest.iter().map(InstallMethod::describe).collect::<Vec<_>>();
+    format!(
+      "Install via: {} (or {})",
+      first.describe(),
+      rest.join(" / ")
+    )
+  }
 }
 
 // --- Pinned tool versions -------------------------------------------------
@@ -785,6 +839,13 @@ pub fn tool_missing_result(
 
 /// Returns `Some(SurfaceResult)` with `SurfaceStatus::ToolMissing` if `binary`
 /// is not found on `PATH`, or `None` if it is available.
+///
+/// `hint` is an optional override; `None` falls back to
+/// [`install_hint_for`], the same derivation [`ToolInfo::effective_install_hint`]
+/// uses, so a caller that doesn't need a bespoke message (nearly all of
+/// them) never has to restate the chain's install prose by hand.
+///
+/// [`ToolInfo::effective_install_hint`]: crate::surfaces::ToolInfo::effective_install_hint
 #[must_use]
 pub fn tool_missing_guard(
   name: &'static str,
@@ -793,7 +854,8 @@ pub fn tool_missing_guard(
   hint: Option<&'static str>,
 ) -> Option<SurfaceResult> {
   if !check_binary_exists(binary) {
-    Some(tool_missing_result(name, start, binary, hint.unwrap_or("")))
+    let hint = hint.map_or_else(|| install_hint_for(binary), str::to_string);
+    Some(tool_missing_result(name, start, binary, &hint))
   } else {
     None
   }
@@ -1843,7 +1905,7 @@ mod tests {
       let info = ToolInfo {
         binary: entry.binary,
         description: "test tool",
-        install_hint: "test hint",
+        install_hint: None,
         is_required_for_fmt: true,
         is_required_for_lint: true,
       };
@@ -1862,7 +1924,7 @@ mod tests {
     let info = ToolInfo {
       binary: "not-a-real-tool",
       description: "test tool",
-      install_hint: "test hint",
+      install_hint: None,
       is_required_for_fmt: false,
       is_required_for_lint: false,
     };
@@ -2016,7 +2078,7 @@ mod tests {
     let missing_tool = ToolInfo {
       binary: "__missing_dummy_binary_test__",
       description: "Dummy Missing Tool Test",
-      install_hint: "Run npm install -g dummy",
+      install_hint: Some("Run npm install -g dummy"),
       is_required_for_fmt: true,
       is_required_for_lint: true,
     };
@@ -2568,6 +2630,10 @@ mod tests {
       other => panic!("Expected ToolMissing, got {other:?}"),
     }
 
+    // No override hint and no registered ALL_CHAINS row for this made-up
+    // binary: falls back to `install_hint_for`'s "no known install method"
+    // message rather than an empty string (Fixes #264 -- a guard given no
+    // explicit hint must never silently print nothing).
     let res_none =
       tool_missing_guard("test", "non_existent_tool_xyz_123", start, None);
     assert!(res_none.is_some());
@@ -2577,7 +2643,8 @@ mod tests {
         install_hint,
       } => {
         assert_eq!(binary, "non_existent_tool_xyz_123");
-        assert_eq!(install_hint, "");
+        assert_eq!(install_hint, install_hint_for("non_existent_tool_xyz_123"));
+        assert!(install_hint.contains("non_existent_tool_xyz_123"));
       }
       other => panic!("Expected ToolMissing, got {other:?}"),
     }
@@ -2806,6 +2873,91 @@ mod tests {
         None,
         "must not flag {extra:?}"
       );
+    }
+  }
+
+  // --- install_hint_for / ToolInfo::effective_install_hint (#264) --------
+  //
+  // These are the regression guards for the bug #264 actually filed: printed
+  // install hints used to be hand-written prose restated 2-4 times per tool,
+  // and drifted away from `ALL_CHAINS` -- most visibly, every printed taplo
+  // hint kept leading with `cargo binstall` after `TAPLO_CHAIN` was
+  // deliberately reordered npm-first. `install_hint_for` derives the text
+  // from the chain directly, so this class of drift can no longer occur:
+  // there is nothing left to hand-edit out of sync.
+
+  #[test]
+  fn test_install_hint_for_taplo_leads_with_the_chain_first_entry() {
+    // This is the exact regression: the printed hint must lead with
+    // whatever `TAPLO_CHAIN`'s first entry actually is (npm), not a
+    // hand-written string that can silently disagree with it.
+    let hint = install_hint_for("taplo");
+    assert!(
+      hint.starts_with("Install via: npm install -g @taplo/cli"),
+      "taplo's hint must lead with the chain's first (npm) entry, got: {hint}"
+    );
+    // The demoted `cargo binstall` entry must still be mentioned somewhere
+    // -- it's still a valid fallback -- just not first.
+    assert!(hint.contains("cargo binstall"));
+    assert!(hint.contains("taplo-cli"));
+    let npm_pos = hint.find("npm install").unwrap();
+    let binstall_pos = hint.find("cargo binstall").unwrap();
+    assert!(
+      npm_pos < binstall_pos,
+      "npm must be mentioned before cargo binstall in: {hint}"
+    );
+  }
+
+  #[test]
+  fn test_install_hint_for_unregistered_binary_names_itself() {
+    let hint = install_hint_for("totally-unregistered-tool");
+    assert!(hint.contains("totally-unregistered-tool"));
+  }
+
+  #[test]
+  fn test_install_hint_for_single_entry_chain_has_no_or_clause() {
+    // rustfmt/clippy-driver's chains are a single `Rustup` entry each --
+    // rendering must not produce a dangling "(or )".
+    let hint = install_hint_for("rustfmt");
+    assert!(!hint.contains("(or"));
+    assert!(hint.contains("rustup component add rustfmt"));
+  }
+
+  #[test]
+  fn test_install_hint_for_apt_chain_is_env_independent() {
+    // `Apt`'s `command()` conditionally prepends `sudo` based on whether
+    // `sudo` is on this machine's PATH -- a printed hint must not inherit
+    // that nondeterminism (Fixes #264 follow-on: a hint has to read the
+    // same on every machine, not just the one running the test suite).
+    let hint = install_hint_for("clang-format");
+    assert!(hint.contains("sudo apt-get install -y clang-format"));
+  }
+
+  #[test]
+  fn test_every_surface_tool_info_binary_resolves_to_all_chains_or_overrides() {
+    // Acceptance criterion from #264: a new tool cannot ship "hintless". A
+    // `ToolInfo` either resolves to a real `ALL_CHAINS` row (and so gets a
+    // derived hint automatically), or it deliberately overrides
+    // `install_hint` itself (the only legitimate reason: it has no
+    // install-chain at all, e.g. `cargo`/`gofmt` ship with a toolchain).
+    for surface in crate::surfaces::all_surfaces() {
+      let resolved = crate::config::ResolvedLangConfig::new(surface.name());
+      for tool in surface.tool_info(&resolved) {
+        let has_chain = install_chain_for(tool.binary).is_some();
+        assert!(
+          has_chain || tool.install_hint.is_some(),
+          "{}'s tool '{}' has no ALL_CHAINS row and no install_hint \
+           override -- it would print install_hint_for's generic \
+           \"no known install method\" fallback. Register it in \
+           ALL_CHAINS, or give it an explicit override if it \
+           genuinely has none.",
+          surface.name(),
+          tool.binary,
+        );
+        // And the reverse never silently drifts either: whichever one
+        // applies must actually render non-empty text.
+        assert!(!tool.effective_install_hint().is_empty());
+      }
     }
   }
 }

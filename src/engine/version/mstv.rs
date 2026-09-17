@@ -112,6 +112,24 @@ pub struct ToolMstvEntry {
   /// How this tool's version string is obtained.
   pub probe: VersionProbe,
   /// Upgrade advice message shown when tool is outdated.
+  ///
+  /// Deliberately distinct from `install_hint_for` (`src/surfaces/tooling.rs`,
+  /// #264): that function renders `ALL_CHAINS`, the answer to "how do I
+  /// install this tool for the first time". This field answers a narrower
+  /// question -- "how do I move an *already-installed* copy of this tool
+  /// past its MSTV floor" -- which for several rows here is a different
+  /// action entirely (`rustup update`, not a fresh `rustup component add`;
+  /// bumping a Go toolchain in place rather than reinstalling a CLI). The
+  /// two are restated by hand in parallel today (e.g. both mention `brew
+  /// install ruff`), which is the same drift risk #264 fixed for install
+  /// hints -- but collapsing this into a single call is out of scope for
+  /// #264 itself: `TOOL_MSTV_REGISTRY`'s shape is being worked in
+  /// `refactor/issue-276-registry-predicate` concurrently, and restructuring
+  /// this struct here would collide with that branch. If a future change
+  /// finds `advice` has drifted from `ALL_CHAINS` the same way `taplo`'s
+  /// install hint did, that is a #264-shaped bug in its own right and
+  /// deserves its own issue, not a silent fix bundled into an unrelated
+  /// registry PR.
   pub advice: &'static str,
 }
 

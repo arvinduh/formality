@@ -61,7 +61,7 @@ impl LanguageSurface for JsonSurface {
     vec![ToolInfo {
       binary: "prettier",
       description: "JSON formatter",
-      install_hint: "Install via: npm install -g prettier (or pnpm add -g prettier / brew install prettier / winget install Prettier.Prettier)",
+      install_hint: None,
       is_required_for_fmt: true,
       is_required_for_lint: false,
     }]
@@ -70,12 +70,8 @@ impl LanguageSurface for JsonSurface {
   fn format(&self, ctx: &ExecutionContext) -> SurfaceResult {
     let start = Instant::now();
 
-    if let Some(res) = tool_missing_guard(
-      self.name(),
-      "prettier",
-      start,
-      Some("npm install -g prettier"),
-    ) {
+    if let Some(res) = tool_missing_guard(self.name(), "prettier", start, None)
+    {
       return res;
     }
 

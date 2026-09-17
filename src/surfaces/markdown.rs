@@ -9,8 +9,9 @@ use super::{
   SurfaceStatus, ToolInfo, build_prettier_inline_args, check_binary_exists,
   classify_all_nonzero_as_error, classify_exit_one_as_violation,
   create_tool_command, diff_check_via_tempcopy_classified, find_files_with_ext,
-  render_native_config, run_tool_command, run_tool_command_classified,
-  sync_native_config, tool_missing_guard, tool_missing_result,
+  install_hint_for, render_native_config, run_tool_command,
+  run_tool_command_classified, sync_native_config, tool_missing_guard,
+  tool_missing_result,
 };
 use crate::config::ResolvedLangConfig;
 use serde::{Deserialize, Serialize};
@@ -383,14 +384,14 @@ impl LanguageSurface for MarkdownSurface {
       ToolInfo {
         binary: "prettier",
         description: "Opinionated code/markdown formatter",
-        install_hint: "Install via: npm install -g prettier (or pnpm add -g prettier / brew install prettier / winget install Prettier.Prettier)",
+        install_hint: None,
         is_required_for_fmt: true,
         is_required_for_lint: false,
       },
       ToolInfo {
         binary: "markdownlint-cli2",
         description: "Fast markdown linter",
-        install_hint: "Install via: npm install -g markdownlint-cli2 (or brew install markdownlint-cli2)",
+        install_hint: None,
         is_required_for_fmt: false,
         is_required_for_lint: true,
       },
@@ -402,12 +403,8 @@ impl LanguageSurface for MarkdownSurface {
   fn format(&self, ctx: &ExecutionContext) -> SurfaceResult {
     let start = Instant::now();
 
-    if let Some(res) = tool_missing_guard(
-      self.name(),
-      "prettier",
-      start,
-      Some("npm install -g prettier"),
-    ) {
+    if let Some(res) = tool_missing_guard(self.name(), "prettier", start, None)
+    {
       return res;
     }
 
@@ -566,7 +563,7 @@ impl LanguageSurface for MarkdownSurface {
         self.name(),
         start,
         "markdownlint-cli2",
-        "npm install -g markdownlint-cli2",
+        &install_hint_for("markdownlint-cli2"),
       );
     };
 

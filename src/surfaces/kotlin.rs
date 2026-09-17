@@ -149,7 +149,7 @@ impl LanguageSurface for KotlinSurface {
     vec![ToolInfo {
       binary: "ktlint",
       description: "Kotlin linter and formatter (Smart Format: style + import organization in one pass)",
-      install_hint: "Install via: brew install ktlint (or scoop install ktlint, see https://github.com/pinterest/ktlint for other options)",
+      install_hint: None,
       is_required_for_fmt: true,
       is_required_for_lint: true,
     }]
@@ -158,12 +158,7 @@ impl LanguageSurface for KotlinSurface {
   fn format(&self, ctx: &ExecutionContext) -> SurfaceResult {
     let start = Instant::now();
 
-    if let Some(res) = tool_missing_guard(
-      self.name(),
-      "ktlint",
-      start,
-      Some("brew install ktlint"),
-    ) {
+    if let Some(res) = tool_missing_guard(self.name(), "ktlint", start, None) {
       return res;
     }
 
@@ -227,12 +222,7 @@ impl LanguageSurface for KotlinSurface {
   fn lint(&self, ctx: &ExecutionContext, fix: bool) -> SurfaceResult {
     let start = Instant::now();
 
-    if let Some(res) = tool_missing_guard(
-      self.name(),
-      "ktlint",
-      start,
-      Some("brew install ktlint"),
-    ) {
+    if let Some(res) = tool_missing_guard(self.name(), "ktlint", start, None) {
       return res;
     }
 

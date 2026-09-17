@@ -191,21 +191,23 @@ impl LanguageSurface for RustSurface {
       ToolInfo {
         binary: "cargo",
         description: "Rust package manager & build tool",
-        install_hint: "Install Rust via rustup: https://rustup.rs",
+        // No ALL_CHAINS row: cargo ships with the Rust toolchain itself
+        // (via rustup) rather than through any package manager here.
+        install_hint: Some("Install Rust via rustup: https://rustup.rs"),
         is_required_for_fmt: true,
         is_required_for_lint: true,
       },
       ToolInfo {
         binary: "rustfmt",
         description: "Rust code formatter",
-        install_hint: "Run: rustup component add rustfmt",
+        install_hint: None,
         is_required_for_fmt: true,
         is_required_for_lint: false,
       },
       ToolInfo {
         binary: "clippy-driver",
         description: "Rust linter (cargo clippy)",
-        install_hint: "Run: rustup component add clippy",
+        install_hint: None,
         is_required_for_fmt: false,
         is_required_for_lint: true,
       },

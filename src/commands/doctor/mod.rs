@@ -300,18 +300,19 @@ fn install_missing_tools_framed(
         }
       }
     } else {
+      let install_hint = tool.effective_install_hint();
       println!(
         "\n  {} No automatic package manager found for {}.\n    Manual install: {}",
         "[MISS]".yellow().bold(),
         tool.binary.bold(),
-        tool.install_hint
+        install_hint
       );
       all_ok = false;
       summary_rows.push(InstallSummaryRow {
         binary: tool.binary,
         installer: "-".to_string(),
         outcome: InstallOutcome::NoInstaller,
-        detail: tool.install_hint.to_string(),
+        detail: install_hint,
       });
     }
   }

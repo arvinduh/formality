@@ -272,14 +272,14 @@ impl LanguageSurface for JavaSurface {
       ToolInfo {
         binary: "google-java-format",
         description: "Java code formatter with built-in import organizing",
-        install_hint: "Install via: brew install google-java-format (or download the all-deps jar from https://github.com/google/google-java-format/releases and place a 'google-java-format' wrapper on PATH)",
+        install_hint: None,
         is_required_for_fmt: true,
         is_required_for_lint: false,
       },
       ToolInfo {
         binary: "checkstyle",
         description: "Java static analysis / style linter",
-        install_hint: "Install via: brew install checkstyle (or download from https://checkstyle.org and place a 'checkstyle' wrapper on PATH)",
+        install_hint: None,
         is_required_for_fmt: false,
         is_required_for_lint: true,
       },
@@ -289,14 +289,9 @@ impl LanguageSurface for JavaSurface {
   fn format(&self, ctx: &ExecutionContext) -> SurfaceResult {
     let start = Instant::now();
 
-    if let Some(res) = tool_missing_guard(
-      self.name(),
-      "google-java-format",
-      start,
-      Some(
-        "brew install google-java-format / download the all-deps jar from https://github.com/google/google-java-format/releases",
-      ),
-    ) {
+    if let Some(res) =
+      tool_missing_guard(self.name(), "google-java-format", start, None)
+    {
       return res;
     }
 
@@ -372,12 +367,9 @@ impl LanguageSurface for JavaSurface {
       return lint_fix_unsupported(self.name(), start);
     }
 
-    if let Some(res) = tool_missing_guard(
-      self.name(),
-      "checkstyle",
-      start,
-      Some("brew install checkstyle / download from https://checkstyle.org"),
-    ) {
+    if let Some(res) =
+      tool_missing_guard(self.name(), "checkstyle", start, None)
+    {
       return res;
     }
 
