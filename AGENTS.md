@@ -72,7 +72,11 @@ is not run against this repository's root.
 ## Ask first
 
 - Anything touching branch protection or CI required-status-check names.
-- Version bumps (owned by dedicated tooling, not hand-edits).
+- Version bumps. They are hand-edits in a dedicated `chore(release)` PR (see
+  `docs/release.md`); there is no automated bump tool. `Cargo.toml` and
+  `editors/vscode/package.json` must move together
+  (`tests/version_lockstep.rs`). The `semver` crate in `Cargo.toml` parses
+  external tools' versions, not formality's own.
 
 ## Never
 

@@ -334,6 +334,15 @@ whatever's next, and leave a comment explaining why) rather than leaving a label
 that's lying about the real state. Spinoff issues carry a `Spun off from #N`
 line.
 
+**Issue body prose goes stale the same way.** Line counts, file:line references,
+and claims about other issues' state in a body are true only as of filing. Six
+bodies in the 2026-09 cycle asserted things that had stopped being true — a
+module size, a blocker that had closed, a flag that had since shipped, a
+function called dead that had production callers. When a design decision is
+later recorded in a comment, the comment is authoritative over the body: read
+the comments, and spot-check the body's factual premise, before dispatching
+against it.
+
 ### Why state lives only on per-issue labels, not a shared document
 
 GitHub's issue-update API has no optimistic concurrency (no ETag/If-Match) — two
@@ -346,3 +355,37 @@ individual issue are narrow, low-contention writes: two sessions touching
 different issues' labels can't collide, and there's no aggregate snapshot to
 fall out of sync. The cost is that nothing pushes a stale `Blocked-by` to
 correct itself — see above.
+
+## 12. Operating subagents — constraints learned the hard way
+
+These are harness and account realities, not preferences. Each one cost real
+work in the 2026-09 cycle before it was written down.
+
+- **Keep concurrent subagents to about four.** Two whole dispatch waves of five
+  agents died together on the account's session limit (HTTP 429), losing all
+  in-flight work. The ceiling is the shared usage limit, not CPU. When work is
+  independent but the wave is full, queue it — don't dispatch into a known
+  limit.
+- **A subagent often ends its turn while a build runs, then wakes when the
+  background build finishes.** A report like "waiting on cargo test" means
+  _still working_, not _stuck_. Never dispatch a second agent into that worktree
+  to "finish" it — this put two agents on one branch twice, the exact collision
+  §1 exists to prevent. If an agent must be stood down, stop it first, then
+  dispatch a replacement.
+- **Stopping an agent loses its context, not its files.** Edits stay in the
+  worktree; unreported _results_ (measurements, review findings) are gone. After
+  stopping one, inventory the worktree — `git status`, commits ahead of `main`,
+  whether the branch is pushed — before re-dispatching.
+- **A quiet CI monitor is not a green build.** Background poll loops over
+  `gh pr checks` exited silently while every check had long since passed. Run
+  `gh pr checks <N>` directly before trusting a monitor that hasn't reported.
+- **An audit's claims are leads, not facts.** Spot-check the premise before
+  filing or dispatching on it, and put "if the change forces an edit outside
+  your stated files, stop and report" in every dispatch — that single
+  instruction caught a wrong "this is dead code" premise before any code was
+  written.
+- **Verify the one worker claim that matters, independently.** "Byte-identical
+  on Linux" — read the `#[cfg]`. "No golden output moved" — confirm the golden
+  files' diff has no removed lines. "The hook passed" — the pre-commit hook's
+  `fmt --staged` can reformat a file _after_ it was staged, leaving the commit
+  and the working tree diverged; check `git status` after every commit.
