@@ -668,17 +668,31 @@ mod tests {
     for rel in ["src/surfaces/kotlin.rs", "src/commands/lsp_diagnostics.rs"] {
       let path = manifest_dir.join(rel);
       let content = std::fs::read_to_string(&path).unwrap();
-      // Strip the test module so the guard doesn't trip on stub helpers
-      // (e.g. `with_ktlint_stub`) that intentionally spawn plain shell
-      // commands to fake out a `ktlint` binary for testing.
-      let prod_code = content
-        .split_once("#[cfg(test)]")
-        .map_or(content.as_str(), |(prod, _)| prod);
+      let prod_code = production_code_before_test_module(&content);
       assert!(
         !prod_code.contains("Command::new(\"ktlint\")"),
         "{rel} must spawn ktlint via create_tool_command, not a bare \
          Command::new(\"ktlint\") -- see #103"
       );
     }
+  }
+
+  /// Strips the inline `#[cfg(test)] mod tests { ... }` block this codebase
+  /// puts at the end of every module (Fixes #113 [pre-recreation]'s
+  /// convention, `test_no_stray_test_files_outside_sanctioned_pattern`),
+  /// leaving only production code -- so a source-textual guard test doesn't
+  /// trip on a test helper (e.g. `with_ktlint_stub`) that intentionally
+  /// spawns a plain shell command to fake out a real binary.
+  ///
+  /// Anchors on the `mod tests` declaration itself, not on the `#[cfg(test)]`
+  /// attribute text: splitting on the *first* `#[cfg(test)]` string is wrong
+  /// the moment a file has one earlier (e.g. on a single `#[cfg(test)]`-gated
+  /// helper function above the test module) -- that would truncate the scan
+  /// there and silently stop guarding everything below it. `mod tests` is
+  /// unambiguous and always marks the real module boundary.
+  fn production_code_before_test_module(content: &str) -> &str {
+    content
+      .find("mod tests")
+      .map_or(content, |idx| &content[..idx])
   }
 }
