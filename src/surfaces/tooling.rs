@@ -713,8 +713,17 @@ pub fn pinned_installer_for(binary: &str) -> Option<&'static str> {
 static BINARY_CACHE: OnceLock<Mutex<HashMap<String, Option<PathBuf>>>> =
   OnceLock::new();
 
-/// Resolves `binary` to its concrete path on `PATH`, memoized per-process so
-/// repeated lookups for the same binary don't re-hit the filesystem.
+/// Resolves `binary` to its concrete path, memoized per-process so repeated
+/// lookups for the same binary don't re-hit the filesystem (or, for the
+/// fallback below, re-spawn a process).
+///
+/// Checks `PATH` first via `which::which`, then -- only if that fails --
+/// falls back to [`resolve_via_known_install_dir`], which consults the one
+/// known-but-not-on-`PATH` install location this crate's installers use
+/// (see that function's doc comment). This is the lookup-time half of the
+/// fix for #293: a tool an *earlier* `fml` process installed into that
+/// directory must still resolve here, in a brand-new process that starts
+/// with a stock environment and never ran that installer itself.
 #[must_use]
 pub fn resolve_binary_path(binary: &str) -> Option<PathBuf> {
   let cache = BINARY_CACHE.get_or_init(|| Mutex::new(HashMap::new()));
@@ -722,7 +731,9 @@ pub fn resolve_binary_path(binary: &str) -> Option<PathBuf> {
   if let Some(resolved) = guard.get(binary) {
     return resolved.clone();
   }
-  let resolved = which::which(binary).ok();
+  let resolved = which::which(binary)
+    .ok()
+    .or_else(|| resolve_via_known_install_dir(binary));
   guard.insert(binary.to_string(), resolved.clone());
   resolved
 }
@@ -1218,6 +1229,103 @@ fn go_bin_dir_from_env(gobin: &str, gopath: &str) -> Option<PathBuf> {
     .map(str::trim)
     .find(|entry| !entry.is_empty())?;
   Some(PathBuf::from(first).join("bin"))
+}
+
+/// Asks the `go` toolchain directly for the directory `go install` writes
+/// binaries into (`GOBIN`, else `$GOPATH/bin`), or `None` if `go` isn't on
+/// `PATH` or the query fails.
+///
+/// [`InstallMethod::GoInstall`] is the one installer in this module that
+/// routinely writes into a directory that is *not* already on `PATH`.
+/// Every other installer used here puts binaries next to (or under the same
+/// prefix as) a package manager the user must already be able to invoke:
+/// `npm -g`, `pipx`, `uv`, `brew`, `cargo install`, `rustup`. `$GOPATH/bin`
+/// has no such guarantee -- Go creates it on demand, and it is on `PATH`
+/// only if the user put it there. On a stock GitHub Actions Linux runner it
+/// is not, so `go install golang.org/x/tools/cmd/goimports@v0.49.0`
+/// succeeds and a lookup for `goimports` from `PATH` alone still finds
+/// nothing -- in this process *or a later one*, since nothing durable ever
+/// records that directory anywhere `PATH` gets rebuilt from (contrast the
+/// Scoop/`winget` case: those register their change in the Windows
+/// registry, which every *new* process picks up on its own -- see
+/// [`refresh_windows_path_from_registry`] -- only an *already-running*
+/// process needs that one refreshed by hand). That's why this directory
+/// gets checked directly at lookup time via [`resolve_via_known_install_dir`]
+/// instead of being mutated into some process's `PATH`: mutating a
+/// process's own `PATH` can never help a *different, later* process, which
+/// is exactly the two-process `fml doctor --install` then `fml fmt`
+/// sequence #293 was filed over.
+#[must_use]
+fn go_install_bin_dir() -> Option<PathBuf> {
+  let mut cmd = create_tool_command("go");
+  cmd.args(["env", "GOBIN", "GOPATH"]);
+  let output = cmd.output().ok()?;
+  if !output.status.success() {
+    return None;
+  }
+
+  // `go env NAME...` prints one value per line, in the order requested,
+  // emitting an empty line for a variable that is unset -- so GOBIN being
+  // empty (the common case) still leaves GOPATH on line 2.
+  let stdout = String::from_utf8_lossy(&output.stdout);
+  let mut lines = stdout.lines();
+  let gobin = lines.next().unwrap_or_default();
+  let gopath = lines.next().unwrap_or_default();
+  go_bin_dir_from_env(gobin, gopath)
+}
+
+/// Pure half of the known-install-directory fallback: does `binary` exist as
+/// a file directly inside `go_bin_dir`? Kept separate from
+/// [`resolve_via_known_install_dir`] (which sources `go_bin_dir` by actually
+/// spawning `go env`) so the on-disk check is unit-testable against a
+/// fabricated temp directory, with no real Go toolchain required.
+#[must_use]
+fn resolve_go_installed_binary(
+  binary: &str,
+  go_bin_dir: &std::path::Path,
+) -> Option<PathBuf> {
+  let candidate =
+    go_bin_dir.join(format!("{binary}{}", std::env::consts::EXE_SUFFIX));
+  candidate.is_file().then_some(candidate)
+}
+
+/// The lookup-time fallback [`resolve_binary_path`] tries once a plain
+/// `PATH` search comes up empty: is `binary` installed via
+/// [`InstallMethod::GoInstall`] somewhere in its chain, and if so, does it
+/// exist in `go install`'s own output directory (`GOBIN`, else
+/// `$GOPATH/bin`)? See [`go_install_bin_dir`]'s doc comment for why that
+/// directory specifically -- it's the one location in this crate's install
+/// chains that a fresh `PATH` search structurally cannot see.
+///
+/// Scoped to Go-installed binaries only (via [`install_chain_for`]) rather
+/// than probing this directory unconditionally for every miss: computing it
+/// spawns `go env`, and every other binary's chain never writes there, so
+/// paying that cost for e.g. a genuinely-missing `prettier` would be pure
+/// waste.
+#[must_use]
+fn resolve_via_known_install_dir(binary: &str) -> Option<PathBuf> {
+  resolve_via_known_install_dir_with(binary, go_install_bin_dir)
+}
+
+/// [`resolve_via_known_install_dir`], with the `go install` bin directory
+/// sourced from `go_bin_dir` instead of a hardcoded `go env` spawn, so tests
+/// can inject a fabricated directory without a real Go toolchain or
+/// mutating any real filesystem state `go env` would otherwise read.
+#[must_use]
+fn resolve_via_known_install_dir_with(
+  binary: &str,
+  go_bin_dir: impl FnOnce() -> Option<PathBuf>,
+) -> Option<PathBuf> {
+  let installs_via_go = install_chain_for(binary).is_some_and(|chain| {
+    chain
+      .iter()
+      .any(|m| matches!(m, InstallMethod::GoInstall(_)))
+  });
+  if !installs_via_go {
+    return None;
+  }
+  let dir = go_bin_dir()?;
+  resolve_go_installed_binary(binary, &dir)
 }
 
 /// Adds `go install`'s output directory (`GOBIN`, else `$GOPATH/bin`) to
