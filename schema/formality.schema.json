@@ -223,10 +223,6 @@
             "type": "string"
           }
         },
-        "format_tool": {
-          "description": "Custom formatter tool binary or command name override.",
-          "type": ["string", "null"]
-        },
         "go": {
           "description": "Go surface specific options.",
           "anyOf": [
@@ -304,10 +300,6 @@
           "type": ["integer", "null"],
           "format": "uint",
           "minimum": 0
-        },
-        "lint_tool": {
-          "description": "Custom linter tool binary or command name override.",
-          "type": ["string", "null"]
         },
         "markdown": {
           "description": "Markdown surface specific options.",
