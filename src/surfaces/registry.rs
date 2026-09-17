@@ -18,10 +18,17 @@ pub struct SurfaceRegistry {
 /// `aliases`, case-insensitively (ASCII only). This is the single
 /// "name-or-alias, case-insensitively" comparison shared by
 /// [`SurfaceRegistry::get_surface_by_name`],
-/// [`SurfaceRegistry::resolve_canonical_name`], and
-/// [`SurfaceRegistry::detect_surfaces_smart`]'s ignore-list check — it used
-/// to be written out three times, independently, in this file.
-fn matches_name_or_alias(name: &str, aliases: &[&str], query: &str) -> bool {
+/// [`SurfaceRegistry::resolve_canonical_name`],
+/// [`SurfaceRegistry::detect_surfaces_smart`]'s ignore-list check, and
+/// `commands::doctor`'s unconfigured-language check — it used to be written
+/// out independently at each of those call sites. `pub(crate)` so the doctor
+/// command (outside this module) can reuse it too, per issue #276's "one
+/// name/alias predicate" goal.
+pub(crate) fn matches_name_or_alias(
+  name: &str,
+  aliases: &[&str],
+  query: &str,
+) -> bool {
   name.eq_ignore_ascii_case(query)
     || aliases.iter().any(|a| a.eq_ignore_ascii_case(query))
 }
