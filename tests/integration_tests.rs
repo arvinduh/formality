@@ -673,21 +673,21 @@ fn test_fmt_rust_import_reordering_lifecycle() {
   assert_eq!(run_cli(root, fmt_cmd(true, &["rust"])), 0);
 }
 
+// `--install` was removed from `fmt`/`lint`/`fix` in v0.3.0 (#282): it is
+// `fml doctor`'s one concern now, so this test (previously
+// `test_fmt_fix_lint_doctor_install_flag_paths`) exercises only `doctor
+// --install` here. `fmt`/`lint`/`fix`'s hidden `install` field is covered by
+// `src/cli.rs`'s `test_install_removed_from_fmt_lint_fix_names_doctor_install`
+// (parses, but is rejected by `Cli::validate()` before it ever reaches
+// dispatch).
 #[test]
-fn test_fmt_fix_lint_doctor_install_flag_paths() {
+fn test_doctor_install_flag_paths() {
   let temp = temp_repo(&[
     (
       "Cargo.toml",
       "[package]\nname = \"install_flag_test\"\nversion = \"0.1.0\"\nedition \
        = \"2024\"\n",
     ),
-    // 2-space indent: matches formality's own default `indent_size` (no
-    // formality.toml present here, so the built-in default applies), not
-    // rustfmt's own 4-space default. Before #151, plain `fml fmt --check`
-    // silently checked against rustfmt's bare default instead of formality's
-    // resolved config, so a 4-space fixture passed by coincidence; now that
-    // the resolved config is actually applied inline, the fixture has to
-    // already match it for `--check` to report clean.
     (
       "src/main.rs",
       "fn main() {\n  println!(\"Hello, world!\");\n}\n",
@@ -695,7 +695,6 @@ fn test_fmt_fix_lint_doctor_install_flag_paths() {
   ]);
   let root = temp.path();
 
-  // Test doctor with install: true
   let doc_code = run_cli(
     root,
     Commands::Doctor {
@@ -704,43 +703,6 @@ fn test_fmt_fix_lint_doctor_install_flag_paths() {
     },
   );
   assert!(doc_code == 0 || doc_code == 2);
-
-  // Test fmt with install: true
-  let fmt_args = Commands::Fmt {
-    check: true,
-    staged: false,
-    changed: false,
-    lang: vec!["rust".to_string()],
-    install: true,
-    allow_missing: false,
-    paths: vec![],
-  };
-  assert_eq!(run_cli(root, fmt_args), 0);
-
-  // Test fix with install: true
-  let fix_args = Commands::Fix {
-    check: false,
-    staged: false,
-    changed: false,
-    lang: vec!["rust".to_string()],
-    install: true,
-    allow_missing: false,
-    paths: vec![],
-  };
-  assert_eq!(run_cli(root, fix_args), 0);
-
-  // Test lint with install: true
-  let lint_args = Commands::Lint {
-    check: false,
-    fix: false,
-    staged: false,
-    changed: false,
-    lang: vec!["rust".to_string()],
-    install: true,
-    allow_missing: false,
-    paths: vec![],
-  };
-  assert_eq!(run_cli(root, lint_args), 0);
 }
 
 #[test]

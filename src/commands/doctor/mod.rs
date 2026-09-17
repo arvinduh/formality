@@ -557,7 +557,7 @@ pub fn format_stale_tool_warning(
   pinned: &Version,
 ) -> String {
   format!(
-    "tool '{binary}' is stale (v{current} != pinned v{pinned}); run 'fml doctor --install' or pass '--install' to update"
+    "tool '{binary}' is stale (v{current} != pinned v{pinned}); run 'fml doctor --install' to update"
   )
 }
 

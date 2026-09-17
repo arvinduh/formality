@@ -732,8 +732,9 @@ pub fn resolve_binary_path(binary: &str) -> Option<PathBuf> {
 /// filesystem instead of returning a stale memoized result.
 ///
 /// Required after a successful install performed *within the same process*
-/// (`fml fmt --install`, `fml lint --install`, `fml doctor --install`): the
-/// preflight scan that decided a tool needed installing already called
+/// (`fml doctor --install`, the only remaining in-process installer as of
+/// v0.3.0 — see #282): the preflight scan that decided a tool needed
+/// installing already called
 /// [`check_binary_exists`] on it and memoized the miss. Without evicting that
 /// entry here, every lookup for the rest of this invocation -- including the
 /// one the just-installed tool's own surface makes before actually running

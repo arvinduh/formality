@@ -11,8 +11,9 @@ use crate::config::FormalityConfig;
 use crate::engine::Plan;
 use crate::errors::ExitStatus;
 
-/// Runs the `fml lint` command: the `[Lint]` plan, always report-only,
-/// optionally installing missing tools first.
+/// Runs the `fml lint` command: the `[Lint]` plan, always report-only.
+/// Provisioning missing tools is `fml doctor --install`'s job, not this
+/// command's (v0.3.0, #282).
 #[allow(clippy::too_many_arguments)]
 pub fn run_lint(
   root: &Path,
@@ -20,7 +21,6 @@ pub fn run_lint(
   staged: bool,
   changed: bool,
   lang: Vec<String>,
-  install: bool,
   paths: Vec<PathBuf>,
   allow_missing: bool,
 ) -> ExitStatus {
@@ -30,9 +30,7 @@ pub fn run_lint(
     staged,
     changed,
     lang,
-    install,
     paths,
     &Plan::lint(allow_missing),
-    "linting",
   )
 }

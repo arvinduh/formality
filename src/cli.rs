@@ -50,8 +50,12 @@ pub enum Commands {
     #[arg(short = 'l', long = "lang", value_name = "LANG")]
     lang: Vec<String>,
 
-    /// Auto-install any missing tool dependencies first
-    #[arg(short = 'i', long)]
+    /// Removed in v0.3.0: `--install` lives only on `fml doctor` now.
+    ///
+    /// Declared hidden, not deleted outright, so [`Cli::validate`] can
+    /// reject it by name with a message pointing at `fml doctor --install`
+    /// instead of clap's bare "unexpected argument".
+    #[arg(short = 'i', long, hide = true)]
     install: bool,
 
     /// A missing required tool alone does not fail the run (still reported
@@ -95,8 +99,12 @@ pub enum Commands {
     #[arg(short = 'l', long = "lang", value_name = "LANG")]
     lang: Vec<String>,
 
-    /// Auto-install any missing tool dependencies first
-    #[arg(short = 'i', long)]
+    /// Removed in v0.3.0: `--install` lives only on `fml doctor` now.
+    ///
+    /// Declared hidden, not deleted outright, so [`Cli::validate`] can
+    /// reject it by name with a message pointing at `fml doctor --install`
+    /// instead of clap's bare "unexpected argument".
+    #[arg(short = 'i', long, hide = true)]
     install: bool,
 
     /// A missing required tool alone does not fail the run (still reported
@@ -128,8 +136,12 @@ pub enum Commands {
     #[arg(short = 'l', long = "lang", value_name = "LANG")]
     lang: Vec<String>,
 
-    /// Auto-install any missing tool dependencies first
-    #[arg(short = 'i', long)]
+    /// Removed in v0.3.0: `--install` lives only on `fml doctor` now.
+    ///
+    /// Declared hidden, not deleted outright, so [`Cli::validate`] can
+    /// reject it by name with a message pointing at `fml doctor --install`
+    /// instead of clap's bare "unexpected argument".
+    #[arg(short = 'i', long, hide = true)]
     install: bool,
 
     /// A missing required tool alone does not fail the run (still reported
@@ -259,15 +271,22 @@ impl Cli {
     cli
   }
 
-  /// Validates flag combinations that are parseable but meaningless.
+  /// Validates flag combinations that are parseable but meaningless, and
+  /// flags that were removed outright but are kept declared (hidden) so
+  /// they can be rejected by name.
   ///
-  /// Currently one rule: `fml lint --check`. `--check` selects the
-  /// report-only mode, and `fml lint` is *always* report-only, so the flag
-  /// is clutter rather than a no-op and is rejected outright. It is
-  /// declared as a hidden arg purely so this can explain why; left
-  /// undeclared, clap answers with "unexpected argument '--check' found"
-  /// and a "to pass '--check' as a value, use '-- --check'" tip that points
-  /// the user somewhere actively wrong.
+  /// - `fml lint --check`. `--check` selects the report-only mode, and
+  ///   `fml lint` is *always* report-only, so the flag is clutter rather
+  ///   than a no-op and is rejected outright. It is declared as a hidden
+  ///   arg purely so this can explain why; left undeclared, clap answers
+  ///   with "unexpected argument '--check' found" and a "to pass '--check'
+  ///   as a value, use '-- --check'" tip that points the user somewhere
+  ///   actively wrong.
+  /// - `fml fmt`/`fml lint`/`fml fix --install` (or `-i`). Removed in
+  ///   v0.3.0: `--install` provisions the machine, which is `fml doctor`'s
+  ///   one concern now, not a run command's. Declared hidden for the same
+  ///   reason as `--check` above: so the error can name `fml doctor
+  ///   --install` instead of clap's bare "unexpected argument".
   ///
   /// # Errors
   ///
@@ -275,9 +294,10 @@ impl Cli {
   ///
   /// # Panics
   ///
-  /// Panics if the `lint` subcommand is missing from [`Commands`] — it is
-  /// declared directly above, so this is a "the enum was edited without
-  /// updating this" assertion, not a runtime condition.
+  /// Panics if the `lint`/`fmt`/`fix` subcommand is missing from
+  /// [`Commands`] — they are declared directly above, so this is a "the
+  /// enum was edited without updating this" assertion, not a runtime
+  /// condition.
   pub fn validate(&self) -> Result<(), clap::Error> {
     if let Commands::Lint { check: true, .. } = &self.command {
       let mut cmd = Self::command();
@@ -294,6 +314,28 @@ impl Cli {
         ),
       ));
     }
+
+    let removed_install_subcommand = match &self.command {
+      Commands::Fmt { install: true, .. } => Some(("fmt", "fml fmt")),
+      Commands::Lint { install: true, .. } => Some(("lint", "fml lint")),
+      Commands::Fix { install: true, .. } => Some(("fix", "fml fix")),
+      _ => None,
+    };
+    if let Some((subcommand_name, command_name)) = removed_install_subcommand {
+      let mut cmd = Self::command();
+      cmd.build();
+      let sub = cmd.find_subcommand_mut(subcommand_name).unwrap_or_else(|| {
+        panic!("`{subcommand_name}` subcommand is declared above")
+      });
+      return Err(sub.error(
+        clap::error::ErrorKind::ArgumentConflict,
+        format!(
+          "`--install` was removed from `{command_name}`.\n       \
+           Provision tools with `fml doctor --install`, then run `{command_name}`.",
+        ),
+      ));
+    }
+
     Ok(())
   }
 }
@@ -541,8 +583,8 @@ mod tests {
 {help}"
       );
       assert!(
-        help.contains("Auto-install any missing tool dependencies first"),
-        "`fml {name} --help` should use the shared --install wording, got:
+        !help.contains("--install"),
+        "`fml {name} --help` must not advertise removed `--install` (v0.3.0) — see #282, got:
 {help}"
       );
     }
@@ -557,6 +599,53 @@ mod tests {
       "`fml lint --help` should use the shared --staged wording, got:
 {lint_help}"
     );
+    assert!(
+      !lint_help.contains("--install"),
+      "`fml lint --help` must not advertise removed `--install` (v0.3.0) — see #282, got:
+{lint_help}"
+    );
+  }
+
+  #[test]
+  fn test_install_removed_from_fmt_lint_fix_names_doctor_install() {
+    for (argv, subcommand, command_name) in [
+      (["fml", "fmt", "--install"], "fmt", "fml fmt"),
+      (["fml", "lint", "--install"], "lint", "fml lint"),
+      (["fml", "fix", "--install"], "fix", "fml fix"),
+    ] {
+      let cli = Cli::try_parse_from(argv).unwrap_or_else(|e| {
+        panic!("`{subcommand} --install` must still parse so validate can reject it by name: {e}")
+      });
+      let err = cli.validate().expect_err(&format!(
+        "`{command_name} --install` must be rejected by validate()"
+      ));
+      let rendered = err.to_string();
+      assert!(
+        rendered.contains("was removed"),
+        "error should say `--install` was removed from `{command_name}`, got:\n{rendered}"
+      );
+      assert!(
+        rendered.contains("fml doctor --install"),
+        "error should name `fml doctor --install` as the replacement, got:\n{rendered}"
+      );
+      assert!(
+        rendered.contains(command_name),
+        "error should name `{command_name}` itself, got:\n{rendered}"
+      );
+    }
+
+    // `-i` is the same removed flag under its short spelling.
+    let cli = Cli::try_parse_from(["fml", "fmt", "-i"]).unwrap();
+    let err = cli.validate().expect_err("`fml fmt -i` must be rejected");
+    assert!(err.to_string().contains("fml doctor --install"));
+  }
+
+  #[test]
+  fn test_fmt_lint_fix_without_install_validate() {
+    for argv in [["fml", "fmt"], ["fml", "lint"], ["fml", "fix"]] {
+      let cli = Cli::try_parse_from(argv).unwrap();
+      assert!(cli.validate().is_ok());
+    }
   }
 
   #[test]
