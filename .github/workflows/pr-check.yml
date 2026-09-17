@@ -244,7 +244,7 @@ jobs:
         # (true) also caches ~/.cargo/bin, which persists every tool a
         # previous run of this job installed with cargo/cargo-binstall
         # (typstyle, taplo, ...) into the next run -- so those tools were
-        # already on PATH before `fml fmt --install` ran and their install
+        # already on PATH before `fml doctor --install` ran and their install
         # chains, including the cargo-binstall bootstrap this job is meant
         # to exercise, were never entered at all. The workspace target
         # cache (what actually makes this job fast) is unaffected.
@@ -309,7 +309,7 @@ jobs:
           printf 'const x = 1;\n' > sample.js
           printf 'fun main() {}\n' > Sample.kt
 
-      - name: fml fmt --install on a runner with none of the tools pre-cached
+      - name: fml doctor --install then fml fmt on a runner with none of the tools pre-cached
         # Deliberately does NOT gate on fml's own exit code: a tool that
         # installs but doesn't land on its exact pinned version (a stale
         # Homebrew bottle, an npm registry lag, ...) is a real but separate
@@ -353,7 +353,8 @@ jobs:
           if [ "$RUNNER_OS" = "Windows" ]; then
             fml_bin="$GITHUB_WORKSPACE/target/debug/fml.exe"
           fi
-          "$fml_bin" fmt --install > fml-output.log 2>&1 || true
+          "$fml_bin" doctor --install > fml-output.log 2>&1 || true
+          "$fml_bin" fmt >> fml-output.log 2>&1 || true
           cat fml-output.log
 
           # Only a [MISS] for a tool fml *itself just installed in this same
