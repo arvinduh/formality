@@ -684,12 +684,45 @@ mod tests {
       let content = std::fs::read_to_string(path).unwrap();
       let prod_code = production_code_before_test_module(&content);
       assert!(
-        !prod_code.contains("Command::new(\"ktlint\")"),
+        !contains_bare_ktlint_spawn(prod_code),
         "{} must spawn ktlint via create_tool_command, not a bare \
-         Command::new(\"ktlint\") -- see #103",
+         Command::new(\"ktlint\"...) -- see #103",
         path.display()
       );
     }
+  }
+
+  /// Whether `code` spawns `ktlint` directly rather than through
+  /// `create_tool_command`, matching the literal binary name
+  /// `Command::new` would actually be given -- `"ktlint"` itself, or a
+  /// `.cmd`/`.bat`/`.exe`/etc. variant with an explicit extension (someone
+  /// "fixing" the Windows case by hardcoding the shim's extension instead
+  /// of going through the shared resolver would still hit the exact bug
+  /// this guards against).
+  ///
+  /// This is a textual scan, not a real Rust parser -- it does not follow
+  /// a variable binding (`let bin = "ktlint"; Command::new(bin)`). Closing
+  /// that gap would need actual syntax analysis (e.g. a `syn` dependency),
+  /// which is disproportionate for a regression guard on an already-fixed
+  /// bug; every call site as of #103 uses the binary name as a literal, so
+  /// literal matching is what is worth guarding today.
+  fn contains_bare_ktlint_spawn(code: &str) -> bool {
+    const PREFIX: &str = "Command::new(\"ktlint";
+    let mut rest = code;
+    while let Some(idx) = rest.find(PREFIX) {
+      let after_prefix = &rest[idx + PREFIX.len()..];
+      // The literal is exactly "ktlint" (the next byte closes the string)
+      // or continues with an extension separator like "ktlint.cmd" -- both
+      // name the real ktlint binary. Anything else (a longer, unrelated
+      // identifier that merely starts with "ktlint") is not a match, so
+      // advance past this occurrence and keep scanning instead of
+      // returning early.
+      if after_prefix.starts_with('"') || after_prefix.starts_with('.') {
+        return true;
+      }
+      rest = after_prefix;
+    }
+    false
   }
 
   /// Strips the inline `#[cfg(test)] mod tests { ... }` block this codebase
