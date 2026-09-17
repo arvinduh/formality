@@ -1,15 +1,14 @@
 //! X-macro table describing each language surface's typed-options wiring.
 //!
 //! Before this module existed, [`super::LangConfig`]'s per-language
-//! typed-options plumbing was hand-maintained in lockstep across four
+//! typed-options plumbing was hand-maintained in lockstep across three
 //! locations: `LangConfig::merge`'s `merge_option!` calls, the
-//! `LangConfig::xxx_options()` accessor methods, `resolve_for_lang`'s
-//! struct-literal assembly, and `default_tools_for_lang`'s match. Adding a
-//! 13th language surface with typed options meant touching all four by
-//! hand, in sync — easy to drift.
+//! `LangConfig::xxx_options()` accessor methods, and `resolve_for_lang`'s
+//! struct-literal assembly. Adding a 13th language surface with typed
+//! options meant touching all three by hand, in sync — easy to drift.
 //!
 //! [`lang_options_table!`] is now the single source of truth for those
-//! four call sites. It doesn't generate code itself — it's an "X-macro":
+//! three call sites. It doesn't generate code itself — it's an "X-macro":
 //! it just hands its table rows (plus any call-site-specific arguments,
 //! see below) to whichever `$callback` macro is passed in, and each
 //! callback below emits the logic specific to one call site from the same
@@ -20,12 +19,11 @@
 //!
 //! ## Table columns
 //!
-//! Each row has the shape `$lang { $ty, $accessor, $is_empty, $fmt, $lint }`:
+//! Each row has the shape `$lang { $ty, $accessor, $is_empty }`:
 //!
 //! - `$lang` — the shared field name on `LangConfig`/`ResolvedLangConfig`
 //!   and the `[lang.<name>]` TOML key. Also used, via `stringify!`, as the
-//!   language-name string matched in `default_tools_for_lang` and
-//!   `resolve_for_lang`.
+//!   language-name string matched in `resolve_for_lang`.
 //! - `$ty` — the per-language typed options struct (e.g. `RustOptions`),
 //!   fully qualified so this table can be invoked from any module. Must be
 //!   `Default`, have an inherent `merge(&mut self, Self)`, and implement
@@ -37,8 +35,6 @@
 //!   and `typst` have no meaningful fields today, so
 //!   (preserved unchanged from the pre-macro code) they pass the
 //!   `|_| false` sentinel instead of a real `is_empty` check.
-//! - `$fmt` / `$lint` — default tool names as string literals, or the
-//!   bare `NONE` sentinel (json has no default lint tool).
 //!
 //! ## Why callbacks take explicit `self`/`other`/`lang_cfg`/`lang_name` args
 //!
@@ -49,18 +45,15 @@
 //! sites below pass them in explicitly as macro arguments — ordinary
 //! hygienic macro argument passing, no special tricks.
 //!
-//! ## Why `resolve_for_lang` and `default_tools_for_lang` generate a whole
-//! expression/function instead of a fragment
+//! ## Why `resolve_for_lang` generates a whole expression instead of a
+//! fragment
 //!
 //! Rust's grammar does not allow a macro invocation to expand into *part*
-//! of a struct-literal field list or *part* of a `match`'s arm list — a
-//! macro used there must produce one complete field/arm each, not "the
-//! rest of the fields" or "the rest of the arms" as a spliced-in
+//! of a struct-literal field list — a macro used there must produce one
+//! complete field each, not "the rest of the fields" as a spliced-in
 //! fragment. So `build_resolved_lang_config!` produces the entire
 //! `ResolvedLangConfig { .. }` literal (fixed fields passed in, table rows
-//! plus `markdown` handled inside), and `impl_default_tools_fn!` produces
-//! the entire `default_tools_for_lang` function (table rows plus the
-//! hand-written `markdown` arm and catch-all, all inside).
+//! plus `markdown` handled inside).
 //!
 //! ## The markdown exception
 //!
@@ -70,23 +63,23 @@
 //! no explicit `[lang.markdown]` options are set — that doesn't fit the
 //! uniform per-language pattern the other eleven rows share. Rather than
 //! bolt a one-off escape hatch onto the table for a single row, markdown
-//! stays hand-written at all four call sites, right alongside the
+//! stays hand-written at all three call sites, right alongside the
 //! macro-generated code for the rest.
 macro_rules! lang_options_table {
   (@rows $callback:ident [$($arg:tt)*]) => {
     $callback! {
       [$($arg)*]
-      rust       { crate::config::options::RustOptions,       rust_options,       crate::config::options::RustOptions::is_empty,       "cargo-fmt",          "clippy" }
-      python     { crate::config::options::PythonOptions,     python_options,     crate::config::options::PythonOptions::is_empty,     "ruff-format",        "ruff-check" }
-      cpp        { crate::config::options::CppOptions,        cpp_options,        crate::config::options::CppOptions::is_empty,        "clang-format",       "clang-tidy" }
-      java       { crate::config::options::JavaOptions,       java_options,       crate::config::options::JavaOptions::is_empty,       "google-java-format", "checkstyle" }
-      go         { crate::config::options::GoOptions,         go_options,         crate::config::options::GoOptions::is_empty,         "goimports",          "golangci-lint" }
-      yaml       { crate::config::options::YamlOptions,       yaml_options,       crate::config::options::YamlOptions::is_empty,       "prettier",           "yamllint" }
-      json       { crate::config::options::JsonOptions,       json_options,       |_: &crate::config::options::JsonOptions| false,     "prettier",           NONE }
-      toml       { crate::config::options::TomlOptions,       toml_options,       crate::config::options::TomlOptions::is_empty,       "taplo",              "taplo" }
-      typst      { crate::config::options::TypstOptions,      typst_options,      |_: &crate::config::options::TypstOptions| false,    "typstyle",           "typstyle" }
-      javascript { crate::config::options::JavaScriptOptions, javascript_options, crate::config::options::JavaScriptOptions::is_empty, "biome",              "biome" }
-      kotlin     { crate::config::options::KotlinOptions,     kotlin_options,     crate::config::options::KotlinOptions::is_empty,     "ktlint",             "ktlint" }
+      rust       { crate::config::options::RustOptions,       rust_options,       crate::config::options::RustOptions::is_empty }
+      python     { crate::config::options::PythonOptions,     python_options,     crate::config::options::PythonOptions::is_empty }
+      cpp        { crate::config::options::CppOptions,        cpp_options,        crate::config::options::CppOptions::is_empty }
+      java       { crate::config::options::JavaOptions,       java_options,       crate::config::options::JavaOptions::is_empty }
+      go         { crate::config::options::GoOptions,         go_options,         crate::config::options::GoOptions::is_empty }
+      yaml       { crate::config::options::YamlOptions,       yaml_options,       crate::config::options::YamlOptions::is_empty }
+      json       { crate::config::options::JsonOptions,       json_options,       |_: &crate::config::options::JsonOptions| false }
+      toml       { crate::config::options::TomlOptions,       toml_options,       crate::config::options::TomlOptions::is_empty }
+      typst      { crate::config::options::TypstOptions,      typst_options,      |_: &crate::config::options::TypstOptions| false }
+      javascript { crate::config::options::JavaScriptOptions, javascript_options, crate::config::options::JavaScriptOptions::is_empty }
+      kotlin     { crate::config::options::KotlinOptions,     kotlin_options,     crate::config::options::KotlinOptions::is_empty }
     }
   };
   ($callback:ident) => {
@@ -97,25 +90,12 @@ macro_rules! lang_options_table {
   };
 }
 
-/// Resolves the `$fmt`/`$lint` table cell into `Option<&'static str>`: a
-/// string literal becomes `Some(...)`, the bare `NONE` sentinel becomes
-/// `None` (distinguishing "no default tool" from a row that forgot to
-/// fill the cell in).
-macro_rules! default_tool_opt {
-  (NONE) => {
-    None
-  };
-  ($tool:literal) => {
-    Some($tool)
-  };
-}
-
 /// Generates `LangConfig::merge`'s per-field merge-or-overwrite logic for
 /// every table row. Takes `self`/`other` explicitly (see module docs on
 /// hygiene) and is invoked as a statement inside `LangConfig::merge`'s
 /// body.
 macro_rules! impl_lang_merge {
-  ([$self_:expr, $other:expr] $( $lang:ident { $ty:ty, $accessor:ident, $is_empty:expr, $fmt:tt, $lint:tt } )*) => {
+  ([$self_:expr, $other:expr] $( $lang:ident { $ty:ty, $accessor:ident, $is_empty:expr } )*) => {
     $(
       if let Some(other_val) = $other.$lang {
         if let Some(ref mut our_val) = $self_.$lang {
@@ -131,7 +111,7 @@ macro_rules! impl_lang_merge {
 /// Generates the `LangConfig::xxx_options()` accessor methods for every
 /// table row. Invoked as an item directly inside `impl LangConfig { .. }`.
 macro_rules! impl_lang_accessors {
-  ([] $( $lang:ident { $ty:ty, $accessor:ident, $is_empty:expr, $fmt:tt, $lint:tt } )*) => {
+  ([] $( $lang:ident { $ty:ty, $accessor:ident, $is_empty:expr } )*) => {
     $(
       /// Extracts resolved per-language typed options for this surface.
       ///
@@ -160,15 +140,13 @@ macro_rules! impl_lang_accessors {
 macro_rules! build_resolved_lang_config {
   ([
     $lang_cfg:expr, $lang_name:expr,
-    $name:expr, $format_tool:expr, $lint_tool:expr,
+    $name:expr,
     $indent_size:expr, $line_length:expr, $use_tabs:expr, $prose_wrap:expr,
     $layout:expr, $enabled:expr, $extra_args:expr, $files:expr, $exclude:expr,
     $markdown:expr, $extra:expr
-  ] $( $lang:ident { $ty:ty, $accessor:ident, $is_empty:expr, $fmt:tt, $lint:tt } )*) => {
+  ] $( $lang:ident { $ty:ty, $accessor:ident, $is_empty:expr } )*) => {
     ResolvedLangConfig {
       name: $name,
-      format_tool: $format_tool,
-      lint_tool: $lint_tool,
       indent_size: $indent_size,
       line_length: $line_length,
       use_tabs: $use_tabs,
@@ -195,29 +173,7 @@ macro_rules! build_resolved_lang_config {
   };
 }
 
-/// Generates the entire `default_tools_for_lang` function: every table
-/// row's match arm plus the hand-written `markdown` arm and catch-all,
-/// all produced in one go since Rust doesn't allow a macro to expand into
-/// only *part* of a `match`'s arm list.
-macro_rules! impl_default_tools_fn {
-  ([] $( $lang:ident { $ty:ty, $accessor:ident, $is_empty:expr, $fmt:tt, $lint:tt } )*) => {
-    fn default_tools_for_lang(
-      lang_name: &str,
-    ) -> (Option<&'static str>, Option<&'static str>) {
-      match lang_name {
-        $(
-          stringify!($lang) => (default_tool_opt!($fmt), default_tool_opt!($lint)),
-        )*
-        // markdown is excluded from `lang_options_table!` (see this
-        // module's docs), so it stays a hand-written arm.
-        "markdown" => (Some("prettier"), Some("markdownlint")),
-        _ => (None, None),
-      }
-    }
-  };
-}
-
 pub(crate) use {
-  build_resolved_lang_config, default_tool_opt, impl_default_tools_fn,
-  impl_lang_accessors, impl_lang_merge, lang_options_table,
+  build_resolved_lang_config, impl_lang_accessors, impl_lang_merge,
+  lang_options_table,
 };
