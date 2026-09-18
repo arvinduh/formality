@@ -1460,8 +1460,29 @@ pub fn refresh_path_after_install(program: &str) {
   }
 }
 
-/// Creates a `Command` with proper handling for Windows batch files (.cmd/.bat)
-/// such as `npm`, `pnpm`, `yarn`, `npx`, and globally installed node CLIs.
+/// Builds the `Command` every tool in this crate is spawned through.
+///
+/// **Spawns the path [`resolve_binary_path`] resolved, on every platform**,
+/// falling back to the bare name only when nothing resolved at all. That is
+/// the execution half of #293's fix and it has to match the detection half:
+/// `check_binary_exists`/`tool_missing_guard` decide a tool is present via
+/// `resolve_binary_path`, which consults `go install`'s own output directory
+/// (`GOBIN`, else `$GOPATH/bin`) in addition to `PATH`. A bare
+/// `Command::new(binary)` re-does a *`PATH`-only* search inside the OS's
+/// `execvp`, so a binary found only through that fallback would pass the
+/// missing-tool guard and then fail to exec -- "found it, can't run it",
+/// which is not what #293 asks for. This was previously `#[cfg(windows)]`
+/// only, which left every Unix spawn on the bare name.
+///
+/// Falling back to the bare name when resolution returns `None` keeps the
+/// old behaviour for the genuinely-missing case: the surface's own
+/// missing-binary guard normally reports that first, and where it doesn't,
+/// the OS's own "No such file or directory" for the plain name stays the
+/// error the user sees.
+///
+/// Windows additionally keeps its batch-file handling: `npm`/`pnpm`/`yarn`/
+/// `npx` and any resolved `.cmd`/`.bat` shim must be run through `cmd /C`
+/// rather than spawned directly.
 #[must_use]
 pub fn create_tool_command(binary: &str) -> std::process::Command {
   #[cfg(windows)]
@@ -1475,18 +1496,24 @@ pub fn create_tool_command(binary: &str) -> std::process::Command {
       cmd.arg("/C").arg(binary);
       return cmd;
     }
-    if let Some(path) = resolve_binary_path(binary) {
-      if let Some(ext) = path.extension().and_then(|e| e.to_str())
-        && (ext.eq_ignore_ascii_case("cmd") || ext.eq_ignore_ascii_case("bat"))
-      {
-        let mut cmd = std::process::Command::new("cmd");
-        cmd.arg("/C").arg(path);
-        return cmd;
-      }
-      return std::process::Command::new(path);
+  }
+
+  let Some(path) = resolve_binary_path(binary) else {
+    return std::process::Command::new(binary);
+  };
+
+  #[cfg(windows)]
+  {
+    if let Some(ext) = path.extension().and_then(|e| e.to_str())
+      && (ext.eq_ignore_ascii_case("cmd") || ext.eq_ignore_ascii_case("bat"))
+    {
+      let mut cmd = std::process::Command::new("cmd");
+      cmd.arg("/C").arg(&path);
+      return cmd;
     }
   }
-  std::process::Command::new(binary)
+
+  std::process::Command::new(path)
 }
 
 /// How a caller of [`run_tool_command_classified`] /
@@ -2147,6 +2174,87 @@ mod tests {
       .collect();
     assert!(args.contains(&"--verbose".to_string()));
     assert!(args.contains(&"--locked".to_string()));
+  }
+
+  #[test]
+  fn test_create_tool_command_spawns_the_resolved_path_not_the_bare_name() {
+    // #293's execution half, asserted on *every* platform: whatever
+    // `resolve_binary_path` resolved is what gets spawned. Before this, the
+    // resolved path was consulted only under `#[cfg(windows)]`, so a Unix
+    // spawn re-did a PATH-only search inside `execvp` and could not reach a
+    // binary that resolved solely through the known-install-dir fallback.
+    //
+    // Driven through `set_binary_path_for_test` with a name no chain and no
+    // other test uses, so the seeded cache entry can't collide with a real
+    // lookup elsewhere in this test binary.
+    let fake = PathBuf::from("/nowhere/fml-spawn-path-probe/bin/probe-tool");
+    set_binary_path_for_test("fml-spawn-path-probe-tool", Some(fake.clone()));
+
+    let cmd = create_tool_command("fml-spawn-path-probe-tool");
+    assert_eq!(
+      std::path::Path::new(cmd.get_program()),
+      fake.as_path(),
+      "create_tool_command must spawn the path resolve_binary_path found, \
+       not the bare binary name -- a bare name is a PATH-only lookup and \
+       cannot see $GOBIN/$GOPATH/bin"
+    );
+
+    forget_binary("fml-spawn-path-probe-tool");
+  }
+
+  #[test]
+  fn test_create_tool_command_falls_back_to_the_bare_name_when_unresolved() {
+    // The other half of the contract: nothing resolved means the old
+    // behaviour is preserved exactly, so the OS's own "No such file or
+    // directory" for the plain name stays the error a user sees rather than
+    // this function inventing a path.
+    set_binary_path_for_test("fml-unresolvable-probe-tool", None);
+
+    let cmd = create_tool_command("fml-unresolvable-probe-tool");
+    assert_eq!(
+      cmd.get_program(),
+      std::ffi::OsStr::new("fml-unresolvable-probe-tool")
+    );
+
+    forget_binary("fml-unresolvable-probe-tool");
+  }
+
+  #[test]
+  fn test_create_tool_command_spawns_a_go_installed_binary_by_its_path() {
+    // Ties the two halves of #293 together end to end: a binary that is
+    // resolvable *only* through the known-install-dir fallback (not on PATH
+    // at all) must be spawned by the path that fallback produced.
+    //
+    // The GOBIN-equivalent is a tempdir, never the machine's real one, and
+    // the fallback is driven through `resolve_via_known_install_dir_with`
+    // so no `go env` spawn and no real Go toolchain is involved. Its result
+    // is seeded into BINARY_CACHE exactly as a real cold lookup would have
+    // memoized it, then evicted again.
+    let tmp = tempfile::tempdir().expect("tempdir");
+    let bin_name = format!("goimports{}", std::env::consts::EXE_SUFFIX);
+    let fixture = tmp.path().join(&bin_name);
+    std::fs::write(&fixture, b"#!/bin/sh\n").expect("write fixture binary");
+    let dir = tmp.path().to_path_buf();
+
+    let resolved =
+      resolve_via_known_install_dir_with("goimports", move || Some(dir));
+    assert_eq!(
+      resolved.as_deref(),
+      Some(fixture.as_path()),
+      "precondition: the fallback must find the fixture in the fake GOBIN"
+    );
+
+    set_binary_path_for_test("goimports", resolved);
+    let cmd = create_tool_command("goimports");
+    let spawned = PathBuf::from(cmd.get_program());
+    forget_binary("goimports");
+
+    assert_eq!(
+      spawned, fixture,
+      "a go-installed binary found only via $GOBIN/$GOPATH/bin must be \
+       spawned by that path; spawning the bare name is what turned #293's \
+       `[MISS]` into `Failed to execute goimports: No such file or directory`"
+    );
   }
 
   #[test]
