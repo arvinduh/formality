@@ -336,7 +336,26 @@ jobs:
         # (no chain available on this runner) reporting [MISS] is a runner
         # image gap, not a regression, and is reported as a notice instead.
         #
-        # Failure signature 2: a convergence-guard [WARN] whose detail says
+        # Failure signature 2: `Failed to execute <tool>` for a tool that
+        # has its own `[OK] Successfully installed <tool>` line earlier in
+        # the same output -- the *other* shape of "installed, then
+        # unusable". Signature 1 fires when the tool cannot be found;
+        # this one fires when it is found and then cannot be run, which is
+        # what happens if resolution reaches the existence check but not
+        # the spawn (#293). That regression once passed this job while
+        # breaking Go formatting outright, because the guard only watched
+        # signature 1.
+        #
+        # Scoped to the same just-installed intersection as signature 1, and
+        # deliberately NOT a bare `[ERR]` grep: an [ERR] names a surface,
+        # not a tool, so a blanket match would fail on unrelated breakage
+        # (a genuinely bad sample file, a tool crashing on a runner quirk)
+        # and the guard would get switched off by the first person it
+        # annoys -- worse than the gap it closes. `Failed to execute <tool>`
+        # is the one execution-error spelling that names the binary, so it
+        # is the one that can be attributed to something fml just installed.
+        #
+        # Failure signature 3: a convergence-guard [WARN] whose detail says
         # "reports an unparseable version" specifically (as opposed to
         # "reports X, expected Y" with two real version numbers, which is
         # just an upstream package manager lagging the pin -- tolerated).
@@ -383,6 +402,28 @@ jobs:
             echo "::error::fml reported as [MISS] tools it had just installed within the same invocation: $(nonempty "$regressed" | tr '\n' ' ')-- see the log above. This is the exact regression this job exists to catch."
             exit 1
           fi
+          # The other half of "installed, then unusable": fml found the tool
+          # (so no [MISS]) and then could not run it. Attributed per-tool by
+          # the binary name in `Failed to execute <tool>: ...`, then
+          # intersected with what this same invocation installed, exactly
+          # like the [MISS] check above -- an execution failure for a tool
+          # fml never installed here is not this regression.
+          unrunnable=$(sed -n 's/.*Failed to execute \([^ :]*\).*/\1/p' fml-output.log | sort -u)
+          broken=$(comm -12 <(nonempty "$installed") <(nonempty "$unrunnable"))
+
+          if [ -n "$broken" ]; then
+            echo "::error::fml failed to execute tools it had just installed within the same invocation: $(nonempty "$broken" | tr '\n' ' ')-- see the log above. Finding a binary without being able to spawn it is the same install-then-unusable regression as a [MISS], only spelled differently."
+            exit 1
+          fi
+          # Not a failure, but worth surfacing: fml has one execution-error
+          # spelling that does not name the binary it tried to run
+          # (`run_tool_command_classified`'s "Failed to execute command:"),
+          # so a spawn failure reported through that path cannot be
+          # attributed to an installed tool and is invisible to the check
+          # above.
+          if grep -q 'Failed to execute command:' fml-output.log; then
+            echo "::notice::fml reported an execution failure that does not name the binary ('Failed to execute command:'), so it could not be attributed to a just-installed tool -- inspect the log above by hand."
+          fi
           if grep -q 'unparseable version' fml-output.log; then
             echo "::error::fml could not resolve/run a tool it just installed (reported 'an unparseable version', meaning the post-install probe found nothing to run at all, not just unexpected --version output) -- see the log above."
             exit 1
@@ -392,7 +433,7 @@ jobs:
           if [ -n "$uninstallable" ]; then
             echo "::notice::Tolerated: fml never reported installing these on $RUNNER_OS, so their absence is a runner-image gap rather than the install-then-miss regression this job guards: $(nonempty "$uninstallable" | tr '\n' ' ')"
           fi
-          echo "No just-installed tool reported as missing, and no unresolvable just-installed tool -- regression check passed."
+          echo "No just-installed tool reported as missing, none that failed to execute, and no unresolvable just-installed tool -- regression check passed."
 
   security-audit:
     name: Security Audit
