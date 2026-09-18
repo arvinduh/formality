@@ -783,7 +783,11 @@ fn clippy_probe_succeeds(driver_bin: &str, cargo_bin: &str) -> bool {
 /// "installed" means (#106). [`check_binary_exists`] is a memoized
 /// `which::which` — a filesystem lookup, no process spawn — so asking it
 /// again after an install costs nothing and is not a second round of version
-/// probes.
+/// probes. (A cache miss for a Go-installed binary can spawn `go env` once,
+/// as the lookup-time fallback for `$GOBIN`/`$GOPATH/bin` -- see
+/// `surfaces::tooling::resolve_via_known_install_dir` -- but that result is
+/// memoized in the same `BINARY_CACHE` too, so it still costs nothing on
+/// the second ask.)
 fn tool_is_on_path(binary: &str) -> bool {
   // The rust surface (and `probe_tool_version`/`get_raw_tool_version`
   // elsewhere in this crate) register/accept the clippy tool under any of

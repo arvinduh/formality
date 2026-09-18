@@ -767,16 +767,52 @@ pub fn pinned_installer_for(binary: &str) -> Option<&'static str> {
 static BINARY_CACHE: OnceLock<Mutex<HashMap<String, Option<PathBuf>>>> =
   OnceLock::new();
 
-/// Resolves `binary` to its concrete path on `PATH`, memoized per-process so
-/// repeated lookups for the same binary don't re-hit the filesystem.
+/// Resolves `binary` to its concrete path, memoized per-process so repeated
+/// lookups for the same binary don't re-hit the filesystem (or, for the
+/// fallback below, re-spawn a process).
+///
+/// Checks `PATH` first via `which::which`, then -- only if that fails --
+/// falls back to [`resolve_via_known_install_dir`], which consults the one
+/// known-but-not-on-`PATH` install location this crate's installers use
+/// (see that function's doc comment). This is the lookup-time half of the
+/// fix for #293: a tool an *earlier* `fml` process installed into that
+/// directory must still resolve here, in a brand-new process that starts
+/// with a stock environment and never ran that installer itself.
+///
+/// **The lock is never held across the resolution itself.** The cache guard
+/// is taken to read, dropped, and only re-taken to insert. That is load
+/// bearing twice over:
+///
+/// 1. *Correctness.* [`resolve_via_known_install_dir`] spawns `go env`
+///    through [`create_tool_command`], which calls **back into this
+///    function** to resolve `go` itself. [`BINARY_CACHE`]'s
+///    `std::sync::Mutex` is not reentrant, so re-locking it on the same
+///    thread while the first guard was alive is a documented
+///    panic-or-deadlock (a deadlock on Windows' SRWLOCK) -- and it would
+///    fire on exactly the lookup this fallback exists for.
+/// 2. *Throughput.* Surfaces fan out over `rayon`
+///    (`crate::engine::runner`), so holding the single global cache mutex
+///    across a process spawn would stall every other surface's lookups
+///    behind one `go env`.
+///
+/// The cost of dropping the guard is that two threads racing on the same
+/// cold binary can both resolve it. That is harmless: resolution is a pure
+/// read of `PATH`/the filesystem, both threads compute the same answer, and
+/// the second insert overwrites the first with an equal value.
 #[must_use]
 pub fn resolve_binary_path(binary: &str) -> Option<PathBuf> {
   let cache = BINARY_CACHE.get_or_init(|| Mutex::new(HashMap::new()));
-  let mut guard = cache.lock().unwrap_or_else(|e| e.into_inner());
-  if let Some(resolved) = guard.get(binary) {
-    return resolved.clone();
+  {
+    let guard = cache.lock().unwrap_or_else(|e| e.into_inner());
+    if let Some(resolved) = guard.get(binary) {
+      return resolved.clone();
+    }
   }
-  let resolved = which::which(binary).ok();
+  // Deliberately outside the critical section -- see the doc comment above.
+  let resolved = which::which(binary)
+    .ok()
+    .or_else(|| resolve_via_known_install_dir(binary));
+  let mut guard = cache.lock().unwrap_or_else(|e| e.into_inner());
   guard.insert(binary.to_string(), resolved.clone());
   resolved
 }
@@ -1154,7 +1190,17 @@ pub fn tool_would_benefit_from_cargo_binstall_bootstrap(binary: &str) -> bool {
 /// Windows-specific, side-effecting part of the refresh this supports is
 /// [`refresh_windows_path_from_registry`], which sources `additional` from
 /// the registry and applies the result via `std::env::set_var`.
+///
+/// That one production caller is itself `#[cfg(windows)]`-gated, so on
+/// every other target this function has no production caller at all --
+/// `#[allow(dead_code)]` there is a deliberate cross-platform-code
+/// allowance, not the unreachable-logic case dead-code scrutiny is aimed
+/// at: the code is live and necessary on Windows, and staying compiled
+/// (and directly unit-tested, see the tests below) on every other platform
+/// is what keeps its logic honest without needing an actual Windows
+/// machine to test it on.
 #[must_use]
+#[cfg_attr(not(windows), allow(dead_code))]
 fn merge_path_entries(current: &str, additional: &str) -> String {
   let separator = if cfg!(windows) { ';' } else { ':' };
   let mut seen: std::collections::HashSet<String> =
@@ -1246,6 +1292,12 @@ pub fn refresh_windows_path_from_registry() {
 /// deliberate -- making a `PATH` addition durable means editing files this
 /// tool doesn't own, and the per-tool `install_hint` already tells the user
 /// what to do about their own shell.
+///
+/// Only called from [`refresh_windows_path_from_registry`]'s
+/// `#[cfg(windows)]` block (Scoop/winget's registry-only PATH updates); see
+/// [`merge_path_entries`]'s doc comment for why this is left compiled (and
+/// therefore `#[allow(dead_code)]`, not deleted) on every other platform.
+#[cfg_attr(not(windows), allow(dead_code))]
 fn merge_into_process_path(additional: &str) {
   let current = std::env::var("PATH").unwrap_or_default();
   let merged = merge_path_entries(&current, additional);
@@ -1264,10 +1316,10 @@ fn merge_into_process_path(additional: &str) {
 /// values of `GOBIN` and `GOPATH`: `GOBIN` when it is set, otherwise the
 /// first `GOPATH` entry plus `bin` (Go's own documented default).
 ///
-/// Split out from [`refresh_go_install_path`] and kept pure so the
-/// precedence is unit-testable on a machine with no Go toolchain at all;
-/// the `go env` invocation that sources these two values is the only part
-/// left in the caller.
+/// Split out from [`go_install_bin_dir`] and kept pure so the precedence is
+/// unit-testable on a machine with no Go toolchain at all; the `go env`
+/// invocation that sources these two values is the only part left in the
+/// caller.
 #[must_use]
 fn go_bin_dir_from_env(gobin: &str, gopath: &str) -> Option<PathBuf> {
   let gobin = gobin.trim();
@@ -1282,34 +1334,43 @@ fn go_bin_dir_from_env(gobin: &str, gopath: &str) -> Option<PathBuf> {
   Some(PathBuf::from(first).join("bin"))
 }
 
-/// Adds `go install`'s output directory (`GOBIN`, else `$GOPATH/bin`) to
-/// this process's `PATH` if it isn't already on it.
+/// Asks the `go` toolchain directly for the directory `go install` writes
+/// binaries into (`GOBIN`, else `$GOPATH/bin`), or `None` if `go` isn't on
+/// `PATH` or the query fails.
 ///
-/// [`InstallMethod::GoInstall`] is the one installer in this module that
-/// routinely writes into a directory that is *not* already on `PATH`.
-/// Every other installer used here puts binaries next to (or under the same
-/// prefix as) a package manager the user must already be able to invoke:
-/// `npm -g`, `pipx`, `uv`, `brew`, `cargo install`, `rustup`. `$GOPATH/bin`
-/// has no such guarantee -- Go creates it on demand, and it is on `PATH`
-/// only if the user put it there. On a stock GitHub Actions Linux runner it
+/// [`InstallMethod::GoInstall`] is the installer this fallback is scoped to
+/// today, *not* the only one with the property. `npm -g`, the other node
+/// managers, `brew`, `cargo install`, `rustup` and `Apt` do put binaries
+/// next to (or under the same prefix as) a package manager the user must
+/// already be able to invoke, so their output directory is on `PATH` too.
+/// **`Pipx` and `Uv` do not**: both write into `~/.local/bin`, which is why
+/// `pipx ensurepath` and `uv tool update-shell` exist at all, and those
+/// chains cover `ruff`, `yamllint` and `clang-format`. That gap is real and
+/// tracked separately in #297 -- it is left out of this fallback
+/// deliberately (widening it needs a per-[`InstallMethod`] known-bin-dir
+/// hook, a design call), not because it does not exist. `$GOPATH/bin` is
+/// simply the case #293 was filed over: Go creates it on demand, and it is
+/// on `PATH` only if the user put it there. On a stock GitHub Actions Linux runner it
 /// is not, so `go install golang.org/x/tools/cmd/goimports@v0.49.0`
-/// succeeds and the very next lookup for `goimports` in the same invocation
-/// still finds nothing.
-///
-/// That is the same user-visible symptom as the [`BINARY_CACHE`] staleness
-/// [`forget_binary`] fixes, but a different cause -- here the binary
-/// genuinely is not reachable from this process's `PATH` -- and the same
-/// shape as the Scoop/`winget` case
-/// [`refresh_windows_path_from_registry`] handles on Windows. Both are
-/// dispatched from [`refresh_path_after_install`].
-pub fn refresh_go_install_path() {
+/// succeeds and a lookup for `goimports` from `PATH` alone still finds
+/// nothing -- in this process *or a later one*, since nothing durable ever
+/// records that directory anywhere `PATH` gets rebuilt from (contrast the
+/// Scoop/`winget` case: those register their change in the Windows
+/// registry, which every *new* process picks up on its own -- see
+/// [`refresh_windows_path_from_registry`] -- only an *already-running*
+/// process needs that one refreshed by hand). That's why this directory
+/// gets checked directly at lookup time via [`resolve_via_known_install_dir`]
+/// instead of being mutated into some process's `PATH`: mutating a
+/// process's own `PATH` can never help a *different, later* process, which
+/// is exactly the two-process `fml doctor --install` then `fml fmt`
+/// sequence #293 was filed over.
+#[must_use]
+fn go_install_bin_dir() -> Option<PathBuf> {
   let mut cmd = create_tool_command("go");
   cmd.args(["env", "GOBIN", "GOPATH"]);
-  let Ok(output) = cmd.output() else {
-    return;
-  };
+  let output = cmd.output().ok()?;
   if !output.status.success() {
-    return;
+    return None;
   }
 
   // `go env NAME...` prints one value per line, in the order requested,
@@ -1319,10 +1380,90 @@ pub fn refresh_go_install_path() {
   let mut lines = stdout.lines();
   let gobin = lines.next().unwrap_or_default();
   let gopath = lines.next().unwrap_or_default();
+  go_bin_dir_from_env(gobin, gopath)
+}
 
-  if let Some(bin_dir) = go_bin_dir_from_env(gobin, gopath) {
-    merge_into_process_path(&bin_dir.to_string_lossy());
+/// Pure half of the known-install-directory fallback: does `binary` exist as
+/// a file directly inside `go_bin_dir`? Kept separate from
+/// [`resolve_via_known_install_dir`] (which sources `go_bin_dir` by actually
+/// spawning `go env`) so the on-disk check is unit-testable against a
+/// fabricated temp directory, with no real Go toolchain required.
+#[must_use]
+fn resolve_go_installed_binary(
+  binary: &str,
+  go_bin_dir: &std::path::Path,
+) -> Option<PathBuf> {
+  let candidate =
+    go_bin_dir.join(format!("{binary}{}", std::env::consts::EXE_SUFFIX));
+  (candidate.is_file() && is_executable_file(&candidate)).then_some(candidate)
+}
+
+/// Whether `path` is something the OS would actually agree to execute --
+/// the same bar `which::which` applies to a `PATH` hit, so the fallback in
+/// [`resolve_via_known_install_dir`] can't resolve a file `which` would
+/// have skipped.
+///
+/// This is load bearing now that [`create_tool_command`] *spawns* the
+/// resolved path: a mode-0644 leftover in `$GOBIN` (a half-written
+/// download, a stray shim) would otherwise pass the missing-tool guard and
+/// then fail to exec with `Permission denied` -- the same "found it, can't
+/// run it" shape #293 is about. On Windows executability is carried by the
+/// extension (already handled by `EXE_SUFFIX` above), not by a permission
+/// bit, so there is nothing further to check there.
+#[must_use]
+fn is_executable_file(path: &std::path::Path) -> bool {
+  #[cfg(unix)]
+  {
+    use std::os::unix::fs::PermissionsExt;
+    std::fs::metadata(path)
+      .is_ok_and(|meta| meta.permissions().mode() & 0o111 != 0)
   }
+  #[cfg(not(unix))]
+  {
+    let _ = path;
+    true
+  }
+}
+
+/// The lookup-time fallback [`resolve_binary_path`] tries once a plain
+/// `PATH` search comes up empty: is `binary` installed via
+/// [`InstallMethod::GoInstall`] somewhere in its chain, and if so, does it
+/// exist in `go install`'s own output directory (`GOBIN`, else
+/// `$GOPATH/bin`)? See [`go_install_bin_dir`]'s doc comment for why that
+/// directory specifically -- it's the one location in this crate's install
+/// chains that a fresh `PATH` search structurally cannot see.
+///
+/// Scoped to Go-installed binaries only (via [`install_chain_for`]) rather
+/// than probing this directory unconditionally for every miss: computing it
+/// spawns `go env`, and no other binary's chain ever writes *there*, so
+/// paying that cost for e.g. a genuinely-missing `prettier` would be pure
+/// waste. Other install methods with their own off-`PATH` directory --
+/// `Pipx`/`Uv`'s `~/.local/bin` -- are #297, and want their own entry here
+/// rather than a wider probe of this one.
+#[must_use]
+fn resolve_via_known_install_dir(binary: &str) -> Option<PathBuf> {
+  resolve_via_known_install_dir_with(binary, go_install_bin_dir)
+}
+
+/// [`resolve_via_known_install_dir`], with the `go install` bin directory
+/// sourced from `go_bin_dir` instead of a hardcoded `go env` spawn, so tests
+/// can inject a fabricated directory without a real Go toolchain or
+/// mutating any real filesystem state `go env` would otherwise read.
+#[must_use]
+fn resolve_via_known_install_dir_with(
+  binary: &str,
+  go_bin_dir: impl FnOnce() -> Option<PathBuf>,
+) -> Option<PathBuf> {
+  let installs_via_go = install_chain_for(binary).is_some_and(|chain| {
+    chain
+      .iter()
+      .any(|m| matches!(m, InstallMethod::GoInstall(_)))
+  });
+  if !installs_via_go {
+    return None;
+  }
+  let dir = go_bin_dir()?;
+  resolve_go_installed_binary(binary, &dir)
 }
 
 /// Applies whatever `PATH` fix-up the installer `program` needs for a
@@ -1334,21 +1475,49 @@ pub fn refresh_go_install_path() {
 /// symptom). Keeping the per-installer knowledge here rather than at the
 /// call site means a new [`InstallMethod`] whose bin directory isn't on
 /// `PATH` has exactly one place to be taught about.
+///
+/// `go install` is *not* handled here (compare the Scoop/winget case
+/// below): its output directory is never durably on `PATH` for anyone, not
+/// just this already-running process, so a same-process `PATH` mutation
+/// would fix nothing that [`resolve_via_known_install_dir`] doesn't already
+/// fix at lookup time -- see [`go_install_bin_dir`]'s doc comment. (An
+/// earlier version of this function did carry a `"go" =>
+/// refresh_go_install_path()` arm; that function is deleted along with it,
+/// per #293's acceptance criteria that the old in-process fix-up not be
+/// left behind once lookup-time resolution supersedes it.)
 pub fn refresh_path_after_install(program: &str) {
   match program {
     // Scoop and winget register their PATH changes in the Windows
     // registry, which an already-running process's inherited environment
     // block never picks up on its own.
     "scoop" | "winget" => refresh_windows_path_from_registry(),
-    // `go install` writes into $GOBIN / $GOPATH/bin, which is frequently
-    // not on PATH at all.
-    "go" => refresh_go_install_path(),
     _ => {}
   }
 }
 
-/// Creates a `Command` with proper handling for Windows batch files (.cmd/.bat)
-/// such as `npm`, `pnpm`, `yarn`, `npx`, and globally installed node CLIs.
+/// Builds the `Command` every tool in this crate is spawned through.
+///
+/// **Spawns the path [`resolve_binary_path`] resolved, on every platform**,
+/// falling back to the bare name only when nothing resolved at all. That is
+/// the execution half of #293's fix and it has to match the detection half:
+/// `check_binary_exists`/`tool_missing_guard` decide a tool is present via
+/// `resolve_binary_path`, which consults `go install`'s own output directory
+/// (`GOBIN`, else `$GOPATH/bin`) in addition to `PATH`. A bare
+/// `Command::new(binary)` re-does a *`PATH`-only* search inside the OS's
+/// `execvp`, so a binary found only through that fallback would pass the
+/// missing-tool guard and then fail to exec -- "found it, can't run it",
+/// which is not what #293 asks for. This was previously `#[cfg(windows)]`
+/// only, which left every Unix spawn on the bare name.
+///
+/// Falling back to the bare name when resolution returns `None` keeps the
+/// old behaviour for the genuinely-missing case: the surface's own
+/// missing-binary guard normally reports that first, and where it doesn't,
+/// the OS's own "No such file or directory" for the plain name stays the
+/// error the user sees.
+///
+/// Windows additionally keeps its batch-file handling: `npm`/`pnpm`/`yarn`/
+/// `npx` and any resolved `.cmd`/`.bat` shim must be run through `cmd /C`
+/// rather than spawned directly.
 #[must_use]
 pub fn create_tool_command(binary: &str) -> std::process::Command {
   #[cfg(windows)]
@@ -1362,18 +1531,24 @@ pub fn create_tool_command(binary: &str) -> std::process::Command {
       cmd.arg("/C").arg(binary);
       return cmd;
     }
-    if let Some(path) = resolve_binary_path(binary) {
-      if let Some(ext) = path.extension().and_then(|e| e.to_str())
-        && (ext.eq_ignore_ascii_case("cmd") || ext.eq_ignore_ascii_case("bat"))
-      {
-        let mut cmd = std::process::Command::new("cmd");
-        cmd.arg("/C").arg(path);
-        return cmd;
-      }
-      return std::process::Command::new(path);
+  }
+
+  let Some(path) = resolve_binary_path(binary) else {
+    return std::process::Command::new(binary);
+  };
+
+  #[cfg(windows)]
+  {
+    if let Some(ext) = path.extension().and_then(|e| e.to_str())
+      && (ext.eq_ignore_ascii_case("cmd") || ext.eq_ignore_ascii_case("bat"))
+    {
+      let mut cmd = std::process::Command::new("cmd");
+      cmd.arg("/C").arg(&path);
+      return cmd;
     }
   }
-  std::process::Command::new(binary)
+
+  std::process::Command::new(path)
 }
 
 /// How a caller of [`run_tool_command_classified`] /
@@ -2037,6 +2212,85 @@ mod tests {
   }
 
   #[test]
+  fn test_create_tool_command_spawns_the_resolved_path_not_the_bare_name() {
+    // #293's execution half, asserted on *every* platform: whatever
+    // `resolve_binary_path` resolved is what gets spawned. Before this, the
+    // resolved path was consulted only under `#[cfg(windows)]`, so a Unix
+    // spawn re-did a PATH-only search inside `execvp` and could not reach a
+    // binary that resolved solely through the known-install-dir fallback.
+    //
+    // Driven through `set_binary_path_for_test` with a name no chain and no
+    // other test uses, so the seeded cache entry can't collide with a real
+    // lookup elsewhere in this test binary.
+    let fake = PathBuf::from("/nowhere/fml-spawn-path-probe/bin/probe-tool");
+    set_binary_path_for_test("fml-spawn-path-probe-tool", Some(fake.clone()));
+
+    let cmd = create_tool_command("fml-spawn-path-probe-tool");
+    assert_eq!(
+      std::path::Path::new(cmd.get_program()),
+      fake.as_path(),
+      "create_tool_command must spawn the path resolve_binary_path found, \
+       not the bare binary name -- a bare name is a PATH-only lookup and \
+       cannot see $GOBIN/$GOPATH/bin"
+    );
+
+    forget_binary("fml-spawn-path-probe-tool");
+  }
+
+  #[test]
+  fn test_create_tool_command_falls_back_to_the_bare_name_when_unresolved() {
+    // The other half of the contract: nothing resolved means the old
+    // behaviour is preserved exactly, so the OS's own "No such file or
+    // directory" for the plain name stays the error a user sees rather than
+    // this function inventing a path.
+    set_binary_path_for_test("fml-unresolvable-probe-tool", None);
+
+    let cmd = create_tool_command("fml-unresolvable-probe-tool");
+    assert_eq!(
+      cmd.get_program(),
+      std::ffi::OsStr::new("fml-unresolvable-probe-tool")
+    );
+
+    forget_binary("fml-unresolvable-probe-tool");
+  }
+
+  #[test]
+  fn test_create_tool_command_spawns_a_go_installed_binary_by_its_path() {
+    // Ties the two halves of #293 together end to end: a binary that is
+    // resolvable *only* through the known-install-dir fallback (not on PATH
+    // at all) must be spawned by the path that fallback produced.
+    //
+    // The GOBIN-equivalent is a tempdir, never the machine's real one, and
+    // the fallback is driven through `resolve_via_known_install_dir_with`
+    // so no `go env` spawn and no real Go toolchain is involved. Its result
+    // is seeded into BINARY_CACHE exactly as a real cold lookup would have
+    // memoized it, then evicted again.
+    let tmp = tempfile::tempdir().expect("tempdir");
+    let fixture = write_go_bin_fixture(tmp.path(), "goimports");
+    let dir = tmp.path().to_path_buf();
+
+    let resolved =
+      resolve_via_known_install_dir_with("goimports", move || Some(dir));
+    assert_eq!(
+      resolved.as_deref(),
+      Some(fixture.as_path()),
+      "precondition: the fallback must find the fixture in the fake GOBIN"
+    );
+
+    set_binary_path_for_test("goimports", resolved);
+    let cmd = create_tool_command("goimports");
+    let spawned = PathBuf::from(cmd.get_program());
+    forget_binary("goimports");
+
+    assert_eq!(
+      spawned, fixture,
+      "a go-installed binary found only via $GOBIN/$GOPATH/bin must be \
+       spawned by that path; spawning the bare name is what turned #293's \
+       `[MISS]` into `Failed to execute goimports: No such file or directory`"
+    );
+  }
+
+  #[test]
   fn test_check_binary_exists_nonexistent_and_edge_case_inputs() {
     assert!(!check_binary_exists("__nonexistent_binary_xyz_987654321__"));
     assert!(!check_binary_exists(""));
@@ -2433,8 +2687,8 @@ mod tests {
     );
   }
 
-  // merge_path_entries is the pure half of every post-install PATH refresh
-  // (refresh_windows_path_from_registry, refresh_go_install_path) -- the
+  // merge_path_entries is the pure half of the post-install PATH refresh
+  // Scoop/winget still need (refresh_windows_path_from_registry) -- the
   // registry/`go env` read plus the std::env::set_var side effect isn't
   // something a unit test should perform for real (it would mutate the test
   // process's actual PATH for every other test running in the same binary),
@@ -2531,10 +2785,11 @@ mod tests {
   }
 
   // go_bin_dir_from_env decides where `go install` just put a binary, which
-  // is what refresh_go_install_path adds to PATH. Getting the GOBIN/GOPATH
-  // precedence wrong means adding a directory that holds nothing and
-  // leaving `goimports` unresolvable right after installing it -- the exact
-  // failure the Fresh-Install Regression CI job exists to catch.
+  // is exactly the directory resolve_via_known_install_dir checks at lookup
+  // time. Getting the GOBIN/GOPATH precedence wrong means checking a
+  // directory that holds nothing and leaving `goimports` unresolvable even
+  // after installing it -- the exact failure the Fresh-Install Regression
+  // CI job exists to catch.
   #[test]
   fn test_go_bin_dir_prefers_gobin_when_set() {
     let dir = go_bin_dir_from_env("/custom/gobin", "/home/u/go");
@@ -2578,6 +2833,247 @@ mod tests {
       None,
       "a Go toolchain that reports neither value must leave PATH alone"
     );
+  }
+
+  /// Writes a stand-in for a `go install`-produced binary into `dir`,
+  /// executable on Unix so it clears the same bar `which::which` applies to
+  /// a `PATH` hit (see `is_executable_file`). Returns its full path.
+  fn write_go_bin_fixture(dir: &std::path::Path, binary: &str) -> PathBuf {
+    let path = dir.join(format!("{binary}{}", std::env::consts::EXE_SUFFIX));
+    std::fs::write(&path, b"#!/bin/sh\n").expect("write fixture binary");
+    #[cfg(unix)]
+    {
+      use std::os::unix::fs::PermissionsExt;
+      std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o755))
+        .expect("chmod fixture binary");
+    }
+    path
+  }
+
+  // --- resolve_via_known_install_dir (#293) -------------------------------
+  //
+  // The lookup-time half of the fix: a binary `go install` put in
+  // `$GOBIN`/`$GOPATH/bin` must resolve even when that directory was never
+  // added to `PATH` at all -- the exact cross-process gap
+  // `refresh_go_install_path` (deleted by this change; it only ever
+  // mutated *this* process's `PATH`, which a later `fml` invocation never
+  // inherits) could not close. These tests exercise the real filesystem
+  // check (`resolve_go_installed_binary`) and the chain-membership gate
+  // (`resolve_via_known_install_dir_with`) against a fabricated temp
+  // directory, so no real Go toolchain or network access is required.
+
+  #[test]
+  fn test_resolve_go_installed_binary_finds_a_real_file() {
+    let tmp = tempfile::tempdir().expect("tempdir");
+    let fixture = write_go_bin_fixture(tmp.path(), "goimports");
+
+    let found = resolve_go_installed_binary("goimports", tmp.path());
+    assert_eq!(
+      found,
+      Some(fixture),
+      "must find the binary Go's own EXE_SUFFIX convention names it under"
+    );
+  }
+
+  #[test]
+  fn test_resolve_go_installed_binary_absent_is_none() {
+    let tmp = tempfile::tempdir().expect("tempdir");
+    assert_eq!(
+      resolve_go_installed_binary("goimports", tmp.path()),
+      None,
+      "an empty GOBIN-equivalent directory must not fabricate a path"
+    );
+  }
+
+  #[test]
+  #[cfg(unix)]
+  fn test_resolve_go_installed_binary_rejects_a_non_executable_file() {
+    // `which::which` requires the executable bit for a PATH hit, so the
+    // fallback must too -- otherwise a mode-0644 leftover in GOBIN would
+    // pass the missing-tool guard and then fail to exec, which is the
+    // failure shape #293 exists to remove, not reintroduce.
+    let tmp = tempfile::tempdir().expect("tempdir");
+    let path = tmp.path().join("goimports");
+    std::fs::write(&path, b"#!/bin/sh\n").expect("write fixture");
+
+    assert_eq!(
+      resolve_go_installed_binary("goimports", tmp.path()),
+      None,
+      "a non-executable file must not resolve as an installed binary"
+    );
+
+    // ...and the same file does resolve once it is actually executable, so
+    // this asserts the permission bit specifically, not merely that some
+    // unrelated condition rejected the path.
+    use std::os::unix::fs::PermissionsExt;
+    std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o755))
+      .expect("chmod fixture");
+    assert_eq!(
+      resolve_go_installed_binary("goimports", tmp.path()),
+      Some(path)
+    );
+  }
+
+  #[test]
+  fn test_resolve_go_installed_binary_rejects_a_directory_of_the_same_name() {
+    // A same-named subdirectory (not a file) must not be reported as the
+    // binary -- guards against a `.is_file()` check accidentally becoming
+    // an `.exists()` check on some future refactor.
+    let tmp = tempfile::tempdir().expect("tempdir");
+    std::fs::create_dir(tmp.path().join("goimports")).expect("mkdir");
+    assert_eq!(resolve_go_installed_binary("goimports", tmp.path()), None);
+  }
+
+  #[test]
+  fn test_resolve_via_known_install_dir_finds_go_installed_binary() {
+    let tmp = tempfile::tempdir().expect("tempdir");
+    let fixture = write_go_bin_fixture(tmp.path(), "goimports");
+    let dir = tmp.path().to_path_buf();
+
+    let found =
+      resolve_via_known_install_dir_with("goimports", move || Some(dir));
+    assert_eq!(found, Some(fixture));
+  }
+
+  #[test]
+  fn test_resolve_via_known_install_dir_finds_golangci_lint_too() {
+    // golangci-lint's chain lists GoInstall as a fallback behind
+    // Brew/Scoop, not as its only entry -- the "does this chain contain a
+    // GoInstall entry anywhere" gate must still catch it, not just a
+    // single-entry chain like goimports's.
+    let tmp = tempfile::tempdir().expect("tempdir");
+    let fixture = write_go_bin_fixture(tmp.path(), "golangci-lint");
+    let dir = tmp.path().to_path_buf();
+
+    let found =
+      resolve_via_known_install_dir_with("golangci-lint", move || Some(dir));
+    assert_eq!(found, Some(fixture));
+  }
+
+  #[test]
+  fn test_resolve_via_known_install_dir_skips_non_go_binaries() {
+    // A tool with no GoInstall entry anywhere in its chain (prettier: npm
+    // only) must never even ask for the Go bin directory -- proven here by
+    // handing it a closure that panics if called at all, not just by
+    // asserting the return value.
+    let found = resolve_via_known_install_dir_with("prettier", || {
+      panic!(
+        "must not query the Go bin directory for a binary with no \
+         GoInstall entry in its chain"
+      )
+    });
+    assert_eq!(found, None);
+  }
+
+  #[test]
+  fn test_resolve_via_known_install_dir_skips_unregistered_binaries() {
+    // A binary with no ALL_CHAINS row at all (install_chain_for returns
+    // None) must take the same short-circuit as a registered-but-non-Go
+    // chain, not panic on the `Option` unwrap.
+    let found =
+      resolve_via_known_install_dir_with("totally-unregistered-tool", || {
+        panic!("must not query the Go bin directory for an unregistered binary")
+      });
+    assert_eq!(found, None);
+  }
+
+  #[test]
+  fn test_resolve_via_known_install_dir_none_when_go_bin_dir_unknown() {
+    // `go` not on PATH, or `go env` failing -- go_install_bin_dir's
+    // contract is `None`, and the fallback must propagate that rather than
+    // panicking on a missing directory.
+    let found = resolve_via_known_install_dir_with("goimports", || None);
+    assert_eq!(found, None);
+  }
+
+  #[test]
+  fn test_go_install_bin_dir_reports_gos_own_output_directory() {
+    // The one test that exercises the real `go env` wiring
+    // `resolve_binary_path`'s fallback uses in production. Deliberately
+    // read-only: it asks the toolchain where `go install` writes and checks
+    // the shape of the answer, and it never creates that directory, writes
+    // a fixture into it, or primes the process-global BINARY_CACHE.
+    //
+    // An earlier version of this test did all three -- it wrote a fake
+    // `goimports` into the developer's *real* GOBIN, which a SIGKILL
+    // mid-test would have left behind for a later real `fml fmt` to try to
+    // exec. It also claimed to use "a name `which` will never resolve"
+    // while actually using `goimports`, so on any machine with
+    // `$GOPATH/bin` on PATH the `which` lookup succeeded and the test
+    // passed without the fallback running at all -- it passed with the
+    // fallback deleted. The fallback's own behaviour is covered instead by
+    // the `resolve_via_known_install_dir_with` tests above and by
+    // `test_create_tool_command_spawns_a_go_installed_binary_by_its_path`,
+    // all of which drive a tempdir and fail if the fallback is removed. The
+    // genuinely-clean two-process end-to-end belongs to the
+    // `Fresh-Install Regression` CI job; it is not reproducible in-process.
+    if which::which("go").is_err() {
+      eprintln!(
+        "skipping test_go_install_bin_dir_reports_gos_own_output_directory: \
+         no `go` on this machine's PATH"
+      );
+      return;
+    }
+
+    let Some(dir) = go_install_bin_dir() else {
+      eprintln!(
+        "skipping test_go_install_bin_dir_reports_gos_own_output_directory: \
+         `go env` reported neither GOBIN nor a usable GOPATH"
+      );
+      return;
+    };
+
+    assert!(
+      dir.is_absolute(),
+      "a bin directory resolve_binary_path will later join a binary name \
+       onto must be absolute, not relative to whatever cwd fml runs in: \
+       {dir:?}"
+    );
+    assert!(
+      std::env::var("GOBIN").is_ok_and(|g| !g.trim().is_empty())
+        || dir.file_name() == Some(std::ffi::OsStr::new("bin")),
+      "with no GOBIN set, go install's output directory is $GOPATH/bin: \
+       {dir:?}"
+    );
+  }
+
+  #[test]
+  fn test_resolve_binary_path_does_not_hold_the_cache_lock_over_the_fallback() {
+    // Regression guard for the self-deadlock (#293 QA finding 2): the
+    // known-install-dir fallback spawns `go env` via `create_tool_command`,
+    // which resolves `go` through `resolve_binary_path` itself. With the
+    // cache guard still alive across the fallback, that re-lock of a
+    // non-reentrant `std::sync::Mutex` on the same thread is a documented
+    // panic-or-deadlock -- a hang on Windows' SRWLOCK.
+    //
+    // Driven through a real Go-chain binary that `which` cannot see, so the
+    // fallback (and therefore the re-entrant lookup) genuinely runs. Done on
+    // a worker thread with a receive timeout so a regression surfaces as a
+    // failed assertion instead of hanging the whole test binary forever.
+    let Some(missing) = ["golangci-lint", "goimports"]
+      .into_iter()
+      .find(|b| which::which(b).is_err())
+    else {
+      eprintln!(
+        "skipping the BINARY_CACHE re-entrancy test: every Go-chain binary \
+         is already on this machine's PATH, so the fallback never runs"
+      );
+      return;
+    };
+
+    let (tx, rx) = std::sync::mpsc::channel();
+    let worker = std::thread::spawn(move || {
+      let resolved = resolve_binary_path(missing);
+      // Sent after the call returns; a deadlocked lookup never gets here.
+      let _ = tx.send(resolved);
+    });
+
+    rx.recv_timeout(std::time::Duration::from_secs(60)).expect(
+      "resolve_binary_path deadlocked (or panicked) on the re-entrant \
+       lookup its own known-install-dir fallback performs -- the \
+       BINARY_CACHE guard must be dropped before the fallback runs",
+    );
+    worker.join().expect("lookup thread panicked");
   }
 
   #[test]
