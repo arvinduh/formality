@@ -356,7 +356,7 @@ impl LanguageSurface for PythonSurface {
     vec![ToolInfo {
       binary: "ruff",
       description: "Fast Python linter and code formatter",
-      install_hint: "Install via: uv tool install ruff (or pip install ruff / brew install ruff / cargo binstall ruff)",
+      install_hint: None,
       is_required_for_fmt: true,
       is_required_for_lint: true,
     }]
@@ -367,9 +367,7 @@ impl LanguageSurface for PythonSurface {
   fn format(&self, ctx: &ExecutionContext) -> SurfaceResult {
     let start = Instant::now();
 
-    if let Some(res) =
-      tool_missing_guard(self.name(), "ruff", start, Some("pip install ruff"))
-    {
+    if let Some(res) = tool_missing_guard(self.name(), "ruff", start, None) {
       return res;
     }
 
@@ -518,9 +516,7 @@ impl LanguageSurface for PythonSurface {
   fn lint(&self, ctx: &ExecutionContext, fix: bool) -> SurfaceResult {
     let start = Instant::now();
 
-    if let Some(res) =
-      tool_missing_guard(self.name(), "ruff", start, Some("pip install ruff"))
-    {
+    if let Some(res) = tool_missing_guard(self.name(), "ruff", start, None) {
       return res;
     }
 

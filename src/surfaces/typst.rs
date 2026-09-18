@@ -87,7 +87,7 @@ impl LanguageSurface for TypstSurface {
     vec![ToolInfo {
       binary: "typstyle",
       description: "Beautiful and reliable code formatter for Typst",
-      install_hint: "Install via: cargo binstall typstyle (or brew install typstyle / winget install typstyle / cargo install typstyle --locked)",
+      install_hint: None,
       is_required_for_fmt: true,
       is_required_for_lint: true,
     }]
@@ -96,14 +96,8 @@ impl LanguageSurface for TypstSurface {
   fn format(&self, ctx: &ExecutionContext) -> SurfaceResult {
     let start = Instant::now();
 
-    if let Some(res) = tool_missing_guard(
-      self.name(),
-      "typstyle",
-      start,
-      Some(
-        "cargo binstall typstyle / brew install typstyle / winget install typstyle / cargo install typstyle --locked",
-      ),
-    ) {
+    if let Some(res) = tool_missing_guard(self.name(), "typstyle", start, None)
+    {
       return res;
     }
 

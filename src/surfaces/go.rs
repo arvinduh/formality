@@ -93,6 +93,15 @@ impl DeclaresFacets for GoSurface {
 /// Standard file extensions recognized for Go source files.
 pub const GO_EXTENSIONS: &[&str] = &["go"];
 
+/// Single source for `gofmt`'s manual install hint: it has no `ALL_CHAINS`
+/// row (it ships with the Go toolchain itself, not through any package
+/// manager tracked there), so unlike every other tool here it can't be
+/// derived via `install_hint_for`. Referenced from both `tool_info` and the
+/// `format()` guard so the two copies cannot drift apart the way #264 found
+/// taplo's hand-copied strings had.
+const GOFMT_INSTALL_HINT: &str =
+  "Ships with the Go toolchain: install Go from https://go.dev/dl/";
+
 /// Builds the argument list for `golangci-lint run`. Mirrors the
 /// `build_ruff_check_args` pattern: pass explicit files only when the caller
 /// scoped the run (specific paths, a `files` allowlist, or an `exclude`
@@ -228,21 +237,24 @@ impl LanguageSurface for GoSurface {
       ToolInfo {
         binary: "gofmt",
         description: "Go code formatter (simplifies code with -s)",
-        install_hint: "Ships with the Go toolchain: install Go from https://go.dev/dl/",
+        // No ALL_CHAINS row: gofmt ships with the Go toolchain itself
+        // rather than through any package manager, so there is no
+        // install-preference chain to derive advice from.
+        install_hint: Some(GOFMT_INSTALL_HINT),
         is_required_for_fmt: true,
         is_required_for_lint: false,
       },
       ToolInfo {
         binary: "goimports",
         description: "Go formatter that also groups and sorts imports",
-        install_hint: "Install via: go install golang.org/x/tools/cmd/goimports@latest",
+        install_hint: None,
         is_required_for_fmt: true,
         is_required_for_lint: false,
       },
       ToolInfo {
         binary: "golangci-lint",
         description: "Fast Go linters runner aggregating multiple static analyzers",
-        install_hint: "Install via: brew install golangci-lint (or go install github.com/golangci/golangci-lint/v2/cmd/golangci-lint@latest)",
+        install_hint: None,
         is_required_for_fmt: false,
         is_required_for_lint: true,
       },
@@ -254,21 +266,14 @@ impl LanguageSurface for GoSurface {
   fn format(&self, ctx: &ExecutionContext) -> SurfaceResult {
     let start = Instant::now();
 
-    if let Some(res) = tool_missing_guard(
-      self.name(),
-      "gofmt",
-      start,
-      Some("Ships with the Go toolchain: install Go from https://go.dev/dl/"),
-    ) {
+    if let Some(res) =
+      tool_missing_guard(self.name(), "gofmt", start, Some(GOFMT_INSTALL_HINT))
+    {
       return res;
     }
 
-    if let Some(res) = tool_missing_guard(
-      self.name(),
-      "goimports",
-      start,
-      Some("go install golang.org/x/tools/cmd/goimports@latest"),
-    ) {
+    if let Some(res) = tool_missing_guard(self.name(), "goimports", start, None)
+    {
       return res;
     }
 
@@ -438,14 +443,9 @@ impl LanguageSurface for GoSurface {
       };
     }
 
-    if let Some(res) = tool_missing_guard(
-      self.name(),
-      "golangci-lint",
-      start,
-      Some(
-        "brew install golangci-lint / go install github.com/golangci/golangci-lint/v2/cmd/golangci-lint@latest",
-      ),
-    ) {
+    if let Some(res) =
+      tool_missing_guard(self.name(), "golangci-lint", start, None)
+    {
       return res;
     }
 

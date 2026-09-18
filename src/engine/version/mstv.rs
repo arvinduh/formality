@@ -112,6 +112,26 @@ pub struct ToolMstvEntry {
   /// How this tool's version string is obtained.
   pub probe: VersionProbe,
   /// Upgrade advice message shown when tool is outdated.
+  ///
+  /// Deliberately distinct from `install_hint_for` (`src/surfaces/tooling.rs`,
+  /// #264): that function renders `ALL_CHAINS`, the answer to "how do I
+  /// install this tool for the first time". This field answers a narrower
+  /// question -- "how do I move an *already-installed* copy of this tool
+  /// past its MSTV floor" -- which for a few rows here is a genuinely
+  /// different action (`rustup update`, not a fresh `rustup component add`;
+  /// bumping a Go toolchain in place rather than reinstalling a CLI).
+  ///
+  /// For most rows, though, this field just restates a package-manager
+  /// command `ALL_CHAINS` already carries, by hand, in parallel -- the same
+  /// drift risk #264 fixed for `ToolInfo.install_hint`, and it had already
+  /// happened here too: this entry's `taplo` row led with `cargo binstall`
+  /// after `TAPLO_CHAIN` was deliberately reordered npm-first, the same
+  /// headline symptom #264 was filed over. That one string is fixed below.
+  /// Deriving every row here from `ALL_CHAINS` the way install hints now
+  /// are is real follow-up work, tracked as its own spinoff issue rather
+  /// than folded into this PR, so as not to restructure
+  /// `TOOL_MSTV_REGISTRY` (or this struct) as a side effect of an
+  /// install-hint fix.
   pub advice: &'static str,
 }
 
@@ -171,7 +191,14 @@ pub const TOOL_MSTV_REGISTRY: &[ToolMstvEntry] = &[
     binary: "taplo",
     min_version: Some(MSTV_TAPLO),
     probe: DEFAULT_VERSION_PROBE,
-    advice: "Run 'cargo binstall taplo-cli' or 'brew install taplo' or 'cargo install --locked taplo-cli'",
+    // npm-first, matching TAPLO_CHAIN's own deliberate order (see
+    // src/surfaces/tooling.rs's comment above TAPLO_CHAIN): cargo-binstall
+    // has no prebuilt for this pin and falls through to a slow source
+    // build, so it is demoted below npm there. This string used to lead
+    // with `cargo binstall` and disagree with that order -- the exact
+    // headline symptom #264 was filed over, reproduced here on the MSTV
+    // upgrade-advice path (Fixes #264).
+    advice: "Run 'npm install -g @taplo/cli' or 'brew install taplo' or 'cargo binstall taplo-cli' or 'cargo install --locked taplo-cli'",
   },
   ToolMstvEntry {
     binary: "markdownlint-cli2",

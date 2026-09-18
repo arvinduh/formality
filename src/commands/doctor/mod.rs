@@ -26,7 +26,7 @@ use crate::engine::version::{
 use crate::surfaces::{
   LanguageSurface, ToolInfo, all_surfaces, check_binary_exists,
   create_tool_command, default_registry, detect_surfaces_smart,
-  pinned_version_for,
+  matches_name_or_alias, pinned_version_for,
 };
 use crate::ui::paths::display_path;
 use crate::ui::table::{
@@ -300,18 +300,19 @@ fn install_missing_tools_framed(
         }
       }
     } else {
+      let install_hint = tool.effective_install_hint();
       println!(
         "\n  {} No automatic package manager found for {}.\n    Manual install: {}",
         "[MISS]".yellow().bold(),
         tool.binary.bold(),
-        tool.install_hint
+        install_hint
       );
       all_ok = false;
       summary_rows.push(InstallSummaryRow {
         binary: tool.binary,
         installer: "-".to_string(),
         outcome: InstallOutcome::NoInstaller,
-        detail: tool.install_hint.to_string(),
+        detail: install_hint,
       });
     }
   }
@@ -1168,10 +1169,10 @@ fn print_unconfigured_languages(
   };
   let mut unconfigured = Vec::new();
   for surface in all_surfaces() {
-    if !explicit_langs.iter().any(|l| {
-      l.eq_ignore_ascii_case(surface.name())
-        || surface.aliases().iter().any(|a| a.eq_ignore_ascii_case(l))
-    }) && surface.detect(root)
+    if !explicit_langs
+      .iter()
+      .any(|l| matches_name_or_alias(surface.name(), surface.aliases(), l))
+      && surface.detect(root)
     {
       unconfigured.push(surface.name());
     }

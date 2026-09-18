@@ -376,7 +376,7 @@ impl LanguageSurface for JavaScriptSurface {
     vec![ToolInfo {
       binary: "biome",
       description: "Fast formatter and linter for JavaScript, TypeScript, JSX and TSX",
-      install_hint: "Install via: npm install -g @biomejs/biome (or pnpm add -g / yarn global add / bun add -g / brew install biome)",
+      install_hint: None,
       is_required_for_fmt: true,
       is_required_for_lint: true,
     }]
@@ -411,12 +411,7 @@ impl LanguageSurface for JavaScriptSurface {
       };
     }
 
-    if let Some(res) = tool_missing_guard(
-      self.name(),
-      "biome",
-      start,
-      Some("npm install -g @biomejs/biome"),
-    ) {
+    if let Some(res) = tool_missing_guard(self.name(), "biome", start, None) {
       return res;
     }
 
@@ -475,12 +470,7 @@ impl LanguageSurface for JavaScriptSurface {
   fn lint(&self, ctx: &ExecutionContext, fix: bool) -> SurfaceResult {
     let start = Instant::now();
 
-    if let Some(res) = tool_missing_guard(
-      self.name(),
-      "biome",
-      start,
-      Some("npm install -g @biomejs/biome"),
-    ) {
+    if let Some(res) = tool_missing_guard(self.name(), "biome", start, None) {
       return res;
     }
 

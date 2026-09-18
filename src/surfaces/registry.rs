@@ -14,6 +14,25 @@ pub struct SurfaceRegistry {
   surfaces: Vec<Box<dyn LanguageSurface>>,
 }
 
+/// Whether `query` matches a surface's canonical `name` or any of its
+/// `aliases`, case-insensitively (ASCII only). This is the single
+/// "name-or-alias, case-insensitively" comparison shared by
+/// [`SurfaceRegistry::get_surface_by_name`],
+/// [`SurfaceRegistry::resolve_canonical_name`],
+/// [`SurfaceRegistry::detect_surfaces_smart`]'s ignore-list check, and
+/// `commands::doctor`'s unconfigured-language check — it used to be written
+/// out independently at each of those call sites. `pub(crate)` so the doctor
+/// command (outside this module) can reuse it too, per issue #276's "one
+/// name/alias predicate" goal.
+pub(crate) fn matches_name_or_alias(
+  name: &str,
+  aliases: &[&str],
+  query: &str,
+) -> bool {
+  name.eq_ignore_ascii_case(query)
+    || aliases.iter().any(|a| a.eq_ignore_ascii_case(query))
+}
+
 impl Default for SurfaceRegistry {
   fn default() -> Self {
     let mut reg = Self::empty();
@@ -80,10 +99,7 @@ impl SurfaceRegistry {
     self
       .surfaces
       .iter()
-      .find(|s| {
-        s.name().eq_ignore_ascii_case(query)
-          || s.aliases().iter().any(|a| a.eq_ignore_ascii_case(query))
-      })
+      .find(|s| matches_name_or_alias(s.name(), s.aliases(), query))
       .cloned()
   }
 
@@ -97,10 +113,7 @@ impl SurfaceRegistry {
     self
       .surfaces
       .iter()
-      .find(|s| {
-        s.name().eq_ignore_ascii_case(query)
-          || s.aliases().iter().any(|a| a.eq_ignore_ascii_case(query))
-      })
+      .find(|s| matches_name_or_alias(s.name(), s.aliases(), query))
       .map(|s| s.name())
   }
 
@@ -144,10 +157,9 @@ impl SurfaceRegistry {
 
     let is_ignored = |name: &str, aliases: &[&'static str]| -> bool {
       if let Some(ref ignores) = global.ignore_languages {
-        ignores.iter().any(|ig| {
-          ig.eq_ignore_ascii_case(name)
-            || aliases.iter().any(|a| a.eq_ignore_ascii_case(ig))
-        })
+        ignores
+          .iter()
+          .any(|ig| matches_name_or_alias(name, aliases, ig))
       } else {
         false
       }
