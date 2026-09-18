@@ -285,20 +285,22 @@ reformat under `fml fix` because their linter is diagnostics-only (e.g. Java's
 
 ### Deprecated spellings
 
-| deprecated          | use instead                                                                            | removed in |
-| ------------------- | -------------------------------------------------------------------------------------- | ---------- |
-| `fml lint --fix`    | `fml fix`                                                                              | `v0.4.0`   |
-| `fml install`       | `fml doctor --install`                                                                 | `v0.4.0`   |
-| `fml list-surfaces` | `fml doctor`                                                                           | `v0.4.0`   |
-| `fml surfaces`      | `fml doctor`                                                                           | `v0.4.0`   |
-| `fml schema`        | `cargo test --test schema_drift` (or `UPDATE_SCHEMA=1 cargo test --test schema_drift`) | `v0.4.0`   |
-| `fml table`         | `fml::ui::table`                                                                       | `v0.4.0`   |
+`fml lint --fix`, `fml list-surfaces`, `fml surfaces`, and `fml table` were
+removed outright in `v0.3.0` (#255) — each now fails with a message naming its
+replacement (`fml fix`, `fml doctor`, `fml doctor`, and the `fml::ui::table`
+library API, respectively) rather than a bare "unexpected argument".
 
-`fml lint --fix` still works and now runs the full `fml fix` pipeline — lint
-fixes _and_ formatting — after printing a notice to stderr. `fml install`,
-`fml list-surfaces` / `fml surfaces`, `fml schema`, and `fml table` also remain
-temporarily available as deprecated CLI commands that print a notice to stderr
-before executing.
+Two spellings remain deprecated, but not yet removed — both are still invoked
+directly by this repo's own CI and release workflows, so removing them needs a
+coordinated workflow update first:
+
+| deprecated    | use instead                                                                            | removed in |
+| ------------- | -------------------------------------------------------------------------------------- | ---------- |
+| `fml install` | `fml doctor --install`                                                                 | `v0.4.0`   |
+| `fml schema`  | `cargo test --test schema_drift` (or `UPDATE_SCHEMA=1 cargo test --test schema_drift`) | `v0.4.0`   |
+
+Both remain temporarily available as deprecated CLI commands that print a notice
+to stderr before executing.
 
 ---
 
