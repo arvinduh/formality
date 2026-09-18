@@ -176,7 +176,7 @@ impl LanguageSurface for TomlSurface {
     vec![ToolInfo {
       binary: "taplo",
       description: "TOML toolkit, formatter and linter",
-      install_hint: "Install via: cargo binstall taplo-cli (or npm install -g @taplo/cli / brew install taplo / cargo install taplo-cli --locked)",
+      install_hint: None,
       is_required_for_fmt: true,
       is_required_for_lint: true,
     }]
@@ -185,14 +185,7 @@ impl LanguageSurface for TomlSurface {
   fn format(&self, ctx: &ExecutionContext) -> SurfaceResult {
     let start = Instant::now();
 
-    if let Some(res) = tool_missing_guard(
-      self.name(),
-      "taplo",
-      start,
-      Some(
-        "cargo binstall taplo-cli / npm install -g @taplo/cli / brew install taplo / cargo install taplo-cli --locked",
-      ),
-    ) {
+    if let Some(res) = tool_missing_guard(self.name(), "taplo", start, None) {
       return res;
     }
 
@@ -243,14 +236,7 @@ impl LanguageSurface for TomlSurface {
       return lint_fix_unsupported(self.name(), start);
     }
 
-    if let Some(res) = tool_missing_guard(
-      self.name(),
-      "taplo",
-      start,
-      Some(
-        "cargo binstall taplo-cli / npm install -g @taplo/cli / brew install taplo / cargo install taplo-cli --locked",
-      ),
-    ) {
+    if let Some(res) = tool_missing_guard(self.name(), "taplo", start, None) {
       return res;
     }
 

@@ -227,7 +227,6 @@ impl LanguageServer for FormalityLsp {
       false,
       false,
       vec![],
-      false,
       vec![path.clone()],
       false,
     );
@@ -288,7 +287,6 @@ impl LanguageServer for FormalityLsp {
         false,
         false,
         vec![],
-        false,
         vec![path.clone()],
         false,
       );

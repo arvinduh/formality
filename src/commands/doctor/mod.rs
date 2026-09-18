@@ -26,7 +26,7 @@ use crate::engine::version::{
 use crate::surfaces::{
   LanguageSurface, ToolInfo, all_surfaces, check_binary_exists,
   create_tool_command, default_registry, detect_surfaces_smart,
-  pinned_version_for,
+  matches_name_or_alias, pinned_version_for,
 };
 use crate::ui::paths::display_path;
 use crate::ui::table::{
@@ -300,18 +300,19 @@ fn install_missing_tools_framed(
         }
       }
     } else {
+      let install_hint = tool.effective_install_hint();
       println!(
         "\n  {} No automatic package manager found for {}.\n    Manual install: {}",
         "[MISS]".yellow().bold(),
         tool.binary.bold(),
-        tool.install_hint
+        install_hint
       );
       all_ok = false;
       summary_rows.push(InstallSummaryRow {
         binary: tool.binary,
         installer: "-".to_string(),
         outcome: InstallOutcome::NoInstaller,
-        detail: tool.install_hint.to_string(),
+        detail: install_hint,
       });
     }
   }
@@ -557,7 +558,7 @@ pub fn format_stale_tool_warning(
   pinned: &Version,
 ) -> String {
   format!(
-    "tool '{binary}' is stale (v{current} != pinned v{pinned}); run 'fml doctor --install' or pass '--install' to update"
+    "tool '{binary}' is stale (v{current} != pinned v{pinned}); run 'fml doctor --install' to update"
   )
 }
 
@@ -782,7 +783,11 @@ fn clippy_probe_succeeds(driver_bin: &str, cargo_bin: &str) -> bool {
 /// "installed" means (#106). [`check_binary_exists`] is a memoized
 /// `which::which` — a filesystem lookup, no process spawn — so asking it
 /// again after an install costs nothing and is not a second round of version
-/// probes.
+/// probes. (A cache miss for a Go-installed binary can spawn `go env` once,
+/// as the lookup-time fallback for `$GOBIN`/`$GOPATH/bin` -- see
+/// `surfaces::tooling::resolve_via_known_install_dir` -- but that result is
+/// memoized in the same `BINARY_CACHE` too, so it still costs nothing on
+/// the second ask.)
 fn tool_is_on_path(binary: &str) -> bool {
   // The rust surface (and `probe_tool_version`/`get_raw_tool_version`
   // elsewhere in this crate) register/accept the clippy tool under any of
@@ -1164,10 +1169,10 @@ fn print_unconfigured_languages(
   };
   let mut unconfigured = Vec::new();
   for surface in all_surfaces() {
-    if !explicit_langs.iter().any(|l| {
-      l.eq_ignore_ascii_case(surface.name())
-        || surface.aliases().iter().any(|a| a.eq_ignore_ascii_case(l))
-    }) && surface.detect(root)
+    if !explicit_langs
+      .iter()
+      .any(|l| matches_name_or_alias(surface.name(), surface.aliases(), l))
+      && surface.detect(root)
     {
       unconfigured.push(surface.name());
     }

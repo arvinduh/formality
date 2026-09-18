@@ -435,7 +435,7 @@ fn test_scan_tools_and_build_table_surfaces_unprobeable_status_not_ready() {
       vec![ToolInfo {
         binary: self.bin,
         description: "Mock Unprobeable Binary",
-        install_hint: "Cannot install",
+        install_hint: Some("Cannot install"),
         is_required_for_fmt: true,
         is_required_for_lint: true,
       }]
@@ -497,7 +497,7 @@ fn test_format_stale_tool_warning() {
   );
   assert_eq!(
     warning,
-    "tool 'prettier' is stale (v3.8.1 != pinned v3.9.6); run 'fml doctor --install' or pass '--install' to update"
+    "tool 'prettier' is stale (v3.8.1 != pinned v3.9.6); run 'fml doctor --install' to update"
   );
 }
 
@@ -534,11 +534,11 @@ fn test_collect_stale_tool_warnings_filters_and_deduplicates() {
   assert_eq!(warnings.len(), 2);
   assert_eq!(
     warnings[0],
-    "tool 'prettier' is stale (v3.8.1 != pinned v3.9.6); run 'fml doctor --install' or pass '--install' to update"
+    "tool 'prettier' is stale (v3.8.1 != pinned v3.9.6); run 'fml doctor --install' to update"
   );
   assert_eq!(
     warnings[1],
-    "tool 'ruff' is stale (v0.8.0 != pinned v0.9.0); run 'fml doctor --install' or pass '--install' to update"
+    "tool 'ruff' is stale (v0.8.0 != pinned v0.9.0); run 'fml doctor --install' to update"
   );
 }
 
@@ -606,7 +606,7 @@ fn doctor_tool_info(binary: &'static str) -> ToolInfo {
   ToolInfo {
     binary,
     description: "",
-    install_hint: "",
+    install_hint: None,
     is_required_for_fmt: true,
     is_required_for_lint: false,
   }

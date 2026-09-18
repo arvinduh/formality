@@ -9,7 +9,8 @@ use crate::engine::Plan;
 use crate::errors::ExitStatus;
 
 /// Runs the `fml fmt` command: the `[Format]` plan, writing by default and
-/// reporting only under `check`, optionally installing missing tools first.
+/// reporting only under `check`. Provisioning missing tools is `fml doctor
+/// --install`'s job, not this command's (v0.3.0, #282).
 #[allow(clippy::too_many_arguments)]
 pub fn run_fmt(
   root: &Path,
@@ -18,7 +19,6 @@ pub fn run_fmt(
   staged: bool,
   changed: bool,
   lang: Vec<String>,
-  install: bool,
   paths: Vec<PathBuf>,
   allow_missing: bool,
 ) -> ExitStatus {
@@ -28,9 +28,7 @@ pub fn run_fmt(
     staged,
     changed,
     lang,
-    install,
     paths,
     &Plan::fmt(check, allow_missing),
-    "formatting",
   )
 }
