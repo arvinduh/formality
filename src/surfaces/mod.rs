@@ -64,6 +64,7 @@ pub use glob::{
   is_excluded, is_repo_ignored, is_standard_ignored, is_temp_file,
   matches_pattern, simple_glob_match, walk_candidate_files,
 };
+pub(crate) use registry::matches_name_or_alias;
 pub use registry::{
   SurfaceRegistry, all_surfaces, default_registry, detect_surfaces,
   detect_surfaces_smart, get_surface_by_name, resolve_canonical_name,

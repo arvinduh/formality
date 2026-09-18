@@ -26,7 +26,7 @@ use crate::engine::version::{
 use crate::surfaces::{
   LanguageSurface, ToolInfo, all_surfaces, check_binary_exists,
   create_tool_command, default_registry, detect_surfaces_smart,
-  pinned_version_for,
+  matches_name_or_alias, pinned_version_for,
 };
 use crate::ui::paths::display_path;
 use crate::ui::table::{
@@ -1164,10 +1164,10 @@ fn print_unconfigured_languages(
   };
   let mut unconfigured = Vec::new();
   for surface in all_surfaces() {
-    if !explicit_langs.iter().any(|l| {
-      l.eq_ignore_ascii_case(surface.name())
-        || surface.aliases().iter().any(|a| a.eq_ignore_ascii_case(l))
-    }) && surface.detect(root)
+    if !explicit_langs
+      .iter()
+      .any(|l| matches_name_or_alias(surface.name(), surface.aliases(), l))
+      && surface.detect(root)
     {
       unconfigured.push(surface.name());
     }
