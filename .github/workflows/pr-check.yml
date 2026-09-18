@@ -220,9 +220,18 @@ jobs:
     # `tooling::refresh_windows_path_from_registry`), and `go install`
     # writing into $GOBIN/$GOPATH/bin, which is on PATH only if the user
     # put it there -- it is not on the stock ubuntu or windows runner
-    # images, so `goimports` reproduces this every run (see
-    # `tooling::refresh_go_install_path`). And exercises the cargo-binstall
-    # auto-bootstrap path (typstyle has no native package on any OS -- see
+    # images, so `goimports` reproduces this every run. That last one is
+    # handled by resolving at *lookup* time rather than by mutating any
+    # process's PATH (`tooling::resolve_via_known_install_dir`, reached from
+    # `tooling::resolve_binary_path`), because a PATH mutation only ever
+    # helps the process that performed the install and never the next one
+    # (#293). Both halves have to hold for a tool to be usable, and this job
+    # is what exercises them together: finding the binary
+    # (`check_binary_exists`) *and* spawning it by the path that was found
+    # (`tooling::create_tool_command`) -- resolving without spawning by that
+    # path turns a "[MISS]" into a "Failed to execute", which is worse, not
+    # better. Also exercises the cargo-binstall auto-bootstrap path
+    # (typstyle has no native package on any OS -- see
     # `tooling::ensure_cargo_binstall`).
     name: Fresh-Install Regression (${{ matrix.os }})
     strategy:
@@ -321,7 +330,8 @@ jobs:
         # tool that has its own `[OK] Successfully installed <tool>` line
         # earlier in the same output -- the in-process BINARY_CACHE
         # staleness bug this job was written for, and the $GOBIN/$GOPATH/bin
-        # PATH gap in `tooling::refresh_go_install_path`. Scoped to exactly
+        # gap now closed by lookup-time resolution
+        # (`tooling::resolve_via_known_install_dir`). Scoped to exactly
         # that intersection on purpose: a tool fml never claimed to install
         # (no chain available on this runner) reporting [MISS] is a runner
         # image gap, not a regression, and is reported as a notice instead.
