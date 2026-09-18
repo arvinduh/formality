@@ -313,214 +313,29 @@ impl Runner {
 
     for res in &results {
       let duration_str = format!("{:.2?}", res.duration);
+      let spec = row_spec(&res.status, plan);
 
-      match &res.status {
-        SurfaceStatus::Passed => {
-          pass_count += 1;
-          runner_table.add_row(crate::ui::table::Row::new(vec![
-            crate::ui::table::Cell::styled(
-              "[PASS] ",
-              crate::ui::table::Style::Ok,
-            ),
-            crate::ui::table::Cell::styled(
-              res.surface_name,
-              crate::ui::table::Style::Strong,
-            ),
-            crate::ui::table::Cell::styled(
-              passed_detail(plan),
-              crate::ui::table::Style::Dim,
-            ),
-            crate::ui::table::Cell::styled(
-              duration_str,
-              crate::ui::table::Style::Dim,
-            )
-            .align(crate::ui::table::Align::Right),
-          ]));
-        }
-        SurfaceStatus::ConfigSynced { files } => {
-          pass_count += 1;
-          // Every file the surface wrote is named, not just the last one
-          // (#130) — a config created on disk but absent from this row is
-          // the worst failure available to a command whose whole job is
-          // writing config files.
-          let detail = synced_files_detail(files);
-          runner_table.add_row(crate::ui::table::Row::new(vec![
-            crate::ui::table::Cell::styled(
-              "[SYNC] ",
-              crate::ui::table::Style::Ok,
-            ),
-            crate::ui::table::Cell::styled(
-              res.surface_name,
-              crate::ui::table::Style::Strong,
-            ),
-            crate::ui::table::Cell::styled(
-              detail,
-              crate::ui::table::Style::Info,
-            ),
-            crate::ui::table::Cell::styled(
-              duration_str,
-              crate::ui::table::Style::Dim,
-            )
-            .align(crate::ui::table::Align::Right),
-          ]));
-        }
-        SurfaceStatus::ConfigDrifted { file, .. } => {
-          violation_count += 1;
-          if exit_code < 1 {
-            exit_code = 1;
-          }
-          runner_table.add_row(crate::ui::table::Row::new(vec![
-            crate::ui::table::Cell::styled(
-              "[DRIFT]",
-              crate::ui::table::Style::Warn,
-            ),
-            crate::ui::table::Cell::styled(
-              res.surface_name,
-              crate::ui::table::Style::Strong,
-            ),
-            crate::ui::table::Cell::styled(
-              format!("{file} out of sync"),
-              crate::ui::table::Style::Warn,
-            ),
-            crate::ui::table::Cell::styled(
-              duration_str,
-              crate::ui::table::Style::Dim,
-            )
-            .align(crate::ui::table::Align::Right),
-          ]));
-        }
-        SurfaceStatus::ManualConfig { file, .. } => {
-          violation_count += 1;
-          if exit_code < 1 {
-            exit_code = 1;
-          }
-          runner_table.add_row(crate::ui::table::Row::new(vec![
-            crate::ui::table::Cell::styled(
-              "[MANUAL]",
-              crate::ui::table::Style::Warn,
-            ),
-            crate::ui::table::Cell::styled(
-              res.surface_name,
-              crate::ui::table::Style::Strong,
-            ),
-            crate::ui::table::Cell::styled(
-              format!("{file} is manually managed"),
-              crate::ui::table::Style::Warn,
-            ),
-            crate::ui::table::Cell::styled(
-              duration_str,
-              crate::ui::table::Style::Dim,
-            )
-            .align(crate::ui::table::Align::Right),
-          ]));
-        }
-        SurfaceStatus::ViolationsFound { .. } => {
-          violation_count += 1;
-          if exit_code < 1 {
-            exit_code = 1;
-          }
-          runner_table.add_row(crate::ui::table::Row::new(vec![
-            crate::ui::table::Cell::styled(
-              "[FAIL] ",
-              crate::ui::table::Style::Error,
-            ),
-            crate::ui::table::Cell::styled(
-              res.surface_name,
-              crate::ui::table::Style::Strong,
-            ),
-            crate::ui::table::Cell::styled(
-              "Violations found",
-              crate::ui::table::Style::Error,
-            ),
-            crate::ui::table::Cell::styled(
-              duration_str,
-              crate::ui::table::Style::Dim,
-            )
-            .align(crate::ui::table::Align::Right),
-          ]));
-        }
-        SurfaceStatus::ToolMissing { binary, .. } => {
-          tool_missing_count += 1;
-          // An unmet precondition, not an operational fault (#252) — the
-          // surface correctly determined it could not proceed. Exit 1
-          // (`ExitStatus::Violations`), the same as a real violation, so a
-          // missing tool never lets the process exit clean; reserve 2 for
-          // `ExecutionError`, which still wins if one occurs elsewhere.
-          //
-          // `--allow-missing` (#163) is the one opt-out: a machine missing
-          // an optional linter must not fail *every* commit that touches
-          // that surface. It only silences this arm's contribution to
-          // `exit_code` — a real violation elsewhere still sets it above,
-          // and the row stays visible either way (silence is the original
-          // bug, not the fix).
-          if !plan.allow_missing && exit_code < 1 {
-            exit_code = 1;
-          }
-          runner_table.add_row(crate::ui::table::Row::new(vec![
-            crate::ui::table::Cell::styled(
-              "[MISS] ",
-              crate::ui::table::Style::Warn,
-            ),
-            crate::ui::table::Cell::styled(
-              res.surface_name,
-              crate::ui::table::Style::Strong,
-            ),
-            crate::ui::table::Cell::styled(
-              format!("Missing binary: {binary}"),
-              crate::ui::table::Style::Warn,
-            ),
-            crate::ui::table::Cell::styled(
-              duration_str,
-              crate::ui::table::Style::Dim,
-            )
-            .align(crate::ui::table::Align::Right),
-          ]));
-        }
-        SurfaceStatus::ExecutionError { .. } => {
-          error_count += 1;
-          exit_code = 2;
-          runner_table.add_row(crate::ui::table::Row::new(vec![
-            crate::ui::table::Cell::styled(
-              "[ERR]  ",
-              crate::ui::table::Style::Error,
-            ),
-            crate::ui::table::Cell::styled(
-              res.surface_name,
-              crate::ui::table::Style::Strong,
-            ),
-            crate::ui::table::Cell::styled(
-              "Execution error",
-              crate::ui::table::Style::Error,
-            ),
-            crate::ui::table::Cell::styled(
-              duration_str,
-              crate::ui::table::Style::Dim,
-            )
-            .align(crate::ui::table::Align::Right),
-          ]));
-        }
-        SurfaceStatus::Skipped { reason } => {
-          runner_table.add_row(crate::ui::table::Row::new(vec![
-            crate::ui::table::Cell::styled(
-              "[SKIP] ",
-              crate::ui::table::Style::Dim,
-            ),
-            crate::ui::table::Cell::styled(
-              res.surface_name,
-              crate::ui::table::Style::Dim,
-            ),
-            crate::ui::table::Cell::styled(
-              reason.clone(),
-              crate::ui::table::Style::Dim,
-            ),
-            crate::ui::table::Cell::styled(
-              duration_str,
-              crate::ui::table::Style::Dim,
-            )
-            .align(crate::ui::table::Align::Right),
-          ]));
-        }
+      match spec.tally {
+        Some(Tally::Pass) => pass_count += 1,
+        Some(Tally::Violation) => violation_count += 1,
+        Some(Tally::ToolMissing) => tool_missing_count += 1,
+        Some(Tally::Error) => error_count += 1,
+        None => {}
       }
+      if let Some(floor) = spec.exit_floor {
+        exit_code = exit_code.max(floor);
+      }
+
+      runner_table.add_row(crate::ui::table::Row::new(vec![
+        crate::ui::table::Cell::styled(spec.tag, spec.tag_style),
+        crate::ui::table::Cell::styled(res.surface_name, spec.name_style),
+        crate::ui::table::Cell::styled(spec.detail, spec.detail_style),
+        crate::ui::table::Cell::styled(
+          duration_str,
+          crate::ui::table::Style::Dim,
+        )
+        .align(crate::ui::table::Align::Right),
+      ]));
     }
 
     let palette = crate::ui::table::Palette::detect();
@@ -604,6 +419,146 @@ impl Runner {
     println!("  {} in {:.2?}\n", summary_text, start_time.elapsed());
 
     ExitStatus::try_from(exit_code).unwrap_or(ExitStatus::Error)
+  }
+}
+
+/// Which run-level counter a row's status contributes to, if any.
+///
+/// `Skipped` and `Passed`/`ConfigSynced` don't all map to the same bucket —
+/// `Passed`/`ConfigSynced` both count as "passed", the others each get their
+/// own tally, and `Skipped` contributes to none of them (it never did, in
+/// the pre-collapse arms either).
+#[derive(Clone, Copy)]
+enum Tally {
+  Pass,
+  Violation,
+  ToolMissing,
+  Error,
+}
+
+/// Everything one results-table row needs, decided once per [`SurfaceStatus`]
+/// instead of once per hand-built arm (#277).
+///
+/// This is data, not behavior: the results-row loop in [`Runner::run`] is
+/// the only place that reads it, folding `tally` into the run counters and
+/// `exit_floor` into `exit_code` (`exit_code = exit_code.max(floor)`,
+/// matching every original arm's `if exit_code < floor { exit_code = floor
+/// }`) before building the row itself. `exit_floor` already has
+/// `--allow-missing` (#163) applied for `ToolMissing` — the gate lives here,
+/// in the one place a status becomes a floor, rather than in that loop.
+struct RowSpec {
+  tag: &'static str,
+  tag_style: crate::ui::table::Style,
+  name_style: crate::ui::table::Style,
+  detail: String,
+  detail_style: crate::ui::table::Style,
+  tally: Option<Tally>,
+  exit_floor: Option<i32>,
+}
+
+/// Builds the row data for one surface's [`SurfaceStatus`] (#277).
+///
+/// `name_style` is `Strong` for every status except `Skipped`, which is
+/// rendered `Dim` (the surface name of a skipped row was never emphasized —
+/// that's the one place the eight original arms disagreed on a cell other
+/// than tag/detail/counter/exit-floor).
+fn row_spec(status: &SurfaceStatus, plan: &Plan) -> RowSpec {
+  use crate::ui::table::Style;
+
+  match status {
+    SurfaceStatus::Passed => RowSpec {
+      tag: "[PASS] ",
+      tag_style: Style::Ok,
+      name_style: Style::Strong,
+      detail: passed_detail(plan).to_string(),
+      detail_style: Style::Dim,
+      tally: Some(Tally::Pass),
+      exit_floor: None,
+    },
+    SurfaceStatus::ConfigSynced { files } => RowSpec {
+      tag: "[SYNC] ",
+      tag_style: Style::Ok,
+      name_style: Style::Strong,
+      // Every file the surface wrote is named, not just the last one
+      // (#130) — a config created on disk but absent from this row is the
+      // worst failure available to a command whose whole job is writing
+      // config files.
+      detail: synced_files_detail(files),
+      detail_style: Style::Info,
+      tally: Some(Tally::Pass),
+      exit_floor: None,
+    },
+    SurfaceStatus::ConfigDrifted { file, .. } => RowSpec {
+      tag: "[DRIFT]",
+      tag_style: Style::Warn,
+      name_style: Style::Strong,
+      detail: format!("{file} out of sync"),
+      detail_style: Style::Warn,
+      tally: Some(Tally::Violation),
+      exit_floor: Some(1),
+    },
+    SurfaceStatus::ManualConfig { file, .. } => RowSpec {
+      tag: "[MANUAL]",
+      tag_style: Style::Warn,
+      name_style: Style::Strong,
+      detail: format!("{file} is manually managed"),
+      detail_style: Style::Warn,
+      tally: Some(Tally::Violation),
+      exit_floor: Some(1),
+    },
+    SurfaceStatus::ViolationsFound { .. } => RowSpec {
+      tag: "[FAIL] ",
+      tag_style: Style::Error,
+      name_style: Style::Strong,
+      detail: "Violations found".to_string(),
+      detail_style: Style::Error,
+      tally: Some(Tally::Violation),
+      exit_floor: Some(1),
+    },
+    SurfaceStatus::ToolMissing { binary, .. } => RowSpec {
+      tag: "[MISS] ",
+      tag_style: Style::Warn,
+      name_style: Style::Strong,
+      detail: format!("Missing binary: {binary}"),
+      detail_style: Style::Warn,
+      tally: Some(Tally::ToolMissing),
+      // An unmet precondition, not an operational fault (#252) — the
+      // surface correctly determined it could not proceed. Exit 1
+      // (`ExitStatus::Violations`), the same as a real violation, so a
+      // missing tool never lets the process exit clean; reserve 2 for
+      // `ExecutionError`, which still wins if one occurs elsewhere.
+      //
+      // `--allow-missing` (#163) is the one opt-out: a machine missing an
+      // optional linter must not fail *every* commit that touches that
+      // surface. It only silences this status's contribution to
+      // `exit_code` — a real violation elsewhere still sets it via its own
+      // floor, and the row stays visible either way (silence is the
+      // original bug, not the fix). The tally above is untouched by this
+      // flag: a missing tool is still counted, just not floored into a
+      // nonzero exit.
+      exit_floor: if plan.allow_missing { None } else { Some(1) },
+    },
+    SurfaceStatus::ExecutionError { .. } => RowSpec {
+      tag: "[ERR]  ",
+      tag_style: Style::Error,
+      name_style: Style::Strong,
+      detail: "Execution error".to_string(),
+      detail_style: Style::Error,
+      tally: Some(Tally::Error),
+      // The original arm assigned `exit_code = 2` unconditionally rather
+      // than flooring; 2 is the run's ceiling, so a floor of 2 is
+      // equivalent — nothing can push `exit_code` past it before or after.
+      exit_floor: Some(2),
+    },
+    SurfaceStatus::Skipped { reason } => RowSpec {
+      tag: "[SKIP] ",
+      tag_style: Style::Dim,
+      name_style: Style::Dim,
+      detail: reason.clone(),
+      detail_style: Style::Dim,
+      tally: None,
+      exit_floor: None,
+    },
   }
 }
 
