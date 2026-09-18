@@ -200,11 +200,13 @@ pub enum Commands {
     hidden: bool,
   },
 
-  /// Deprecated: use `fml doctor`. Kept working for one minor release.
+  /// Removed in v0.3.0: `fml doctor` is the only spelling now.
   ///
-  /// Hidden from `--help` deliberately: it is on its way out, so help
-  /// advertises only the spelling we want adopted. It still parses, and
-  /// dispatches to `fml doctor` after printing the shared deprecation notice.
+  /// Declared hidden, not deleted outright, so [`Cli::validate`] can reject
+  /// it by name with a message pointing at `fml doctor` instead of clap's
+  /// bare "unexpected argument". Both spellings (`list-surfaces` and the
+  /// `surfaces` alias) parse to this one variant, so rejecting the variant
+  /// rejects both.
   #[command(name = "list-surfaces", alias = "surfaces", hide = true)]
   ListSurfaces,
 
@@ -286,9 +288,10 @@ impl Cli {
   ///   one concern now, not a run command's. Declared hidden for the same
   ///   reason as `--check` above: so the error can name `fml doctor
   ///   --install` instead of clap's bare "unexpected argument".
-  /// - `fml lint --fix`. Removed outright in v0.3.0 (#255): declared hidden
-  ///   for the same by-name-rejection reason as the flags above, reusing
-  ///   the same mechanism rather than inventing a second one (see #282).
+  /// - `fml lint --fix`, `fml list-surfaces`/`fml surfaces`. Removed
+  ///   outright in v0.3.0 (#255): each declared hidden for the same
+  ///   by-name-rejection reason as the flags above, reusing the same
+  ///   mechanism rather than inventing a second one (see #282).
   ///
   /// # Errors
   ///
@@ -296,9 +299,9 @@ impl Cli {
   ///
   /// # Panics
   ///
-  /// Panics if the `lint`/`fmt`/`fix` subcommand is missing from
-  /// [`Commands`] — they are declared directly above, so this is a "the
-  /// enum was edited without updating this" assertion, not a runtime
+  /// Panics if the `lint`/`fmt`/`fix`/`list-surfaces` subcommand is missing
+  /// from [`Commands`] — they are declared directly above, so this is a
+  /// "the enum was edited without updating this" assertion, not a runtime
   /// condition.
   pub fn validate(&self) -> Result<(), clap::Error> {
     if let Commands::Lint { check: true, .. } = &self.command {
@@ -352,6 +355,27 @@ impl Cli {
       ));
     }
 
+    if let Commands::ListSurfaces = &self.command {
+      // Either spelling (`list-surfaces` or the `surfaces` alias) parses to
+      // this one variant; name whichever one the user actually typed.
+      let spelling = if std::env::args().any(|a| a == "surfaces") {
+        "fml surfaces"
+      } else {
+        "fml list-surfaces"
+      };
+      let mut cmd = Self::command();
+      cmd.build();
+      let sub = cmd
+        .find_subcommand_mut("list-surfaces")
+        .expect("`list-surfaces` subcommand is declared above");
+      return Err(sub.error(
+        clap::error::ErrorKind::ArgumentConflict,
+        format!(
+          "`{spelling}` was removed in v0.3.0.\n       Use `fml doctor` instead.",
+        ),
+      ));
+    }
+
     Ok(())
   }
 }
@@ -373,12 +397,45 @@ mod tests {
   use clap::CommandFactory;
 
   #[test]
-  fn test_list_surfaces_subcommand_and_alias() {
-    let cli = Cli::try_parse_from(["fml", "list-surfaces"]).unwrap();
+  fn test_list_surfaces_and_surfaces_are_rejected_with_a_tailored_error() {
+    // Both spellings still parse (declared hidden) so `validate` can name
+    // the removed spelling by which one the user actually typed.
+    let cli = Cli::try_parse_from(["fml", "list-surfaces"])
+      .expect("list-surfaces must parse so validate can reject it by name");
     assert!(matches!(cli.command, Commands::ListSurfaces));
+    let err = cli
+      .validate()
+      .expect_err("`fml list-surfaces` must be an error");
+    let rendered = err.to_string();
+    assert!(
+      rendered.contains("fml list-surfaces"),
+      "error should name the spelling actually typed, got:\n{rendered}"
+    );
+    assert!(
+      rendered.contains("was removed"),
+      "error should say it was removed, got:\n{rendered}"
+    );
+    assert!(
+      rendered.contains("fml doctor"),
+      "error should name the replacement, got:\n{rendered}"
+    );
 
-    let cli_alias = Cli::try_parse_from(["fml", "surfaces"]).unwrap();
+    // The alias also parses to the same variant and is rejected the same
+    // way. Which literal spelling the message names depends on the real
+    // process argv (`std::env::args()`), not the parsed `Cli` here, so
+    // that half is exercised against the built binary instead — see
+    // `test_deprecated_list_surfaces_and_surfaces_are_rejected` in
+    // tests/integration_tests.rs.
+    let cli_alias = Cli::try_parse_from(["fml", "surfaces"])
+      .expect("surfaces must parse so validate can reject it by name");
     assert!(matches!(cli_alias.command, Commands::ListSurfaces));
+    let err_alias = cli_alias
+      .validate()
+      .expect_err("`fml surfaces` must be an error");
+    assert!(
+      err_alias.to_string().contains("was removed"),
+      "error should say it was removed, got:\n{err_alias}"
+    );
   }
 
   #[test]
@@ -521,8 +578,10 @@ mod tests {
   }
 
   #[test]
-  fn test_deprecated_install_and_surfaces_commands_parse_and_are_hidden_from_help()
-   {
+  fn test_deprecated_install_command_parses_and_is_hidden_from_help() {
+    // `fml install` itself is not in #255's scope (blocked on CI workflows
+    // that still invoke it — see the PR description) and keeps working
+    // exactly as before.
     let cli_install = Cli::try_parse_from(["fml", "install"]).unwrap();
     assert!(matches!(
       cli_install.command,
@@ -538,15 +597,6 @@ mod tests {
     ));
     assert!(cli_install_all.validate().is_ok());
 
-    let cli_list_surfaces =
-      Cli::try_parse_from(["fml", "list-surfaces"]).unwrap();
-    assert!(matches!(cli_list_surfaces.command, Commands::ListSurfaces));
-    assert!(cli_list_surfaces.validate().is_ok());
-
-    let cli_surfaces = Cli::try_parse_from(["fml", "surfaces"]).unwrap();
-    assert!(matches!(cli_surfaces.command, Commands::ListSurfaces));
-    assert!(cli_surfaces.validate().is_ok());
-
     let mut cmd = Cli::command();
     cmd.build();
     let help = cmd.render_help().to_string();
@@ -561,24 +611,37 @@ mod tests {
       "deprecated `install` should be hidden from subcommand list"
     );
     assert!(
-      !visible_subcommands.contains(&"list-surfaces"),
-      "deprecated `list-surfaces` should be hidden from subcommand list"
-    );
-    assert!(
       !help.lines().any(|l| l.trim_start().starts_with("install ")),
       "deprecated `install` should not appear in --help, got:\n{help}"
+    );
+  }
+
+  #[test]
+  fn test_removed_list_surfaces_and_surfaces_are_hidden_from_help() {
+    let mut cmd = Cli::command();
+    cmd.build();
+    let help = cmd.render_help().to_string();
+
+    let visible_subcommands: Vec<&str> = cmd
+      .get_subcommands()
+      .filter(|c| !c.is_hide_set())
+      .map(|c| c.get_name())
+      .collect();
+    assert!(
+      !visible_subcommands.contains(&"list-surfaces"),
+      "removed `list-surfaces` should be hidden from subcommand list"
     );
     assert!(
       !help
         .lines()
         .any(|l| l.trim_start().starts_with("list-surfaces ")),
-      "deprecated `list-surfaces` should not appear in --help, got:\n{help}"
+      "removed `list-surfaces` should not appear in --help, got:\n{help}"
     );
     assert!(
       !help
         .lines()
         .any(|l| l.trim_start().starts_with("surfaces ")),
-      "deprecated alias `surfaces` should not appear in --help, got:\n{help}"
+      "removed alias `surfaces` should not appear in --help, got:\n{help}"
     );
   }
 

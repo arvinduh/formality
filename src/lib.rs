@@ -131,18 +131,16 @@ fn run_command_inner(
       commands::init::run_init(root, &config, force, hidden)
     }
 
+    // Removed in v0.3.0 (#255): `Cli::validate()` rejects this variant by
+    // name before `run_command_inner` is ever reached via the real CLI
+    // (`Cli::parse_checked`). Only code that builds a `Commands` value
+    // directly and calls `run_with_args`/`run_command_inner` without going
+    // through `validate()` first could reach this arm, which no test or
+    // caller does after this removal.
     Commands::ListSurfaces => {
-      let spelling = if std::env::args().any(|a| a == "surfaces") {
-        "fml surfaces"
-      } else {
-        "fml list-surfaces"
-      };
-      crate::ui::deprecation::warn_deprecated_spelling(
-        spelling,
-        "fml doctor",
-        None,
-      );
-      commands::doctor::run_doctor(root, false, false, &config)
+      unreachable!(
+        "`fml list-surfaces`/`fml surfaces` is rejected by `Cli::validate()` before dispatch"
+      )
     }
 
     Commands::Fmt {
@@ -830,10 +828,19 @@ mod tests {
 
   #[test]
   fn test_relative_root_resolves_to_absolute() {
+    // `Commands::ListSurfaces` used to be the harmless probe here, but it's
+    // now rejected by `Cli::validate()` before dispatch (#255) and panics
+    // if reached directly via `run_with_args`, which bypasses `validate()`.
+    // `Doctor { all: false, install: false }` dispatches to the exact same
+    // `commands::doctor::run_doctor(root, false, false, &config)` call
+    // `ListSurfaces` used to, so this is not a new code path.
     let args = Cli {
       config: None,
       root: Some(std::path::PathBuf::from(".")),
-      command: Commands::ListSurfaces,
+      command: Commands::Doctor {
+        all: false,
+        install: false,
+      },
     };
     let status = run_with_args(args);
     assert_eq!(status, ExitStatus::Clean);

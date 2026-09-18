@@ -102,9 +102,11 @@ workspace/toolchain verification checks). Tool installation lives entirely in
 removed from `fmt`/`lint`/`fix` in v0.3.0 (#282), so `fml doctor --install` is
 its only caller now. `fmt`/`lint`/`fix` instead call
 `preflight_warn_stale_tools`, which only warns about stale tools, never
-installs. The deprecated `fml install` and `fml list-surfaces` / `fml surfaces`
-dispatch directly to `doctor::run_doctor`. `mod.rs` at the top of this directory
-also holds shared helpers used by more than one command handler.
+installs. The deprecated `fml install` still dispatches directly to
+`doctor::run_doctor`; `fml list-surfaces` / `fml surfaces` used to as well but
+were removed outright in v0.3.0 (#255) and are now rejected by `Cli::validate()`
+before dispatch. `mod.rs` at the top of this directory also holds shared helpers
+used by more than one command handler.
 
 ## Cross-cutting: process and release docs
 
