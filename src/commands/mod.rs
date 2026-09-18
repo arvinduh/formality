@@ -20,8 +20,6 @@ pub mod migrate;
 pub mod schema;
 /// Native configuration synchronization CLI command handler.
 pub mod sync;
-/// Output table formatting helper CLI command.
-pub mod table;
 
 use std::path::{Path, PathBuf};
 

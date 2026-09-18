@@ -131,18 +131,16 @@ fn run_command_inner(
       commands::init::run_init(root, &config, force, hidden)
     }
 
+    // Removed in v0.3.0 (#255): `Cli::validate()` rejects this variant by
+    // name before `run_command_inner` is ever reached via the real CLI
+    // (`Cli::parse_checked`). Only code that builds a `Commands` value
+    // directly and calls `run_with_args`/`run_command_inner` without going
+    // through `validate()` first could reach this arm, which no test or
+    // caller does after this removal.
     Commands::ListSurfaces => {
-      let spelling = if std::env::args().any(|a| a == "surfaces") {
-        "fml surfaces"
-      } else {
-        "fml list-surfaces"
-      };
-      crate::ui::deprecation::warn_deprecated_spelling(
-        spelling,
-        "fml doctor",
-        None,
-      );
-      commands::doctor::run_doctor(root, false, false, &config)
+      unreachable!(
+        "`fml list-surfaces`/`fml surfaces` is rejected by `Cli::validate()` before dispatch"
+      )
     }
 
     Commands::Fmt {
@@ -183,42 +181,6 @@ fn run_command_inner(
       allow_missing,
     ),
 
-    // `--fix` is the deprecated spelling of `fml fix` and dispatches to it
-    // outright, rather than to a lint-only writing form. That form no
-    // longer exists: a lint-fix pass without the format pass that follows
-    // it leaves the tree lint-fixed but unformatted, which is exactly the
-    // state `.agents/orchestrate.md` §5 says `fml` must never leave
-    // behind — and it was the sole source of the `fml fix` /
-    // `fml lint --fix` ambiguity. The notice says so, and the run banner
-    // reads `fml fix`, because that is genuinely what runs.
-    Commands::Lint {
-      fix: true,
-      staged,
-      changed,
-      lang,
-      allow_missing,
-      paths,
-      ..
-    } => {
-      crate::ui::deprecation::warn_deprecated_spelling(
-        "fml lint --fix",
-        "fml fix",
-        Some(
-          "it applies the same lint fixes and then reformats, which `fml lint --fix` never did",
-        ),
-      );
-      commands::fix::run_fix(
-        root,
-        &config,
-        false,
-        staged,
-        changed,
-        lang,
-        paths,
-        allow_missing,
-      )
-    }
-
     Commands::Lint {
       staged,
       changed,
@@ -245,13 +207,13 @@ fn run_command_inner(
       ExitStatus::Clean
     }
 
-    Commands::Table { json } => {
-      crate::ui::deprecation::warn_deprecated_spelling(
-        "fml table",
-        "fml::ui::table",
-        None,
-      );
-      commands::table::run_table(json)
+    // Removed in v0.3.0 (#255): `Cli::validate()` rejects this variant by
+    // name before `run_command_inner` is ever reached via the real CLI —
+    // see the `ListSurfaces` arm above for why this arm still exists.
+    Commands::Table { .. } => {
+      unreachable!(
+        "`fml table` is rejected by `Cli::validate()` before dispatch"
+      )
     }
 
     Commands::Migrate { command } => {
@@ -866,10 +828,18 @@ mod tests {
 
   #[test]
   fn test_relative_root_resolves_to_absolute() {
+    // `Commands::ListSurfaces` used to be the harmless probe here, but it's
+    // now rejected by `Cli::validate()` before dispatch (#255) and panics
+    // if reached directly via `run_with_args`, which bypasses `validate()`.
+    // `Doctor` is an equally cheap, side-effect-free read used the same way
+    // elsewhere in this test module.
     let args = Cli {
       config: None,
       root: Some(std::path::PathBuf::from(".")),
-      command: Commands::ListSurfaces,
+      command: Commands::Doctor {
+        all: false,
+        install: false,
+      },
     };
     let status = run_with_args(args);
     assert_eq!(status, ExitStatus::Clean);

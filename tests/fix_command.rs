@@ -497,34 +497,40 @@ fn test_fix_check_and_fix_agree_when_no_pass_can_fix() {
   );
 }
 
-/// Issue #118: `fml lint --fix` is the deprecated spelling of `fml fix` and
-/// must keep working for one minor release — dispatching to the *fix* plan,
-/// so the tree is left formatted rather than lint-fixed-but-unformatted.
+/// Issue #255: `fml lint --fix` was removed outright in v0.3.0 — it must
+/// fail with a message naming `fml fix`, never a bare clap "unexpected
+/// argument", and it must never reach the fix plan.
 #[test]
-fn test_deprecated_lint_fix_runs_the_fix_plan() {
-  if !markdown_toolchain_available() {
-    eprintln!(
-      "SKIP: test_deprecated_lint_fix_runs_the_fix_plan \
-       — markdownlint/prettier not on PATH"
-    );
-    return;
-  }
+fn test_lint_fix_is_rejected_by_the_real_binary() {
+  use std::process::Command;
 
   let temp =
     temp_repo(&[("doc.md", "# Title\n\nSome paragraph   with   spaces.\n")]);
   let root = temp.path();
-  let doc_md = root.join("doc.md");
 
-  assert_eq!(run_cli(root, lint_cmd(true, &["markdown"])), 0);
-
-  // The format pass ran: `fml lint --fix` used to leave this collapsed-run
-  // of spaces alone, because it never reformatted.
-  let after = fs::read_to_string(&doc_md).unwrap();
+  let out = Command::new(env!("CARGO_BIN_EXE_fml"))
+    .args(["lint", "--fix", "--lang", "markdown"])
+    .current_dir(root)
+    .output()
+    .expect("failed to run fml lint --fix");
+  assert!(!out.status.success());
+  let stderr = String::from_utf8_lossy(&out.stderr);
   assert!(
-    !after.contains("   with   "),
-    "`fml lint --fix` must dispatch to the fix plan, which reformats; got:\n{after}"
+    stderr.contains("fml lint")
+      && stderr.contains("--fix")
+      && stderr.contains("was removed"),
+    "expected removal error naming `--fix` on `fml lint` in stderr, got: {stderr}"
+  );
+  assert!(
+    stderr.contains("fml fix"),
+    "expected the error to name `fml fix` as the replacement, got: {stderr}"
   );
 
-  // And the tree it left behind is genuinely clean.
-  assert_eq!(run_cli(root, fmt_cmd(true, &["markdown"])), 0);
+  // Never dispatched: the file is untouched.
+  let doc_md = root.join("doc.md");
+  assert_eq!(
+    fs::read_to_string(&doc_md).unwrap(),
+    "# Title\n\nSome paragraph   with   spaces.\n",
+    "a rejected command must not write anything"
+  );
 }

@@ -12,8 +12,8 @@ module map) · [Facet Rosetta](docs/facet-rosetta.md) (the canonical
 cross-language config vocabulary) ·
 [Language Surface Guides](docs/language-surfaces.md) (per-surface tools, config,
 and behavior) · [Adding a New Surface](docs/new-surface-guide.md) ·
-[`fml table` Spec](docs/table-spec.md) · [Style Guide](docs/style-guide.md) ·
-[Release Procedure](docs/release.md) ·
+[Table Spec](docs/table-spec.md) (`fml::ui::table`) ·
+[Style Guide](docs/style-guide.md) · [Release Procedure](docs/release.md) ·
 [Compatibility Matrix](docs/compatibility.md) · [ADRs](docs/adr/README.md)
 
 ---
@@ -285,20 +285,22 @@ reformat under `fml fix` because their linter is diagnostics-only (e.g. Java's
 
 ### Deprecated spellings
 
-| deprecated          | use instead                                                                            | removed in |
-| ------------------- | -------------------------------------------------------------------------------------- | ---------- |
-| `fml lint --fix`    | `fml fix`                                                                              | `v0.4.0`   |
-| `fml install`       | `fml doctor --install`                                                                 | `v0.4.0`   |
-| `fml list-surfaces` | `fml doctor`                                                                           | `v0.4.0`   |
-| `fml surfaces`      | `fml doctor`                                                                           | `v0.4.0`   |
-| `fml schema`        | `cargo test --test schema_drift` (or `UPDATE_SCHEMA=1 cargo test --test schema_drift`) | `v0.4.0`   |
-| `fml table`         | `fml::ui::table`                                                                       | `v0.4.0`   |
+`fml lint --fix`, `fml list-surfaces`, `fml surfaces`, and `fml table` were
+removed outright in `v0.3.0` (#255) — each now fails with a message naming its
+replacement (`fml fix`, `fml doctor`, `fml doctor`, and the `fml::ui::table`
+library API, respectively) rather than a bare "unexpected argument".
 
-`fml lint --fix` still works and now runs the full `fml fix` pipeline — lint
-fixes _and_ formatting — after printing a notice to stderr. `fml install`,
-`fml list-surfaces` / `fml surfaces`, `fml schema`, and `fml table` also remain
-temporarily available as deprecated CLI commands that print a notice to stderr
-before executing.
+Two spellings remain deprecated, but not yet removed — both are still invoked
+directly by this repo's own CI and release workflows, so removing them needs a
+coordinated workflow update first:
+
+| deprecated    | use instead                                                                            | removed in |
+| ------------- | -------------------------------------------------------------------------------------- | ---------- |
+| `fml install` | `fml doctor --install`                                                                 | `v0.4.0`   |
+| `fml schema`  | `cargo test --test schema_drift` (or `UPDATE_SCHEMA=1 cargo test --test schema_drift`) | `v0.4.0`   |
+
+Both remain temporarily available as deprecated CLI commands that print a notice
+to stderr before executing.
 
 ---
 
@@ -387,30 +389,29 @@ Options:
 
 ### Key flags
 
-| Command       | Flag              | Description                                                                                    |
-| :------------ | :---------------- | :--------------------------------------------------------------------------------------------- |
-| `fml fmt`     | `--check`         | Exit 1 if any file would be reformatted (CI safe)                                              |
-| `fml fmt`     | `--staged`        | Operate only on `git diff --cached` files                                                      |
-| `fml fmt`     | `--changed`       | Operate only on `git diff` (unstaged) files                                                    |
-| `fml fmt`     | `--lang`          | Filter to a specific surface, e.g. `--lang rust`                                               |
-| `fml fmt`     | `--allow-missing` | A missing required tool alone does not fail the run (still reported)                           |
-| `fml lint`    | `--staged`        | Operate only on `git diff --cached` files                                                      |
-| `fml lint`    | `--changed`       | Operate only on `git diff` (unstaged) files                                                    |
-| `fml lint`    | `--lang`          | Filter to a specific surface                                                                   |
-| `fml lint`    | `--allow-missing` | A missing required tool alone does not fail the run (still reported)                           |
-| `fml fix`     | `--check`         | Exit 1 if `fml fix` would change anything; writes nothing (CI safe)                            |
-| `fml fix`     | `--staged`        | Operate only on `git diff --cached` files                                                      |
-| `fml fix`     | `--changed`       | Operate only on `git diff` (unstaged) files                                                    |
-| `fml fix`     | `--lang`          | Filter to a specific surface                                                                   |
-| `fml fix`     | `--allow-missing` | A missing required tool alone does not fail the run (still reported)                           |
-| `fml sync`    | `--check`         | Exit 1 if any native config is out of sync                                                     |
-| `fml sync`    | `--lang`          | Filter to a specific surface                                                                   |
-| `fml doctor`  | `--all`           | Show all surfaces, not just active ones                                                        |
-| `fml doctor`  | `--install`       | Auto-install all missing toolchains                                                            |
-| `fml init`    | `--force`         | Overwrite an existing config file                                                              |
-| `fml init`    | `--hidden`        | Write `.formality.toml` instead of `formality.toml`                                            |
-| `fml table`   | `--json`          | Table spec JSON string (reads stdin if omitted) — see [docs/table-spec.md](docs/table-spec.md) |
-| `fml migrate` | `schema`          | Rewrite `#:schema` directive in config to match current release                                |
+| Command       | Flag              | Description                                                          |
+| :------------ | :---------------- | :------------------------------------------------------------------- |
+| `fml fmt`     | `--check`         | Exit 1 if any file would be reformatted (CI safe)                    |
+| `fml fmt`     | `--staged`        | Operate only on `git diff --cached` files                            |
+| `fml fmt`     | `--changed`       | Operate only on `git diff` (unstaged) files                          |
+| `fml fmt`     | `--lang`          | Filter to a specific surface, e.g. `--lang rust`                     |
+| `fml fmt`     | `--allow-missing` | A missing required tool alone does not fail the run (still reported) |
+| `fml lint`    | `--staged`        | Operate only on `git diff --cached` files                            |
+| `fml lint`    | `--changed`       | Operate only on `git diff` (unstaged) files                          |
+| `fml lint`    | `--lang`          | Filter to a specific surface                                         |
+| `fml lint`    | `--allow-missing` | A missing required tool alone does not fail the run (still reported) |
+| `fml fix`     | `--check`         | Exit 1 if `fml fix` would change anything; writes nothing (CI safe)  |
+| `fml fix`     | `--staged`        | Operate only on `git diff --cached` files                            |
+| `fml fix`     | `--changed`       | Operate only on `git diff` (unstaged) files                          |
+| `fml fix`     | `--lang`          | Filter to a specific surface                                         |
+| `fml fix`     | `--allow-missing` | A missing required tool alone does not fail the run (still reported) |
+| `fml sync`    | `--check`         | Exit 1 if any native config is out of sync                           |
+| `fml sync`    | `--lang`          | Filter to a specific surface                                         |
+| `fml doctor`  | `--all`           | Show all surfaces, not just active ones                              |
+| `fml doctor`  | `--install`       | Auto-install all missing toolchains                                  |
+| `fml init`    | `--force`         | Overwrite an existing config file                                    |
+| `fml init`    | `--hidden`        | Write `.formality.toml` instead of `formality.toml`                  |
+| `fml migrate` | `schema`          | Rewrite `#:schema` directive in config to match current release      |
 
 ---
 
