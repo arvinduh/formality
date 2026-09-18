@@ -778,16 +778,41 @@ static BINARY_CACHE: OnceLock<Mutex<HashMap<String, Option<PathBuf>>>> =
 /// fix for #293: a tool an *earlier* `fml` process installed into that
 /// directory must still resolve here, in a brand-new process that starts
 /// with a stock environment and never ran that installer itself.
+///
+/// **The lock is never held across the resolution itself.** The cache guard
+/// is taken to read, dropped, and only re-taken to insert. That is load
+/// bearing twice over:
+///
+/// 1. *Correctness.* [`resolve_via_known_install_dir`] spawns `go env`
+///    through [`create_tool_command`], which calls **back into this
+///    function** to resolve `go` itself. [`BINARY_CACHE`]'s
+///    `std::sync::Mutex` is not reentrant, so re-locking it on the same
+///    thread while the first guard was alive is a documented
+///    panic-or-deadlock (a deadlock on Windows' SRWLOCK) -- and it would
+///    fire on exactly the lookup this fallback exists for.
+/// 2. *Throughput.* Surfaces fan out over `rayon`
+///    (`crate::engine::runner`), so holding the single global cache mutex
+///    across a process spawn would stall every other surface's lookups
+///    behind one `go env`.
+///
+/// The cost of dropping the guard is that two threads racing on the same
+/// cold binary can both resolve it. That is harmless: resolution is a pure
+/// read of `PATH`/the filesystem, both threads compute the same answer, and
+/// the second insert overwrites the first with an equal value.
 #[must_use]
 pub fn resolve_binary_path(binary: &str) -> Option<PathBuf> {
   let cache = BINARY_CACHE.get_or_init(|| Mutex::new(HashMap::new()));
-  let mut guard = cache.lock().unwrap_or_else(|e| e.into_inner());
-  if let Some(resolved) = guard.get(binary) {
-    return resolved.clone();
+  {
+    let guard = cache.lock().unwrap_or_else(|e| e.into_inner());
+    if let Some(resolved) = guard.get(binary) {
+      return resolved.clone();
+    }
   }
+  // Deliberately outside the critical section -- see the doc comment above.
   let resolved = which::which(binary)
     .ok()
     .or_else(|| resolve_via_known_install_dir(binary));
+  let mut guard = cache.lock().unwrap_or_else(|e| e.into_inner());
   guard.insert(binary.to_string(), resolved.clone());
   resolved
 }
@@ -2868,6 +2893,45 @@ mod tests {
       "the fallback hit must be memoized in BINARY_CACHE, not re-derived \
        (and re-stat'd) on every call"
     );
+  }
+
+  #[test]
+  fn test_resolve_binary_path_does_not_hold_the_cache_lock_over_the_fallback() {
+    // Regression guard for the self-deadlock (#293 QA finding 2): the
+    // known-install-dir fallback spawns `go env` via `create_tool_command`,
+    // which resolves `go` through `resolve_binary_path` itself. With the
+    // cache guard still alive across the fallback, that re-lock of a
+    // non-reentrant `std::sync::Mutex` on the same thread is a documented
+    // panic-or-deadlock -- a hang on Windows' SRWLOCK.
+    //
+    // Driven through a real Go-chain binary that `which` cannot see, so the
+    // fallback (and therefore the re-entrant lookup) genuinely runs. Done on
+    // a worker thread with a receive timeout so a regression surfaces as a
+    // failed assertion instead of hanging the whole test binary forever.
+    let Some(missing) = ["golangci-lint", "goimports"]
+      .into_iter()
+      .find(|b| which::which(b).is_err())
+    else {
+      eprintln!(
+        "skipping the BINARY_CACHE re-entrancy test: every Go-chain binary \
+         is already on this machine's PATH, so the fallback never runs"
+      );
+      return;
+    };
+
+    let (tx, rx) = std::sync::mpsc::channel();
+    let worker = std::thread::spawn(move || {
+      let resolved = resolve_binary_path(missing);
+      // Sent after the call returns; a deadlocked lookup never gets here.
+      let _ = tx.send(resolved);
+    });
+
+    rx.recv_timeout(std::time::Duration::from_secs(60)).expect(
+      "resolve_binary_path deadlocked (or panicked) on the re-entrant \
+       lookup its own known-install-dir fallback performs -- the \
+       BINARY_CACHE guard must be dropped before the fallback runs",
+    );
+    worker.join().expect("lookup thread panicked");
   }
 
   #[test]
