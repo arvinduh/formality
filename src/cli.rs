@@ -71,12 +71,11 @@ pub enum Commands {
 
   /// Lint source files. Never writes -- use `fml fix` to apply fixes
   Lint {
-    /// Deprecated: use `fml fix`. Kept working for one minor release.
+    /// Removed in v0.3.0: `fml fix` is the only spelling now.
     ///
-    /// Hidden from `--help` deliberately: it is on its way out, so help
-    /// advertises only the spelling we want adopted. It still parses, and
-    /// dispatches to the `fix` plan (lint fixes *and* format) after
-    /// printing the shared deprecation notice.
+    /// Declared hidden, not deleted outright, so [`Cli::validate`] can
+    /// reject it by name with a message pointing at `fml fix` instead of
+    /// clap's bare "unexpected argument".
     #[arg(long, hide = true)]
     fix: bool,
 
@@ -201,11 +200,13 @@ pub enum Commands {
     hidden: bool,
   },
 
-  /// Deprecated: use `fml doctor`. Kept working for one minor release.
+  /// Removed in v0.3.0: `fml doctor` is the only spelling now.
   ///
-  /// Hidden from `--help` deliberately: it is on its way out, so help
-  /// advertises only the spelling we want adopted. It still parses, and
-  /// dispatches to `fml doctor` after printing the shared deprecation notice.
+  /// Declared hidden, not deleted outright, so [`Cli::validate`] can reject
+  /// it by name with a message pointing at `fml doctor` instead of clap's
+  /// bare "unexpected argument". Both spellings (`list-surfaces` and the
+  /// `surfaces` alias) parse to this one variant, so rejecting the variant
+  /// rejects both.
   #[command(name = "list-surfaces", alias = "surfaces", hide = true)]
   ListSurfaces,
 
@@ -237,10 +238,11 @@ pub enum Commands {
   /// Editors connect via stdio (the default transport for most editors).
   Lsp,
 
-  /// Deprecated: use `fml::ui::table` library API.
+  /// Removed in v0.3.0: use the `fml::ui::table` library API directly.
   ///
-  /// Render an opinionated semantic terminal table from JSON specification.
-  /// Hidden from `--help`; still parses for 1 minor release.
+  /// Declared hidden, not deleted outright, so [`Cli::validate`] can reject
+  /// it by name with a message pointing at the library API instead of
+  /// clap's bare "unexpected argument".
   #[command(hide = true)]
   Table {
     /// Table specification JSON string (reads from stdin if omitted)
@@ -287,6 +289,10 @@ impl Cli {
   ///   one concern now, not a run command's. Declared hidden for the same
   ///   reason as `--check` above: so the error can name `fml doctor
   ///   --install` instead of clap's bare "unexpected argument".
+  /// - `fml lint --fix`, `fml list-surfaces`/`fml surfaces`, `fml table`.
+  ///   All removed outright in v0.3.0 (#255); each is declared hidden for
+  ///   the same by-name-rejection reason as the flags above, reusing the
+  ///   same mechanism rather than inventing a second one (see #282).
   ///
   /// # Errors
   ///
@@ -294,10 +300,10 @@ impl Cli {
   ///
   /// # Panics
   ///
-  /// Panics if the `lint`/`fmt`/`fix` subcommand is missing from
-  /// [`Commands`] — they are declared directly above, so this is a "the
-  /// enum was edited without updating this" assertion, not a runtime
-  /// condition.
+  /// Panics if the `lint`/`fmt`/`fix`/`list-surfaces`/`table` subcommand is
+  /// missing from [`Commands`] — they are declared directly above, so this
+  /// is a "the enum was edited without updating this" assertion, not a
+  /// runtime condition.
   pub fn validate(&self) -> Result<(), clap::Error> {
     if let Commands::Lint { check: true, .. } = &self.command {
       let mut cmd = Self::command();
@@ -312,6 +318,20 @@ impl Cli {
           "  tip: `fml lint` is already report-only. For a read-only run ",
           "of the fix pipeline, use `fml fix --check`.",
         ),
+      ));
+    }
+
+    if let Commands::Lint { fix: true, .. } = &self.command {
+      let mut cmd = Self::command();
+      cmd.build();
+      let lint = cmd
+        .find_subcommand_mut("lint")
+        .expect("`lint` subcommand is declared above");
+      return Err(lint.error(
+        clap::error::ErrorKind::ArgumentConflict,
+        "`--fix` was removed from `fml lint` in v0.3.0.\n       \
+         Use `fml fix` instead — it applies the same lint fixes and then \
+         reformats, which `fml lint --fix` never did.",
       ));
     }
 
@@ -336,6 +356,40 @@ impl Cli {
       ));
     }
 
+    if let Commands::ListSurfaces = &self.command {
+      // Either spelling (`list-surfaces` or the `surfaces` alias) parses to
+      // this one variant; name whichever one the user actually typed.
+      let spelling = if std::env::args().any(|a| a == "surfaces") {
+        "fml surfaces"
+      } else {
+        "fml list-surfaces"
+      };
+      let mut cmd = Self::command();
+      cmd.build();
+      let sub = cmd
+        .find_subcommand_mut("list-surfaces")
+        .expect("`list-surfaces` subcommand is declared above");
+      return Err(sub.error(
+        clap::error::ErrorKind::ArgumentConflict,
+        format!(
+          "`{spelling}` was removed in v0.3.0.\n       Use `fml doctor` instead.",
+        ),
+      ));
+    }
+
+    if let Commands::Table { .. } = &self.command {
+      let mut cmd = Self::command();
+      cmd.build();
+      let sub = cmd
+        .find_subcommand_mut("table")
+        .expect("`table` subcommand is declared above");
+      return Err(sub.error(
+        clap::error::ErrorKind::ArgumentConflict,
+        "`fml table` was removed in v0.3.0.\n       \
+         Use the `fml::ui::table` library API directly instead.",
+      ));
+    }
+
     Ok(())
   }
 }
@@ -357,12 +411,45 @@ mod tests {
   use clap::CommandFactory;
 
   #[test]
-  fn test_list_surfaces_subcommand_and_alias() {
-    let cli = Cli::try_parse_from(["fml", "list-surfaces"]).unwrap();
+  fn test_list_surfaces_and_surfaces_are_rejected_with_a_tailored_error() {
+    // Both spellings still parse (declared hidden) so `validate` can name
+    // the removed spelling by which one the user actually typed.
+    let cli = Cli::try_parse_from(["fml", "list-surfaces"])
+      .expect("list-surfaces must parse so validate can reject it by name");
     assert!(matches!(cli.command, Commands::ListSurfaces));
+    let err = cli
+      .validate()
+      .expect_err("`fml list-surfaces` must be an error");
+    let rendered = err.to_string();
+    assert!(
+      rendered.contains("fml list-surfaces"),
+      "error should name the spelling actually typed, got:\n{rendered}"
+    );
+    assert!(
+      rendered.contains("was removed"),
+      "error should say it was removed, got:\n{rendered}"
+    );
+    assert!(
+      rendered.contains("fml doctor"),
+      "error should name the replacement, got:\n{rendered}"
+    );
 
-    let cli_alias = Cli::try_parse_from(["fml", "surfaces"]).unwrap();
+    // The alias also parses to the same variant and is rejected the same
+    // way. Which literal spelling the message names depends on the real
+    // process argv (`std::env::args()`), not the parsed `Cli` here, so
+    // that half is exercised against the built binary instead — see
+    // `test_deprecated_list_surfaces_and_surfaces_are_rejected` in
+    // tests/integration_tests.rs.
+    let cli_alias = Cli::try_parse_from(["fml", "surfaces"])
+      .expect("surfaces must parse so validate can reject it by name");
     assert!(matches!(cli_alias.command, Commands::ListSurfaces));
+    let err_alias = cli_alias
+      .validate()
+      .expect_err("`fml surfaces` must be an error");
+    assert!(
+      err_alias.to_string().contains("was removed"),
+      "error should say it was removed, got:\n{err_alias}"
+    );
   }
 
   #[test]
@@ -408,10 +495,23 @@ mod tests {
   }
 
   #[test]
-  fn test_deprecated_lint_fix_still_parses_but_is_hidden_from_help() {
-    let cli = Cli::try_parse_from(["fml", "lint", "--fix"]).unwrap();
-    assert!(matches!(cli.command, Commands::Lint { fix: true, .. }));
-    assert!(cli.validate().is_ok());
+  fn test_lint_fix_is_rejected_with_a_tailored_error() {
+    // `--fix` still parses (declared hidden) so `validate` can name the
+    // replacement instead of clap's bare "unexpected argument".
+    let cli = Cli::try_parse_from(["fml", "lint", "--fix"])
+      .expect("--fix must parse so validate can reject it by name");
+    let err = cli
+      .validate()
+      .expect_err("`fml lint --fix` must be an error");
+    let rendered = err.to_string();
+    assert!(
+      rendered.contains("was removed"),
+      "error should say `--fix` was removed, got:\n{rendered}"
+    );
+    assert!(
+      rendered.contains("fml fix"),
+      "error should name the replacement, got:\n{rendered}"
+    );
 
     let mut cmd = Cli::command();
     cmd.build();
@@ -422,7 +522,7 @@ mod tests {
       .to_string();
     assert!(
       !help.contains("--fix"),
-      "a deprecated spelling should not be advertised in --help, got:
+      "a removed spelling should not be advertised in --help, got:
 {help}"
     );
     assert!(
@@ -454,9 +554,13 @@ mod tests {
   }
 
   #[test]
-  fn test_deprecated_schema_and_table_still_parse_but_are_hidden_from_help() {
+  fn test_deprecated_schema_still_parses_and_is_hidden_from_help() {
+    // `fml schema` itself is not in #255's scope (blocked on CI/release
+    // workflows that still invoke it — see the PR description) and keeps
+    // working exactly as before.
     let cli = Cli::try_parse_from(["fml", "schema"]).unwrap();
     assert!(matches!(cli.command, Commands::Schema { output: None }));
+    assert!(cli.validate().is_ok());
 
     let cli =
       Cli::try_parse_from(["fml", "schema", "-o", "schema.json"]).unwrap();
@@ -467,17 +571,6 @@ mod tests {
       } if p == std::path::Path::new("schema.json")
     ));
 
-    let cli = Cli::try_parse_from(["fml", "table"]).unwrap();
-    assert!(matches!(cli.command, Commands::Table { json: None }));
-
-    let cli = Cli::try_parse_from(["fml", "table", "--json", "{}"]).unwrap();
-    assert!(matches!(
-      cli.command,
-      Commands::Table {
-        json: Some(ref s)
-      } if s == "{}"
-    ));
-
     let mut cmd = Cli::command();
     cmd.build();
     let help = cmd.render_help().to_string();
@@ -485,15 +578,50 @@ mod tests {
       !help.lines().any(|l| l.trim_start().starts_with("schema ")),
       "deprecated `schema` subcommand should not be advertised in --help, got:\n{help}"
     );
+  }
+
+  #[test]
+  fn test_table_is_rejected_with_a_tailored_error() {
+    // Still parses (declared hidden) so `validate` can name the library API
+    // instead of clap's bare "unexpected argument".
+    let cli = Cli::try_parse_from(["fml", "table"])
+      .expect("table must parse so validate can reject it by name");
+    assert!(matches!(cli.command, Commands::Table { json: None }));
+    let err = cli.validate().expect_err("`fml table` must be an error");
+    let rendered = err.to_string();
+    assert!(
+      rendered.contains("was removed"),
+      "error should say `fml table` was removed, got:\n{rendered}"
+    );
+    assert!(
+      rendered.contains("fml::ui::table"),
+      "error should name the library API replacement, got:\n{rendered}"
+    );
+
+    let cli_json = Cli::try_parse_from(["fml", "table", "--json", "{}"])
+      .expect("table --json must parse so validate can reject it by name");
+    assert!(matches!(
+      cli_json.command,
+      Commands::Table {
+        json: Some(ref s)
+      } if s == "{}"
+    ));
+    assert!(cli_json.validate().is_err());
+
+    let mut cmd = Cli::command();
+    cmd.build();
+    let help = cmd.render_help().to_string();
     assert!(
       !help.lines().any(|l| l.trim_start().starts_with("table ")),
-      "deprecated `table` subcommand should not be advertised in --help, got:\n{help}"
+      "removed `table` subcommand should not be advertised in --help, got:\n{help}"
     );
   }
 
   #[test]
-  fn test_deprecated_install_and_surfaces_commands_parse_and_are_hidden_from_help()
-   {
+  fn test_deprecated_install_command_parses_and_is_hidden_from_help() {
+    // `fml install` itself is not in #255's scope (blocked on CI workflows
+    // that still invoke it — see the PR description) and keeps working
+    // exactly as before.
     let cli_install = Cli::try_parse_from(["fml", "install"]).unwrap();
     assert!(matches!(
       cli_install.command,
@@ -509,15 +637,6 @@ mod tests {
     ));
     assert!(cli_install_all.validate().is_ok());
 
-    let cli_list_surfaces =
-      Cli::try_parse_from(["fml", "list-surfaces"]).unwrap();
-    assert!(matches!(cli_list_surfaces.command, Commands::ListSurfaces));
-    assert!(cli_list_surfaces.validate().is_ok());
-
-    let cli_surfaces = Cli::try_parse_from(["fml", "surfaces"]).unwrap();
-    assert!(matches!(cli_surfaces.command, Commands::ListSurfaces));
-    assert!(cli_surfaces.validate().is_ok());
-
     let mut cmd = Cli::command();
     cmd.build();
     let help = cmd.render_help().to_string();
@@ -532,24 +651,37 @@ mod tests {
       "deprecated `install` should be hidden from subcommand list"
     );
     assert!(
-      !visible_subcommands.contains(&"list-surfaces"),
-      "deprecated `list-surfaces` should be hidden from subcommand list"
-    );
-    assert!(
       !help.lines().any(|l| l.trim_start().starts_with("install ")),
       "deprecated `install` should not appear in --help, got:\n{help}"
+    );
+  }
+
+  #[test]
+  fn test_removed_list_surfaces_and_surfaces_are_hidden_from_help() {
+    let mut cmd = Cli::command();
+    cmd.build();
+    let help = cmd.render_help().to_string();
+
+    let visible_subcommands: Vec<&str> = cmd
+      .get_subcommands()
+      .filter(|c| !c.is_hide_set())
+      .map(|c| c.get_name())
+      .collect();
+    assert!(
+      !visible_subcommands.contains(&"list-surfaces"),
+      "removed `list-surfaces` should be hidden from subcommand list"
     );
     assert!(
       !help
         .lines()
         .any(|l| l.trim_start().starts_with("list-surfaces ")),
-      "deprecated `list-surfaces` should not appear in --help, got:\n{help}"
+      "removed `list-surfaces` should not appear in --help, got:\n{help}"
     );
     assert!(
       !help
         .lines()
         .any(|l| l.trim_start().starts_with("surfaces ")),
-      "deprecated alias `surfaces` should not appear in --help, got:\n{help}"
+      "removed alias `surfaces` should not appear in --help, got:\n{help}"
     );
   }
 

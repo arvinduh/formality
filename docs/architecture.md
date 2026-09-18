@@ -81,9 +81,10 @@ See [language-surfaces.md](language-surfaces.md) for what each surface wraps and
 Terminal UI rendering, currently just semantic table formatting
 (`ui/table/mod.rs`, `render.rs`): width policies, wrapping/truncation,
 terminal-width clamping, and semantic color roles. This is the same machinery
-both `fml table`'s public JSON-spec renderer and `fml`'s own internal output
-(`fml doctor`) render through — see [table-spec.md](table-spec.md) for the JSON
-specification it consumes.
+both `fml::ui::table`'s public JSON-spec renderer (the `fml table` CLI command
+that used to front it was removed in v0.3.0 (#255)) and `fml`'s own internal
+output (`fml doctor`) render through — see [table-spec.md](table-spec.md) for
+the JSON specification it consumes.
 
 ## `src/commands`
 
@@ -92,19 +93,20 @@ in `src/lib.rs`: `fmt.rs`, `lint.rs`, `fix.rs` (the composite
 lint-fix-then-format pipeline — see [style-guide.md](style-guide.md) §4's
 `Runner` dispatch section), `sync.rs`, `init.rs`, `migrate.rs` (config
 schema-reference migration), `schema.rs` (`fml schema`, JSON Schema generation),
-`table.rs` (`fml table`), `lsp.rs` and `lsp_diagnostics.rs` (the `fml lsp`
-Language Server — document formatting via `fml fmt` plus diagnostics publishing
-via `fml lint`, with `lsp_diagnostics.rs` providing structured per-violation
-diagnostics, `#159 [pre-recreation]`), and `doctor/` (a directory module —
-`mod.rs`, `gitignore.rs`, `venv.rs` — implementing `fml doctor`'s
-workspace/toolchain verification checks). Tool installation lives entirely in
-`doctor/mod.rs` (`install_missing_tools`, `preflight_install`) — `--install` was
-removed from `fmt`/`lint`/`fix` in v0.3.0 (#282), so `fml doctor --install` is
-its only caller now. `fmt`/`lint`/`fix` instead call
-`preflight_warn_stale_tools`, which only warns about stale tools, never
-installs. The deprecated `fml install` and `fml list-surfaces` / `fml surfaces`
-dispatch directly to `doctor::run_doctor`. `mod.rs` at the top of this directory
-also holds shared helpers used by more than one command handler.
+`lsp.rs` and `lsp_diagnostics.rs` (the `fml lsp` Language Server — document
+formatting via `fml fmt` plus diagnostics publishing via `fml lint`, with
+`lsp_diagnostics.rs` providing structured per-violation diagnostics,
+`#159 [pre-recreation]`), and `doctor/` (a directory module — `mod.rs`,
+`gitignore.rs`, `venv.rs` — implementing `fml doctor`'s workspace/toolchain
+verification checks). Tool installation lives entirely in `doctor/mod.rs`
+(`install_missing_tools`, `preflight_install`) — `--install` was removed from
+`fmt`/`lint`/`fix` in v0.3.0 (#282), so `fml doctor --install` is its only
+caller now. `fmt`/`lint`/`fix` instead call `preflight_warn_stale_tools`, which
+only warns about stale tools, never installs. The deprecated `fml install` still
+dispatches directly to `doctor::run_doctor`; `fml list-surfaces` /
+`fml surfaces` used to as well but were removed outright in v0.3.0 (#255) and
+are now rejected by `Cli::validate()` before dispatch. `mod.rs` at the top of
+this directory also holds shared helpers used by more than one command handler.
 
 ## Cross-cutting: process and release docs
 
