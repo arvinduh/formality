@@ -77,9 +77,9 @@ pub use tooling::{
   ExitClass, InstallMethod, chain_wants_cargo_binstall, check_binary_exists,
   classify_all_nonzero_as_error, classify_exit_one_as_violation,
   create_tool_command, ensure_cargo_binstall, extra_args_set_flag,
-  forget_binary, has_cargo_binstall, install_chain_for, lint_fix_unsupported,
-  merge_tool_streams, pinned_installer_for, pinned_version_for,
-  refresh_go_install_path, refresh_path_after_install,
+  forget_binary, has_cargo_binstall, install_chain_for, install_hint_for,
+  lint_fix_unsupported, merge_tool_streams, pinned_installer_for,
+  pinned_version_for, refresh_go_install_path, refresh_path_after_install,
   refresh_windows_path_from_registry, resolve_binary_path, run_tool_command,
   run_tool_command_classified, selected_install_method_for,
   selected_pinned_version_for, set_binary_path_for_test, tool_missing_guard,
@@ -219,8 +219,25 @@ pub struct ToolInfo {
   pub binary: &'static str,
   /// Human-readable tool description.
   pub description: &'static str,
-  /// Installation instructions hint.
-  pub install_hint: &'static str,
+  /// Installation instructions override. `None` (the common case, and the
+  /// default for every tool with a real install-preference chain) derives
+  /// the hint from `binary`'s registered chain via
+  /// [`Self::effective_install_hint`], so the printed text can never drift
+  /// out of sync with the chain the way hand-written prose did (Fixes
+  /// #264). `Some(..)` is reserved for two narrow cases, both of which
+  /// must be exactly one named `const` referenced from every call site for
+  /// that tool (never a repeated string literal — that is the exact #264
+  /// drift shape, just moved one level up):
+  /// - `binary` has no install chain at all (it ships inside a toolchain
+  ///   rather than through a package manager — e.g. `cargo`, `gofmt`).
+  /// - `binary` has a chain, but the chain has a real coverage gap a
+  ///   package-manager command can't express (no entry at all for some
+  ///   platform, or a manual-download fallback) — e.g.
+  ///   `google-java-format`/`checkstyle`, whose chains have no Windows
+  ///   entry. Reach for this only when the gap is real; a chain that
+  ///   already covers every platform (e.g. `ktlint`'s) should stay `None`
+  ///   even if its old hand-written hint said something extra.
+  pub install_hint: Option<&'static str>,
   /// Whether this tool is required for formatting.
   pub is_required_for_fmt: bool,
   /// Whether this tool is required for linting.
@@ -232,6 +249,20 @@ impl ToolInfo {
   #[must_use]
   pub fn selected_install_method(&self) -> Option<InstallMethod> {
     tooling::selected_install_method_for(self.binary)
+  }
+
+  /// The install hint to actually print: `install_hint` when this tool
+  /// declared an override, or the chain-derived text from
+  /// [`tooling::install_hint_for`] otherwise. This is the one place that
+  /// picks between the two, so every call site (`tool_missing_guard`'s
+  /// `None` sites, `fml doctor`'s printed tables) reads the exact same
+  /// text for the exact same tool.
+  #[must_use]
+  pub fn effective_install_hint(&self) -> String {
+    self
+      .install_hint
+      .map(str::to_string)
+      .unwrap_or_else(|| tooling::install_hint_for(self.binary))
   }
 
   /// Returns the (program, args) for the first available installer in this

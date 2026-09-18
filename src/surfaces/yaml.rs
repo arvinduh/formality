@@ -186,14 +186,14 @@ impl LanguageSurface for YamlSurface {
       ToolInfo {
         binary: "prettier",
         description: "YAML formatter",
-        install_hint: "Install via: npm install -g prettier (or pnpm add -g prettier / brew install prettier / winget install Prettier.Prettier)",
+        install_hint: None,
         is_required_for_fmt: true,
         is_required_for_lint: false,
       },
       ToolInfo {
         binary: "yamllint",
         description: "YAML linter",
-        install_hint: "Install via: pip install yamllint (or uv tool install yamllint / brew install yamllint / winget install yamllint)",
+        install_hint: None,
         is_required_for_fmt: false,
         is_required_for_lint: true,
       },
@@ -203,12 +203,8 @@ impl LanguageSurface for YamlSurface {
   fn format(&self, ctx: &ExecutionContext) -> SurfaceResult {
     let start = Instant::now();
 
-    if let Some(res) = tool_missing_guard(
-      self.name(),
-      "prettier",
-      start,
-      Some("npm install -g prettier"),
-    ) {
+    if let Some(res) = tool_missing_guard(self.name(), "prettier", start, None)
+    {
       return res;
     }
 
@@ -274,12 +270,8 @@ impl LanguageSurface for YamlSurface {
       return lint_fix_unsupported(self.name(), start);
     }
 
-    if let Some(res) = tool_missing_guard(
-      self.name(),
-      "yamllint",
-      start,
-      Some("pip install yamllint"),
-    ) {
+    if let Some(res) = tool_missing_guard(self.name(), "yamllint", start, None)
+    {
       return res;
     }
 

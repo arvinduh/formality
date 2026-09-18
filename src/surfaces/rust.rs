@@ -5,13 +5,24 @@ use super::{
   DeclaresFacets, ExecutionContext, Facet, FacetSupport, LanguageSurface,
   NativeConfig, SurfaceResult, SurfaceStatus, ToolInfo, check_binary_exists,
   create_tool_command, find_files_with_ext, find_manifest_upwards,
-  render_native_config, run_tool_command, sync_native_config,
+  install_hint_for, render_native_config, run_tool_command, sync_native_config,
   tool_missing_guard, tool_missing_result,
 };
 use serde::{Deserialize, Serialize};
 use std::path::{Path, PathBuf};
 use std::process::Command;
 use std::time::Instant;
+
+/// Single source for `cargo`'s manual install hint: it has no `ALL_CHAINS`
+/// row (it ships with the Rust toolchain itself, via rustup, not through
+/// any package manager tracked there), so unlike `rustfmt`/`clippy-driver`
+/// below it can't be derived via `install_hint_for`. Referenced from both
+/// `tool_info` and the `lint()` guard so the two copies cannot drift apart
+/// the way #264 found taplo's hand-copied strings had -- which is exactly
+/// what had already happened here (`"Install Rust via rustup: ..."` vs
+/// `"Install Rust via ..."`, no `rustup` mention) before this constant
+/// existed.
+const CARGO_INSTALL_HINT: &str = "Install Rust via rustup: https://rustup.rs";
 
 /// Native `.rustfmt.toml` configuration representation for Rust formatting.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
@@ -191,21 +202,23 @@ impl LanguageSurface for RustSurface {
       ToolInfo {
         binary: "cargo",
         description: "Rust package manager & build tool",
-        install_hint: "Install Rust via rustup: https://rustup.rs",
+        // No ALL_CHAINS row: cargo ships with the Rust toolchain itself
+        // (via rustup) rather than through any package manager here.
+        install_hint: Some(CARGO_INSTALL_HINT),
         is_required_for_fmt: true,
         is_required_for_lint: true,
       },
       ToolInfo {
         binary: "rustfmt",
         description: "Rust code formatter",
-        install_hint: "Run: rustup component add rustfmt",
+        install_hint: None,
         is_required_for_fmt: true,
         is_required_for_lint: false,
       },
       ToolInfo {
         binary: "clippy-driver",
         description: "Rust linter (cargo clippy)",
-        install_hint: "Run: rustup component add clippy",
+        install_hint: None,
         is_required_for_fmt: false,
         is_required_for_lint: true,
       },
@@ -222,7 +235,7 @@ impl LanguageSurface for RustSurface {
         self.name(),
         start,
         "cargo / rustfmt",
-        "Run: rustup component add rustfmt",
+        &install_hint_for("rustfmt"),
       );
     }
 
@@ -297,12 +310,9 @@ impl LanguageSurface for RustSurface {
   fn lint(&self, ctx: &ExecutionContext, fix: bool) -> SurfaceResult {
     let start = Instant::now();
 
-    if let Some(res) = tool_missing_guard(
-      self.name(),
-      "cargo",
-      start,
-      Some("Install Rust via https://rustup.rs"),
-    ) {
+    if let Some(res) =
+      tool_missing_guard(self.name(), "cargo", start, Some(CARGO_INSTALL_HINT))
+    {
       return res;
     }
 
