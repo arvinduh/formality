@@ -1103,7 +1103,17 @@ pub fn tool_would_benefit_from_cargo_binstall_bootstrap(binary: &str) -> bool {
 /// Windows-specific, side-effecting part of the refresh this supports is
 /// [`refresh_windows_path_from_registry`], which sources `additional` from
 /// the registry and applies the result via `std::env::set_var`.
+///
+/// That one production caller is itself `#[cfg(windows)]`-gated, so on
+/// every other target this function has no production caller at all --
+/// `#[allow(dead_code)]` there is a deliberate cross-platform-code
+/// allowance, not the unreachable-logic case dead-code scrutiny is aimed
+/// at: the code is live and necessary on Windows, and staying compiled
+/// (and directly unit-tested, see the tests below) on every other platform
+/// is what keeps its logic honest without needing an actual Windows
+/// machine to test it on.
 #[must_use]
+#[cfg_attr(not(windows), allow(dead_code))]
 fn merge_path_entries(current: &str, additional: &str) -> String {
   let separator = if cfg!(windows) { ';' } else { ':' };
   let mut seen: std::collections::HashSet<String> =
@@ -1195,6 +1205,12 @@ pub fn refresh_windows_path_from_registry() {
 /// deliberate -- making a `PATH` addition durable means editing files this
 /// tool doesn't own, and the per-tool `install_hint` already tells the user
 /// what to do about their own shell.
+///
+/// Only called from [`refresh_windows_path_from_registry`]'s
+/// `#[cfg(windows)]` block (Scoop/winget's registry-only PATH updates); see
+/// [`merge_path_entries`]'s doc comment for why this is left compiled (and
+/// therefore `#[allow(dead_code)]`, not deleted) on every other platform.
+#[cfg_attr(not(windows), allow(dead_code))]
 fn merge_into_process_path(additional: &str) {
   let current = std::env::var("PATH").unwrap_or_default();
   let merged = merge_path_entries(&current, additional);
@@ -1213,10 +1229,10 @@ fn merge_into_process_path(additional: &str) {
 /// values of `GOBIN` and `GOPATH`: `GOBIN` when it is set, otherwise the
 /// first `GOPATH` entry plus `bin` (Go's own documented default).
 ///
-/// Split out from [`refresh_go_install_path`] and kept pure so the
-/// precedence is unit-testable on a machine with no Go toolchain at all;
-/// the `go env` invocation that sources these two values is the only part
-/// left in the caller.
+/// Split out from [`go_install_bin_dir`] and kept pure so the precedence is
+/// unit-testable on a machine with no Go toolchain at all; the `go env`
+/// invocation that sources these two values is the only part left in the
+/// caller.
 #[must_use]
 fn go_bin_dir_from_env(gobin: &str, gopath: &str) -> Option<PathBuf> {
   let gobin = gobin.trim();
@@ -1328,49 +1344,6 @@ fn resolve_via_known_install_dir_with(
   resolve_go_installed_binary(binary, &dir)
 }
 
-/// Adds `go install`'s output directory (`GOBIN`, else `$GOPATH/bin`) to
-/// this process's `PATH` if it isn't already on it.
-///
-/// [`InstallMethod::GoInstall`] is the one installer in this module that
-/// routinely writes into a directory that is *not* already on `PATH`.
-/// Every other installer used here puts binaries next to (or under the same
-/// prefix as) a package manager the user must already be able to invoke:
-/// `npm -g`, `pipx`, `uv`, `brew`, `cargo install`, `rustup`. `$GOPATH/bin`
-/// has no such guarantee -- Go creates it on demand, and it is on `PATH`
-/// only if the user put it there. On a stock GitHub Actions Linux runner it
-/// is not, so `go install golang.org/x/tools/cmd/goimports@v0.49.0`
-/// succeeds and the very next lookup for `goimports` in the same invocation
-/// still finds nothing.
-///
-/// That is the same user-visible symptom as the [`BINARY_CACHE`] staleness
-/// [`forget_binary`] fixes, but a different cause -- here the binary
-/// genuinely is not reachable from this process's `PATH` -- and the same
-/// shape as the Scoop/`winget` case
-/// [`refresh_windows_path_from_registry`] handles on Windows. Both are
-/// dispatched from [`refresh_path_after_install`].
-pub fn refresh_go_install_path() {
-  let mut cmd = create_tool_command("go");
-  cmd.args(["env", "GOBIN", "GOPATH"]);
-  let Ok(output) = cmd.output() else {
-    return;
-  };
-  if !output.status.success() {
-    return;
-  }
-
-  // `go env NAME...` prints one value per line, in the order requested,
-  // emitting an empty line for a variable that is unset -- so GOBIN being
-  // empty (the common case) still leaves GOPATH on line 2.
-  let stdout = String::from_utf8_lossy(&output.stdout);
-  let mut lines = stdout.lines();
-  let gobin = lines.next().unwrap_or_default();
-  let gopath = lines.next().unwrap_or_default();
-
-  if let Some(bin_dir) = go_bin_dir_from_env(gobin, gopath) {
-    merge_into_process_path(&bin_dir.to_string_lossy());
-  }
-}
-
 /// Applies whatever `PATH` fix-up the installer `program` needs for a
 /// binary it just installed to be resolvable for the rest of this process,
 /// and does nothing for the installers that need none.
@@ -1380,15 +1353,22 @@ pub fn refresh_go_install_path() {
 /// symptom). Keeping the per-installer knowledge here rather than at the
 /// call site means a new [`InstallMethod`] whose bin directory isn't on
 /// `PATH` has exactly one place to be taught about.
+///
+/// `go install` is *not* handled here (compare the Scoop/winget case
+/// below): its output directory is never durably on `PATH` for anyone, not
+/// just this already-running process, so a same-process `PATH` mutation
+/// would fix nothing that [`resolve_via_known_install_dir`] doesn't already
+/// fix at lookup time -- see [`go_install_bin_dir`]'s doc comment. (An
+/// earlier version of this function did carry a `"go" =>
+/// refresh_go_install_path()` arm; that function is deleted along with it,
+/// per #293's acceptance criteria that the old in-process fix-up not be
+/// left behind once lookup-time resolution supersedes it.)
 pub fn refresh_path_after_install(program: &str) {
   match program {
     // Scoop and winget register their PATH changes in the Windows
     // registry, which an already-running process's inherited environment
     // block never picks up on its own.
     "scoop" | "winget" => refresh_windows_path_from_registry(),
-    // `go install` writes into $GOBIN / $GOPATH/bin, which is frequently
-    // not on PATH at all.
-    "go" => refresh_go_install_path(),
     _ => {}
   }
 }
@@ -2479,8 +2459,8 @@ mod tests {
     );
   }
 
-  // merge_path_entries is the pure half of every post-install PATH refresh
-  // (refresh_windows_path_from_registry, refresh_go_install_path) -- the
+  // merge_path_entries is the pure half of the post-install PATH refresh
+  // Scoop/winget still need (refresh_windows_path_from_registry) -- the
   // registry/`go env` read plus the std::env::set_var side effect isn't
   // something a unit test should perform for real (it would mutate the test
   // process's actual PATH for every other test running in the same binary),
@@ -2577,10 +2557,11 @@ mod tests {
   }
 
   // go_bin_dir_from_env decides where `go install` just put a binary, which
-  // is what refresh_go_install_path adds to PATH. Getting the GOBIN/GOPATH
-  // precedence wrong means adding a directory that holds nothing and
-  // leaving `goimports` unresolvable right after installing it -- the exact
-  // failure the Fresh-Install Regression CI job exists to catch.
+  // is exactly the directory resolve_via_known_install_dir checks at lookup
+  // time. Getting the GOBIN/GOPATH precedence wrong means checking a
+  // directory that holds nothing and leaving `goimports` unresolvable even
+  // after installing it -- the exact failure the Fresh-Install Regression
+  // CI job exists to catch.
   #[test]
   fn test_go_bin_dir_prefers_gobin_when_set() {
     let dir = go_bin_dir_from_env("/custom/gobin", "/home/u/go");
