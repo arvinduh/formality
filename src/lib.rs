@@ -207,13 +207,13 @@ fn run_command_inner(
       ExitStatus::Clean
     }
 
-    Commands::Table { json } => {
-      crate::ui::deprecation::warn_deprecated_spelling(
-        "fml table",
-        "fml::ui::table",
-        None,
-      );
-      commands::table::run_table(json)
+    // Removed in v0.3.0 (#255): `Cli::validate()` rejects this variant by
+    // name before `run_command_inner` is ever reached via the real CLI —
+    // see the `ListSurfaces` arm above for why this arm still exists.
+    Commands::Table { .. } => {
+      unreachable!(
+        "`fml table` is rejected by `Cli::validate()` before dispatch"
+      )
     }
 
     Commands::Migrate { command } => {
@@ -831,9 +831,8 @@ mod tests {
     // `Commands::ListSurfaces` used to be the harmless probe here, but it's
     // now rejected by `Cli::validate()` before dispatch (#255) and panics
     // if reached directly via `run_with_args`, which bypasses `validate()`.
-    // `Doctor { all: false, install: false }` dispatches to the exact same
-    // `commands::doctor::run_doctor(root, false, false, &config)` call
-    // `ListSurfaces` used to, so this is not a new code path.
+    // `Doctor` is an equally cheap, side-effect-free read used the same way
+    // elsewhere in this test module.
     let args = Cli {
       config: None,
       root: Some(std::path::PathBuf::from(".")),

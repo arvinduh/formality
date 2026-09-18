@@ -238,10 +238,11 @@ pub enum Commands {
   /// Editors connect via stdio (the default transport for most editors).
   Lsp,
 
-  /// Deprecated: use `fml::ui::table` library API.
+  /// Removed in v0.3.0: use the `fml::ui::table` library API directly.
   ///
-  /// Render an opinionated semantic terminal table from JSON specification.
-  /// Hidden from `--help`; still parses for 1 minor release.
+  /// Declared hidden, not deleted outright, so [`Cli::validate`] can reject
+  /// it by name with a message pointing at the library API instead of
+  /// clap's bare "unexpected argument".
   #[command(hide = true)]
   Table {
     /// Table specification JSON string (reads from stdin if omitted)
@@ -288,10 +289,10 @@ impl Cli {
   ///   one concern now, not a run command's. Declared hidden for the same
   ///   reason as `--check` above: so the error can name `fml doctor
   ///   --install` instead of clap's bare "unexpected argument".
-  /// - `fml lint --fix`, `fml list-surfaces`/`fml surfaces`. Removed
-  ///   outright in v0.3.0 (#255): each declared hidden for the same
-  ///   by-name-rejection reason as the flags above, reusing the same
-  ///   mechanism rather than inventing a second one (see #282).
+  /// - `fml lint --fix`, `fml list-surfaces`/`fml surfaces`, `fml table`.
+  ///   All removed outright in v0.3.0 (#255); each is declared hidden for
+  ///   the same by-name-rejection reason as the flags above, reusing the
+  ///   same mechanism rather than inventing a second one (see #282).
   ///
   /// # Errors
   ///
@@ -299,10 +300,10 @@ impl Cli {
   ///
   /// # Panics
   ///
-  /// Panics if the `lint`/`fmt`/`fix`/`list-surfaces` subcommand is missing
-  /// from [`Commands`] — they are declared directly above, so this is a
-  /// "the enum was edited without updating this" assertion, not a runtime
-  /// condition.
+  /// Panics if the `lint`/`fmt`/`fix`/`list-surfaces`/`table` subcommand is
+  /// missing from [`Commands`] — they are declared directly above, so this
+  /// is a "the enum was edited without updating this" assertion, not a
+  /// runtime condition.
   pub fn validate(&self) -> Result<(), clap::Error> {
     if let Commands::Lint { check: true, .. } = &self.command {
       let mut cmd = Self::command();
@@ -373,6 +374,19 @@ impl Cli {
         format!(
           "`{spelling}` was removed in v0.3.0.\n       Use `fml doctor` instead.",
         ),
+      ));
+    }
+
+    if let Commands::Table { .. } = &self.command {
+      let mut cmd = Self::command();
+      cmd.build();
+      let sub = cmd
+        .find_subcommand_mut("table")
+        .expect("`table` subcommand is declared above");
+      return Err(sub.error(
+        clap::error::ErrorKind::ArgumentConflict,
+        "`fml table` was removed in v0.3.0.\n       \
+         Use the `fml::ui::table` library API directly instead.",
       ));
     }
 
@@ -540,9 +554,13 @@ mod tests {
   }
 
   #[test]
-  fn test_deprecated_schema_and_table_still_parse_but_are_hidden_from_help() {
+  fn test_deprecated_schema_still_parses_and_is_hidden_from_help() {
+    // `fml schema` itself is not in #255's scope (blocked on CI/release
+    // workflows that still invoke it — see the PR description) and keeps
+    // working exactly as before.
     let cli = Cli::try_parse_from(["fml", "schema"]).unwrap();
     assert!(matches!(cli.command, Commands::Schema { output: None }));
+    assert!(cli.validate().is_ok());
 
     let cli =
       Cli::try_parse_from(["fml", "schema", "-o", "schema.json"]).unwrap();
@@ -553,17 +571,6 @@ mod tests {
       } if p == std::path::Path::new("schema.json")
     ));
 
-    let cli = Cli::try_parse_from(["fml", "table"]).unwrap();
-    assert!(matches!(cli.command, Commands::Table { json: None }));
-
-    let cli = Cli::try_parse_from(["fml", "table", "--json", "{}"]).unwrap();
-    assert!(matches!(
-      cli.command,
-      Commands::Table {
-        json: Some(ref s)
-      } if s == "{}"
-    ));
-
     let mut cmd = Cli::command();
     cmd.build();
     let help = cmd.render_help().to_string();
@@ -571,9 +578,42 @@ mod tests {
       !help.lines().any(|l| l.trim_start().starts_with("schema ")),
       "deprecated `schema` subcommand should not be advertised in --help, got:\n{help}"
     );
+  }
+
+  #[test]
+  fn test_table_is_rejected_with_a_tailored_error() {
+    // Still parses (declared hidden) so `validate` can name the library API
+    // instead of clap's bare "unexpected argument".
+    let cli = Cli::try_parse_from(["fml", "table"])
+      .expect("table must parse so validate can reject it by name");
+    assert!(matches!(cli.command, Commands::Table { json: None }));
+    let err = cli.validate().expect_err("`fml table` must be an error");
+    let rendered = err.to_string();
+    assert!(
+      rendered.contains("was removed"),
+      "error should say `fml table` was removed, got:\n{rendered}"
+    );
+    assert!(
+      rendered.contains("fml::ui::table"),
+      "error should name the library API replacement, got:\n{rendered}"
+    );
+
+    let cli_json = Cli::try_parse_from(["fml", "table", "--json", "{}"])
+      .expect("table --json must parse so validate can reject it by name");
+    assert!(matches!(
+      cli_json.command,
+      Commands::Table {
+        json: Some(ref s)
+      } if s == "{}"
+    ));
+    assert!(cli_json.validate().is_err());
+
+    let mut cmd = Cli::command();
+    cmd.build();
+    let help = cmd.render_help().to_string();
     assert!(
       !help.lines().any(|l| l.trim_start().starts_with("table ")),
-      "deprecated `table` subcommand should not be advertised in --help, got:\n{help}"
+      "removed `table` subcommand should not be advertised in --help, got:\n{help}"
     );
   }
 

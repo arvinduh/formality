@@ -23,7 +23,7 @@ Select or describe the primary component affected:
 - [ ] Config Sync engine (`fml sync`)
 - [ ] Tool Installer (`fml install`)
 - [ ] Execution Engine / Rayon parallel runner
-- [ ] CLI Output / Table UI (`fml table`)
+- [ ] CLI Output / Table UI (`fml::ui::table`)
 - [ ] Other
 
 ## Configuration Proposal (`formality.toml`)

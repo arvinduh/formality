@@ -37,7 +37,8 @@ Depend on `tokei` as a library crate, not invoke it as a subprocess.
   existing pattern of consuming structured output (JSON where a subprocess tool
   supports it) rather than parsing free-form CLI text — see
   [table-spec.md](../table-spec.md) for the same preference applied to
-  `fml table`'s own output.
+  `fml::ui::table`'s own output (the `fml table` CLI command this text
+  originally referred to was removed in v0.3.0, #255).
 - No extra runtime dependency for users: `fml stat` would work the moment the
   `fml` binary itself is installed, with no separate `tokei` install step,
   version-compat matrix, or `MSTV` (minimum-supported-tool-version) check to
@@ -51,8 +52,8 @@ Depend on `tokei` as a library crate, not invoke it as a subprocess.
 - `fml stat` would not need the subprocess-discovery/version-check machinery
   `src/engine/version/` and `src/surfaces/tooling.rs` provide for the other 12
   surfaces, so implementing it doesn't extend that machinery — it's a different
-  shape of command, closer to `fml table`'s self-contained rendering than to a
-  `LanguageSurface`.
+  shape of command, closer to `fml::ui::table`'s self-contained rendering than
+  to a `LanguageSurface`.
 - Per `.agents/orchestrate.md` §10, the concrete `fml stat` proposal (example
   invocation, example output) still needs to be presented to the user for
   confirmation before implementation begins — this ADR records the

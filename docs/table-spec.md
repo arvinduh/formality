@@ -36,21 +36,17 @@ let rendered = render(&table);
 print!("{rendered}");
 ```
 
-## CLI Usage (Deprecated)
+## `fml table` CLI command (removed)
 
-> [!NOTE] The `fml table` CLI command is deprecated as of `v0.3.0` and will be
-> removed in `v0.4.0`. Use the `fml::ui::table` library API directly instead.
+> [!NOTE] The `fml table` CLI command was removed outright in `v0.3.0` (#255).
+> `fml table ...` now fails with a message naming the `fml::ui::table` library
+> API above as the replacement, rather than a bare "unexpected argument". Use
+> [`render_json`](#library-usage-fmluitable) directly instead — it takes the
+> same JSON specification this document describes and returns the rendered
+> string rather than printing to stdout.
 
-```bash
-# From a JSON string argument (deprecated):
-fml table --json '{"columns": [...], "rows": [...]}'
-
-# From stdin (deprecated):
-echo '{"columns": [...], "rows": [...]}' | fml table
-```
-
-Output goes to stdout; exit code `0` on success, `2` if the JSON fails to parse
-or doesn't match the schema below.
+`render_json`'s `Result` is `Err` when the JSON fails to parse or doesn't match
+the schema below; `Ok` on success.
 
 The Rust types backing this spec live in `src/ui/table/mod.rs` and
 `src/ui/table/render.rs` — this document mirrors their `Serialize`/
@@ -161,8 +157,8 @@ stdout isn't a TTY.
 
 ## Full example
 
-```bash
-fml table --json '{
+```rust
+let rendered = fml::ui::table::render_json(r#"{
   "columns": [
     {"header": {"spans": [{"text": "Surface", "style": "strong"}]}, "width": {"fixed": 12}},
     {"header": {"spans": [{"text": "Status", "style": "strong"}]}, "width": {"fixed": 10}},
@@ -187,7 +183,8 @@ fml table --json '{
     ]}
   ],
   "layout": {"max_width": 80}
-}'
+}"#).expect("valid table JSON");
+print!("{rendered}");
 ```
 
 This is the same rendering path formality's own commands use internally — e.g.

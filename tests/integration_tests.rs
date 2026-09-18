@@ -768,7 +768,10 @@ fn test_fmt_staged_and_changed_with_explicit_paths_filtering() {
 }
 
 #[test]
-fn test_table_command_json_valid_and_invalid_syntax() {
+fn test_table_library_api_json_valid_and_invalid_syntax() {
+  // The `fml table` CLI command was removed in v0.3.0 (#255); this exercises
+  // its replacement, the `fml::ui::table` library API, directly.
+
   // 1. Valid table JSON payload
   let mut table = fml::ui::table::Table::new(vec![
     fml::ui::table::Column::new("Name"),
@@ -780,27 +783,36 @@ fn test_table_command_json_valid_and_invalid_syntax() {
   ]));
   let valid_table_json = serde_json::to_string(&table).unwrap();
 
-  assert_eq!(
-    run_cli_no_root(Commands::Table {
-      json: Some(valid_table_json),
-    }),
-    0
-  );
+  assert!(fml::ui::table::render_json(&valid_table_json).is_ok());
 
   // 2. Empty JSON or missing structure
-  assert_ne!(
-    run_cli_no_root(Commands::Table {
-      json: Some("[]".to_string()),
-    }),
-    0
-  );
+  assert!(fml::ui::table::render_json("[]").is_err());
 
   // 3. Invalid JSON syntax
-  assert_ne!(
-    run_cli_no_root(Commands::Table {
-      json: Some("{ not valid json }".to_string()),
-    }),
-    0
+  assert!(fml::ui::table::render_json("{ not valid json }").is_err());
+}
+
+#[test]
+fn test_table_is_rejected_by_the_real_binary() {
+  // Removed in v0.3.0 (#255): must fail with a message naming the
+  // replacement, never a bare clap "unexpected argument".
+  use std::process::Command;
+
+  let out = Command::new(env!("CARGO_BIN_EXE_fml"))
+    .arg("table")
+    .arg("--json")
+    .arg("{}")
+    .output()
+    .expect("failed to run fml table");
+  assert!(!out.status.success());
+  let stderr = String::from_utf8_lossy(&out.stderr);
+  assert!(
+    stderr.contains("fml table") && stderr.contains("was removed"),
+    "expected removal error naming `fml table` in stderr, got: {stderr}"
+  );
+  assert!(
+    stderr.contains("fml::ui::table"),
+    "expected the error to name the library API replacement, got: {stderr}"
   );
 }
 
