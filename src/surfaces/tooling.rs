@@ -2960,4 +2960,87 @@ mod tests {
       }
     }
   }
+
+  #[test]
+  fn test_no_surface_hardcodes_a_chain_derived_install_command() {
+    // QA follow-up on #264: `ToolInfo.install_hint: None` and
+    // `tool_missing_guard`'s `None` made the *common* call sites derive
+    // automatically, but nothing stopped a bespoke call site --
+    // `tool_missing_result`, or a fresh `tool_missing_guard` call written
+    // without reaching for the derived hint -- from smuggling a
+    // hand-copied package-manager command straight back in. That is
+    // exactly what happened: `rust.rs`'s combined "cargo / rustfmt"
+    // missing-tool message still spelled out `"Run: rustup component add
+    // rustfmt"` by hand after `rustfmt`'s own `ToolInfo.install_hint` had
+    // already switched to `None`, and `cargo`'s/`gofmt`'s legitimate
+    // no-chain overrides existed as two textually-drifting copies each
+    // rather than one source. The coverage test above only walks
+    // `ToolInfo` rows, so it never saw either.
+    //
+    // This scans every surface source file's non-comment lines for the
+    // literal shell-command phrases `InstallMethod::describe()` renders.
+    // Any such phrase appearing outside this file (`tooling.rs`, where
+    // they're the source of truth) means either a hand copy has
+    // reappeared, or a new legitimate no-chain override was added as a
+    // second copy of a string instead of one named `const` -- both are
+    // the #264 drift shape, and both should fail this test.
+    const CHAIN_COMMAND_PHRASES: &[&str] = &[
+      "npm install -g",
+      "pnpm add -g",
+      "yarn global add",
+      "bun add -g",
+      "uv tool install",
+      "pipx install",
+      "pip install",
+      "pip3 install",
+      "apt-get install",
+      "brew install",
+      "scoop install",
+      "winget install",
+      "cargo binstall",
+      "cargo install",
+      "rustup component add",
+      "go install",
+    ];
+
+    let surface_sources: &[(&str, &str)] = &[
+      ("cpp.rs", include_str!("cpp.rs")),
+      ("go.rs", include_str!("go.rs")),
+      ("java.rs", include_str!("java.rs")),
+      ("javascript.rs", include_str!("javascript.rs")),
+      ("json.rs", include_str!("json.rs")),
+      ("kotlin.rs", include_str!("kotlin.rs")),
+      ("markdown.rs", include_str!("markdown.rs")),
+      ("python.rs", include_str!("python.rs")),
+      ("rust.rs", include_str!("rust.rs")),
+      ("toml.rs", include_str!("toml.rs")),
+      ("typst.rs", include_str!("typst.rs")),
+      ("yaml.rs", include_str!("yaml.rs")),
+    ];
+
+    for (file, source) in surface_sources {
+      for (lineno, line) in source.lines().enumerate() {
+        let trimmed = line.trim_start();
+        // Full-line (doc) comments legitimately quote command text for
+        // human readers explaining *why* a constant exists (e.g. this
+        // file's own `CARGO_INSTALL_HINT` doc comment).
+        if trimmed.starts_with("//") {
+          continue;
+        }
+        for phrase in CHAIN_COMMAND_PHRASES {
+          assert!(
+            !trimmed.contains(phrase),
+            "{file}:{} hardcodes a chain-derived install command \
+             ({phrase:?}) outside `install_hint_for` -- this is the #264 \
+             drift bug reappearing. A binary with a real ALL_CHAINS row \
+             must derive its hint (pass `None`); a binary with no chain \
+             at all must use exactly one named `const` referenced from \
+             every call site, not a repeated string literal. Line: \
+             {trimmed:?}",
+            lineno + 1,
+          );
+        }
+      }
+    }
+  }
 }
