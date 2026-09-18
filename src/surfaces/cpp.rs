@@ -406,14 +406,14 @@ impl LanguageSurface for CppSurface {
       ToolInfo {
         binary: "clang-format",
         description: "C/C++ code formatter",
-        install_hint: "Install via: sudo apt install clang-format (or brew install clang-format / pip install clang-format / winget install LLVM.LLVM)",
+        install_hint: None,
         is_required_for_fmt: true,
         is_required_for_lint: false,
       },
       ToolInfo {
         binary: "clang-tidy",
         description: "C/C++ linter and static analyzer",
-        install_hint: "Install via: sudo apt install clang-tidy (or brew install llvm / winget install LLVM.LLVM)",
+        install_hint: None,
         is_required_for_fmt: false,
         is_required_for_lint: true,
       },
@@ -423,14 +423,9 @@ impl LanguageSurface for CppSurface {
   fn format(&self, ctx: &ExecutionContext) -> SurfaceResult {
     let start = Instant::now();
 
-    if let Some(res) = tool_missing_guard(
-      self.name(),
-      "clang-format",
-      start,
-      Some(
-        "sudo apt install clang-format / brew install clang-format / pip install clang-format / winget install LLVM.LLVM",
-      ),
-    ) {
+    if let Some(res) =
+      tool_missing_guard(self.name(), "clang-format", start, None)
+    {
       return res;
     }
 
@@ -491,14 +486,9 @@ impl LanguageSurface for CppSurface {
   fn lint(&self, ctx: &ExecutionContext, fix: bool) -> SurfaceResult {
     let start = Instant::now();
 
-    if let Some(res) = tool_missing_guard(
-      self.name(),
-      "clang-tidy",
-      start,
-      Some(
-        "sudo apt install clang-tidy / brew install llvm / winget install LLVM.LLVM",
-      ),
-    ) {
+    if let Some(res) =
+      tool_missing_guard(self.name(), "clang-tidy", start, None)
+    {
       return res;
     }
 

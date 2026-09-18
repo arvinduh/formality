@@ -435,7 +435,7 @@ fn test_scan_tools_and_build_table_surfaces_unprobeable_status_not_ready() {
       vec![ToolInfo {
         binary: self.bin,
         description: "Mock Unprobeable Binary",
-        install_hint: "Cannot install",
+        install_hint: Some("Cannot install"),
         is_required_for_fmt: true,
         is_required_for_lint: true,
       }]
@@ -606,7 +606,7 @@ fn doctor_tool_info(binary: &'static str) -> ToolInfo {
   ToolInfo {
     binary,
     description: "",
-    install_hint: "",
+    install_hint: None,
     is_required_for_fmt: true,
     is_required_for_lint: false,
   }

@@ -4,10 +4,7 @@
 //! [`super::ResolvedLangConfig`].
 
 use super::facets::LayoutFacet;
-use super::lang_table::{
-  build_resolved_lang_config, default_tool_opt, impl_default_tools_fn,
-  lang_options_table,
-};
+use super::lang_table::{build_resolved_lang_config, lang_options_table};
 use super::options::MarkdownOptions;
 use super::{
   CONFIG_FILE_CANDIDATES, ConfigError, FormalityConfig, GlobalConfig,
@@ -148,7 +145,6 @@ impl FormalityConfig {
   ) -> ResolvedLangConfig {
     let lang_cfg = self.lang.get(lang_name);
 
-    let (default_fmt, default_lint) = default_tools_for_lang(lang_name);
     let (layout, indent_size, line_length, use_tabs, prose_wrap) =
       resolve_layout_for_lang(lang_name, lang_cfg, global);
 
@@ -172,12 +168,6 @@ impl FormalityConfig {
       lang_cfg,
       lang_name,
       lang_name.to_string(),
-      lang_cfg
-        .and_then(|l| l.format_tool.clone())
-        .or_else(|| default_fmt.map(std::string::ToString::to_string)),
-      lang_cfg
-        .and_then(|l| l.lint_tool.clone())
-        .or_else(|| default_lint.map(std::string::ToString::to_string)),
       indent_size,
       line_length,
       use_tabs,
@@ -338,7 +328,7 @@ impl FormalityConfig {
 
     out.push_str(
       "\n# Detected language surfaces below. Uncomment a section to override\n\
-       # its defaults (indent_size, line_length, format_tool, lint_tool, ...).\n\
+       # its defaults (indent_size, line_length, ...).\n\
        # Leave commented out to keep using formality's built-in defaults.\n",
     );
     for lang in langs {
@@ -440,8 +430,6 @@ pub fn find_user_config() -> Option<PathBuf> {
 
   None
 }
-
-lang_options_table!(impl_default_tools_fn);
 
 fn resolve_layout_for_lang(
   lang_name: &str,
