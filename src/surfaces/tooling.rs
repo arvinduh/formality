@@ -2916,90 +2916,53 @@ mod tests {
   }
 
   #[test]
-  fn test_resolve_binary_path_falls_back_to_known_install_dir() {
-    // End-to-end through the real public entry point: when `which` can't
-    // find a Go-installed binary (guaranteed here by a name `which` will
-    // never resolve on any real PATH) but it exists in a directory that
-    // "looks like" a GOBIN, `resolve_binary_path` must still return it, and
-    // must memoize the hit in BINARY_CACHE rather than re-deriving it every
-    // call.
+  fn test_go_install_bin_dir_reports_gos_own_output_directory() {
+    // The one test that exercises the real `go env` wiring
+    // `resolve_binary_path`'s fallback uses in production. Deliberately
+    // read-only: it asks the toolchain where `go install` writes and checks
+    // the shape of the answer, and it never creates that directory, writes
+    // a fixture into it, or primes the process-global BINARY_CACHE.
     //
-    // `resolve_binary_path` itself always sources the Go bin directory via
-    // the real `go_install_bin_dir` (a real `go env` spawn) rather than an
-    // injectable closure -- this is the one test that exercises that real
-    // wiring end to end, so it's skipped when `go` genuinely isn't on this
-    // machine's PATH (a fresh Fresh-Install-Regression-style runner not
-    // covered by this test at all -- that gap is exactly what the
-    // Fresh-Install Regression CI job is for).
-    if !check_binary_exists("go") {
+    // An earlier version of this test did all three -- it wrote a fake
+    // `goimports` into the developer's *real* GOBIN, which a SIGKILL
+    // mid-test would have left behind for a later real `fml fmt` to try to
+    // exec. It also claimed to use "a name `which` will never resolve"
+    // while actually using `goimports`, so on any machine with
+    // `$GOPATH/bin` on PATH the `which` lookup succeeded and the test
+    // passed without the fallback running at all -- it passed with the
+    // fallback deleted. The fallback's own behaviour is covered instead by
+    // the `resolve_via_known_install_dir_with` tests above and by
+    // `test_create_tool_command_spawns_a_go_installed_binary_by_its_path`,
+    // all of which drive a tempdir and fail if the fallback is removed. The
+    // genuinely-clean two-process end-to-end belongs to the
+    // `Fresh-Install Regression` CI job; it is not reproducible in-process.
+    if which::which("go").is_err() {
       eprintln!(
-        "skipping test_resolve_binary_path_falls_back_to_known_install_dir: \
+        "skipping test_go_install_bin_dir_reports_gos_own_output_directory: \
          no `go` on this machine's PATH"
       );
       return;
     }
 
-    let Some(real_dir) = go_install_bin_dir() else {
+    let Some(dir) = go_install_bin_dir() else {
       eprintln!(
-        "skipping test_resolve_binary_path_falls_back_to_known_install_dir: \
-         `go env` reported no usable GOBIN/GOPATH"
+        "skipping test_go_install_bin_dir_reports_gos_own_output_directory: \
+         `go env` reported neither GOBIN nor a usable GOPATH"
       );
       return;
     };
-    std::fs::create_dir_all(&real_dir).expect("create real GOBIN dir");
 
-    // "goimports" is the real registered name this test needs -- ALL_CHAINS
-    // is fixed, compiled-in data, so there's no way to register a fake
-    // binary name with a GoInstall entry for this test's own use. If a
-    // real `goimports` is already sitting in this machine's GOBIN (a prior
-    // real `go install`), `pre_existing` below leaves it alone entirely
-    // (no write, no delete) and the test only observes it; otherwise the
-    // `Cleanup` guard below removes the fixture this test itself wrote.
-    let bin_name = format!("goimports{}", std::env::consts::EXE_SUFFIX);
-    let fixture = real_dir.join(&bin_name);
-    let pre_existing = fixture.exists();
-
-    // RAII guard so a fixture this test wrote (and the cache entry it
-    // primes) never survives a failed assertion below and leaks into a
-    // later test or a later real `go install goimports`.
-    struct Cleanup {
-      path: PathBuf,
-      wrote_it: bool,
-    }
-    impl Drop for Cleanup {
-      fn drop(&mut self) {
-        if self.wrote_it {
-          let _ = std::fs::remove_file(&self.path);
-        }
-        forget_binary("goimports");
-      }
-    }
-    let _cleanup = Cleanup {
-      path: fixture.clone(),
-      wrote_it: !pre_existing,
-    };
-
-    if !pre_existing {
-      std::fs::write(&fixture, b"#!/bin/sh\n").expect("write fixture binary");
-    }
-    forget_binary("goimports");
-
-    let resolved = resolve_binary_path("goimports");
-    assert_eq!(
-      resolved.as_deref(),
-      Some(fixture.as_path()),
-      "resolve_binary_path must find a goimports binary sitting in go \
-       install's own output directory even though `which` cannot see it \
-       on PATH"
+    assert!(
+      dir.is_absolute(),
+      "a bin directory resolve_binary_path will later join a binary name \
+       onto must be absolute, not relative to whatever cwd fml runs in: \
+       {dir:?}"
     );
-
-    // Memoized: a second call must return the identical cached value
-    // without needing the file to still be present.
-    let cached = resolve_binary_path("goimports");
-    assert_eq!(
-      cached, resolved,
-      "the fallback hit must be memoized in BINARY_CACHE, not re-derived \
-       (and re-stat'd) on every call"
+    assert!(
+      std::env::var("GOBIN").is_ok_and(|g| !g.trim().is_empty())
+        || dir.file_name() == Some(std::ffi::OsStr::new("bin")),
+      "with no GOBIN set, go install's output directory is $GOPATH/bin: \
+       {dir:?}"
     );
   }
 
