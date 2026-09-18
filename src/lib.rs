@@ -150,9 +150,9 @@ fn run_command_inner(
       staged,
       changed,
       lang,
-      install,
       allow_missing,
       paths,
+      ..
     } => commands::fmt::run_fmt(
       root,
       &config,
@@ -160,7 +160,6 @@ fn run_command_inner(
       staged,
       changed,
       lang,
-      install,
       paths,
       allow_missing,
     ),
@@ -170,9 +169,9 @@ fn run_command_inner(
       staged,
       changed,
       lang,
-      install,
       allow_missing,
       paths,
+      ..
     } => commands::fix::run_fix(
       root,
       &config,
@@ -180,7 +179,6 @@ fn run_command_inner(
       staged,
       changed,
       lang,
-      install,
       paths,
       allow_missing,
     ),
@@ -198,7 +196,6 @@ fn run_command_inner(
       staged,
       changed,
       lang,
-      install,
       allow_missing,
       paths,
       ..
@@ -217,7 +214,6 @@ fn run_command_inner(
         staged,
         changed,
         lang,
-        install,
         paths,
         allow_missing,
       )
@@ -227,7 +223,6 @@ fn run_command_inner(
       staged,
       changed,
       lang,
-      install,
       allow_missing,
       paths,
       ..
@@ -237,7 +232,6 @@ fn run_command_inner(
       staged,
       changed,
       lang,
-      install,
       paths,
       allow_missing,
     ),

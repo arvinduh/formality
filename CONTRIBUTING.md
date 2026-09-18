@@ -42,8 +42,10 @@ mind:
    are verified and never overwritten without explicit confirmation.
 5. **Automated Tool Management (`fml doctor --install`)**: Missing binary
    dependencies are detected and can be auto-installed via package managers
-   (`cargo`, `npm`, `pip`, `brew`, `rustup`). `fml fmt -i` and `fml lint -i`
-   support on-demand installations.
+   (`cargo`, `npm`, `pip`, `brew`, `rustup`). `fml doctor --install` is the only
+   install spelling — `fmt`/`lint`/`fix` no longer take `-i`/`--install`
+   (removed in v0.3.0, #282); provision tools with `fml doctor --install` first,
+   then run them.
 6. **Blazing Parallel Runner**: Multi-threaded execution (`rayon`) runs
    independent language surfaces concurrently.
 7. **Always Dogfood**: Always test and verify with the freshly built binary

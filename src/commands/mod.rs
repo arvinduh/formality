@@ -25,8 +25,6 @@ pub mod table;
 
 use std::path::{Path, PathBuf};
 
-use colored::Colorize;
-
 use crate::config::FormalityConfig;
 use crate::engine::{Pass, Plan, Runner};
 use crate::errors::{ExitStatus, FormalityError, GitError, SurfaceError};
@@ -35,29 +33,19 @@ use crate::surfaces::{
   get_surface_by_name,
 };
 
-/// Prints a warning that one or more required tools failed to auto-install,
-/// so the affected language(s) may have been skipped for this `verb`.
-pub fn warn_tool_install_failed(verb: &str) {
-  eprintln!(
-    "{} One or more required tools failed to install automatically; {verb} may be skipped for affected languages.",
-    "[WARN]".yellow().bold()
-  );
-}
-
 /// Dispatches a [`Plan`] across target surfaces for the `fmt`, `lint`, and
 /// `fix` commands after resolving git paths, target surfaces, and preflight
-/// tool requirements.
-#[allow(clippy::too_many_arguments)]
+/// tool requirements. Provisioning missing tools is `fml doctor --install`'s
+/// job now, not these commands' — see #282; this dispatch only warns about
+/// stale tools, never installs.
 pub fn dispatch_plan(
   root: &Path,
   config: &FormalityConfig,
   staged: bool,
   changed: bool,
   lang: Vec<String>,
-  install: bool,
   paths: Vec<PathBuf>,
   plan: &Plan,
-  verb: &'static str,
 ) -> ExitStatus {
   let target_paths = match resolve_git_paths(root, staged, changed, paths) {
     Ok(p) => p,
@@ -82,26 +70,11 @@ pub fn dispatch_plan(
   let for_fmt = plan.includes(Pass::Format);
   let for_lint = plan.includes(Pass::Lint);
 
-  let mut install_failed = false;
-  if install {
-    if !crate::commands::doctor::preflight_install(
-      &surfaces, config, for_fmt, for_lint,
-    ) {
-      warn_tool_install_failed(verb);
-      install_failed = true;
-    }
-  } else {
-    crate::commands::doctor::preflight_warn_stale_tools(
-      &surfaces, config, for_fmt, for_lint,
-    );
-  }
+  crate::commands::doctor::preflight_warn_stale_tools(
+    &surfaces, config, for_fmt, for_lint,
+  );
 
-  let status = Runner::run(surfaces, root, &target_paths, plan, config);
-  if install_failed && status.is_clean() {
-    ExitStatus::Error
-  } else {
-    status
-  }
+  Runner::run(surfaces, root, &target_paths, plan, config)
 }
 
 fn normalize_path(path: &Path) -> PathBuf {
