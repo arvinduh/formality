@@ -2980,10 +2980,11 @@ mod tests {
     // This scans every surface source file's non-comment lines for the
     // literal shell-command phrases `InstallMethod::describe()` renders.
     // Any such phrase appearing outside this file (`tooling.rs`, where
-    // they're the source of truth) means either a hand copy has
-    // reappeared, or a new legitimate no-chain override was added as a
-    // second copy of a string instead of one named `const` -- both are
-    // the #264 drift shape, and both should fail this test.
+    // they're the source of truth) or outside a named override `const`'s
+    // own declaration means either a hand copy has reappeared, or a new
+    // override was added as a second copy of a string instead of one
+    // named `const` -- both are the #264 drift shape, and both should
+    // fail this test.
     const CHAIN_COMMAND_PHRASES: &[&str] = &[
       "npm install -g",
       "pnpm add -g",
@@ -3003,6 +3004,23 @@ mod tests {
       "go install",
     ];
 
+    // Tools with no ALL_CHAINS row at all (`cargo`, `gofmt`) get a plain
+    // manual-bootstrap override; tools whose row exists but can't express
+    // a real fallback the chain has no way to carry (no Windows entry at
+    // all, or a docs/manual-download URL) get one too -- see
+    // `GOOGLE_JAVA_FORMAT_INSTALL_HINT`'s and `CHECKSTYLE_INSTALL_HINT`'s
+    // doc comments in java.rs. Either way, each is exactly one named
+    // `const`, referenced from every call site for that tool, so it can't
+    // re-drift into two disagreeing copies. Declaration lines for these
+    // are exempted below; any *other* occurrence of a chain-command phrase
+    // still fails the test.
+    const ALLOWED_OVERRIDE_CONSTANTS: &[&str] = &[
+      "CARGO_INSTALL_HINT",
+      "GOFMT_INSTALL_HINT",
+      "GOOGLE_JAVA_FORMAT_INSTALL_HINT",
+      "CHECKSTYLE_INSTALL_HINT",
+    ];
+
     let surface_sources: &[(&str, &str)] = &[
       ("cpp.rs", include_str!("cpp.rs")),
       ("go.rs", include_str!("go.rs")),
@@ -3019,8 +3037,28 @@ mod tests {
     ];
 
     for (file, source) in surface_sources {
+      // Exempt an allowed override const's own declaration (which may
+      // wrap across multiple lines once rustfmt reflows a long string
+      // literal) from the phrase scan below entirely: track "inside a
+      // `const <ALLOWED_NAME>: ... = ...;` declaration" as a span, not a
+      // single line, so a wrapped literal's continuation lines are
+      // exempted too, not just the line the `const` keyword appears on.
+      let mut in_allowed_decl = false;
       for (lineno, line) in source.lines().enumerate() {
         let trimmed = line.trim_start();
+        if !in_allowed_decl
+          && ALLOWED_OVERRIDE_CONSTANTS
+            .iter()
+            .any(|name| trimmed.starts_with(&format!("const {name}:")))
+        {
+          in_allowed_decl = true;
+        }
+        if in_allowed_decl {
+          if trimmed.contains(';') {
+            in_allowed_decl = false;
+          }
+          continue;
+        }
         // Full-line (doc) comments legitimately quote command text for
         // human readers explaining *why* a constant exists (e.g. this
         // file's own `CARGO_INSTALL_HINT` doc comment).
@@ -3031,10 +3069,12 @@ mod tests {
           assert!(
             !trimmed.contains(phrase),
             "{file}:{} hardcodes a chain-derived install command \
-             ({phrase:?}) outside `install_hint_for` -- this is the #264 \
-             drift bug reappearing. A binary with a real ALL_CHAINS row \
-             must derive its hint (pass `None`); a binary with no chain \
-             at all must use exactly one named `const` referenced from \
+             ({phrase:?}) outside `install_hint_for` and outside an \
+             allowed override const -- this is the #264 drift bug \
+             reappearing. A binary with a real ALL_CHAINS row and no \
+             documented fallback gap must derive its hint (pass `None`); \
+             a legitimate override must be exactly one named `const`, \
+             added to ALLOWED_OVERRIDE_CONSTANTS above, referenced from \
              every call site, not a repeated string literal. Line: \
              {trimmed:?}",
             lineno + 1,
