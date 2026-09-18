@@ -1338,13 +1338,19 @@ fn go_bin_dir_from_env(gobin: &str, gopath: &str) -> Option<PathBuf> {
 /// binaries into (`GOBIN`, else `$GOPATH/bin`), or `None` if `go` isn't on
 /// `PATH` or the query fails.
 ///
-/// [`InstallMethod::GoInstall`] is the one installer in this module that
-/// routinely writes into a directory that is *not* already on `PATH`.
-/// Every other installer used here puts binaries next to (or under the same
-/// prefix as) a package manager the user must already be able to invoke:
-/// `npm -g`, `pipx`, `uv`, `brew`, `cargo install`, `rustup`. `$GOPATH/bin`
-/// has no such guarantee -- Go creates it on demand, and it is on `PATH`
-/// only if the user put it there. On a stock GitHub Actions Linux runner it
+/// [`InstallMethod::GoInstall`] is the installer this fallback is scoped to
+/// today, *not* the only one with the property. `npm -g`, the other node
+/// managers, `brew`, `cargo install`, `rustup` and `Apt` do put binaries
+/// next to (or under the same prefix as) a package manager the user must
+/// already be able to invoke, so their output directory is on `PATH` too.
+/// **`Pipx` and `Uv` do not**: both write into `~/.local/bin`, which is why
+/// `pipx ensurepath` and `uv tool update-shell` exist at all, and those
+/// chains cover `ruff`, `yamllint` and `clang-format`. That gap is real and
+/// tracked separately in #297 -- it is left out of this fallback
+/// deliberately (widening it needs a per-[`InstallMethod`] known-bin-dir
+/// hook, a design call), not because it does not exist. `$GOPATH/bin` is
+/// simply the case #293 was filed over: Go creates it on demand, and it is
+/// on `PATH` only if the user put it there. On a stock GitHub Actions Linux runner it
 /// is not, so `go install golang.org/x/tools/cmd/goimports@v0.49.0`
 /// succeeds and a lookup for `goimports` from `PATH` alone still finds
 /// nothing -- in this process *or a later one*, since nothing durable ever
@@ -1429,9 +1435,11 @@ fn is_executable_file(path: &std::path::Path) -> bool {
 ///
 /// Scoped to Go-installed binaries only (via [`install_chain_for`]) rather
 /// than probing this directory unconditionally for every miss: computing it
-/// spawns `go env`, and every other binary's chain never writes there, so
+/// spawns `go env`, and no other binary's chain ever writes *there*, so
 /// paying that cost for e.g. a genuinely-missing `prettier` would be pure
-/// waste.
+/// waste. Other install methods with their own off-`PATH` directory --
+/// `Pipx`/`Uv`'s `~/.local/bin` -- are #297, and want their own entry here
+/// rather than a wider probe of this one.
 #[must_use]
 fn resolve_via_known_install_dir(binary: &str) -> Option<PathBuf> {
   resolve_via_known_install_dir_with(binary, go_install_bin_dir)
