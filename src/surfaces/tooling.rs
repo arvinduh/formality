@@ -1389,7 +1389,34 @@ fn resolve_go_installed_binary(
 ) -> Option<PathBuf> {
   let candidate =
     go_bin_dir.join(format!("{binary}{}", std::env::consts::EXE_SUFFIX));
-  candidate.is_file().then_some(candidate)
+  (candidate.is_file() && is_executable_file(&candidate)).then_some(candidate)
+}
+
+/// Whether `path` is something the OS would actually agree to execute --
+/// the same bar `which::which` applies to a `PATH` hit, so the fallback in
+/// [`resolve_via_known_install_dir`] can't resolve a file `which` would
+/// have skipped.
+///
+/// This is load bearing now that [`create_tool_command`] *spawns* the
+/// resolved path: a mode-0644 leftover in `$GOBIN` (a half-written
+/// download, a stray shim) would otherwise pass the missing-tool guard and
+/// then fail to exec with `Permission denied` -- the same "found it, can't
+/// run it" shape #293 is about. On Windows executability is carried by the
+/// extension (already handled by `EXE_SUFFIX` above), not by a permission
+/// bit, so there is nothing further to check there.
+#[must_use]
+fn is_executable_file(path: &std::path::Path) -> bool {
+  #[cfg(unix)]
+  {
+    use std::os::unix::fs::PermissionsExt;
+    std::fs::metadata(path)
+      .is_ok_and(|meta| meta.permissions().mode() & 0o111 != 0)
+  }
+  #[cfg(not(unix))]
+  {
+    let _ = path;
+    true
+  }
 }
 
 /// The lookup-time fallback [`resolve_binary_path`] tries once a plain
@@ -2231,9 +2258,7 @@ mod tests {
     // is seeded into BINARY_CACHE exactly as a real cold lookup would have
     // memoized it, then evicted again.
     let tmp = tempfile::tempdir().expect("tempdir");
-    let bin_name = format!("goimports{}", std::env::consts::EXE_SUFFIX);
-    let fixture = tmp.path().join(&bin_name);
-    std::fs::write(&fixture, b"#!/bin/sh\n").expect("write fixture binary");
+    let fixture = write_go_bin_fixture(tmp.path(), "goimports");
     let dir = tmp.path().to_path_buf();
 
     let resolved =
@@ -2802,6 +2827,21 @@ mod tests {
     );
   }
 
+  /// Writes a stand-in for a `go install`-produced binary into `dir`,
+  /// executable on Unix so it clears the same bar `which::which` applies to
+  /// a `PATH` hit (see `is_executable_file`). Returns its full path.
+  fn write_go_bin_fixture(dir: &std::path::Path, binary: &str) -> PathBuf {
+    let path = dir.join(format!("{binary}{}", std::env::consts::EXE_SUFFIX));
+    std::fs::write(&path, b"#!/bin/sh\n").expect("write fixture binary");
+    #[cfg(unix)]
+    {
+      use std::os::unix::fs::PermissionsExt;
+      std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o755))
+        .expect("chmod fixture binary");
+    }
+    path
+  }
+
   // --- resolve_via_known_install_dir (#293) -------------------------------
   //
   // The lookup-time half of the fix: a binary `go install` put in
@@ -2817,14 +2857,12 @@ mod tests {
   #[test]
   fn test_resolve_go_installed_binary_finds_a_real_file() {
     let tmp = tempfile::tempdir().expect("tempdir");
-    let bin_name = format!("goimports{}", std::env::consts::EXE_SUFFIX);
-    std::fs::write(tmp.path().join(&bin_name), b"#!/bin/sh\n")
-      .expect("write fixture binary");
+    let fixture = write_go_bin_fixture(tmp.path(), "goimports");
 
     let found = resolve_go_installed_binary("goimports", tmp.path());
     assert_eq!(
       found,
-      Some(tmp.path().join(&bin_name)),
+      Some(fixture),
       "must find the binary Go's own EXE_SUFFIX convention names it under"
     );
   }
@@ -2836,6 +2874,35 @@ mod tests {
       resolve_go_installed_binary("goimports", tmp.path()),
       None,
       "an empty GOBIN-equivalent directory must not fabricate a path"
+    );
+  }
+
+  #[test]
+  #[cfg(unix)]
+  fn test_resolve_go_installed_binary_rejects_a_non_executable_file() {
+    // `which::which` requires the executable bit for a PATH hit, so the
+    // fallback must too -- otherwise a mode-0644 leftover in GOBIN would
+    // pass the missing-tool guard and then fail to exec, which is the
+    // failure shape #293 exists to remove, not reintroduce.
+    let tmp = tempfile::tempdir().expect("tempdir");
+    let path = tmp.path().join("goimports");
+    std::fs::write(&path, b"#!/bin/sh\n").expect("write fixture");
+
+    assert_eq!(
+      resolve_go_installed_binary("goimports", tmp.path()),
+      None,
+      "a non-executable file must not resolve as an installed binary"
+    );
+
+    // ...and the same file does resolve once it is actually executable, so
+    // this asserts the permission bit specifically, not merely that some
+    // unrelated condition rejected the path.
+    use std::os::unix::fs::PermissionsExt;
+    std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o755))
+      .expect("chmod fixture");
+    assert_eq!(
+      resolve_go_installed_binary("goimports", tmp.path()),
+      Some(path)
     );
   }
 
@@ -2852,14 +2919,12 @@ mod tests {
   #[test]
   fn test_resolve_via_known_install_dir_finds_go_installed_binary() {
     let tmp = tempfile::tempdir().expect("tempdir");
-    let bin_name = format!("goimports{}", std::env::consts::EXE_SUFFIX);
-    std::fs::write(tmp.path().join(&bin_name), b"#!/bin/sh\n")
-      .expect("write fixture binary");
+    let fixture = write_go_bin_fixture(tmp.path(), "goimports");
     let dir = tmp.path().to_path_buf();
 
     let found =
       resolve_via_known_install_dir_with("goimports", move || Some(dir));
-    assert_eq!(found, Some(tmp.path().join(&bin_name)));
+    assert_eq!(found, Some(fixture));
   }
 
   #[test]
@@ -2869,14 +2934,12 @@ mod tests {
     // GoInstall entry anywhere" gate must still catch it, not just a
     // single-entry chain like goimports's.
     let tmp = tempfile::tempdir().expect("tempdir");
-    let bin_name = format!("golangci-lint{}", std::env::consts::EXE_SUFFIX);
-    std::fs::write(tmp.path().join(&bin_name), b"#!/bin/sh\n")
-      .expect("write fixture binary");
+    let fixture = write_go_bin_fixture(tmp.path(), "golangci-lint");
     let dir = tmp.path().to_path_buf();
 
     let found =
       resolve_via_known_install_dir_with("golangci-lint", move || Some(dir));
-    assert_eq!(found, Some(tmp.path().join(&bin_name)));
+    assert_eq!(found, Some(fixture));
   }
 
   #[test]
