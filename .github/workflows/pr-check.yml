@@ -83,7 +83,7 @@ jobs:
         # on PATH before `cargo test --verbose` runs, mirroring Job 2 and
         # the old ci.yml. Without this, e.g. fix_command.rs's TOML-surface
         # tests fail on a clean runner with no taplo installed.
-        run: ./target/debug/fml install
+        run: ./target/debug/fml doctor --install
 
       - name: Run full test suite
         run: cargo test --verbose
@@ -113,7 +113,7 @@ jobs:
         run: cargo build
 
       - name: Install tool dependencies via fml
-        run: ./target/debug/fml install
+        run: ./target/debug/fml doctor --install
 
       - name: Check formatting
         run: ./target/debug/fml fmt --check
