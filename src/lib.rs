@@ -183,42 +183,6 @@ fn run_command_inner(
       allow_missing,
     ),
 
-    // `--fix` is the deprecated spelling of `fml fix` and dispatches to it
-    // outright, rather than to a lint-only writing form. That form no
-    // longer exists: a lint-fix pass without the format pass that follows
-    // it leaves the tree lint-fixed but unformatted, which is exactly the
-    // state `.agents/orchestrate.md` §5 says `fml` must never leave
-    // behind — and it was the sole source of the `fml fix` /
-    // `fml lint --fix` ambiguity. The notice says so, and the run banner
-    // reads `fml fix`, because that is genuinely what runs.
-    Commands::Lint {
-      fix: true,
-      staged,
-      changed,
-      lang,
-      allow_missing,
-      paths,
-      ..
-    } => {
-      crate::ui::deprecation::warn_deprecated_spelling(
-        "fml lint --fix",
-        "fml fix",
-        Some(
-          "it applies the same lint fixes and then reformats, which `fml lint --fix` never did",
-        ),
-      );
-      commands::fix::run_fix(
-        root,
-        &config,
-        false,
-        staged,
-        changed,
-        lang,
-        paths,
-        allow_missing,
-      )
-    }
-
     Commands::Lint {
       staged,
       changed,

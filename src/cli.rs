@@ -71,12 +71,11 @@ pub enum Commands {
 
   /// Lint source files. Never writes -- use `fml fix` to apply fixes
   Lint {
-    /// Deprecated: use `fml fix`. Kept working for one minor release.
+    /// Removed in v0.3.0: `fml fix` is the only spelling now.
     ///
-    /// Hidden from `--help` deliberately: it is on its way out, so help
-    /// advertises only the spelling we want adopted. It still parses, and
-    /// dispatches to the `fix` plan (lint fixes *and* format) after
-    /// printing the shared deprecation notice.
+    /// Declared hidden, not deleted outright, so [`Cli::validate`] can
+    /// reject it by name with a message pointing at `fml fix` instead of
+    /// clap's bare "unexpected argument".
     #[arg(long, hide = true)]
     fix: bool,
 
@@ -287,6 +286,9 @@ impl Cli {
   ///   one concern now, not a run command's. Declared hidden for the same
   ///   reason as `--check` above: so the error can name `fml doctor
   ///   --install` instead of clap's bare "unexpected argument".
+  /// - `fml lint --fix`. Removed outright in v0.3.0 (#255): declared hidden
+  ///   for the same by-name-rejection reason as the flags above, reusing
+  ///   the same mechanism rather than inventing a second one (see #282).
   ///
   /// # Errors
   ///
@@ -312,6 +314,20 @@ impl Cli {
           "  tip: `fml lint` is already report-only. For a read-only run ",
           "of the fix pipeline, use `fml fix --check`.",
         ),
+      ));
+    }
+
+    if let Commands::Lint { fix: true, .. } = &self.command {
+      let mut cmd = Self::command();
+      cmd.build();
+      let lint = cmd
+        .find_subcommand_mut("lint")
+        .expect("`lint` subcommand is declared above");
+      return Err(lint.error(
+        clap::error::ErrorKind::ArgumentConflict,
+        "`--fix` was removed from `fml lint` in v0.3.0.\n       \
+         Use `fml fix` instead — it applies the same lint fixes and then \
+         reformats, which `fml lint --fix` never did.",
       ));
     }
 
@@ -408,10 +424,23 @@ mod tests {
   }
 
   #[test]
-  fn test_deprecated_lint_fix_still_parses_but_is_hidden_from_help() {
-    let cli = Cli::try_parse_from(["fml", "lint", "--fix"]).unwrap();
-    assert!(matches!(cli.command, Commands::Lint { fix: true, .. }));
-    assert!(cli.validate().is_ok());
+  fn test_lint_fix_is_rejected_with_a_tailored_error() {
+    // `--fix` still parses (declared hidden) so `validate` can name the
+    // replacement instead of clap's bare "unexpected argument".
+    let cli = Cli::try_parse_from(["fml", "lint", "--fix"])
+      .expect("--fix must parse so validate can reject it by name");
+    let err = cli
+      .validate()
+      .expect_err("`fml lint --fix` must be an error");
+    let rendered = err.to_string();
+    assert!(
+      rendered.contains("was removed"),
+      "error should say `--fix` was removed, got:\n{rendered}"
+    );
+    assert!(
+      rendered.contains("fml fix"),
+      "error should name the replacement, got:\n{rendered}"
+    );
 
     let mut cmd = Cli::command();
     cmd.build();
@@ -422,7 +451,7 @@ mod tests {
       .to_string();
     assert!(
       !help.contains("--fix"),
-      "a deprecated spelling should not be advertised in --help, got:
+      "a removed spelling should not be advertised in --help, got:
 {help}"
     );
     assert!(
