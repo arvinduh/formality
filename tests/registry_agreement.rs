@@ -220,3 +220,83 @@ fn test_mstv_entries_correspond_to_a_checked_binary() {
      MstvOnly/Both exemption in tests/registry_agreement.rs::EXEMPTIONS)"
   );
 }
+
+// --- #294: MSTV advice content must agree with ALL_CHAINS -----------------
+//
+// `ToolMstvEntry.advice` used to be a second, hand-maintained copy of the
+// same package-manager commands `ALL_CHAINS` already owns (the same drift
+// shape #264 fixed for `ToolInfo.install_hint`) -- most visibly, its
+// `taplo` row led with `cargo binstall` after `TAPLO_CHAIN` was
+// deliberately reordered npm-first. `MstvAdvice::Derived` (see
+// `src/engine/version/mstv.rs`) now sources the install portion from
+// `install_hint_for`, the same `ALL_CHAINS` renderer `ToolInfo` hints use;
+// `MstvAdvice::Bespoke` remains only for a binary with no `ALL_CHAINS` row
+// at all to derive from (`gofmt`, exempt on the chain side above).
+//
+// This reuses this file's own `EXEMPTIONS`/`ExemptSide` mechanism rather
+// than adding a third one: a binary legitimately exempt from the chain
+// side (`ExemptSide::ChainOnly`/`Both`) has no `ALL_CHAINS` row to derive
+// from, so `Bespoke` is its only option and is not a violation; any other
+// binary reaching for `Bespoke` is the #264/#294 drift bug reappearing.
+
+/// Whether `entry` hand-writes upgrade advice (`MstvAdvice::Bespoke`) for a
+/// binary that a chain-side exemption does not excuse from having a real
+/// `ALL_CHAINS` row -- i.e. a binary that has (or should have) a chain row
+/// to derive its install guidance from instead.
+fn hardcodes_bespoke_advice_for_a_chain_backed_binary(
+  entry: &mstv::ToolMstvEntry,
+) -> bool {
+  let chain_exempt =
+    exemption(entry.binary).is_some_and(ExemptSide::exempts_chain);
+  matches!(entry.advice, mstv::MstvAdvice::Bespoke(_)) && !chain_exempt
+}
+
+#[test]
+fn test_no_mstv_entry_hardcodes_advice_for_a_chain_backed_binary() {
+  let violations: Vec<&str> = mstv::all_mstv_entries()
+    .iter()
+    .filter(|entry| hardcodes_bespoke_advice_for_a_chain_backed_binary(entry))
+    .map(|entry| entry.binary)
+    .collect();
+
+  assert!(
+    violations.is_empty(),
+    "MSTV entries with hand-written (MstvAdvice::Bespoke) upgrade advice \
+     for a binary not exempt from the ALL_CHAINS side: {violations:?} -- \
+     this is the #264/#294 drift bug reappearing. Use \
+     MstvAdvice::Derived {{ upgrade_note: .. }} instead, or add a \
+     ChainOnly/Both exemption in EXEMPTIONS if the binary genuinely has no \
+     ALL_CHAINS row."
+  );
+}
+
+/// Demonstrates the guard above actually catches a regression: a fabricated
+/// entry that reverts a chain-backed binary (`taplo`, which has no chain
+/// exemption) to hand-written `Bespoke` advice must be flagged.
+#[test]
+fn test_hardcoded_advice_detector_catches_a_regression() {
+  let regression = mstv::ToolMstvEntry {
+    binary: "taplo",
+    min_version: None,
+    probe: mstv::DEFAULT_VERSION_PROBE,
+    advice: mstv::MstvAdvice::Bespoke(
+      "Run 'cargo binstall taplo-cli' or 'npm install -g @taplo/cli'",
+    ),
+  };
+
+  assert!(
+    hardcodes_bespoke_advice_for_a_chain_backed_binary(&regression),
+    "detector failed to catch hand-written Bespoke advice reintroduced on \
+     'taplo', a chain-backed binary with no ALL_CHAINS exemption"
+  );
+
+  // Sanity check on the other side: `gofmt` is legitimately chain-exempt
+  // (see EXEMPTIONS), so the same detector must not flag it.
+  let gofmt_entry = mstv::get_tool_mstv_entry("gofmt")
+    .expect("gofmt is a real TOOL_MSTV_REGISTRY entry");
+  assert!(
+    !hardcodes_bespoke_advice_for_a_chain_backed_binary(gofmt_entry),
+    "detector incorrectly flagged 'gofmt', which is legitimately exempt \
+     from the ALL_CHAINS side"
+  );
+}
