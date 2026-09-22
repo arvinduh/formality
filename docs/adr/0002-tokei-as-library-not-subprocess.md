@@ -53,7 +53,8 @@ Depend on `tokei` as a library crate, not invoke it as a subprocess.
   `src/engine/version/` and `src/surfaces/tooling.rs` provide for the other 12
   surfaces, so implementing it doesn't extend that machinery — it's a different
   shape of command, closer to `fml::ui::table`'s self-contained rendering than
-  to a `LanguageSurface`.
+  to a `LanguageSurface` (as above, this text originally said `fml table`; that
+  CLI command was removed in v0.3.0, #255, and only the library API remains).
 - Per `.agents/orchestrate.md` §10, the concrete `fml stat` proposal (example
   invocation, example output) still needs to be presented to the user for
   confirmation before implementation begins — this ADR records the
