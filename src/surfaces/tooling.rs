@@ -330,9 +330,9 @@ pub fn install_hint_for(binary: &str) -> String {
 //
 // Bumping a pin is a deliberate action, same as bumping
 // `rust-toolchain.toml`: update the literal(s) here, re-run the presubmit
-// dogfooding (`fmt`/`lint`/`doctor --all`/`install`) to confirm the new
-// version doesn't reformat/re-lint this repo's own tree differently, then
-// commit.
+// dogfooding (`fmt`/`lint`/`doctor --all`/`doctor --install`) to confirm
+// the new version doesn't reformat/re-lint this repo's own tree
+// differently, then commit.
 
 // `CargoBinstall` sits *below* the npm family here, unlike every other
 // chain that lists it, and deliberately so: cargo-binstall only installs a
