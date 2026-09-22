@@ -1356,10 +1356,10 @@ fn go_bin_dir_from_env(gobin: &str, gopath: &str) -> Option<PathBuf> {
 ///
 /// One of the directories [`KnownInstallDir`] enumerates -- see that type
 /// for the full per-[`InstallMethod`] audit of which installers write
-/// somewhere `PATH` may not cover. `$GOPATH/bin` is
-/// the case #293 was filed over: Go creates it on demand, and it is
-/// on `PATH` only if the user put it there. On a stock GitHub Actions Linux runner it
-/// is not, so `go install golang.org/x/tools/cmd/goimports@v0.49.0`
+/// somewhere `PATH` may not cover. `$GOPATH/bin` is the case #293 was filed
+/// over: Go creates it on demand, and it is on `PATH` only if the user put
+/// it there. On a stock GitHub Actions Linux runner it is not, so
+/// `go install golang.org/x/tools/cmd/goimports@v0.49.0`
 /// succeeds and a lookup for `goimports` from `PATH` alone still finds
 /// nothing -- in this process *or a later one*, since nothing durable ever
 /// records that directory anywhere `PATH` gets rebuilt from (contrast the
@@ -1685,19 +1685,24 @@ fn resolve_via_known_install_dir_with(
 ///
 /// Called right after a successful install (alongside [`forget_binary`],
 /// which handles the separate in-process caching half of the same
-/// symptom). Keeping the per-installer knowledge here rather than at the
-/// call site means a new [`InstallMethod`] whose bin directory isn't on
-/// `PATH` has exactly one place to be taught about.
+/// symptom). This is *not* the place a new [`InstallMethod`] whose bin
+/// directory isn't on `PATH` gets taught about -- that is
+/// [`KnownInstallDir::for_method`], which fixes the cross-process case as
+/// well and whose `match` is exhaustive so the decision cannot be skipped.
+/// What is left here is only the one fix-up a *lookup* cannot perform: a
+/// `PATH` change another process already made durably, which this
+/// already-running process's inherited environment block never sees.
 ///
-/// `go install` is *not* handled here (compare the Scoop/winget case
-/// below): its output directory is never durably on `PATH` for anyone, not
-/// just this already-running process, so a same-process `PATH` mutation
-/// would fix nothing that [`resolve_via_known_install_dir`] doesn't already
-/// fix at lookup time -- see [`go_install_bin_dir`]'s doc comment. (An
-/// earlier version of this function did carry a `"go" =>
-/// refresh_go_install_path()` arm; that function is deleted along with it,
-/// per #293's acceptance criteria that the old in-process fix-up not be
-/// left behind once lookup-time resolution supersedes it.)
+/// So `go install`, `pipx`, `uv` and `pip` are all absent from the match
+/// below (compare the Scoop/winget case): their output directories are
+/// never durably on `PATH` for anyone, not just this process, so a
+/// same-process `PATH` mutation would fix nothing that
+/// [`resolve_via_known_install_dir`] doesn't already fix at lookup time,
+/// for this process *and* the next one. (An earlier version of this
+/// function did carry a `"go" => refresh_go_install_path()` arm; that
+/// function is deleted along with it, per #293's acceptance criteria that
+/// the old in-process fix-up not be left behind once lookup-time resolution
+/// supersedes it.)
 pub fn refresh_path_after_install(program: &str) {
   match program {
     // Scoop and winget register their PATH changes in the Windows
@@ -1714,8 +1719,10 @@ pub fn refresh_path_after_install(program: &str) {
 /// falling back to the bare name only when nothing resolved at all. That is
 /// the execution half of #293's fix and it has to match the detection half:
 /// `check_binary_exists`/`tool_missing_guard` decide a tool is present via
-/// `resolve_binary_path`, which consults `go install`'s own output directory
-/// (`GOBIN`, else `$GOPATH/bin`) in addition to `PATH`. A bare
+/// `resolve_binary_path`, which consults every [`KnownInstallDir`] the
+/// binary's own install chain could have written to -- `go install`'s output
+/// directory (`GOBIN`, else `$GOPATH/bin`), and pipx/uv/pip's `~/.local/bin`
+/// (#297) -- in addition to `PATH`. A bare
 /// `Command::new(binary)` re-does a *`PATH`-only* search inside the OS's
 /// `execvp`, so a binary found only through that fallback would pass the
 /// missing-tool guard and then fail to exec -- "found it, can't run it",
