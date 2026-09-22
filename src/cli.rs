@@ -254,7 +254,13 @@ pub enum Commands {
     json: Option<String>,
   },
 
-  /// Deprecated: use `fml init`. Kept working for one minor release.
+  /// Removed in v0.3.0: `fml init` is the only spelling now.
+  ///
+  /// Declared hidden, not deleted outright, so [`Cli::validate`] can reject
+  /// it by name with a message pointing at `fml init` instead of clap's
+  /// bare "unexpected argument". `command` stays declared for the same
+  /// reason: `fml migrate schema` must reach the tailored error too, not
+  /// fail earlier on an unrecognized subcommand.
   #[command(hide = true)]
   Migrate {
     /// Which migration to run.
@@ -298,6 +304,11 @@ impl Cli {
   ///   declared hidden for the same by-name-rejection reason as the flags
   ///   above, reusing the same mechanism rather than inventing a second one
   ///   (see #282).
+  /// - `fml migrate`/`fml migrate schema`. Removed in v0.3.0 (#299):
+  ///   `fml init` runs the same `apply_schema_pin` operation and also
+  ///   scaffolds a config when none exists, so nothing `migrate schema` did
+  ///   is missing. Declared hidden for the same by-name-rejection reason as
+  ///   the rest of this list.
   ///
   /// # Errors
   ///
@@ -305,10 +316,10 @@ impl Cli {
   ///
   /// # Panics
   ///
-  /// Panics if the `lint`/`fmt`/`fix`/`list-surfaces`/`table`/`install`
-  /// subcommand is missing from [`Commands`] — they are declared directly
-  /// above, so this is a "the enum was edited without updating this"
-  /// assertion, not a runtime condition.
+  /// Panics if the `lint`/`fmt`/`fix`/`list-surfaces`/`table`/`install`/
+  /// `migrate` subcommand is missing from [`Commands`] — they are declared
+  /// directly above, so this is a "the enum was edited without updating
+  /// this" assertion, not a runtime condition.
   pub fn validate(&self) -> Result<(), clap::Error> {
     if let Commands::Lint { check: true, .. } = &self.command {
       let mut cmd = Self::command();
@@ -408,11 +419,29 @@ impl Cli {
       ));
     }
 
+    if let Commands::Migrate { .. } = &self.command {
+      let mut cmd = Self::command();
+      cmd.build();
+      let sub = cmd
+        .find_subcommand_mut("migrate")
+        .expect("`migrate` subcommand is declared above");
+      return Err(sub.error(
+        clap::error::ErrorKind::ArgumentConflict,
+        "`fml migrate` was removed in v0.3.0.\n       \
+         Use `fml init` instead — it applies the same schema-pin update.",
+      ));
+    }
+
     Ok(())
   }
 }
 
 /// Subcommands of `fml migrate`.
+///
+/// `fml migrate` itself was removed in v0.3.0 (#299); this stays declared
+/// (hidden) only so `fml migrate schema` still parses and reaches
+/// [`Cli::validate`]'s tailored rejection instead of failing earlier on an
+/// unrecognized subcommand.
 #[derive(Subcommand, Debug)]
 #[command(hide = true)]
 pub enum MigrateCommands {
@@ -556,23 +585,49 @@ mod tests {
   }
 
   #[test]
-  fn test_deprecated_migrate_still_parses_but_is_hidden_from_help() {
-    let cli = Cli::try_parse_from(["fml", "migrate", "schema"]).unwrap();
+  fn test_migrate_schema_is_rejected_with_a_tailored_error() {
+    // Still parses (declared hidden) so `validate` can name `fml init`
+    // instead of clap's bare "unexpected argument".
+    let cli = Cli::try_parse_from(["fml", "migrate", "schema"])
+      .expect("migrate schema must parse so validate can reject it by name");
     assert!(matches!(
       cli.command,
       Commands::Migrate {
         command: MigrateCommands::Schema
       }
     ));
-    assert!(cli.validate().is_ok());
+    let err = cli
+      .validate()
+      .expect_err("`fml migrate schema` must be an error");
+    let rendered = err.to_string();
+    assert!(
+      rendered.contains("`fml migrate` was removed"),
+      "error should say `fml migrate` was removed, got:\n{rendered}"
+    );
+    assert!(
+      rendered.contains("fml init"),
+      "error should name the replacement, got:\n{rendered}"
+    );
+    assert!(
+      !rendered.contains("unexpected argument"),
+      "error must not fall back to clap's bare rejection, got:\n{rendered}"
+    );
 
     let mut cmd = Cli::command();
     cmd.build();
     let help = cmd.render_help().to_string();
+    let visible_subcommands: Vec<&str> = cmd
+      .get_subcommands()
+      .filter(|c| !c.is_hide_set())
+      .map(clap::Command::get_name)
+      .collect();
     assert!(
-      !help.contains("migrate"),
-      "a deprecated command should not be advertised in --help, got:
-{help}"
+      !visible_subcommands.contains(&"migrate"),
+      "removed `migrate` should be hidden from subcommand list"
+    );
+    assert!(
+      !help.lines().any(|l| l.trim_start().starts_with("migrate ")),
+      "removed `migrate` should not appear in --help, got:\n{help}"
     );
   }
 
