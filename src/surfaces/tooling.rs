@@ -2453,7 +2453,7 @@ mod tests {
     // is seeded into BINARY_CACHE exactly as a real cold lookup would have
     // memoized it, then evicted again.
     let tmp = tempfile::tempdir().expect("tempdir");
-    let fixture = write_go_bin_fixture(tmp.path(), "goimports");
+    let fixture = write_bin_fixture(tmp.path(), "goimports");
     let dir = tmp.path().to_path_buf();
 
     let resolved = resolve_via_known_install_dir_with("goimports", move |_| {
@@ -3023,10 +3023,10 @@ mod tests {
     );
   }
 
-  /// Writes a stand-in for a `go install`-produced binary into `dir`,
+  /// Writes a stand-in for an installer-produced binary into `dir`,
   /// executable on Unix so it clears the same bar `which::which` applies to
   /// a `PATH` hit (see `is_executable_file`). Returns its full path.
-  fn write_go_bin_fixture(dir: &std::path::Path, binary: &str) -> PathBuf {
+  fn write_bin_fixture(dir: &std::path::Path, binary: &str) -> PathBuf {
     let path = dir.join(format!("{binary}{}", std::env::consts::EXE_SUFFIX));
     std::fs::write(&path, b"#!/bin/sh\n").expect("write fixture binary");
     #[cfg(unix)]
@@ -3053,7 +3053,7 @@ mod tests {
   #[test]
   fn test_resolve_installed_binary_in_finds_a_real_file() {
     let tmp = tempfile::tempdir().expect("tempdir");
-    let fixture = write_go_bin_fixture(tmp.path(), "goimports");
+    let fixture = write_bin_fixture(tmp.path(), "goimports");
 
     let found = resolve_installed_binary_in("goimports", tmp.path());
     assert_eq!(
@@ -3115,7 +3115,7 @@ mod tests {
   #[test]
   fn test_resolve_via_known_install_dir_finds_go_installed_binary() {
     let tmp = tempfile::tempdir().expect("tempdir");
-    let fixture = write_go_bin_fixture(tmp.path(), "goimports");
+    let fixture = write_bin_fixture(tmp.path(), "goimports");
     let dir = tmp.path().to_path_buf();
 
     let found = resolve_via_known_install_dir_with("goimports", move |_| {
@@ -3131,7 +3131,7 @@ mod tests {
     // GoInstall entry anywhere" gate must still catch it, not just a
     // single-entry chain like goimports's.
     let tmp = tempfile::tempdir().expect("tempdir");
-    let fixture = write_go_bin_fixture(tmp.path(), "golangci-lint");
+    let fixture = write_bin_fixture(tmp.path(), "golangci-lint");
     let dir = tmp.path().to_path_buf();
 
     let found =
@@ -3175,6 +3175,158 @@ mod tests {
     // panicking on a missing directory.
     let found = resolve_via_known_install_dir_with("goimports", |_| None);
     assert_eq!(found, None);
+  }
+
+  // --- the non-Go install methods (#297) ----------------------------------
+  //
+  // #297's acceptance criterion is that the guarantee must not be
+  // Go-specific by construction. Every test below fails if
+  // `KnownInstallDir::for_method`'s `Pipx`/`Uv`/`Pip`/`Pip3` arms go back to
+  // `None`, which is what the shipped code did before this change.
+
+  #[test]
+  fn test_resolve_via_known_install_dir_finds_a_pipx_or_uv_installed_binary() {
+    // `ruff`, `yamllint` and `clang-format` are the three tools whose chains
+    // run through `uv`/`pipx`/`pip` (`RUFF_CHAIN`, `YAMLLINT_CHAIN`,
+    // `CLANG_FORMAT_CHAIN`) -- all of which install into `~/.local/bin`, the
+    // directory `pipx ensurepath` and `uv tool update-shell` exist precisely
+    // because `PATH` routinely misses.
+    //
+    // The stand-in for `~/.local/bin` is a tempdir, never the machine's real
+    // one. The Go arm is wired to a panic so this cannot pass by way of
+    // `KnownInstallDir::Go` -- none of these three chains has a `GoInstall`
+    // entry, and if one ever did, resolving through it would not prove the
+    // Python-family directories are probed at all.
+    for binary in ["ruff", "yamllint", "clang-format"] {
+      let tmp = tempfile::tempdir().expect("tempdir");
+      let fixture = write_bin_fixture(tmp.path(), binary);
+      let dir = tmp.path().to_path_buf();
+
+      let resolved = resolve_via_known_install_dir_with(binary, |kind| {
+        assert_ne!(
+          kind,
+          KnownInstallDir::Go,
+          "{binary} has no GoInstall entry in its chain; resolving it \
+           through the Go bin directory would prove nothing about #297"
+        );
+        Some(dir.clone())
+      });
+
+      assert_eq!(
+        resolved.as_deref(),
+        Some(fixture.as_path()),
+        "a {binary} installed by pipx/uv/pip into a directory that is not on \
+         PATH must still resolve -- this is #293's `[OK]`-then-unusable \
+         shape reached through a non-Go install method"
+      );
+    }
+  }
+
+  #[test]
+  fn test_create_tool_command_spawns_a_local_bin_installed_binary_by_its_path()
+  {
+    // #297's first acceptance criterion in full: *spawned*, not merely
+    // resolved. PR #296's blocker 1 was a fix that resolved the binary while
+    // `create_tool_command` still spawned the bare name, converting a
+    // `[MISS]` into `Failed to execute <tool>` -- strictly worse. This is
+    // that end-to-end check for a pipx/uv-installed tool rather than a
+    // go-installed one.
+    //
+    // `yamllint` is used rather than `ruff`/`clang-format` because no other
+    // test in this binary resolves it, keeping the brief window in which the
+    // process-global cache holds the fixture path away from surfaces that
+    // actually spawn their tool.
+    let tmp = tempfile::tempdir().expect("tempdir");
+    let fixture = write_bin_fixture(tmp.path(), "yamllint");
+    let dir = tmp.path().to_path_buf();
+
+    let resolved =
+      resolve_via_known_install_dir_with("yamllint", |_| Some(dir.clone()));
+    assert_eq!(
+      resolved.as_deref(),
+      Some(fixture.as_path()),
+      "precondition: the fallback must find the fixture in the fake \
+       ~/.local/bin"
+    );
+
+    set_binary_path_for_test("yamllint", resolved);
+    let cmd = create_tool_command("yamllint");
+    let spawned = PathBuf::from(cmd.get_program());
+    forget_binary("yamllint");
+
+    assert_eq!(
+      spawned, fixture,
+      "a pipx/uv-installed binary found only via ~/.local/bin must be \
+       spawned by that path on every platform, not by the bare name"
+    );
+  }
+
+  #[test]
+  fn test_apt_and_the_other_audited_methods_contribute_no_directory() {
+    // The `Apt` half of #297's acceptance criteria, as an assertion rather
+    // than prose: a `.deb`'s binaries land under the distribution's own
+    // prefix (`/usr/bin`) -- the prefix `apt-get` itself was invoked from --
+    // so there is nothing for the fallback to probe. #293's prose
+    // enumeration omitted `Apt` entirely, which is part of why it was wrong.
+    //
+    // `clang-tidy`'s chain is `Apt`, `Brew`, `WingetName`, `Scoop`: every
+    // method audited as safe and not one that maps to a `KnownInstallDir`.
+    // The closure panics, so this fails loudly if any of them ever starts
+    // claiming a directory without that decision being made deliberately.
+    let found = resolve_via_known_install_dir_with("clang-tidy", |kind| {
+      panic!(
+        "clang-tidy installs only via apt/brew/winget/scoop, all audited as \
+         writing somewhere already on PATH; none may probe {kind:?}"
+      )
+    });
+    assert_eq!(found, None);
+  }
+
+  #[test]
+  fn test_known_install_dir_for_method_matches_the_documented_audit() {
+    // One representative of every `InstallMethod` variant, mapped to the
+    // conclusion recorded on `KnownInstallDir`. `for_method`'s `match` is
+    // exhaustive with no `_` arm, so a new variant breaks the build there;
+    // this table is what keeps an *existing* variant from being silently
+    // re-classified.
+    let cases: &[(InstallMethod, Option<KnownInstallDir>)] = &[
+      (
+        InstallMethod::GoInstall("x@latest"),
+        Some(KnownInstallDir::Go),
+      ),
+      (InstallMethod::Pipx("x"), Some(KnownInstallDir::Pipx)),
+      (InstallMethod::Uv("x"), Some(KnownInstallDir::UvTool)),
+      (InstallMethod::Pip("x"), Some(KnownInstallDir::PythonUser)),
+      (InstallMethod::Pip3("x"), Some(KnownInstallDir::PythonUser)),
+      // Audited as safe -- see `KnownInstallDir`'s doc comment for each.
+      (InstallMethod::Apt("x"), None),
+      (InstallMethod::Brew("x"), None),
+      (InstallMethod::Npm("x"), None),
+      (InstallMethod::Pnpm("x"), None),
+      (InstallMethod::Yarn("x"), None),
+      (InstallMethod::Bun("x"), None),
+      (InstallMethod::CargoBinstall("x"), None),
+      (
+        InstallMethod::Cargo {
+          package: "x",
+          locked: true,
+        },
+        None,
+      ),
+      (InstallMethod::Rustup("x"), None),
+      (InstallMethod::Scoop("x"), None),
+      (InstallMethod::WingetName("x"), None),
+      (InstallMethod::WingetId("x"), None),
+    ];
+
+    for (method, expected) in cases {
+      assert_eq!(
+        KnownInstallDir::for_method(method),
+        *expected,
+        "{method:?} was re-classified without the audit on \
+         KnownInstallDir being updated to match"
+      );
+    }
   }
 
   // --- KnownInstallDir::path precedence (#297) ----------------------------
