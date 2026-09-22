@@ -344,10 +344,17 @@ fn test_list_surfaces_and_surfaces_are_rejected_by_the_real_binary() {
     .expect("failed to run fml list-surfaces");
   assert!(!out_list_surfaces.status.success());
   let stderr_list = String::from_utf8_lossy(&out_list_surfaces.stderr);
+  // The backticked sentence, not a bare substring: clap's
+  // `Usage: fml list-surfaces [OPTIONS]` line already contains
+  // "fml list-surfaces", so a looser assertion passes even when the message
+  // names the wrong spelling.
   assert!(
-    stderr_list.contains("fml list-surfaces")
-      && stderr_list.contains("was removed"),
+    stderr_list.contains("`fml list-surfaces` was removed"),
     "expected removal error naming `fml list-surfaces` in stderr, got: {stderr_list}"
+  );
+  assert!(
+    !stderr_list.contains("`fml surfaces` was removed"),
+    "error must not name the alias when `list-surfaces` was typed, got: {stderr_list}"
   );
   assert!(
     stderr_list.contains("fml doctor"),
@@ -361,30 +368,62 @@ fn test_list_surfaces_and_surfaces_are_rejected_by_the_real_binary() {
   assert!(!out_surfaces.status.success());
   let stderr_surfaces = String::from_utf8_lossy(&out_surfaces.stderr);
   assert!(
-    stderr_surfaces.contains("fml surfaces")
-      && stderr_surfaces.contains("was removed"),
+    stderr_surfaces.contains("`fml surfaces` was removed"),
     "expected removal error naming `fml surfaces` in stderr, got: {stderr_surfaces}"
+  );
+  assert!(
+    !stderr_surfaces.contains("`fml list-surfaces` was removed"),
+    "error must not name the canonical spelling when the alias was typed, got: {stderr_surfaces}"
   );
 }
 
 #[test]
-fn test_deprecated_install_command_still_emits_deprecation_notice() {
-  // `fml install` itself is not in #255's scope (blocked on CI workflows
-  // that still invoke it — see the PR description) and keeps working
-  // exactly as before.
+fn test_removed_install_command_names_doctor_install() {
+  // Removed in v0.3.0 (#255). It still parses (declared hidden) so the
+  // error names `fml doctor --install` rather than clap's bare "unexpected
+  // argument"; exercised against the built binary because that is the path
+  // a user following an old README actually takes.
   use std::process::Command;
 
   let out_install = Command::new(env!("CARGO_BIN_EXE_fml"))
     .arg("install")
     .output()
     .expect("failed to run fml install");
+  assert!(!out_install.status.success());
   let stderr_install = String::from_utf8_lossy(&out_install.stderr);
   assert!(
-    stderr_install.contains(
-      "`fml install` is deprecated and will be removed in v0.4.0. Use `fml doctor --install` instead."
-    ),
-    "expected deprecation warning in stderr, got: {stderr_install}"
+    stderr_install.contains("`fml install` was removed in v0.3.0."),
+    "expected removal error naming `fml install` in stderr, got: {stderr_install}"
   );
+  assert!(
+    stderr_install.contains("fml doctor --install"),
+    "expected the error to name the replacement, got: {stderr_install}"
+  );
+  assert!(
+    !stderr_install.contains("unexpected argument"),
+    "error must not fall back to clap's bare rejection, got: {stderr_install}"
+  );
+
+  // `--all`/`-a` stays declared purely so it reaches this same error rather
+  // than failing earlier on an unknown flag — which only the real binary
+  // can demonstrate, since that is clap's own parse step.
+  for flag in ["--all", "-a"] {
+    let out = Command::new(env!("CARGO_BIN_EXE_fml"))
+      .args(["install", flag])
+      .output()
+      .unwrap_or_else(|e| panic!("failed to run fml install {flag}: {e}"));
+    assert!(!out.status.success(), "`fml install {flag}` must fail");
+    let stderr = String::from_utf8_lossy(&out.stderr);
+    assert!(
+      stderr.contains("`fml install` was removed in v0.3.0.")
+        && stderr.contains("fml doctor --install"),
+      "`fml install {flag}` should get the same tailored error, got: {stderr}"
+    );
+    assert!(
+      !stderr.contains("unexpected argument"),
+      "`fml install {flag}` must not fall back to clap's bare rejection, got: {stderr}"
+    );
+  }
 }
 
 #[test]
@@ -806,30 +845,17 @@ fn test_table_is_rejected_by_the_real_binary() {
     .expect("failed to run fml table");
   assert!(!out.status.success());
   let stderr = String::from_utf8_lossy(&out.stderr);
+  // The backticked sentence, not a bare substring: clap's
+  // `Usage: fml table [OPTIONS]` line already contains "fml table", so a
+  // looser assertion holds whatever the message says.
   assert!(
-    stderr.contains("fml table") && stderr.contains("was removed"),
+    stderr.contains("`fml table` was removed"),
     "expected removal error naming `fml table` in stderr, got: {stderr}"
   );
   assert!(
     stderr.contains("fml::ui::table"),
     "expected the error to name the library API replacement, got: {stderr}"
   );
-}
-
-#[test]
-fn test_install_command_active_surfaces() {
-  let temp = temp_repo(&[
-    (
-      "Cargo.toml",
-      "[package]\nname = \"install_test\"\nversion = \"0.1.0\"\nedition = \
-       \"2024\"\n",
-    ),
-    ("src/main.rs", "fn main() {}\n"),
-  ]);
-  let root = temp.path();
-
-  // Install for active surfaces (rust is already installed or handled gracefully)
-  assert_eq!(run_cli(root, Commands::Install { all: false }), 0);
 }
 
 #[test]

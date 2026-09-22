@@ -21,7 +21,7 @@ Select or describe the primary component affected:
 - [ ] New Language Surface (specify language and native tools)
 - [ ] Facet Rosetta mapping / canonical config expansion
 - [ ] Config Sync engine (`fml sync`)
-- [ ] Tool Installer (`fml install`)
+- [ ] Tool Installer (`fml doctor --install`)
 - [ ] Execution Engine / Rayon parallel runner
 - [ ] CLI Output / Table UI (`fml::ui::table`)
 - [ ] Other

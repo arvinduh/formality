@@ -515,10 +515,11 @@ fn test_lint_fix_is_rejected_by_the_real_binary() {
     .expect("failed to run fml lint --fix");
   assert!(!out.status.success());
   let stderr = String::from_utf8_lossy(&out.stderr);
+  // The message's own sentence, not a bare substring: clap's
+  // `Usage: fml lint [OPTIONS] [PATH]...` line already contains "fml lint",
+  // so `contains("fml lint")` is satisfied no matter what the message says.
   assert!(
-    stderr.contains("fml lint")
-      && stderr.contains("--fix")
-      && stderr.contains("was removed"),
+    stderr.contains("`--fix` was removed from `fml lint`"),
     "expected removal error naming `--fix` on `fml lint` in stderr, got: {stderr}"
   );
   assert!(
