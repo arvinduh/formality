@@ -17,8 +17,8 @@
 //! additional colour-asserting path, not a replacement for the colour-free
 //! one.
 //!
-//! The five statuses `fml sync` can reach are covered here, each produced
-//! through the real `Runner::run` path — no row is constructed by hand:
+//! All eight statuses are covered, each produced through the real
+//! `Runner::run` path — no row is constructed by hand:
 //!
 //! | status | how it is produced |
 //! |---|---|
@@ -27,8 +27,9 @@
 //! | `Passed` | `fml sync --check` over a config that is already in sync |
 //! | `ConfigDrifted` | a generated config edited, then `fml sync --check` |
 //! | `ManualConfig` | a hand-written config with no formality header |
-//!
-//! `fml sync` shells out to no external tool, so every test here is hermetic.
+//! | `ToolMissing` | `fml fmt` with a `PATH` that has no `rustfmt`/`cargo` |
+//! | `ExecutionError` | a `clang-format` shim that exits non-zero |
+//! | `ViolationsFound` | a `typstyle` shim that exits non-zero |
 
 use std::path::{Path, PathBuf};
 use std::process::Command;
@@ -378,6 +379,94 @@ fn golden_sync_check_renders_passed_drifted_and_manual_rows_with_styles() {
     "[PASS]",
     "editorconfig",
     "Already in sync",
+    Style::Ok,
+    Style::Strong,
+    Style::Dim,
+  );
+}
+
+/// Writes an executable `#!/bin/sh` shim named `binary` into `dir` that
+/// exits with `code`.
+///
+/// `which::which` (which `surfaces::tooling::resolve_binary_path` uses)
+/// requires the executable bit for a `PATH` hit, so the mode is set
+/// explicitly.
+#[cfg(unix)]
+fn write_shim(dir: &Path, binary: &str, code: i32) {
+  use std::os::unix::fs::PermissionsExt;
+  let path = dir.join(binary);
+  std::fs::write(&path, format!("#!/bin/sh\nexit {code}\n")).unwrap();
+  std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o755))
+    .unwrap();
+}
+
+/// The three statuses that need a real tool invocation, plus `Passed`'s
+/// format-plan spelling, from one `fml fmt` run over a `PATH` containing
+/// nothing but shims this test wrote.
+///
+/// Hermetic by construction: the run cannot see a real `rustfmt`,
+/// `clang-format`, `typstyle` or `taplo`, so these statuses do not depend on
+/// what the machine happens to have installed.
+///
+/// Unix-only: the shims are `#!/bin/sh` scripts. The `NO_COLOR` process
+/// tests remain cross-platform; this is the colour-asserting addition.
+#[cfg(unix)]
+#[test]
+fn golden_fmt_renders_missing_error_and_violation_rows_with_styles() {
+  let shims = tempfile::tempdir().expect("tempdir");
+  // `clang-format` cannot do its job -> `ExecutionError` (#151); `typstyle`
+  // exits non-zero through the unclassified `run_tool_command` path ->
+  // `ViolationsFound`; `taplo` succeeds -> `Passed`. No `rustfmt`/`cargo`
+  // shim at all -> `ToolMissing`.
+  write_shim(shims.path(), "clang-format", 1);
+  write_shim(shims.path(), "typstyle", 1);
+  write_shim(shims.path(), "taplo", 0);
+
+  let dir = tempfile::tempdir().expect("tempdir");
+  std::fs::write(dir.path().join("formality.toml"), SCHEMA_LINE).unwrap();
+  std::fs::write(dir.path().join("main.rs"), "fn main() {}\n").unwrap();
+  std::fs::write(dir.path().join("main.cpp"), "int main() { return 0; }\n")
+    .unwrap();
+  std::fs::write(dir.path().join("doc.typ"), "#let x = 1\n").unwrap();
+  std::fs::write(dir.path().join("thing.toml"), "a = 1\n").unwrap();
+  let root = temp_root(&dir);
+
+  let stdout = run_fml(&root, &["fmt"], Some(shims.path()));
+  let rows = rendered_rows(&stdout);
+
+  assert_row(
+    &rows,
+    "[MISS]",
+    "rust",
+    "Missing binary: cargo / rustfmt",
+    Style::Warn,
+    Style::Strong,
+    Style::Warn,
+  );
+  assert_row(
+    &rows,
+    "[ERR]",
+    "cpp",
+    "Execution error",
+    Style::Error,
+    Style::Strong,
+    Style::Error,
+  );
+  assert_row(
+    &rows,
+    "[FAIL]",
+    "typst",
+    "Violations found",
+    Style::Error,
+    Style::Strong,
+    Style::Error,
+  );
+  // `Passed` again, under a format plan: the detail text is plan-dependent.
+  assert_row(
+    &rows,
+    "[PASS]",
+    "toml",
+    "Clean / Formatted",
     Style::Ok,
     Style::Strong,
     Style::Dim,
