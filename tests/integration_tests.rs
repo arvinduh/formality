@@ -824,8 +824,11 @@ fn test_table_is_rejected_by_the_real_binary() {
     .expect("failed to run fml table");
   assert!(!out.status.success());
   let stderr = String::from_utf8_lossy(&out.stderr);
+  // The backticked sentence, not a bare substring: clap's
+  // `Usage: fml table [OPTIONS]` line already contains "fml table", so a
+  // looser assertion holds whatever the message says.
   assert!(
-    stderr.contains("fml table") && stderr.contains("was removed"),
+    stderr.contains("`fml table` was removed"),
     "expected removal error naming `fml table` in stderr, got: {stderr}"
   );
   assert!(
