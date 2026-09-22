@@ -289,7 +289,10 @@ reformat under `fml fix` because their linter is diagnostics-only (e.g. Java's
 `fml install` were removed outright in `v0.3.0` (#255) — each now fails with a
 message naming its replacement (`fml fix`, `fml doctor`, `fml doctor`, the
 `fml::ui::table` library API, and `fml doctor --install`, respectively) rather
-than a bare "unexpected argument". Nothing is deprecated-but-working today.
+than a bare "unexpected argument".
+
+`fml migrate` remains deprecated but still working — it prints a notice naming
+`fml init` and then runs. Its removal is tracked separately in #299.
 
 ---
 
