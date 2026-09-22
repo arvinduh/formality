@@ -731,3 +731,101 @@ fn golden_lint_attributes_each_ruff_hint_to_its_own_group() {
     "1 passed, 2 failed (7 violations remaining)"
   );
 }
+
+/// Writes a `markdownlint-cli2` shim that prints its `Attempted:` line only
+/// when `attempted` is true and it was invoked with `--fix`.
+///
+/// Both conditions are the real tool's: it prints the line only under
+/// `--fix`, and only when it attempted at least one fix — so the run that
+/// finds nothing left to fix prints nothing at all
+/// (`markdownlint-cli2.mjs`, `if (issuesAttempted > 0)`).
+#[cfg(unix)]
+fn write_markdownlint_shim(dir: &Path, attempted: bool) {
+  use std::os::unix::fs::PermissionsExt;
+  let attempted_echo = if attempted {
+    "  echo 'Attempted: 3 fixes in 1 file'\n"
+  } else {
+    "  :\n"
+  };
+  let script = format!(
+    "#!/bin/sh\n\
+     echo 'markdownlint-cli2 v0.23.2 (markdownlint v0.41.1)'\n\
+     case \"$*\" in\n\
+     *--fix*)\n\
+     {attempted_echo}\
+     ;;\n\
+     esac\n\
+     echo 'Summary: 2 issues in 1 file'\n\
+     echo 'README.md:3:1 error MD033/no-inline-html Inline HTML [Element: p]'\n\
+     echo 'README.md:5 error MD036/no-emphasis-as-heading Emphasis used instead of a heading'\n\
+     exit 1\n"
+  );
+  let path = dir.join("markdownlint-cli2");
+  std::fs::write(&path, script).unwrap();
+  std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o755))
+    .unwrap();
+}
+
+/// Two `fml fix` runs over an unchanged tree render identically (#119).
+///
+/// This is the property the issue names, and the one that made a correct run
+/// look broken: counts that move and then stop read from outside as "it
+/// fixes one thing per run and is broken".
+///
+/// The two runs differ only in what `markdownlint-cli2` says about itself,
+/// exactly as the real tool does — run 1 fixed something and prints
+/// `Attempted:`, run 2 has nothing left to fix and prints nothing. The row
+/// must not lose its `0 auto-fixable` between them, which is what the
+/// invocation-seeded half of `FixerEvidence` exists for: it is the only
+/// coverage of the `plan.mode.is_write() && plan.includes(Pass::Lint) &&
+/// supports_lint_fix()` condition in `Runner::run`, and forcing that
+/// condition to `false` fails this test and nothing else.
+#[cfg(unix)]
+#[test]
+fn golden_two_fix_runs_over_an_unchanged_tree_render_identically() {
+  let shims = tempfile::tempdir().expect("tempdir");
+  // Everything the markdown surface's format pass shells out to, succeeding
+  // so the only findings in the run are the lint pass's.
+  write_shim(shims.path(), "prettier", 0);
+  write_shim(shims.path(), "taplo", 0);
+
+  let dir = tempfile::tempdir().expect("tempdir");
+  std::fs::write(dir.path().join("formality.toml"), SCHEMA_LINE).unwrap();
+  std::fs::write(dir.path().join("README.md"), "# T\n").unwrap();
+  let root = temp_root(&dir);
+
+  // Run 1: markdownlint fixed something and says so.
+  write_markdownlint_shim(shims.path(), true);
+  let first = run_fml(&root, &["fix"], Some(shims.path()));
+
+  // Run 2: nothing left for it to fix, so it prints no `Attempted:` line.
+  write_markdownlint_shim(shims.path(), false);
+  let second = run_fml(&root, &["fix"], Some(shims.path()));
+
+  for (label, stdout) in [("first", &first), ("second", &second)] {
+    assert_row(
+      &rendered_rows(stdout),
+      "[FAIL]",
+      "markdown",
+      "2 violations, 0 auto-fixable",
+      Style::Error,
+      Style::Strong,
+      Style::Error,
+    );
+    assert_eq!(
+      summary_line(stdout),
+      "1 passed, 1 failed (2 violations remaining, none auto-fixable \u{2014} manual edits needed)",
+      "{label} run"
+    );
+  }
+
+  // And the whole table, not just the row this test reasons about: the only
+  // thing allowed to differ between two runs of an unchanged tree is how
+  // long they took, which `rendered_rows` normalises away.
+  let rows = |s: &str| format!("{:#?}", rendered_rows(s));
+  assert_eq!(
+    rows(&first),
+    rows(&second),
+    "two `fml fix` runs over an unchanged tree must render identically"
+  );
+}
