@@ -91,22 +91,22 @@ the JSON specification it consumes.
 Mostly one file per CLI subcommand handler, dispatched from `run_command_inner`
 in `src/lib.rs`: `fmt.rs`, `lint.rs`, `fix.rs` (the composite
 lint-fix-then-format pipeline — see [style-guide.md](style-guide.md) §4's
-`Runner` dispatch section), `sync.rs`, `init.rs`, `migrate.rs` (config
-schema-reference migration), `schema.rs` (`fml schema`, JSON Schema generation),
-`lsp.rs` and `lsp_diagnostics.rs` (the `fml lsp` Language Server — document
-formatting via `fml fmt` plus diagnostics publishing via `fml lint`, with
-`lsp_diagnostics.rs` providing structured per-violation diagnostics,
-`#159 [pre-recreation]`), and `doctor/` (a directory module — `mod.rs`,
-`gitignore.rs`, `venv.rs` — implementing `fml doctor`'s workspace/toolchain
-verification checks). Tool installation lives entirely in `doctor/mod.rs`
-(`install_missing_tools`, `preflight_install`) — `--install` was removed from
-`fmt`/`lint`/`fix` in v0.3.0 (#282), so `fml doctor --install` is its only
-caller now. `fmt`/`lint`/`fix` instead call `preflight_warn_stale_tools`, which
-only warns about stale tools, never installs. `fml install`, `fml list-surfaces`
-and `fml surfaces` used to dispatch here directly, but all three were removed
-outright in v0.3.0 (#255) and are now rejected by `Cli::validate()` before
-dispatch. `mod.rs` at the top of this directory also holds shared helpers used
-by more than one command handler.
+`Runner` dispatch section), `sync.rs`, `init.rs` (also carries the `#:schema`
+directive update that `fml migrate` used to provide separately, removed in
+v0.3.0, #299), `schema.rs` (`fml schema`, JSON Schema generation), `lsp.rs` and
+`lsp_diagnostics.rs` (the `fml lsp` Language Server — document formatting via
+`fml fmt` plus diagnostics publishing via `fml lint`, with `lsp_diagnostics.rs`
+providing structured per-violation diagnostics, `#159 [pre-recreation]`), and
+`doctor/` (a directory module — `mod.rs`, `gitignore.rs`, `venv.rs` —
+implementing `fml doctor`'s workspace/toolchain verification checks). Tool
+installation lives entirely in `doctor/mod.rs` (`install_missing_tools`,
+`preflight_install`) — `--install` was removed from `fmt`/`lint`/`fix` in v0.3.0
+(#282), so `fml doctor --install` is its only caller now. `fmt`/`lint`/`fix`
+instead call `preflight_warn_stale_tools`, which only warns about stale tools,
+never installs. `fml install`, `fml list-surfaces` and `fml surfaces` used to
+dispatch here directly, but all three were removed outright in v0.3.0 (#255) and
+are now rejected by `Cli::validate()` before dispatch. `mod.rs` at the top of
+this directory also holds shared helpers used by more than one command handler.
 
 ## Cross-cutting: process and release docs
 
