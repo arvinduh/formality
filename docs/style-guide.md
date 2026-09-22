@@ -90,13 +90,13 @@ introduced the sibling `<name>_tests.rs` files (`glob_tests.rs`, `mod_tests.rs`,
 `config/facets_tests.rs` predates it); issue `#120 [pre-recreation]`'s
 `refactor(structure): relocate editorconfig into domain sub-package` commit then
 explicitly collapsed every one of them back inline, and a survey of the current
-tree confirms which way the codebase actually settled — 25 files use inline
+tree confirms which way the codebase actually settled — 24 files use inline
 `mod tests { ... }` (all 12 language surfaces, `errors.rs`, `config/facets.rs`,
-`config/schema.rs`, `engine/update.rs`, `commands/migrate.rs`,
-`commands/lsp_diagnostics.rs`, …) against 5 that use the `mod.rs` + sibling
-`tests.rs` split (`ui/table`, `config`, `engine/runner`, `engine/version`,
-`commands/doctor`). Inline is the default; the sibling-file split is reserved
-for directory modules specifically, not a free choice per file.
+`config/schema.rs`, `engine/update.rs`, `commands/lsp_diagnostics.rs`, …)
+against 5 that use the `mod.rs` + sibling `tests.rs` split (`ui/table`,
+`config`, `engine/runner`, `engine/version`, `commands/doctor`). Inline is the
+default; the sibling-file split is reserved for directory modules specifically,
+not a free choice per file.
 
 If you're adding a new language surface, see
 [Adding a New Language Surface](new-surface-guide.md) — its test-coverage
