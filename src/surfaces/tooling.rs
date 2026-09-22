@@ -42,11 +42,26 @@ pub enum InstallMethod {
   /// `pipx install <package>`. Requires `pipx` on PATH. Same `name==version`
   /// pinning convention as [`InstallMethod::Uv`].
   Pipx(&'static str),
-  /// `pip install --user <package>`. Requires `pip` on PATH. Same
+  /// `pip install <package>`. Requires `pip` on PATH. Same
   /// `name==version` pinning convention as [`InstallMethod::Uv`].
+  ///
+  /// **No `--user`**, deliberately. These two doc comments used to say
+  /// `pip install --user <package>` while [`InstallMethod::command`] emitted
+  /// no such flag; the drift became user-visible once #264 started rendering
+  /// install methods into printed hints (which render from `command()`), and
+  /// #297 resolved it in favour of the code rather than the comment. `--user`
+  /// is *rejected outright* inside an active virtualenv ("Can not perform a
+  /// '--user' install"), which is exactly where a bare `pip` most often
+  /// resolves, so adding the flag would break the common case to satisfy a
+  /// comment. Without it, pip installs into the prefix of the `pip` that ran
+  /// — the venv's `bin`, or the system prefix — which is on `PATH` by
+  /// construction whenever that `pip` was invocable. The user scheme is still
+  /// reachable without the flag (PEP 370 configuration, distro-patched pips),
+  /// so [`KnownInstallDir::PythonUser`] covers that directory anyway.
   Pip(&'static str),
-  /// `pip3 install --user <package>`. Requires `pip3` on PATH. Same
-  /// `name==version` pinning convention as [`InstallMethod::Uv`].
+  /// `pip3 install <package>`. Requires `pip3` on PATH. Same
+  /// `name==version` pinning convention as [`InstallMethod::Uv`], and the
+  /// same deliberate absence of `--user` as [`InstallMethod::Pip`].
   Pip3(&'static str),
   /// `apt-get install -y <package>`. Requires `apt-get` on PATH.
   Apt(&'static str),
