@@ -211,11 +211,14 @@ pub enum Commands {
   #[command(name = "list-surfaces", alias = "surfaces", hide = true)]
   ListSurfaces,
 
-  /// Deprecated: use `cargo test --test schema_drift` (or `UPDATE_SCHEMA=1 cargo test --test schema_drift`).
+  /// Write the JSON Schema for formality.toml to stdout or a file
   ///
-  /// Output the JSON Schema for formality.toml to stdout or file. Hidden from
-  /// `--help`; still parses for 1 minor release.
-  #[command(hide = true)]
+  /// Briefly deprecated in favour of `UPDATE_SCHEMA=1 cargo test --test
+  /// schema_drift`, un-deprecated in v0.3.0 (#255): that replacement needs
+  /// a Rust toolchain *and* a checkout of this repository, so anyone who
+  /// installed `fml` as a released binary could not run it. It also
+  /// generates the published schema asset in the release pipeline, which a
+  /// test cannot do.
   Schema {
     /// Optional file path to write the JSON schema to (defaults to stdout)
     #[arg(short = 'o', long, value_name = "FILE")]
@@ -569,10 +572,9 @@ mod tests {
   }
 
   #[test]
-  fn test_deprecated_schema_still_parses_and_is_hidden_from_help() {
-    // `fml schema` itself is not in #255's scope (blocked on CI/release
-    // workflows that still invoke it — see the PR description) and keeps
-    // working exactly as before.
+  fn test_schema_parses_and_is_advertised_in_help() {
+    // Un-deprecated in v0.3.0 (#255): it is a supported command, so it
+    // must be visible in `--help` like any other.
     let cli = Cli::try_parse_from(["fml", "schema"]).unwrap();
     assert!(matches!(cli.command, Commands::Schema { output: None }));
     assert!(cli.validate().is_ok());
@@ -588,10 +590,19 @@ mod tests {
 
     let mut cmd = Cli::command();
     cmd.build();
+    let visible_subcommands: Vec<&str> = cmd
+      .get_subcommands()
+      .filter(|c| !c.is_hide_set())
+      .map(|c| c.get_name())
+      .collect();
+    assert!(
+      visible_subcommands.contains(&"schema"),
+      "`schema` is supported and should be visible, got: {visible_subcommands:?}"
+    );
     let help = cmd.render_help().to_string();
     assert!(
-      !help.lines().any(|l| l.trim_start().starts_with("schema ")),
-      "deprecated `schema` subcommand should not be advertised in --help, got:\n{help}"
+      help.lines().any(|l| l.trim_start().starts_with("schema ")),
+      "supported `schema` subcommand should be advertised in --help, got:\n{help}"
     );
   }
 

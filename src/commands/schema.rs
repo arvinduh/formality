@@ -1,8 +1,10 @@
 //! `fml schema` command: generates and writes/prints the JSON Schema for
 //! `formality.toml`.
 //!
-//! Deprecated: use `cargo test --test schema_drift` (or
-//! `UPDATE_SCHEMA=1 cargo test --test schema_drift`) and [`crate::config::schema::generate_schema`].
+//! A supported, user-facing command: it is how anyone working offline, or
+//! vendoring the schema into their own repo, gets the same artifact the
+//! `#:schema` URL serves, and it is what the release pipeline runs to
+//! generate the published schema asset.
 
 use colored::Colorize;
 use std::path::PathBuf;

@@ -330,6 +330,19 @@ $ fml init
 [OK] Updated formality.toml schema reference: s0.9 -> s1.0
 ```
 
+Editors fetch the pinned `#:schema` URL directly, so most projects never need a
+local copy. When you do — working offline or air-gapped, or checking the schema
+into your own repo — `fml schema` writes the same document the release asset
+serves:
+
+```bash
+# Print the JSON Schema to stdout
+fml schema
+
+# Or write it to a file
+fml schema --output formality.schema.json
+```
+
 ### Full configuration with overrides
 
 ```toml
@@ -376,6 +389,7 @@ Commands:
   sync     Sync native tool configs from canonical globals
   doctor   Diagnose installed toolchains with install hints
   init     Scaffold a new formality.toml configuration
+  schema   Write the JSON Schema for formality.toml to stdout or a file
   lsp      Start the formality LSP server (stdio transport)
   migrate  Migrate project files to match the current formality release
   help     Print this message or the help of the given subcommand(s)
@@ -411,6 +425,7 @@ Options:
 | `fml doctor`  | `--install`       | Auto-install all missing toolchains                                  |
 | `fml init`    | `--force`         | Overwrite an existing config file                                    |
 | `fml init`    | `--hidden`        | Write `.formality.toml` instead of `formality.toml`                  |
+| `fml schema`  | `-o`, `--output`  | Write the JSON Schema to `<FILE>` instead of stdout                  |
 | `fml migrate` | `schema`          | Rewrite `#:schema` directive in config to match current release      |
 
 ---
