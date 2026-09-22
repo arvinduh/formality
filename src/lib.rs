@@ -118,13 +118,13 @@ fn run_command_inner(
       commands::doctor::run_doctor(root, all, install, &config)
     }
 
-    Commands::Install { all } => {
-      crate::ui::deprecation::warn_deprecated_spelling(
-        "fml install",
-        "fml doctor --install",
-        None,
-      );
-      commands::doctor::run_doctor(root, all, true, &config)
+    // Removed in v0.3.0 (#255): `Cli::validate()` rejects this variant by
+    // name before `run_command_inner` is ever reached — see the
+    // `ListSurfaces` arm below for why this arm still exists.
+    Commands::Install { .. } => {
+      unreachable!(
+        "`fml install` is rejected by `Cli::validate()` before dispatch"
+      )
     }
 
     Commands::Init { force, hidden } => {
