@@ -30,6 +30,14 @@
 //! | `ToolMissing` | `fml fmt` with a `PATH` that has no `rustfmt`/`cargo` |
 //! | `ExecutionError` | a `clang-format` shim that exits non-zero |
 //! | `ViolationsFound` | a `typstyle` shim that exits non-zero |
+//!
+//! `ViolationsFound` renders three different detail texts since #119, all
+//! three covered here: the bare `Violations found` above (a tool that says
+//! nothing measurable), `N violations` (a tool that counts but claims
+//! nothing about fixability), and `N violations, K auto-fixable` (a tool
+//! that does both). The run summary's remaining-violations clause is
+//! asserted alongside them, from the same runs, because its whole contract
+//! is that it equals the sum of the rows.
 
 use std::path::{Path, PathBuf};
 use std::process::Command;
@@ -471,4 +479,213 @@ fn golden_fmt_renders_missing_error_and_violation_rows_with_styles() {
     Style::Strong,
     Style::Dim,
   );
+}
+
+/// Writes an executable shim that prints `stdout` and exits with `code`.
+///
+/// [`write_shim`]'s silent form covers a tool that says nothing measurable;
+/// this one lets a test hand the runner a tool's *real* summary lines
+/// (captured from `ruff 0.15.8` and `markdownlint-cli2 v0.23.2`) without
+/// depending on either being installed, or on the machine's version of
+/// either still wording them the same way.
+#[cfg(unix)]
+fn write_speaking_shim(dir: &Path, binary: &str, stdout: &str, code: i32) {
+  use std::os::unix::fs::PermissionsExt;
+  let path = dir.join(binary);
+  let script = stdout
+    .lines()
+    .map(|l| format!("echo '{}'\n", l.replace('\'', "'\\''")))
+    .collect::<String>();
+  std::fs::write(&path, format!("#!/bin/sh\n{script}exit {code}\n")).unwrap();
+  std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o755))
+    .unwrap();
+}
+
+/// The run summary `fml` prints under the table, with its styling stripped
+/// and its elapsed time normalised away.
+fn summary_line(stdout: &str) -> String {
+  let plain = fml::ui::table::strip_ansi_escapes(stdout);
+  let line = plain
+    .lines()
+    .map(str::trim)
+    .find(|l| {
+      l.contains(" in ") && (l.contains("passed") || l.contains("failed"))
+    })
+    .unwrap_or_else(|| panic!("no run summary in:\n{plain}"))
+    .to_string();
+  match line.rfind(" in ") {
+    Some(at) => line[..at].to_string(),
+    None => line,
+  }
+}
+
+/// `ruff check` over a file with two fixable and two unfixable findings,
+/// verbatim from `ruff 0.15.8` (diagnostic bodies elided).
+#[cfg(unix)]
+const RUFF_MIXED_STDOUT: &str = "\
+F401 [*] `os` imported but unused
+B904 Within an `except` clause, raise exceptions with `raise ... from err`
+Found 4 errors.
+[*] 2 fixable with the `--fix` option.";
+
+/// `markdownlint-cli2` over a file with two unfixable findings, verbatim
+/// from v0.23.2 including the banner lines the surface filters out.
+#[cfg(unix)]
+const MARKDOWNLINT_STDOUT: &str = "\
+markdownlint-cli2 v0.23.2 (markdownlint v0.41.1)
+Linting: 1 file
+Summary: 2 issues in 1 file
+README.md:3:1 error MD033/no-inline-html Inline HTML [Element: p]
+README.md:5 error MD036/no-emphasis-as-heading Emphasis used instead of a heading";
+
+/// A tree with one `.py`, one `.md` and one `.toml`, plus the shims a run
+/// over it needs. Returns both temp dirs so neither is dropped early.
+#[cfg(unix)]
+fn counted_repo(
+  markdownlint_stdout: &str,
+) -> (tempfile::TempDir, tempfile::TempDir, PathBuf) {
+  let shims = tempfile::tempdir().expect("tempdir");
+  write_speaking_shim(shims.path(), "ruff", RUFF_MIXED_STDOUT, 1);
+  write_speaking_shim(
+    shims.path(),
+    "markdownlint-cli2",
+    markdownlint_stdout,
+    1,
+  );
+  // `formality.toml` itself matches the toml surface, so the run would
+  // otherwise report a missing `taplo` and change the summary's prefix.
+  write_shim(shims.path(), "taplo", 0);
+
+  let dir = tempfile::tempdir().expect("tempdir");
+  std::fs::write(dir.path().join("formality.toml"), SCHEMA_LINE).unwrap();
+  std::fs::write(dir.path().join("app.py"), "import os\n").unwrap();
+  std::fs::write(dir.path().join("README.md"), "# T\n").unwrap();
+  let root = temp_root(&dir);
+  (dir, shims, root)
+}
+
+/// The two measured `[FAIL]` spellings, and the summary clause that is the
+/// sum of exactly those two rows (#119).
+///
+/// `fml lint` is the plan used because it is one pass per surface: what each
+/// shim prints is what the row reports, with no format pass or post-format
+/// recheck in between to reason about.
+#[cfg(unix)]
+#[test]
+fn golden_lint_renders_counted_violation_rows_and_summary() {
+  let (_dir, shims, root) = counted_repo(MARKDOWNLINT_STDOUT);
+  let stdout = run_fml(&root, &["lint"], Some(shims.path()));
+  let rows = rendered_rows(&stdout);
+
+  // ruff answers both questions itself: `Found 4 errors.` and its own
+  // ``[*] 2 fixable`` hint.
+  assert_row(
+    &rows,
+    "[FAIL]",
+    "python",
+    "4 violations, 2 auto-fixable",
+    Style::Error,
+    Style::Strong,
+    Style::Error,
+  );
+  // markdownlint-cli2 counts but marks no violation fixable, and this plan
+  // ran no fixer — so the count is reported with no fixability claim rather
+  // than a guessed zero.
+  assert_row(
+    &rows,
+    "[FAIL]",
+    "markdown",
+    "2 violations",
+    Style::Error,
+    Style::Strong,
+    Style::Error,
+  );
+
+  // 4 + 2, straight off the rows above. No fixability figure: markdown
+  // withheld its half, and half a claim reads as a whole one.
+  assert_eq!(
+    summary_line(&stdout),
+    "1 passed, 2 failed (6 violations remaining)"
+  );
+}
+
+/// The wording the issue is actually about: everything that is left needs a
+/// human (#119).
+#[cfg(unix)]
+#[test]
+fn golden_lint_says_in_words_when_nothing_left_is_auto_fixable() {
+  let markdownlint = MARKDOWNLINT_STDOUT.replace(
+    "Linting: 1 file",
+    "Linting: 1 file\nAttempted: 3 fixes in 1 file",
+  );
+  let (_dir, shims, root) = counted_repo(&markdownlint);
+  // A `ruff` that fixed what it could and says so: 2 remaining, and no
+  // ``[*]`` hint beside the `Found` line, which is ruff stating that none of
+  // the two are fixable.
+  write_speaking_shim(
+    shims.path(),
+    "ruff",
+    "B904 Within an `except` clause, raise exceptions with `raise ... from err`\n\
+     Found 4 errors (2 fixed, 2 remaining).",
+    1,
+  );
+
+  let stdout = run_fml(&root, &["lint"], Some(shims.path()));
+  let rows = rendered_rows(&stdout);
+
+  // The count is the *remaining* 2, never the leading 4 — those no longer
+  // exist.
+  assert_row(
+    &rows,
+    "[FAIL]",
+    "python",
+    "2 violations, 0 auto-fixable",
+    Style::Error,
+    Style::Strong,
+    Style::Error,
+  );
+  // markdownlint's `Attempted:` line is its statement that it ran its fixer,
+  // so what it still reports is what it could not fix.
+  assert_row(
+    &rows,
+    "[FAIL]",
+    "markdown",
+    "2 violations, 0 auto-fixable",
+    Style::Error,
+    Style::Strong,
+    Style::Error,
+  );
+
+  assert_eq!(
+    summary_line(&stdout),
+    "1 passed, 2 failed (4 violations remaining, none auto-fixable \u{2014} manual edits needed)"
+  );
+}
+
+/// A failing surface `fml` cannot measure suppresses the summary clause
+/// outright, and keeps its own row's wording (#119).
+///
+/// A total that silently omits a surface is worse than no total: nothing in
+/// the line would say it is partial.
+#[cfg(unix)]
+#[test]
+fn golden_lint_suppresses_the_summary_clause_when_a_surface_is_uncounted() {
+  let (_dir, shims, root) = counted_repo(MARKDOWNLINT_STDOUT);
+  // `taplo` exits non-zero saying nothing a count can be read out of.
+  write_shim(shims.path(), "taplo", 1);
+  std::fs::write(root.join("thing.toml"), "a = 1\n").unwrap();
+
+  let stdout = run_fml(&root, &["lint"], Some(shims.path()));
+  let rows = rendered_rows(&stdout);
+
+  assert_row(
+    &rows,
+    "[FAIL]",
+    "toml",
+    "Violations found",
+    Style::Error,
+    Style::Strong,
+    Style::Error,
+  );
+  assert_eq!(summary_line(&stdout), "3 failed");
 }
