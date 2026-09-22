@@ -1531,12 +1531,29 @@ impl KnownInstallDir {
   /// consult them for every chain that lists the matching installer.
   #[must_use]
   fn path(self) -> Option<PathBuf> {
+    self.path_with(go_install_bin_dir, |var| std::env::var(var).ok())
+  }
+
+  /// [`Self::path`], with the `go install` bin directory and every
+  /// environment read injected, so the precedence rules below are
+  /// unit-testable without mutating this process's environment. Mutating it
+  /// would be both racy (the test binary is multi-threaded, which is why
+  /// `std::env::set_var` is `unsafe` in the 2024 edition) and, for `HOME`,
+  /// able to misdirect unrelated tests running alongside.
+  #[must_use]
+  fn path_with(
+    self,
+    go_bin_dir: impl FnOnce() -> Option<PathBuf>,
+    env: impl Fn(&str) -> Option<String>,
+  ) -> Option<PathBuf> {
     match self {
-      Self::Go => go_install_bin_dir(),
-      Self::Pipx => non_empty_env_dir("PIPX_BIN_DIR").or_else(local_bin_dir),
-      Self::UvTool => non_empty_env_dir("UV_TOOL_BIN_DIR")
-        .or_else(|| non_empty_env_dir("XDG_BIN_HOME"))
-        .or_else(local_bin_dir),
+      Self::Go => go_bin_dir(),
+      Self::Pipx => {
+        non_empty_dir(&env, "PIPX_BIN_DIR").or_else(|| local_bin_dir(&env))
+      }
+      Self::UvTool => non_empty_dir(&env, "UV_TOOL_BIN_DIR")
+        .or_else(|| non_empty_dir(&env, "XDG_BIN_HOME"))
+        .or_else(|| local_bin_dir(&env)),
       Self::PythonUser => {
         // The user scheme's scripts land in `<base>/bin` on Unix and
         // `<base>\Scripts` on Windows; `PYTHONUSERBASE` overrides the base,
@@ -1544,31 +1561,46 @@ impl KnownInstallDir {
         // under `%APPDATA%\Python\PythonXY`, whose version component cannot
         // be derived without asking an interpreter -- so only the explicit
         // override is honored there rather than guessing a wrong directory.
-        let scripts = if cfg!(windows) { "Scripts" } else { "bin" };
-        if let Some(base) = non_empty_env_dir("PYTHONUSERBASE") {
-          return Some(base.join(scripts));
+        if let Some(base) = non_empty_dir(&env, "PYTHONUSERBASE") {
+          return Some(base.join(USER_SCHEME_SCRIPT_DIR));
         }
-        if cfg!(windows) { None } else { local_bin_dir() }
+        if cfg!(windows) {
+          None
+        } else {
+          local_bin_dir(&env)
+        }
       }
     }
   }
 }
 
+/// The leaf name of the Python user scheme's script directory: `bin` on
+/// Unix, `Scripts` on Windows.
+const USER_SCHEME_SCRIPT_DIR: &str =
+  if cfg!(windows) { "Scripts" } else { "bin" };
+
+/// The environment variable naming the user's home directory on this
+/// platform. Named once, so production lookups and their tests cannot
+/// disagree about which variable [`local_bin_dir`] actually reads.
+const HOME_VAR: &str = if cfg!(windows) { "USERPROFILE" } else { "HOME" };
+
 /// `$HOME/.local/bin` (`%USERPROFILE%\.local\bin` on Windows) -- the
 /// directory current `pipx` and `uv` both install tool binaries into, and
 /// the default script directory of Python's user scheme on Unix.
 #[must_use]
-fn local_bin_dir() -> Option<PathBuf> {
-  let home = if cfg!(windows) { "USERPROFILE" } else { "HOME" };
-  Some(non_empty_env_dir(home)?.join(".local").join("bin"))
+fn local_bin_dir(env: &impl Fn(&str) -> Option<String>) -> Option<PathBuf> {
+  Some(non_empty_dir(env, HOME_VAR)?.join(".local").join("bin"))
 }
 
-/// Reads `var` as a path, treating unset and blank-or-whitespace alike as
-/// "not configured" -- an exported-but-empty `PIPX_BIN_DIR` must not turn
-/// into a probe of the filesystem root.
+/// Reads `var` through `env` as a path, treating unset and
+/// blank-or-whitespace alike as "not configured" -- an exported-but-empty
+/// `PIPX_BIN_DIR` must not turn into a probe of the filesystem root.
 #[must_use]
-fn non_empty_env_dir(var: &str) -> Option<PathBuf> {
-  let value = std::env::var(var).ok()?;
+fn non_empty_dir(
+  env: &impl Fn(&str) -> Option<String>,
+  var: &str,
+) -> Option<PathBuf> {
+  let value = env(var)?;
   let trimmed = value.trim();
   (!trimmed.is_empty()).then(|| PathBuf::from(trimmed))
 }
@@ -3143,6 +3175,144 @@ mod tests {
     // panicking on a missing directory.
     let found = resolve_via_known_install_dir_with("goimports", |_| None);
     assert_eq!(found, None);
+  }
+
+  // --- KnownInstallDir::path precedence (#297) ----------------------------
+  //
+  // Driven through `path_with`, never the real environment: the test binary
+  // is multi-threaded and `HOME` in particular is read by unrelated code, so
+  // `set_var` here would be both racy and contaminating.
+
+  /// Builds a `path_with` environment closure from an explicit table, so a
+  /// variable absent from `vars` reads as genuinely unset.
+  fn fake_env(
+    vars: &[(&'static str, &'static str)],
+  ) -> impl Fn(&str) -> Option<String> + use<> {
+    let vars = vars.to_vec();
+    move |var: &str| {
+      vars
+        .iter()
+        .find(|(name, _)| *name == var)
+        .map(|(_, value)| (*value).to_string())
+    }
+  }
+
+  fn no_go_bin_dir() -> Option<PathBuf> {
+    panic!("a non-Go KnownInstallDir must never ask for the Go bin directory")
+  }
+
+  #[test]
+  fn test_known_install_dir_path_prefers_pipx_bin_dir_over_local_bin() {
+    // `PIPX_BIN_DIR` is pipx's own override; honouring it is the difference
+    // between probing where pipx actually wrote and probing a default that
+    // the user has configured away from.
+    let dir = KnownInstallDir::Pipx.path_with(
+      no_go_bin_dir,
+      fake_env(&[("PIPX_BIN_DIR", "/opt/pipx/bin"), (HOME_VAR, "/home/u")]),
+    );
+    assert_eq!(dir, Some(PathBuf::from("/opt/pipx/bin")));
+  }
+
+  #[test]
+  fn test_known_install_dir_path_defaults_pipx_and_uv_to_local_bin() {
+    // The case #297 was filed over: with nothing configured, both managers
+    // install into `~/.local/bin` -- which is why `pipx ensurepath` and
+    // `uv tool update-shell` exist at all.
+    let expected = Some(PathBuf::from("/home/u").join(".local").join("bin"));
+    let env = fake_env(&[(HOME_VAR, "/home/u")]);
+
+    assert_eq!(
+      KnownInstallDir::Pipx.path_with(no_go_bin_dir, &env),
+      expected
+    );
+    assert_eq!(
+      KnownInstallDir::UvTool.path_with(no_go_bin_dir, &env),
+      expected
+    );
+    assert_eq!(
+      KnownInstallDir::PythonUser.path_with(no_go_bin_dir, &env),
+      if cfg!(windows) { None } else { expected },
+      "without PYTHONUSERBASE the user scheme's scripts are ~/.local/bin on \
+       Unix; on Windows the default base embeds an interpreter version this \
+       crate cannot derive, so it must decline rather than guess"
+    );
+  }
+
+  #[test]
+  fn test_known_install_dir_path_uv_precedence_is_uv_then_xdg_then_local() {
+    let all = fake_env(&[
+      ("UV_TOOL_BIN_DIR", "/uv/bin"),
+      ("XDG_BIN_HOME", "/xdg/bin"),
+      (HOME_VAR, "/home/u"),
+    ]);
+    assert_eq!(
+      KnownInstallDir::UvTool.path_with(no_go_bin_dir, all),
+      Some(PathBuf::from("/uv/bin"))
+    );
+
+    let xdg_only =
+      fake_env(&[("XDG_BIN_HOME", "/xdg/bin"), (HOME_VAR, "/home/u")]);
+    assert_eq!(
+      KnownInstallDir::UvTool.path_with(no_go_bin_dir, xdg_only),
+      Some(PathBuf::from("/xdg/bin"))
+    );
+  }
+
+  #[test]
+  fn test_known_install_dir_path_treats_a_blank_override_as_unset() {
+    // An exported-but-empty `PIPX_BIN_DIR` must not become a probe of the
+    // filesystem root -- `PathBuf::from("")` joined with a binary name is a
+    // relative path, resolved against whatever directory fml happens to run
+    // in.
+    let dir = KnownInstallDir::Pipx.path_with(
+      no_go_bin_dir,
+      fake_env(&[("PIPX_BIN_DIR", "   "), (HOME_VAR, "/home/u")]),
+    );
+    assert_eq!(
+      dir,
+      Some(PathBuf::from("/home/u").join(".local").join("bin"))
+    );
+  }
+
+  #[test]
+  fn test_known_install_dir_path_python_user_base_override() {
+    let dir = KnownInstallDir::PythonUser.path_with(
+      no_go_bin_dir,
+      fake_env(&[("PYTHONUSERBASE", "/py/user"), (HOME_VAR, "/home/u")]),
+    );
+    assert_eq!(
+      dir,
+      Some(PathBuf::from("/py/user").join(USER_SCHEME_SCRIPT_DIR))
+    );
+  }
+
+  #[test]
+  fn test_known_install_dir_path_is_none_without_a_home_directory() {
+    // No home and no override is "cannot determine", not a panic and not a
+    // relative path.
+    let env = fake_env(&[]);
+    for kind in [
+      KnownInstallDir::Pipx,
+      KnownInstallDir::UvTool,
+      KnownInstallDir::PythonUser,
+    ] {
+      assert_eq!(
+        kind.path_with(no_go_bin_dir, &env),
+        None,
+        "{kind:?} must decline rather than fabricate a path"
+      );
+    }
+  }
+
+  #[test]
+  fn test_known_install_dir_path_go_reads_no_environment() {
+    // Go's directory comes from `go env`, not from any variable this type
+    // reads; proven by an env closure that panics if consulted at all.
+    let dir = KnownInstallDir::Go.path_with(
+      || Some(PathBuf::from("/go/bin")),
+      |var| panic!("KnownInstallDir::Go must not read the environment: {var}"),
+    );
+    assert_eq!(dir, Some(PathBuf::from("/go/bin")));
   }
 
   #[test]
