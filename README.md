@@ -283,24 +283,13 @@ have a real lint auto-fix mode (`supports_lint_fix()`) versus which only
 reformat under `fml fix` because their linter is diagnostics-only (e.g. Java's
 `checkstyle`, YAML's `yamllint`, TOML's `taplo lint`).
 
-### Deprecated spellings
+### Removed spellings
 
-`fml lint --fix`, `fml list-surfaces`, `fml surfaces`, and `fml table` were
-removed outright in `v0.3.0` (#255) — each now fails with a message naming its
-replacement (`fml fix`, `fml doctor`, `fml doctor`, and the `fml::ui::table`
-library API, respectively) rather than a bare "unexpected argument".
-
-Two spellings remain deprecated, but not yet removed — both are still invoked
-directly by this repo's own CI and release workflows, so removing them needs a
-coordinated workflow update first:
-
-| deprecated    | use instead                                                                            | removed in |
-| ------------- | -------------------------------------------------------------------------------------- | ---------- |
-| `fml install` | `fml doctor --install`                                                                 | `v0.4.0`   |
-| `fml schema`  | `cargo test --test schema_drift` (or `UPDATE_SCHEMA=1 cargo test --test schema_drift`) | `v0.4.0`   |
-
-Both remain temporarily available as deprecated CLI commands that print a notice
-to stderr before executing.
+`fml lint --fix`, `fml list-surfaces`, `fml surfaces`, `fml table`, and
+`fml install` were removed outright in `v0.3.0` (#255) — each now fails with a
+message naming its replacement (`fml fix`, `fml doctor`, `fml doctor`, the
+`fml::ui::table` library API, and `fml doctor --install`, respectively) rather
+than a bare "unexpected argument". Nothing is deprecated-but-working today.
 
 ---
 
