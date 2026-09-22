@@ -403,6 +403,27 @@ fn test_removed_install_command_names_doctor_install() {
     !stderr_install.contains("unexpected argument"),
     "error must not fall back to clap's bare rejection, got: {stderr_install}"
   );
+
+  // `--all`/`-a` stays declared purely so it reaches this same error rather
+  // than failing earlier on an unknown flag — which only the real binary
+  // can demonstrate, since that is clap's own parse step.
+  for flag in ["--all", "-a"] {
+    let out = Command::new(env!("CARGO_BIN_EXE_fml"))
+      .args(["install", flag])
+      .output()
+      .unwrap_or_else(|e| panic!("failed to run fml install {flag}: {e}"));
+    assert!(!out.status.success(), "`fml install {flag}` must fail");
+    let stderr = String::from_utf8_lossy(&out.stderr);
+    assert!(
+      stderr.contains("`fml install` was removed in v0.3.0.")
+        && stderr.contains("fml doctor --install"),
+      "`fml install {flag}` should get the same tailored error, got: {stderr}"
+    );
+    assert!(
+      !stderr.contains("unexpected argument"),
+      "`fml install {flag}` must not fall back to clap's bare rejection, got: {stderr}"
+    );
+  }
 }
 
 #[test]
