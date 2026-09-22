@@ -160,10 +160,19 @@ pub(super) fn tally(
   // Fixability is known for the surface only if it is known for *every*
   // tool that contributed to the count — a partial figure would read as
   // complete.
+  //
+  // Each group's figure is clamped to its own count, and the sum clamped
+  // again to the surface's. Nothing should ever exceed it — a tool saying
+  // more of its findings are fixable than it found would be nonsense — but
+  // this is the number a reader cannot check by eye, and `7 violations, 9
+  // auto-fixable` is the kind of line that costs the whole summary its
+  // credibility. The clamp is unconditional so no future parser can put one
+  // on screen.
   let auto_fixable = groups
     .iter()
-    .map(|g| g.auto_fixable)
-    .try_fold(0usize, |acc, f| f.map(|k| acc + k));
+    .map(|g| g.auto_fixable.map(|k| k.min(g.remaining)))
+    .try_fold(0usize, |acc, f| f.map(|k| acc + k))
+    .map(|k| k.min(remaining));
 
   Some(ViolationTally {
     remaining,
@@ -173,30 +182,36 @@ pub(super) fn tally(
 
 /// Splits `message` into per-tool groups.
 ///
-/// A `ruff` group is opened by its `Found …` line and takes its fixability
-/// from a ``[*] K fixable …`` line anywhere in the message; a
-/// `markdownlint-cli2` group is opened by its `N issues in M files` tail and
-/// takes its fixability from `evidence` or from an `Attempted:` line in the
-/// same message.
+/// One message can hold more than one group. [`combine_pass_results`] joins
+/// two passes' `ViolationsFound` messages with a newline, and python's
+/// widened-selection path puts a whole second `ruff` invocation's output
+/// into one message, so *two `ruff` groups in one message is a real shape*,
+/// not a hypothetical.
+///
+/// That is why a group takes its fixability from the hint **that follows
+/// it**, not from the first hint anywhere in the message. `ruff` prints
+/// ``[*] K fixable …`` directly under the `Found …` line it belongs to, so
+/// the lines between one group's opener and the next opener are that
+/// group's own. Resolving the hint once for the whole message attributed one
+/// invocation's `K` to every group in it, which could render more
+/// auto-fixable violations than there were violations.
+///
+/// [`combine_pass_results`]: super::combine_pass_results
 fn parse_groups(message: &str, evidence: FixerEvidence) -> Vec<Group> {
   let evidence = evidence.merge(FixerEvidence::from_message(message));
-
-  let ruff_fixable = message
-    .lines()
-    .find_map(|l| parse_ruff_fixable_hint(l.trim()));
+  let lines: Vec<&str> = message.lines().map(str::trim).collect();
 
   let mut groups = Vec::new();
-  for line in message.lines() {
-    let line = line.trim();
+  for (i, line) in lines.iter().enumerate() {
     if let Some(remaining) = parse_ruff_found(line) {
       groups.push(Group {
         remaining,
         // `ruff` emits the ``[*] K fixable`` hint whenever any diagnostic it
-        // just printed carries the `[*]` marker, so its *absence* next to a
+        // just printed carries the `[*]` marker, so its *absence* below a
         // `Found …` line is ruff's own statement that none of them do — not
         // a missing signal. This is the one place absence is read as zero,
         // and only for the tool that guarantees it.
-        auto_fixable: Some(ruff_fixable.unwrap_or(0)),
+        auto_fixable: Some(ruff_fixable_after(&lines, i).unwrap_or(0)),
       });
     } else if let Some(remaining) = parse_markdownlint_summary(line) {
       groups.push(Group {
@@ -211,6 +226,23 @@ fn parse_groups(message: &str, evidence: FixerEvidence) -> Vec<Group> {
     }
   }
   groups
+}
+
+/// The ``[*] K fixable …`` hint belonging to the group opened at
+/// `lines[start]`: the first one between that line and the next line that
+/// opens a group, or [`None`] if that stretch has none.
+fn ruff_fixable_after(lines: &[&str], start: usize) -> Option<usize> {
+  lines
+    .iter()
+    .skip(start + 1)
+    .take_while(|l| !opens_group(l))
+    .find_map(|l| parse_ruff_fixable_hint(l))
+}
+
+/// Whether `line` opens a group, i.e. is one of the two count lines
+/// [`parse_groups`] recognizes.
+fn opens_group(line: &str) -> bool {
+  parse_ruff_found(line).is_some() || parse_markdownlint_summary(line).is_some()
 }
 
 /// ``Found 4 errors.`` → `4`; ``Found 4 errors (2 fixed, 2 remaining).`` →
@@ -426,13 +458,46 @@ README.md:5 error MD036/no-emphasis-as-heading Emphasis used instead of a headin
   }
 
   #[test]
-  fn two_passes_concatenated_sum_and_keep_the_weakest_claim() {
-    // `combine_pass_results` joins the lint and format messages with a
-    // newline, so one message can carry two tools' signals.
+  fn two_ruff_groups_attribute_each_hint_to_its_own_group() {
+    // The realistic multi-group shape: one surface, two `ruff` invocations,
+    // joined by `combine_pass_results`. The second has no hint under it, so
+    // it contributes 0 — resolving one hint for the whole message credited
+    // the first group's 2 to both and could report more auto-fixable
+    // violations than there were violations at all.
+    let msg = format!("{RUFF_MIXED}\n{RUFF_AFTER_FIX}");
+    let t = tally(&msg, FixerEvidence::default()).unwrap();
+    assert_eq!(t.remaining, 6, "4 from the first group, 2 from the second");
+    assert_eq!(t.auto_fixable, Some(2), "the second group has no hint");
+  }
+
+  #[test]
+  fn a_hint_never_attaches_to_a_group_above_it() {
+    // A group with no hint of its own must not borrow the *next* group's.
+    let msg = "Found 1 error.\nFound 9 errors.\n[*] 9 fixable with the \
+               `--fix` option.";
+    let t = tally(msg, FixerEvidence::default()).unwrap();
+    assert_eq!(t.remaining, 10);
+    assert_eq!(t.auto_fixable, Some(9));
+  }
+
+  #[test]
+  fn auto_fixable_is_clamped_to_the_count_it_qualifies() {
+    // Belt and braces on the one number a reader cannot check: whatever a
+    // parser produces, the row can never say more is fixable than is left.
+    let msg = "Found 1 error.\n[*] 6 fixable with the `--fix` option.";
+    let t = tally(msg, FixerEvidence::default()).unwrap();
+    assert_eq!(t.remaining, 1);
+    assert_eq!(t.auto_fixable, Some(1));
+  }
+
+  #[test]
+  fn a_mixed_tool_message_keeps_the_weakest_claim() {
+    // No surface runs both `ruff` and `markdownlint-cli2` today, so this
+    // shape is hypothetical — but the rule it pins is not: one unmeasured
+    // half must not leave the other half reading as a whole claim.
     let msg = format!("{RUFF_MIXED}\n1 issue in 1 file");
     let t = tally(&msg, FixerEvidence::default()).unwrap();
     assert_eq!(t.remaining, 5);
-    // ruff's half is known, markdownlint's is not -> the surface's is not.
     assert_eq!(t.auto_fixable, None);
   }
 

@@ -689,3 +689,45 @@ fn golden_lint_suppresses_the_summary_clause_when_a_surface_is_uncounted() {
   );
   assert_eq!(summary_line(&stdout), "3 failed");
 }
+
+/// Two `ruff` invocations' output in one surface's message: each `Found …`
+/// group takes the ``[*]`` hint under *it*, not the first one in the
+/// message (#119).
+///
+/// Attributing one hint to every group rendered `5 violations, 6
+/// auto-fixable` here — more fixable than there were violations at all, in
+/// the row and again in the summary, which is the one number a reader
+/// cannot check by eye.
+#[cfg(unix)]
+#[test]
+fn golden_lint_attributes_each_ruff_hint_to_its_own_group() {
+  let (_dir, shims, root) = counted_repo(MARKDOWNLINT_STDOUT);
+  write_speaking_shim(
+    shims.path(),
+    "ruff",
+    "F401 [*] `os` imported but unused\n\
+     Found 3 errors.\n\
+     [*] 3 fixable with the `--fix` option.\n\
+     B904 Within an `except` clause, raise exceptions with `raise ... from err`\n\
+     Found 2 errors.",
+    1,
+  );
+
+  let stdout = run_fml(&root, &["lint"], Some(shims.path()));
+  let rows = rendered_rows(&stdout);
+
+  // 3 + 2 remaining; only the first group has a hint, so 3 fixable.
+  assert_row(
+    &rows,
+    "[FAIL]",
+    "python",
+    "5 violations, 3 auto-fixable",
+    Style::Error,
+    Style::Strong,
+    Style::Error,
+  );
+  assert_eq!(
+    summary_line(&stdout),
+    "1 passed, 2 failed (7 violations remaining)"
+  );
+}
