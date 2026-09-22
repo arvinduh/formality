@@ -439,13 +439,18 @@ mod tests {
       .validate()
       .expect_err("`fml list-surfaces` must be an error");
     let rendered = err.to_string();
+    // Assert on the message's own sentence, not a bare substring: clap's
+    // `Usage: fml list-surfaces [OPTIONS]` line contains
+    // "fml list-surfaces" whatever the message says, so
+    // `contains("fml list-surfaces")` passes even when the spelling branch
+    // below picks the wrong name.
     assert!(
-      rendered.contains("fml list-surfaces"),
+      rendered.contains("`fml list-surfaces` was removed"),
       "error should name the spelling actually typed, got:\n{rendered}"
     );
     assert!(
-      rendered.contains("was removed"),
-      "error should say it was removed, got:\n{rendered}"
+      !rendered.contains("`fml surfaces` was removed"),
+      "error must not name the alias when `list-surfaces` was typed, got:\n{rendered}"
     );
     assert!(
       rendered.contains("fml doctor"),

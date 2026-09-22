@@ -344,10 +344,17 @@ fn test_list_surfaces_and_surfaces_are_rejected_by_the_real_binary() {
     .expect("failed to run fml list-surfaces");
   assert!(!out_list_surfaces.status.success());
   let stderr_list = String::from_utf8_lossy(&out_list_surfaces.stderr);
+  // The backticked sentence, not a bare substring: clap's
+  // `Usage: fml list-surfaces [OPTIONS]` line already contains
+  // "fml list-surfaces", so a looser assertion passes even when the message
+  // names the wrong spelling.
   assert!(
-    stderr_list.contains("fml list-surfaces")
-      && stderr_list.contains("was removed"),
+    stderr_list.contains("`fml list-surfaces` was removed"),
     "expected removal error naming `fml list-surfaces` in stderr, got: {stderr_list}"
+  );
+  assert!(
+    !stderr_list.contains("`fml surfaces` was removed"),
+    "error must not name the alias when `list-surfaces` was typed, got: {stderr_list}"
   );
   assert!(
     stderr_list.contains("fml doctor"),
@@ -361,9 +368,12 @@ fn test_list_surfaces_and_surfaces_are_rejected_by_the_real_binary() {
   assert!(!out_surfaces.status.success());
   let stderr_surfaces = String::from_utf8_lossy(&out_surfaces.stderr);
   assert!(
-    stderr_surfaces.contains("fml surfaces")
-      && stderr_surfaces.contains("was removed"),
+    stderr_surfaces.contains("`fml surfaces` was removed"),
     "expected removal error naming `fml surfaces` in stderr, got: {stderr_surfaces}"
+  );
+  assert!(
+    !stderr_surfaces.contains("`fml list-surfaces` was removed"),
+    "error must not name the canonical spelling when the alias was typed, got: {stderr_surfaces}"
   );
 }
 
