@@ -176,12 +176,13 @@ pub enum Commands {
     install: bool,
   },
 
-  /// Deprecated: use `fml doctor --install`. Kept working for one minor release.
+  /// Removed in v0.3.0: `fml doctor --install` is the only spelling now.
   ///
-  /// Hidden from `--help` deliberately: it is on its way out, so help
-  /// advertises only the spelling we want adopted. It still parses, and
-  /// dispatches to `fml doctor --install` after printing the shared
-  /// deprecation notice.
+  /// Declared hidden, not deleted outright, so [`Cli::validate`] can reject
+  /// it by name with a message pointing at `fml doctor --install` instead
+  /// of clap's bare "unexpected argument". `--all` stays declared for the
+  /// same reason: `fml install --all` must reach the tailored error too,
+  /// not fail earlier on an unknown flag.
   #[command(hide = true)]
   Install {
     /// Install tools for all supported language surfaces
@@ -210,11 +211,14 @@ pub enum Commands {
   #[command(name = "list-surfaces", alias = "surfaces", hide = true)]
   ListSurfaces,
 
-  /// Deprecated: use `cargo test --test schema_drift` (or `UPDATE_SCHEMA=1 cargo test --test schema_drift`).
+  /// Write the JSON Schema for formality.toml to stdout or a file
   ///
-  /// Output the JSON Schema for formality.toml to stdout or file. Hidden from
-  /// `--help`; still parses for 1 minor release.
-  #[command(hide = true)]
+  /// Briefly deprecated in favour of `UPDATE_SCHEMA=1 cargo test --test
+  /// schema_drift`, un-deprecated in v0.3.0 (#255): that replacement needs
+  /// a Rust toolchain *and* a checkout of this repository, so anyone who
+  /// installed `fml` as a released binary could not run it. It also
+  /// generates the published schema asset in the release pipeline, which a
+  /// test cannot do.
   Schema {
     /// Optional file path to write the JSON schema to (defaults to stdout)
     #[arg(short = 'o', long, value_name = "FILE")]
@@ -289,10 +293,11 @@ impl Cli {
   ///   one concern now, not a run command's. Declared hidden for the same
   ///   reason as `--check` above: so the error can name `fml doctor
   ///   --install` instead of clap's bare "unexpected argument".
-  /// - `fml lint --fix`, `fml list-surfaces`/`fml surfaces`, `fml table`.
-  ///   All removed outright in v0.3.0 (#255); each is declared hidden for
-  ///   the same by-name-rejection reason as the flags above, reusing the
-  ///   same mechanism rather than inventing a second one (see #282).
+  /// - `fml lint --fix`, `fml list-surfaces`/`fml surfaces`, `fml table`,
+  ///   `fml install`. All removed outright in v0.3.0 (#255); each is
+  ///   declared hidden for the same by-name-rejection reason as the flags
+  ///   above, reusing the same mechanism rather than inventing a second one
+  ///   (see #282).
   ///
   /// # Errors
   ///
@@ -300,10 +305,10 @@ impl Cli {
   ///
   /// # Panics
   ///
-  /// Panics if the `lint`/`fmt`/`fix`/`list-surfaces`/`table` subcommand is
-  /// missing from [`Commands`] — they are declared directly above, so this
-  /// is a "the enum was edited without updating this" assertion, not a
-  /// runtime condition.
+  /// Panics if the `lint`/`fmt`/`fix`/`list-surfaces`/`table`/`install`
+  /// subcommand is missing from [`Commands`] — they are declared directly
+  /// above, so this is a "the enum was edited without updating this"
+  /// assertion, not a runtime condition.
   pub fn validate(&self) -> Result<(), clap::Error> {
     if let Commands::Lint { check: true, .. } = &self.command {
       let mut cmd = Self::command();
@@ -377,6 +382,19 @@ impl Cli {
       ));
     }
 
+    if let Commands::Install { .. } = &self.command {
+      let mut cmd = Self::command();
+      cmd.build();
+      let sub = cmd
+        .find_subcommand_mut("install")
+        .expect("`install` subcommand is declared above");
+      return Err(sub.error(
+        clap::error::ErrorKind::ArgumentConflict,
+        "`fml install` was removed in v0.3.0.\n       \
+         Use `fml doctor --install` instead.",
+      ));
+    }
+
     if let Commands::Table { .. } = &self.command {
       let mut cmd = Self::command();
       cmd.build();
@@ -421,13 +439,18 @@ mod tests {
       .validate()
       .expect_err("`fml list-surfaces` must be an error");
     let rendered = err.to_string();
+    // Assert on the message's own sentence, not a bare substring: clap's
+    // `Usage: fml list-surfaces [OPTIONS]` line contains
+    // "fml list-surfaces" whatever the message says, so
+    // `contains("fml list-surfaces")` passes even when the spelling branch
+    // below picks the wrong name.
     assert!(
-      rendered.contains("fml list-surfaces"),
+      rendered.contains("`fml list-surfaces` was removed"),
       "error should name the spelling actually typed, got:\n{rendered}"
     );
     assert!(
-      rendered.contains("was removed"),
-      "error should say it was removed, got:\n{rendered}"
+      !rendered.contains("`fml surfaces` was removed"),
+      "error must not name the alias when `list-surfaces` was typed, got:\n{rendered}"
     );
     assert!(
       rendered.contains("fml doctor"),
@@ -554,10 +577,9 @@ mod tests {
   }
 
   #[test]
-  fn test_deprecated_schema_still_parses_and_is_hidden_from_help() {
-    // `fml schema` itself is not in #255's scope (blocked on CI/release
-    // workflows that still invoke it — see the PR description) and keeps
-    // working exactly as before.
+  fn test_schema_parses_and_is_advertised_in_help() {
+    // Un-deprecated in v0.3.0 (#255): it is a supported command, so it
+    // must be visible in `--help` like any other.
     let cli = Cli::try_parse_from(["fml", "schema"]).unwrap();
     assert!(matches!(cli.command, Commands::Schema { output: None }));
     assert!(cli.validate().is_ok());
@@ -573,10 +595,19 @@ mod tests {
 
     let mut cmd = Cli::command();
     cmd.build();
+    let visible_subcommands: Vec<&str> = cmd
+      .get_subcommands()
+      .filter(|c| !c.is_hide_set())
+      .map(|c| c.get_name())
+      .collect();
+    assert!(
+      visible_subcommands.contains(&"schema"),
+      "`schema` is supported and should be visible, got: {visible_subcommands:?}"
+    );
     let help = cmd.render_help().to_string();
     assert!(
-      !help.lines().any(|l| l.trim_start().starts_with("schema ")),
-      "deprecated `schema` subcommand should not be advertised in --help, got:\n{help}"
+      help.lines().any(|l| l.trim_start().starts_with("schema ")),
+      "supported `schema` subcommand should be advertised in --help, got:\n{help}"
     );
   }
 
@@ -618,24 +649,48 @@ mod tests {
   }
 
   #[test]
-  fn test_deprecated_install_command_parses_and_is_hidden_from_help() {
-    // `fml install` itself is not in #255's scope (blocked on CI workflows
-    // that still invoke it — see the PR description) and keeps working
-    // exactly as before.
-    let cli_install = Cli::try_parse_from(["fml", "install"]).unwrap();
+  fn test_install_command_is_rejected_with_a_tailored_error() {
+    // Still parses (declared hidden) so `validate` can name `fml doctor
+    // --install` instead of clap's bare "unexpected argument".
+    let cli_install = Cli::try_parse_from(["fml", "install"])
+      .expect("install must parse so validate can reject it by name");
     assert!(matches!(
       cli_install.command,
       Commands::Install { all: false }
     ));
-    assert!(cli_install.validate().is_ok());
+    let err = cli_install
+      .validate()
+      .expect_err("`fml install` must be an error");
+    let rendered = err.to_string();
+    assert!(
+      rendered.contains("was removed"),
+      "error should say `fml install` was removed, got:\n{rendered}"
+    );
+    assert!(
+      rendered.contains("fml doctor --install"),
+      "error should name the replacement, got:\n{rendered}"
+    );
+    assert!(
+      !rendered.contains("unexpected argument"),
+      "error must not fall back to clap's bare rejection, got:\n{rendered}"
+    );
 
-    let cli_install_all =
-      Cli::try_parse_from(["fml", "install", "-a"]).unwrap();
+    // `--all` stays declared so `fml install --all` reaches the same
+    // tailored error rather than failing earlier on an unknown flag.
+    let cli_install_all = Cli::try_parse_from(["fml", "install", "-a"])
+      .expect("install -a must parse so validate can reject it by name");
     assert!(matches!(
       cli_install_all.command,
       Commands::Install { all: true }
     ));
-    assert!(cli_install_all.validate().is_ok());
+    assert!(
+      cli_install_all
+        .validate()
+        .expect_err("`fml install --all` must be an error")
+        .to_string()
+        .contains("fml doctor --install"),
+      "`fml install --all` should get the same tailored error"
+    );
 
     let mut cmd = Cli::command();
     cmd.build();
@@ -648,11 +703,11 @@ mod tests {
       .collect();
     assert!(
       !visible_subcommands.contains(&"install"),
-      "deprecated `install` should be hidden from subcommand list"
+      "removed `install` should be hidden from subcommand list"
     );
     assert!(
       !help.lines().any(|l| l.trim_start().starts_with("install ")),
-      "deprecated `install` should not appear in --help, got:\n{help}"
+      "removed `install` should not appear in --help, got:\n{help}"
     );
   }
 

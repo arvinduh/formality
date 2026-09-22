@@ -13,9 +13,10 @@ name: PR Check
 #      fix_command.rs by calling fml::run_with_args(...) in-process - so
 #      this job already behaviorally validates that fmt/lint/sync produce
 #      correct output. That's also why this job builds fml and runs
-#      `fml install` before the test suite: this job's runner starts with
-#      none of those tools installed, and it's a separate parallel runner
-#      from Job 2, so Job 2 installing its own copies doesn't help it.
+#      `fml doctor --install` before the test suite: this job's runner
+#      starts with none of those tools installed, and it's a separate
+#      parallel runner from Job 2, so Job 2 installing its own copies
+#      doesn't help it.
 #   2. Formality Dogfooding - runs fml against THIS repo's own live tree.
 #      Job 1 already proves fmt/lint *work correctly*; this job proves this
 #      repo's checked-in state actually *complies* with them right now -
@@ -83,7 +84,7 @@ jobs:
         # on PATH before `cargo test --verbose` runs, mirroring Job 2 and
         # the old ci.yml. Without this, e.g. fix_command.rs's TOML-surface
         # tests fail on a clean runner with no taplo installed.
-        run: ./target/debug/fml install
+        run: ./target/debug/fml doctor --install
 
       - name: Run full test suite
         run: cargo test --verbose
@@ -98,8 +99,8 @@ jobs:
       - name: Set up Rust toolchain
         # clippy is required (not just rustfmt) because `fml lint` on the
         # rust surface is `cargo clippy` - without the component, `fml
-        # install`/`fml doctor` won't catch the gap either: they probe
-        # clippy-driver via `which`, and rustup's shim at
+        # doctor --install`/`fml doctor` won't catch the gap either: they
+        # probe clippy-driver via `which`, and rustup's shim at
         # ~/.cargo/bin/clippy-driver exists even when the component isn't
         # installed, so it false-positives as [READY].
         uses: dtolnay/rust-toolchain@1.98.1
@@ -113,7 +114,7 @@ jobs:
         run: cargo build
 
       - name: Install tool dependencies via fml
-        run: ./target/debug/fml install
+        run: ./target/debug/fml doctor --install
 
       - name: Check formatting
         run: ./target/debug/fml fmt --check
@@ -202,11 +203,12 @@ jobs:
     # "Library Tests" is) -- adding one is a call for whoever owns branch
     # protection to make deliberately, not a side effect of adding this job.
     # This job exists specifically to catch a class of bug `test-lib`'s
-    # ubuntu-only `fml install` step could not: a tool installed within an
-    # `fml ... --install` invocation being reported ToolMissing by the very
-    # next step of that *same* invocation, because a per-process PATH-lookup
-    # cache (`surfaces::tooling::BINARY_CACHE`) memoized the pre-install
-    # "not found" result and was never evicted after the install succeeded.
+    # ubuntu-only `fml doctor --install` step could not: a tool installed
+    # within an `fml ... --install` invocation being reported ToolMissing by
+    # the very next step of that *same* invocation, because a per-process
+    # PATH-lookup cache (`surfaces::tooling::BINARY_CACHE`) memoized the
+    # pre-install "not found" result and was never evicted after the install
+    # succeeded.
     # The bug itself is platform-independent (pure in-process caching, no
     # OS-specific code path), but the concrete report that caught it was on
     # a Windows runner with none of the tools pre-cached -- exactly the kind

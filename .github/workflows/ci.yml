@@ -58,7 +58,7 @@ jobs:
         run: cargo build
 
       - name: Install tool dependencies via fml
-        run: ./target/debug/fml install
+        run: ./target/debug/fml doctor --install
 
       - name: Check formatting
         run: ./target/debug/fml fmt --check

@@ -283,24 +283,16 @@ have a real lint auto-fix mode (`supports_lint_fix()`) versus which only
 reformat under `fml fix` because their linter is diagnostics-only (e.g. Java's
 `checkstyle`, YAML's `yamllint`, TOML's `taplo lint`).
 
-### Deprecated spellings
+### Removed spellings
 
-`fml lint --fix`, `fml list-surfaces`, `fml surfaces`, and `fml table` were
-removed outright in `v0.3.0` (#255) — each now fails with a message naming its
-replacement (`fml fix`, `fml doctor`, `fml doctor`, and the `fml::ui::table`
-library API, respectively) rather than a bare "unexpected argument".
+`fml lint --fix`, `fml list-surfaces`, `fml surfaces`, `fml table`, and
+`fml install` were removed outright in `v0.3.0` (#255) — each now fails with a
+message naming its replacement (`fml fix`, `fml doctor`, `fml doctor`, the
+`fml::ui::table` library API, and `fml doctor --install`, respectively) rather
+than a bare "unexpected argument".
 
-Two spellings remain deprecated, but not yet removed — both are still invoked
-directly by this repo's own CI and release workflows, so removing them needs a
-coordinated workflow update first:
-
-| deprecated    | use instead                                                                            | removed in |
-| ------------- | -------------------------------------------------------------------------------------- | ---------- |
-| `fml install` | `fml doctor --install`                                                                 | `v0.4.0`   |
-| `fml schema`  | `cargo test --test schema_drift` (or `UPDATE_SCHEMA=1 cargo test --test schema_drift`) | `v0.4.0`   |
-
-Both remain temporarily available as deprecated CLI commands that print a notice
-to stderr before executing.
+`fml migrate` remains deprecated but still working — it prints a notice naming
+`fml init` and then runs. Its removal is tracked separately in #299.
 
 ---
 
@@ -328,6 +320,19 @@ schema change, since that's a human decision.
 ```text
 $ fml init
 [OK] Updated formality.toml schema reference: s0.9 -> s1.0
+```
+
+Editors fetch the pinned `#:schema` URL directly, so most projects never need a
+local copy. When you do — working offline or air-gapped, or checking the schema
+into your own repo — `fml schema` writes the same document the release asset
+serves:
+
+```bash
+# Print the JSON Schema to stdout
+fml schema
+
+# Or write it to a file
+fml schema --output formality.schema.json
 ```
 
 ### Full configuration with overrides
@@ -376,6 +381,7 @@ Commands:
   sync     Sync native tool configs from canonical globals
   doctor   Diagnose installed toolchains with install hints
   init     Scaffold a new formality.toml configuration
+  schema   Write the JSON Schema for formality.toml to stdout or a file
   lsp      Start the formality LSP server (stdio transport)
   migrate  Migrate project files to match the current formality release
   help     Print this message or the help of the given subcommand(s)
@@ -411,6 +417,7 @@ Options:
 | `fml doctor`  | `--install`       | Auto-install all missing toolchains                                  |
 | `fml init`    | `--force`         | Overwrite an existing config file                                    |
 | `fml init`    | `--hidden`        | Write `.formality.toml` instead of `formality.toml`                  |
+| `fml schema`  | `-o`, `--output`  | Write the JSON Schema to `<FILE>` instead of stdout                  |
 | `fml migrate` | `schema`          | Rewrite `#:schema` directive in config to match current release      |
 
 ---
