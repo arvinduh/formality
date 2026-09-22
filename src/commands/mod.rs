@@ -14,8 +14,6 @@ pub mod lint;
 pub mod lsp;
 /// Structured per-violation lint diagnostics for `fml lsp` (Fixes #159 [pre-recreation]).
 pub mod lsp_diagnostics;
-/// Config schema-reference migration CLI command handler.
-pub mod migrate;
 /// JSON Schema generator CLI command handler.
 pub mod schema;
 /// Native configuration synchronization CLI command handler.
