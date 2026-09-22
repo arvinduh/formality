@@ -124,9 +124,8 @@ fn run_command_inner(
       commands::doctor::run_doctor(root, all, install, &config)
     }
 
-    // Removed in v0.3.0 (#255): `Cli::validate()` rejects this variant by
-    // name before `run_command_inner` is ever reached — see the
-    // `ListSurfaces` arm below for why this arm still exists.
+    // Removed in v0.3.0 (#255) — see the `ListSurfaces` arm below for why
+    // this arm still exists.
     Commands::Install { .. } => {
       unreachable!(
         "`fml install` is rejected by `Cli::validate()` before dispatch"
@@ -138,11 +137,10 @@ fn run_command_inner(
     }
 
     // Removed in v0.3.0 (#255): `Cli::validate()` rejects this variant by
-    // name before `run_command_inner` is ever reached via the real CLI
-    // (`Cli::parse_checked`). Only code that builds a `Commands` value
-    // directly and calls `run_with_args`/`run_command_inner` without going
-    // through `validate()` first could reach this arm, which no test or
-    // caller does after this removal.
+    // name, so nothing dispatches it. Both entry points validate — the CLI
+    // through `Cli::parse_checked`, a library caller through
+    // `run_with_args` — and `run_command_inner` is private with that one
+    // caller, so this arm exists only to keep the match exhaustive.
     Commands::ListSurfaces => {
       unreachable!(
         "`fml list-surfaces`/`fml surfaces` is rejected by `Cli::validate()` before dispatch"
@@ -213,9 +211,8 @@ fn run_command_inner(
       ExitStatus::Clean
     }
 
-    // Removed in v0.3.0 (#255): `Cli::validate()` rejects this variant by
-    // name before `run_command_inner` is ever reached via the real CLI —
-    // see the `ListSurfaces` arm above for why this arm still exists.
+    // Removed in v0.3.0 (#255) — see the `ListSurfaces` arm above for why
+    // this arm still exists.
     Commands::Table { .. } => {
       unreachable!(
         "`fml table` is rejected by `Cli::validate()` before dispatch"
