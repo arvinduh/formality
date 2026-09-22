@@ -1466,6 +1466,9 @@ fn is_executable_file(path: &std::path::Path) -> bool {
 ///   distro-patched pips that fall back to it when the system prefix is not
 ///   writable -- and probing it costs one `stat` on a directory this set
 ///   already knows about, so it is covered rather than argued away.
+///   `PYTHONUSERBASE` is honored everywhere; the *default* base is only
+///   derivable on Linux and the other non-macOS Unixes, per
+///   [`PYTHON_USER_BASE_DEFAULT_IS_DERIVABLE`].
 ///
 /// **Safe without one, and why:**
 ///
@@ -1555,19 +1558,17 @@ impl KnownInstallDir {
         .or_else(|| non_empty_dir(&env, "XDG_BIN_HOME"))
         .or_else(|| local_bin_dir(&env)),
       Self::PythonUser => {
-        // The user scheme's scripts land in `<base>/bin` on Unix and
-        // `<base>\Scripts` on Windows; `PYTHONUSERBASE` overrides the base,
-        // whose default is `~/.local` (Unix). On Windows the default base is
-        // under `%APPDATA%\Python\PythonXY`, whose version component cannot
-        // be derived without asking an interpreter -- so only the explicit
-        // override is honored there rather than guessing a wrong directory.
+        // `PYTHONUSERBASE` overrides the base on every platform, and the
+        // scripts sit at `<base>/bin` (`<base>\Scripts` on Windows). The
+        // *default* base is another matter -- see
+        // `PYTHON_USER_BASE_DEFAULT_IS_DERIVABLE`.
         if let Some(base) = non_empty_dir(&env, "PYTHONUSERBASE") {
           return Some(base.join(USER_SCHEME_SCRIPT_DIR));
         }
-        if cfg!(windows) {
-          None
-        } else {
+        if PYTHON_USER_BASE_DEFAULT_IS_DERIVABLE {
           local_bin_dir(&env)
+        } else {
+          None
         }
       }
     }
@@ -1578,6 +1579,31 @@ impl KnownInstallDir {
 /// Unix, `Scripts` on Windows.
 const USER_SCHEME_SCRIPT_DIR: &str =
   if cfg!(windows) { "Scripts" } else { "bin" };
+
+/// Whether the Python user scheme's *default* base (the one used when
+/// `PYTHONUSERBASE` is unset) can be derived from the home directory alone.
+///
+/// True only on Linux and the other non-macOS Unixes, where `site.USER_BASE`
+/// is `~/.local`. It is **false** on:
+///
+/// * **Windows** -- the default base is `%APPDATA%\Python\PythonXY`, whose
+///   `XY` is the interpreter's version.
+/// * **macOS** -- framework builds of CPython (both python.org's installer
+///   and Homebrew's) put `site.USER_BASE` at `~/Library/Python/X.Y`, so
+///   scripts land in e.g. `~/Library/Python/3.13/bin`, *not* `~/.local/bin`.
+///
+/// In both cases the version component cannot be derived without asking an
+/// interpreter, so [`KnownInstallDir::path_with`] declines rather than
+/// guessing a directory that is wrong. The cost is a missed resolution, never
+/// a false hit: a `pip`-installed tool under a framework Python's user scheme
+/// on macOS still reports `[MISS]` the way it does today. Resolving it would
+/// mean globbing `~/Library/Python/*/bin`, which is a wider change than
+/// #297's audit -- deliberately not folded in here. `PYTHONUSERBASE` is still
+/// honored on every platform, and [`KnownInstallDir::Pipx`] /
+/// [`KnownInstallDir::UvTool`] are unaffected: pipx and uv use `~/.local/bin`
+/// on macOS as on Linux.
+const PYTHON_USER_BASE_DEFAULT_IS_DERIVABLE: bool =
+  !cfg!(windows) && !cfg!(target_os = "macos");
 
 /// The environment variable naming the user's home directory on this
 /// platform. Named once, so production lookups and their tests cannot
@@ -3493,10 +3519,16 @@ mod tests {
     );
     assert_eq!(
       KnownInstallDir::PythonUser.path_with(no_go_bin_dir, &env),
-      if cfg!(windows) { None } else { expected },
+      if PYTHON_USER_BASE_DEFAULT_IS_DERIVABLE {
+        expected
+      } else {
+        None
+      },
       "without PYTHONUSERBASE the user scheme's scripts are ~/.local/bin on \
-       Unix; on Windows the default base embeds an interpreter version this \
-       crate cannot derive, so it must decline rather than guess"
+       Linux; on Windows (%APPDATA%\\Python\\PythonXY) and on macOS \
+       (~/Library/Python/X.Y, framework builds) the default base embeds an \
+       interpreter version this crate cannot derive, so it must decline \
+       rather than guess"
     );
   }
 
