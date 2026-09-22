@@ -45,7 +45,7 @@ machine-generated shape.
   `import_sort` configurable; `trailing_comma`, `prose_wrap`, `edition`,
   `standard` unsupported.
 - **`extra_args` handling**: `--extend-select` on the import pass is
-  discriminated so exit 1 with findings reports as `[FAIL] Violations found`
+  discriminated so exit 1 with findings reports as a `[FAIL]` violation row
   rather than `[ERR] Execution error` (Fixes
   [#208](https://github.com/arvinduh/formality/issues/208)); see
   [`extra_args` and exit-code contracts](#extra_args-and-exit-code-contracts).
@@ -277,7 +277,7 @@ The flags known to do this, each reproduced against the version
 
 | Surface        | Flag                     | Status                           | What you'll see                                                                                                                                                                                                                          |
 | -------------- | ------------------------ | -------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| **python**     | `--extend-select <rule>` | **Handled (Fixes #208)**         | On the `ruff check --select I --fix` import pass, exit 1 when selection is widened or findings are present is classified as `[FAIL] Violations found` with process exit 1, not `[ERR] Execution error`. Verified on `ruff 0.16.4`.       |
+| **python**     | `--extend-select <rule>` | **Handled (Fixes #208)**         | On the `ruff check --select I --fix` import pass, exit 1 when selection is widened or findings are present is classified as a `[FAIL]` violation row with process exit 1, not `[ERR] Execution error`. Verified on `ruff 0.16.4`.        |
 | **java**       | `--set-exit-if-changed`  | **Unguarded — known limitation** | `google-java-format --replace` still rewrites the file, then exits 1 because it changed something; reported as `[ERR] Execution error` rather than a successful format. Verified on `google-java-format@2.3.0` (upstream 1.35.0).        |
 | **javascript** | `--linter-enabled`       | **Refused** with an explanation  | Not actually an instance of the above: `fml fmt` passes this flag itself and biome rejects it given twice, so the format pass fails either way. `fml` now says so instead of surfacing biome's opaque error. Verified on `biome@2.5.10`. |
 

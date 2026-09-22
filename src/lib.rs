@@ -772,6 +772,11 @@ mod tests {
                 let is_sanctioned_post_recreation = match num {
                   // Post-recreation #113 is markdownlint-cli2 exit code classification in markdown.rs
                   113 => rel_path == "src/surfaces/markdown.rs",
+                  // Post-recreation #119 is `fml fix`'s remaining /
+                  // auto-fixable reporting, which lives entirely in the
+                  // runner (this fix, not the pre-recreation issue of the
+                  // same number)
+                  119 => rel_path.starts_with("src/engine/runner/"),
                   // Post-recreation #120 is disabling MD033/no-inline-html by
                   // default in markdown.rs (this fix, not the pre-recreation
                   // issue of the same number)
