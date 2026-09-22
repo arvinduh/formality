@@ -3261,6 +3261,116 @@ mod tests {
     );
   }
 
+  /// Records which [`KnownInstallDir`]s a `resolve_via_known_install_dir_with`
+  /// call actually asked for, in order, so the loop's traversal is assertable
+  /// rather than inferred from its return value alone.
+  fn recording_dir_for(
+    answers: Vec<(KnownInstallDir, Option<PathBuf>)>,
+  ) -> (
+    impl Fn(KnownInstallDir) -> Option<PathBuf>,
+    std::sync::Arc<Mutex<Vec<KnownInstallDir>>>,
+  ) {
+    let asked = std::sync::Arc::new(Mutex::new(Vec::new()));
+    let log = std::sync::Arc::clone(&asked);
+    let dir_for = move |kind: KnownInstallDir| {
+      log.lock().unwrap_or_else(|e| e.into_inner()).push(kind);
+      answers
+        .iter()
+        .find(|(k, _)| *k == kind)
+        .and_then(|(_, dir)| dir.clone())
+    };
+    (dir_for, asked)
+  }
+
+  #[test]
+  fn test_resolve_via_known_install_dir_probes_past_an_early_chain_miss() {
+    // The realistic case the loop exists for: `UV_TOOL_BIN_DIR` exported
+    // (so uv's directory is a real, empty directory) while the tool was
+    // actually pipx-installed into `~/.local/bin`. `RUFF_CHAIN`'s order is
+    // Uv, Pipx, Pip, Pip3, so the *first* directory probed misses -- and a
+    // fallback that stops there reports `[MISS]` for a tool that is sitting
+    // right there in the next one.
+    let uv_dir = tempfile::tempdir().expect("tempdir");
+    let pipx_dir = tempfile::tempdir().expect("tempdir");
+    let fixture = write_bin_fixture(pipx_dir.path(), "ruff");
+
+    let (dir_for, asked) = recording_dir_for(vec![
+      (KnownInstallDir::UvTool, Some(uv_dir.path().to_path_buf())),
+      (KnownInstallDir::Pipx, Some(pipx_dir.path().to_path_buf())),
+    ]);
+    let resolved = resolve_via_known_install_dir_with("ruff", dir_for);
+
+    assert_eq!(
+      resolved.as_deref(),
+      Some(fixture.as_path()),
+      "a miss in the first chain directory must not end the search -- the \
+       binary is in the second one"
+    );
+    assert_eq!(
+      *asked.lock().unwrap_or_else(|e| e.into_inner()),
+      vec![KnownInstallDir::UvTool, KnownInstallDir::Pipx],
+      "directories are tried in chain order, and the search stops at the hit"
+    );
+  }
+
+  #[test]
+  fn test_resolve_via_known_install_dir_asks_each_kind_once_in_chain_order() {
+    // `RUFF_CHAIN` is Uv, Pipx, Pip, Pip3 -- and `Pip`/`Pip3` both map to
+    // `KnownInstallDir::PythonUser`. The kind de-duplication is what keeps
+    // that from being asked for (and probed) twice. Every directory misses
+    // here, so the whole chain is walked.
+    let empty = tempfile::tempdir().expect("tempdir");
+    let (dir_for, asked) = recording_dir_for(vec![
+      (KnownInstallDir::UvTool, Some(empty.path().to_path_buf())),
+      (KnownInstallDir::Pipx, None),
+      (KnownInstallDir::PythonUser, None),
+    ]);
+
+    assert_eq!(
+      resolve_via_known_install_dir_with("ruff", dir_for),
+      None,
+      "no chain directory holds the binary, so the answer is a clean miss"
+    );
+    assert_eq!(
+      *asked.lock().unwrap_or_else(|e| e.into_inner()),
+      vec![
+        KnownInstallDir::UvTool,
+        KnownInstallDir::Pipx,
+        KnownInstallDir::PythonUser,
+      ],
+      "each distinct kind is asked exactly once, in chain order; a kind \
+       whose directory is unknown (None) must not end the search either"
+    );
+  }
+
+  #[test]
+  fn test_resolve_via_known_install_dir_probes_a_repeated_directory_once() {
+    // `Pipx` and `PythonUser` both resolve to `~/.local/bin` on a stock
+    // Linux box, so the path de-duplication saves a redundant `stat`.
+    // Ordinarily that is invisible; it is made observable here by creating
+    // the fixture *between* the two answers, from inside the closure. The
+    // second probe would find it -- so a `None` result is proof the second
+    // probe never happened.
+    let shared = tempfile::tempdir().expect("tempdir");
+    let dir = shared.path().to_path_buf();
+    let late_fixture = dir.clone();
+
+    let dir_for = move |kind: KnownInstallDir| match kind {
+      KnownInstallDir::Pipx => Some(dir.clone()),
+      KnownInstallDir::PythonUser => {
+        write_bin_fixture(&late_fixture, "ruff");
+        Some(late_fixture.clone())
+      }
+      _ => None,
+    };
+
+    assert_eq!(
+      resolve_via_known_install_dir_with("ruff", dir_for),
+      None,
+      "a directory already probed this call must not be probed again"
+    );
+  }
+
   #[test]
   fn test_apt_and_the_other_audited_methods_contribute_no_directory() {
     // The `Apt` half of #297's acceptance criteria, as an assertion rather
