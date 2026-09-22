@@ -321,6 +321,11 @@ impl Runner {
     let mut violation_count = 0;
     let mut tool_missing_count = 0;
     let mut error_count = 0;
+    // The run-level remaining-violation figure, accumulated from the rows as
+    // they are built — never tallied independently (#119). Whatever the
+    // summary prints is by construction the sum of the numbers rendered
+    // above it, so the two can never drift.
+    let mut remaining = RemainingViolations::default();
 
     let mut runner_table = crate::ui::table::Table::new(vec![
       crate::ui::table::Column::new(crate::ui::table::Cell::text(""))
@@ -353,6 +358,7 @@ impl Runner {
         ),
         _ => None,
       };
+      remaining.record(&res.status, tally);
       let spec = row_spec(&res.status, plan, tally);
 
       match spec.tally {
@@ -450,11 +456,15 @@ impl Runner {
       );
     }
 
-    let summary_text = if parts.is_empty() {
+    let mut summary_text = if parts.is_empty() {
       "0 surfaces".dimmed().to_string()
     } else {
       parts.join(", ")
     };
+    if let Some(clause) = remaining.clause() {
+      summary_text.push(' ');
+      summary_text.push_str(&clause.dimmed().to_string());
+    }
 
     println!("  {} in {:.2?}\n", summary_text, start_time.elapsed());
 
@@ -634,6 +644,88 @@ const fn violation_noun(count: usize) -> &'static str {
     "violation"
   } else {
     "violations"
+  }
+}
+
+/// The run-level remaining-violation figure, folded together as the rows are
+/// built (#119).
+///
+/// Deliberately *not* an independent pass over `results`: the summary's
+/// number is the sum of the per-surface numbers the table already printed,
+/// so a reader can add the column up by eye and get the footer. A separate
+/// tally could disagree with the rows, and the footer is the one a reader
+/// cannot check.
+struct RemainingViolations {
+  /// Sum of every row's remaining count.
+  total: usize,
+  /// Sum of every row's auto-fixable count, or `None` once any counted row
+  /// withheld the claim — a partial figure would read as a complete one.
+  ///
+  /// Starts at `Some(0)`: with no rows folded in yet, nothing has withheld
+  /// anything. `Default` would give `None`, which would latch the clause
+  /// into its claim-free form for every run.
+  auto_fixable: Option<usize>,
+  /// Set when a `ViolationsFound` row produced no count at all, which makes
+  /// `total` an undercount and suppresses the whole clause.
+  incomplete: bool,
+}
+
+impl Default for RemainingViolations {
+  fn default() -> Self {
+    Self {
+      total: 0,
+      auto_fixable: Some(0),
+      incomplete: false,
+    }
+  }
+}
+
+impl RemainingViolations {
+  /// Folds one row in. `tally` is `None` both for statuses that are not
+  /// violations at all and for a `ViolationsFound` whose tools exposed no
+  /// count; only the latter makes the total incomplete.
+  fn record(
+    &mut self,
+    status: &SurfaceStatus,
+    tally: Option<violations::ViolationTally>,
+  ) {
+    match tally {
+      None => {
+        if matches!(status, SurfaceStatus::ViolationsFound { .. }) {
+          self.incomplete = true;
+        }
+      }
+      Some(t) => {
+        self.total += t.remaining;
+        self.auto_fixable = self
+          .auto_fixable
+          .zip(t.auto_fixable)
+          .map(|(acc, k)| acc + k);
+      }
+    }
+  }
+
+  /// The parenthesised clause appended to the run summary, or `None` when
+  /// there is nothing trustworthy to say.
+  ///
+  /// Suppressed entirely when any failing surface went uncounted: a total
+  /// that silently omits a surface is worse than no total, because nothing
+  /// in the line says it is partial.
+  fn clause(&self) -> Option<String> {
+    if self.incomplete || self.total == 0 {
+      return None;
+    }
+    let noun = violation_noun(self.total);
+    Some(match self.auto_fixable {
+      None => format!("({} {noun} remaining)", self.total),
+      Some(0) => format!(
+        "({} {noun} remaining, none auto-fixable — manual edits needed)",
+        self.total
+      ),
+      Some(k) => {
+        format!("({} {noun} remaining, {k} auto-fixable)", self.total)
+      }
+    })
   }
 }
 
