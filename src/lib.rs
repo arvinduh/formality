@@ -27,7 +27,7 @@ pub mod ui;
 pub use config::SCHEMA_VERSION;
 pub use config::schema::generate_schema;
 
-use cli::{Cli, Commands, MigrateCommands};
+use cli::{Cli, Commands};
 use colored::Colorize;
 use config::FormalityConfig;
 use errors::{ExitStatus, FormalityError};
@@ -219,15 +219,12 @@ fn run_command_inner(
       )
     }
 
-    Commands::Migrate { command } => {
-      crate::ui::deprecation::warn_deprecated_spelling(
-        "fml migrate schema",
-        "fml init",
-        Some("it initializes or updates the schema pin in formality.toml"),
-      );
-      match command {
-        MigrateCommands::Schema => commands::migrate::run_migrate_schema(root),
-      }
+    // Removed in v0.3.0 (#299) — see the `ListSurfaces` arm above for why
+    // this arm still exists.
+    Commands::Migrate { .. } => {
+      unreachable!(
+        "`fml migrate`/`fml migrate schema` is rejected by `Cli::validate()` before dispatch"
+      )
     }
   }
 }
@@ -857,11 +854,14 @@ mod tests {
     // `run_with_args` is `pub`, so an external library consumer can build a
     // removed variant directly, bypassing `Cli::parse_checked`. Each such
     // variant's dispatch arm is `unreachable!()`; validating on entry is
-    // what keeps that from being a panic in a library (#255).
+    // what keeps that from being a panic in a library (#255, #299).
     for command in [
       Commands::Install { all: false },
       Commands::ListSurfaces,
       Commands::Table { json: None },
+      Commands::Migrate {
+        command: cli::MigrateCommands::Schema,
+      },
     ] {
       let args = Cli {
         config: None,

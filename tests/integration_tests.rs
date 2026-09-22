@@ -4,7 +4,7 @@ use common::{
   fmt_cmd, init_cmd, init_git_repo, run_cli, run_cli_no_root, sync_cmd,
   temp_repo,
 };
-use fml::cli::{Commands, MigrateCommands};
+use fml::cli::Commands;
 use fml::config::SCHEMA_VERSION;
 use fml::errors::ExitStatus;
 use fml::surfaces::{
@@ -233,7 +233,11 @@ fn test_init_inserts_schema_pin_when_config_missing_schema() {
 }
 
 #[test]
-fn test_deprecated_migrate_schema_prints_notice_and_succeeds() {
+fn test_removed_migrate_command_names_init() {
+  // Removed in v0.3.0 (#299). It still parses (declared hidden) so the
+  // error names `fml init` rather than clap's bare "unexpected argument";
+  // exercised against the built binary because that is the path a user
+  // following an old README actually takes.
   let temp = temp_repo(&[(
     "formality.toml",
     "#:schema https://github.com/arvinduh/formality/releases/download/s0.9/formality.schema.json\n[global]\nindent_size = 2\n",
@@ -249,17 +253,24 @@ fn test_deprecated_migrate_schema_prints_notice_and_succeeds() {
     .output()
     .expect("failed to run fml");
 
-  assert!(out.status.success());
+  assert!(!out.status.success());
   let stderr = String::from_utf8_lossy(&out.stderr);
   assert!(
-    stderr.contains("`fml migrate schema` is deprecated and will be removed in v0.4.0. Use `fml init` instead — it initializes or updates the schema pin in formality.toml"),
-    "stderr should contain deprecation notice, got:\n{stderr}"
+    stderr.contains("`fml migrate` was removed in v0.3.0."),
+    "expected removal error naming `fml migrate` in stderr, got: {stderr}"
+  );
+  assert!(
+    stderr.contains("fml init"),
+    "expected the error to name the replacement, got: {stderr}"
+  );
+  assert!(
+    !stderr.contains("unexpected argument"),
+    "error must not fall back to clap's bare rejection, got: {stderr}"
   );
 
+  // The config must be left untouched: a rejected command never dispatches.
   let content = fs::read_to_string(temp.path().join("formality.toml")).unwrap();
-  assert!(
-    content.contains(&format!("s{SCHEMA_VERSION}/formality.schema.json"))
-  );
+  assert!(content.contains("s0.9/formality.schema.json"));
 }
 
 #[test]
@@ -481,62 +492,6 @@ fn test_schema_command() {
       .unwrap()
       .contains("FormalityConfig")
   );
-}
-
-#[test]
-fn test_migrate_schema_command() {
-  let temp = temp_repo(&[]);
-  let root = temp.path();
-
-  // 1. No config present -> error.
-  assert_eq!(
-    run_cli(
-      root,
-      Commands::Migrate {
-        command: MigrateCommands::Schema,
-      }
-    ),
-    2
-  );
-
-  // 2. Stale #:schema line gets rewritten to the current version.
-  fs::write(
-    root.join("formality.toml"),
-    "#:schema \
-     https://github.com/arvinduh/formality/releases/download/s0.9/formality.schema.json\n[global]\nindent_size \
-     = 2\n",
-  )
-  .unwrap();
-
-  assert_eq!(
-    run_cli(
-      root,
-      Commands::Migrate {
-        command: MigrateCommands::Schema,
-      }
-    ),
-    0
-  );
-
-  let content = fs::read_to_string(root.join("formality.toml")).unwrap();
-  assert!(
-    content
-      .contains(&format!("s{}/formality.schema.json", fml::SCHEMA_VERSION))
-  );
-  assert!(content.contains("[global]\nindent_size = 2\n"));
-
-  // 3. Already up to date -> no-op, file unchanged.
-  assert_eq!(
-    run_cli(
-      root,
-      Commands::Migrate {
-        command: MigrateCommands::Schema,
-      }
-    ),
-    0
-  );
-  let content_after = fs::read_to_string(root.join("formality.toml")).unwrap();
-  assert_eq!(content, content_after);
 }
 
 #[test]
