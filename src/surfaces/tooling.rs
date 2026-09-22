@@ -42,11 +42,26 @@ pub enum InstallMethod {
   /// `pipx install <package>`. Requires `pipx` on PATH. Same `name==version`
   /// pinning convention as [`InstallMethod::Uv`].
   Pipx(&'static str),
-  /// `pip install --user <package>`. Requires `pip` on PATH. Same
+  /// `pip install <package>`. Requires `pip` on PATH. Same
   /// `name==version` pinning convention as [`InstallMethod::Uv`].
+  ///
+  /// **No `--user`**, deliberately. These two doc comments used to say
+  /// `pip install --user <package>` while [`InstallMethod::command`] emitted
+  /// no such flag; the drift became user-visible once #264 started rendering
+  /// install methods into printed hints (which render from `command()`), and
+  /// #297 resolved it in favour of the code rather than the comment. `--user`
+  /// is *rejected outright* inside an active virtualenv ("Can not perform a
+  /// '--user' install"), which is exactly where a bare `pip` most often
+  /// resolves, so adding the flag would break the common case to satisfy a
+  /// comment. Without it, pip installs into the prefix of the `pip` that ran
+  /// — the venv's `bin`, or the system prefix — which is on `PATH` by
+  /// construction whenever that `pip` was invocable. The user scheme is still
+  /// reachable without the flag (PEP 370 configuration, distro-patched pips),
+  /// so [`KnownInstallDir::PythonUser`] covers that directory anyway.
   Pip(&'static str),
-  /// `pip3 install --user <package>`. Requires `pip3` on PATH. Same
-  /// `name==version` pinning convention as [`InstallMethod::Uv`].
+  /// `pip3 install <package>`. Requires `pip3` on PATH. Same
+  /// `name==version` pinning convention as [`InstallMethod::Uv`], and the
+  /// same deliberate absence of `--user` as [`InstallMethod::Pip`].
   Pip3(&'static str),
   /// `apt-get install -y <package>`. Requires `apt-get` on PATH.
   Apt(&'static str),
@@ -1339,20 +1354,12 @@ fn go_bin_dir_from_env(gobin: &str, gopath: &str) -> Option<PathBuf> {
 /// binaries into (`GOBIN`, else `$GOPATH/bin`), or `None` if `go` isn't on
 /// `PATH` or the query fails.
 ///
-/// [`InstallMethod::GoInstall`] is the installer this fallback is scoped to
-/// today, *not* the only one with the property. `npm -g`, the other node
-/// managers, `brew`, `cargo install`, `rustup` and `Apt` do put binaries
-/// next to (or under the same prefix as) a package manager the user must
-/// already be able to invoke, so their output directory is on `PATH` too.
-/// **`Pipx` and `Uv` do not**: both write into `~/.local/bin`, which is why
-/// `pipx ensurepath` and `uv tool update-shell` exist at all, and those
-/// chains cover `ruff`, `yamllint` and `clang-format`. That gap is real and
-/// tracked separately in #297 -- it is left out of this fallback
-/// deliberately (widening it needs a per-[`InstallMethod`] known-bin-dir
-/// hook, a design call), not because it does not exist. `$GOPATH/bin` is
-/// simply the case #293 was filed over: Go creates it on demand, and it is
-/// on `PATH` only if the user put it there. On a stock GitHub Actions Linux runner it
-/// is not, so `go install golang.org/x/tools/cmd/goimports@v0.49.0`
+/// One of the directories [`KnownInstallDir`] enumerates -- see that type
+/// for the full per-[`InstallMethod`] audit of which installers write
+/// somewhere `PATH` may not cover. `$GOPATH/bin` is the case #293 was filed
+/// over: Go creates it on demand, and it is on `PATH` only if the user put
+/// it there. On a stock GitHub Actions Linux runner it is not, so
+/// `go install golang.org/x/tools/cmd/goimports@v0.49.0`
 /// succeeds and a lookup for `goimports` from `PATH` alone still finds
 /// nothing -- in this process *or a later one*, since nothing durable ever
 /// records that directory anywhere `PATH` gets rebuilt from (contrast the
@@ -1385,17 +1392,17 @@ fn go_install_bin_dir() -> Option<PathBuf> {
 }
 
 /// Pure half of the known-install-directory fallback: does `binary` exist as
-/// a file directly inside `go_bin_dir`? Kept separate from
-/// [`resolve_via_known_install_dir`] (which sources `go_bin_dir` by actually
-/// spawning `go env`) so the on-disk check is unit-testable against a
-/// fabricated temp directory, with no real Go toolchain required.
+/// an executable file directly inside `dir`? Kept separate from
+/// [`resolve_via_known_install_dir`] (which sources its directories from
+/// [`KnownInstallDir::path`], one of which actually spawns `go env`) so the
+/// on-disk check is unit-testable against a fabricated temp directory, with
+/// no real toolchain of any kind required.
 #[must_use]
-fn resolve_go_installed_binary(
+fn resolve_installed_binary_in(
   binary: &str,
-  go_bin_dir: &std::path::Path,
+  dir: &std::path::Path,
 ) -> Option<PathBuf> {
-  let candidate =
-    go_bin_dir.join(format!("{binary}{}", std::env::consts::EXE_SUFFIX));
+  let candidate = dir.join(format!("{binary}{}", std::env::consts::EXE_SUFFIX));
   (candidate.is_file() && is_executable_file(&candidate)).then_some(candidate)
 }
 
@@ -1426,45 +1433,250 @@ fn is_executable_file(path: &std::path::Path) -> bool {
   }
 }
 
-/// The lookup-time fallback [`resolve_binary_path`] tries once a plain
-/// `PATH` search comes up empty: is `binary` installed via
-/// [`InstallMethod::GoInstall`] somewhere in its chain, and if so, does it
-/// exist in `go install`'s own output directory (`GOBIN`, else
-/// `$GOPATH/bin`)? See [`go_install_bin_dir`]'s doc comment for why that
-/// directory specifically -- it's the one location in this crate's install
-/// chains that a fresh `PATH` search structurally cannot see.
+/// An install directory one of this crate's [`InstallMethod`]s writes
+/// binaries into that a plain `PATH` search can structurally fail to see --
+/// the set [`resolve_via_known_install_dir`] probes after `which` comes up
+/// empty.
 ///
-/// Scoped to Go-installed binaries only (via [`install_chain_for`]) rather
-/// than probing this directory unconditionally for every miss: computing it
-/// spawns `go env`, and no other binary's chain ever writes *there*, so
-/// paying that cost for e.g. a genuinely-missing `prettier` would be pure
-/// waste. Other install methods with their own off-`PATH` directory --
-/// `Pipx`/`Uv`'s `~/.local/bin` -- are #297, and want their own entry here
-/// rather than a wider probe of this one.
-#[must_use]
-fn resolve_via_known_install_dir(binary: &str) -> Option<PathBuf> {
-  resolve_via_known_install_dir_with(binary, go_install_bin_dir)
+/// # The audit, per `InstallMethod` variant
+///
+/// Every variant is accounted for in [`KnownInstallDir::for_method`]'s
+/// `match`, deliberately without a `_` arm, so a new install method cannot
+/// be added without deciding which side of this line it falls on. #293's
+/// first fix enumerated this informally in prose and got it wrong twice
+/// (`Apt` was omitted entirely; `Pipx`/`Uv` were claimed to install next to
+/// a package manager already on `PATH`), which is what #297 exists for.
+///
+/// **Needs an entry here:**
+///
+/// * [`InstallMethod::GoInstall`] -- `GOBIN`, else `$GOPATH/bin`. Created
+///   on demand by Go and on `PATH` only if the user put it there (#293).
+/// * [`InstallMethod::Pipx`] -- `$PIPX_BIN_DIR`, else `~/.local/bin`. That
+///   this directory routinely is not on `PATH` is exactly why
+///   `pipx ensurepath` exists as a command.
+/// * [`InstallMethod::Uv`] -- `$UV_TOOL_BIN_DIR`, else `$XDG_BIN_HOME`,
+///   else `~/.local/bin`; `uv tool update-shell` is uv's counterpart to
+///   `pipx ensurepath`, for the same reason.
+/// * [`InstallMethod::Pip`] / [`InstallMethod::Pip3`] -- the Python user
+///   scheme's script directory. `command()` does *not* pass `--user`, so
+///   these normally install into the prefix of the `pip` that ran (an
+///   active virtualenv's `bin`, or the system prefix), both on `PATH` by
+///   construction whenever that `pip` itself was invocable. The user scheme
+///   is still reachable without `--user` -- PEP 370 configuration, and
+///   distro-patched pips that fall back to it when the system prefix is not
+///   writable -- and probing it costs one `stat` on a directory this set
+///   already knows about, so it is covered rather than argued away.
+///   `PYTHONUSERBASE` is honored everywhere; the *default* base is only
+///   derivable on Linux and the other non-macOS Unixes, per
+///   [`PYTHON_USER_BASE_DEFAULT_IS_DERIVABLE`].
+///
+/// **Safe without one, and why:**
+///
+/// * [`InstallMethod::Apt`] -- `/usr/bin` (a `.deb`'s binaries land under
+///   the distribution's own prefix, which is what `apt-get` itself is
+///   invoked from). Audited explicitly because #293's prose enumeration
+///   left it out; it is genuinely safe, not merely unlisted.
+/// * [`InstallMethod::Npm`] / `Pnpm` / `Yarn` / `Bun` -- the node manager's
+///   own global prefix `bin`, next to the manager the user just invoked.
+/// * [`InstallMethod::Brew`] -- the brew prefix's `bin`, likewise.
+/// * [`InstallMethod::Cargo`] / `CargoBinstall` / `Rustup` -- `$CARGO_HOME/bin`
+///   (default `~/.cargo/bin`), which is where `cargo`/`rustup` themselves
+///   live, so resolving either of those implies the directory is on `PATH`.
+/// * [`InstallMethod::Scoop`] / `WingetName` / `WingetId` -- these register
+///   their `PATH` change in the Windows registry, which every *new* process
+///   inherits on its own; only an already-running process needs
+///   [`refresh_windows_path_from_registry`]. That is a same-process
+///   staleness problem, not a cross-process resolution gap.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum KnownInstallDir {
+  /// `go install`'s output directory -- see [`go_install_bin_dir`].
+  Go,
+  /// `pipx install`'s binary directory.
+  Pipx,
+  /// `uv tool install`'s binary directory.
+  UvTool,
+  /// The Python user scheme's script directory (`pip`'s user site).
+  PythonUser,
 }
 
-/// [`resolve_via_known_install_dir`], with the `go install` bin directory
-/// sourced from `go_bin_dir` instead of a hardcoded `go env` spawn, so tests
-/// can inject a fabricated directory without a real Go toolchain or
-/// mutating any real filesystem state `go env` would otherwise read.
+impl KnownInstallDir {
+  /// Which directory, if any, this install method writes into that `PATH`
+  /// is not guaranteed to cover. See the type's doc comment for the audit
+  /// behind each arm; the `match` is exhaustive on purpose.
+  #[must_use]
+  fn for_method(method: &InstallMethod) -> Option<Self> {
+    match method {
+      InstallMethod::GoInstall(_) => Some(Self::Go),
+      InstallMethod::Pipx(_) => Some(Self::Pipx),
+      InstallMethod::Uv(_) => Some(Self::UvTool),
+      InstallMethod::Pip(_) | InstallMethod::Pip3(_) => Some(Self::PythonUser),
+      InstallMethod::CargoBinstall(_)
+      | InstallMethod::Npm(_)
+      | InstallMethod::Pnpm(_)
+      | InstallMethod::Yarn(_)
+      | InstallMethod::Bun(_)
+      | InstallMethod::Apt(_)
+      | InstallMethod::Brew(_)
+      | InstallMethod::Scoop(_)
+      | InstallMethod::WingetName(_)
+      | InstallMethod::WingetId(_)
+      | InstallMethod::Cargo { .. }
+      | InstallMethod::Rustup(_) => None,
+    }
+  }
+
+  /// Where this directory actually is on this machine, or `None` when it
+  /// cannot be determined (no home directory, or -- for [`Self::Go`] --
+  /// no usable `go` toolchain to ask).
+  ///
+  /// Only [`Self::Go`] spawns a process; the rest are pure environment
+  /// reads, which is why [`resolve_via_known_install_dir`] can afford to
+  /// consult them for every chain that lists the matching installer.
+  #[must_use]
+  fn path(self) -> Option<PathBuf> {
+    self.path_with(go_install_bin_dir, |var| std::env::var(var).ok())
+  }
+
+  /// [`Self::path`], with the `go install` bin directory and every
+  /// environment read injected, so the precedence rules below are
+  /// unit-testable without mutating this process's environment. Mutating it
+  /// would be both racy (the test binary is multi-threaded, which is why
+  /// `std::env::set_var` is `unsafe` in the 2024 edition) and, for `HOME`,
+  /// able to misdirect unrelated tests running alongside.
+  #[must_use]
+  fn path_with(
+    self,
+    go_bin_dir: impl FnOnce() -> Option<PathBuf>,
+    env: impl Fn(&str) -> Option<String>,
+  ) -> Option<PathBuf> {
+    match self {
+      Self::Go => go_bin_dir(),
+      Self::Pipx => {
+        non_empty_dir(&env, "PIPX_BIN_DIR").or_else(|| local_bin_dir(&env))
+      }
+      Self::UvTool => non_empty_dir(&env, "UV_TOOL_BIN_DIR")
+        .or_else(|| non_empty_dir(&env, "XDG_BIN_HOME"))
+        .or_else(|| local_bin_dir(&env)),
+      Self::PythonUser => {
+        // `PYTHONUSERBASE` overrides the base on every platform, and the
+        // scripts sit at `<base>/bin` (`<base>\Scripts` on Windows). The
+        // *default* base is another matter -- see
+        // `PYTHON_USER_BASE_DEFAULT_IS_DERIVABLE`.
+        if let Some(base) = non_empty_dir(&env, "PYTHONUSERBASE") {
+          return Some(base.join(USER_SCHEME_SCRIPT_DIR));
+        }
+        if PYTHON_USER_BASE_DEFAULT_IS_DERIVABLE {
+          local_bin_dir(&env)
+        } else {
+          None
+        }
+      }
+    }
+  }
+}
+
+/// The leaf name of the Python user scheme's script directory: `bin` on
+/// Unix, `Scripts` on Windows.
+const USER_SCHEME_SCRIPT_DIR: &str =
+  if cfg!(windows) { "Scripts" } else { "bin" };
+
+/// Whether the Python user scheme's *default* base (the one used when
+/// `PYTHONUSERBASE` is unset) can be derived from the home directory alone.
+///
+/// True only on Linux and the other non-macOS Unixes, where `site.USER_BASE`
+/// is `~/.local`. It is **false** on:
+///
+/// * **Windows** -- the default base is `%APPDATA%\Python\PythonXY`, whose
+///   `XY` is the interpreter's version.
+/// * **macOS** -- framework builds of CPython (both python.org's installer
+///   and Homebrew's) put `site.USER_BASE` at `~/Library/Python/X.Y`, so
+///   scripts land in e.g. `~/Library/Python/3.13/bin`, *not* `~/.local/bin`.
+///
+/// In both cases the version component cannot be derived without asking an
+/// interpreter, so [`KnownInstallDir::path_with`] declines rather than
+/// guessing a directory that is wrong. The cost is a missed resolution, never
+/// a false hit: a `pip`-installed tool under a framework Python's user scheme
+/// on macOS still reports `[MISS]` the way it does today. Resolving it would
+/// mean globbing `~/Library/Python/*/bin`, which is a wider change than
+/// #297's audit -- deliberately not folded in here. `PYTHONUSERBASE` is still
+/// honored on every platform, and [`KnownInstallDir::Pipx`] /
+/// [`KnownInstallDir::UvTool`] are unaffected: pipx and uv use `~/.local/bin`
+/// on macOS as on Linux.
+const PYTHON_USER_BASE_DEFAULT_IS_DERIVABLE: bool =
+  !cfg!(windows) && !cfg!(target_os = "macos");
+
+/// The environment variable naming the user's home directory on this
+/// platform. Named once, so production lookups and their tests cannot
+/// disagree about which variable [`local_bin_dir`] actually reads.
+const HOME_VAR: &str = if cfg!(windows) { "USERPROFILE" } else { "HOME" };
+
+/// `$HOME/.local/bin` (`%USERPROFILE%\.local\bin` on Windows) -- the
+/// directory current `pipx` and `uv` both install tool binaries into, and
+/// the default script directory of Python's user scheme on Unix.
+#[must_use]
+fn local_bin_dir(env: &impl Fn(&str) -> Option<String>) -> Option<PathBuf> {
+  Some(non_empty_dir(env, HOME_VAR)?.join(".local").join("bin"))
+}
+
+/// Reads `var` through `env` as a path, treating unset and
+/// blank-or-whitespace alike as "not configured" -- an exported-but-empty
+/// `PIPX_BIN_DIR` must not turn into a probe of the filesystem root.
+#[must_use]
+fn non_empty_dir(
+  env: &impl Fn(&str) -> Option<String>,
+  var: &str,
+) -> Option<PathBuf> {
+  let value = env(var)?;
+  let trimmed = value.trim();
+  (!trimmed.is_empty()).then(|| PathBuf::from(trimmed))
+}
+
+/// The lookup-time fallback [`resolve_binary_path`] tries once a plain
+/// `PATH` search comes up empty: does `binary` exist in any of the
+/// [`KnownInstallDir`]s its own install chain could have put it in?
+///
+/// Driven off [`install_chain_for`] rather than probing every known
+/// directory for every miss, so a genuinely-missing `prettier` (npm family
+/// only) does no extra filesystem work at all and, in particular, never
+/// pays for [`KnownInstallDir::Go`]'s `go env` spawn. Directories are
+/// tried in chain order -- the same order [`InstallMethod`]s are attempted
+/// at install time -- and de-duplicated, since `uv`, `pipx` and pip's user
+/// scheme commonly resolve to the same `~/.local/bin`.
+#[must_use]
+fn resolve_via_known_install_dir(binary: &str) -> Option<PathBuf> {
+  resolve_via_known_install_dir_with(binary, KnownInstallDir::path)
+}
+
+/// [`resolve_via_known_install_dir`], with each [`KnownInstallDir`]'s
+/// location sourced from `dir_for` instead of the real environment, so
+/// tests can inject a fabricated directory without a Go toolchain, a home
+/// directory, or any mutation of real filesystem state.
 #[must_use]
 fn resolve_via_known_install_dir_with(
   binary: &str,
-  go_bin_dir: impl FnOnce() -> Option<PathBuf>,
+  dir_for: impl Fn(KnownInstallDir) -> Option<PathBuf>,
 ) -> Option<PathBuf> {
-  let installs_via_go = install_chain_for(binary).is_some_and(|chain| {
-    chain
-      .iter()
-      .any(|m| matches!(m, InstallMethod::GoInstall(_)))
-  });
-  if !installs_via_go {
-    return None;
+  let chain = install_chain_for(binary)?;
+
+  let mut probed: Vec<PathBuf> = Vec::new();
+  let mut kinds: Vec<KnownInstallDir> = Vec::new();
+  for kind in chain.iter().filter_map(KnownInstallDir::for_method) {
+    if kinds.contains(&kind) {
+      continue;
+    }
+    kinds.push(kind);
+    let Some(dir) = dir_for(kind) else {
+      continue;
+    };
+    if probed.contains(&dir) {
+      continue;
+    }
+    if let Some(found) = resolve_installed_binary_in(binary, &dir) {
+      return Some(found);
+    }
+    probed.push(dir);
   }
-  let dir = go_bin_dir()?;
-  resolve_go_installed_binary(binary, &dir)
+  None
 }
 
 /// Applies whatever `PATH` fix-up the installer `program` needs for a
@@ -1473,19 +1685,24 @@ fn resolve_via_known_install_dir_with(
 ///
 /// Called right after a successful install (alongside [`forget_binary`],
 /// which handles the separate in-process caching half of the same
-/// symptom). Keeping the per-installer knowledge here rather than at the
-/// call site means a new [`InstallMethod`] whose bin directory isn't on
-/// `PATH` has exactly one place to be taught about.
+/// symptom). This is *not* the place a new [`InstallMethod`] whose bin
+/// directory isn't on `PATH` gets taught about -- that is
+/// [`KnownInstallDir::for_method`], which fixes the cross-process case as
+/// well and whose `match` is exhaustive so the decision cannot be skipped.
+/// What is left here is only the one fix-up a *lookup* cannot perform: a
+/// `PATH` change another process already made durably, which this
+/// already-running process's inherited environment block never sees.
 ///
-/// `go install` is *not* handled here (compare the Scoop/winget case
-/// below): its output directory is never durably on `PATH` for anyone, not
-/// just this already-running process, so a same-process `PATH` mutation
-/// would fix nothing that [`resolve_via_known_install_dir`] doesn't already
-/// fix at lookup time -- see [`go_install_bin_dir`]'s doc comment. (An
-/// earlier version of this function did carry a `"go" =>
-/// refresh_go_install_path()` arm; that function is deleted along with it,
-/// per #293's acceptance criteria that the old in-process fix-up not be
-/// left behind once lookup-time resolution supersedes it.)
+/// So `go install`, `pipx`, `uv` and `pip` are all absent from the match
+/// below (compare the Scoop/winget case): their output directories are
+/// never durably on `PATH` for anyone, not just this process, so a
+/// same-process `PATH` mutation would fix nothing that
+/// [`resolve_via_known_install_dir`] doesn't already fix at lookup time,
+/// for this process *and* the next one. (An earlier version of this
+/// function did carry a `"go" => refresh_go_install_path()` arm; that
+/// function is deleted along with it, per #293's acceptance criteria that
+/// the old in-process fix-up not be left behind once lookup-time resolution
+/// supersedes it.)
 pub fn refresh_path_after_install(program: &str) {
   match program {
     // Scoop and winget register their PATH changes in the Windows
@@ -1502,8 +1719,10 @@ pub fn refresh_path_after_install(program: &str) {
 /// falling back to the bare name only when nothing resolved at all. That is
 /// the execution half of #293's fix and it has to match the detection half:
 /// `check_binary_exists`/`tool_missing_guard` decide a tool is present via
-/// `resolve_binary_path`, which consults `go install`'s own output directory
-/// (`GOBIN`, else `$GOPATH/bin`) in addition to `PATH`. A bare
+/// `resolve_binary_path`, which consults every [`KnownInstallDir`] the
+/// binary's own install chain could have written to -- `go install`'s output
+/// directory (`GOBIN`, else `$GOPATH/bin`), and pipx/uv/pip's `~/.local/bin`
+/// (#297) -- in addition to `PATH`. A bare
 /// `Command::new(binary)` re-does a *`PATH`-only* search inside the OS's
 /// `execvp`, so a binary found only through that fallback would pass the
 /// missing-tool guard and then fail to exec -- "found it, can't run it",
@@ -2267,11 +2486,12 @@ mod tests {
     // is seeded into BINARY_CACHE exactly as a real cold lookup would have
     // memoized it, then evicted again.
     let tmp = tempfile::tempdir().expect("tempdir");
-    let fixture = write_go_bin_fixture(tmp.path(), "goimports");
+    let fixture = write_bin_fixture(tmp.path(), "goimports");
     let dir = tmp.path().to_path_buf();
 
-    let resolved =
-      resolve_via_known_install_dir_with("goimports", move || Some(dir));
+    let resolved = resolve_via_known_install_dir_with("goimports", move |_| {
+      Some(dir.clone())
+    });
     assert_eq!(
       resolved.as_deref(),
       Some(fixture.as_path()),
@@ -2836,10 +3056,10 @@ mod tests {
     );
   }
 
-  /// Writes a stand-in for a `go install`-produced binary into `dir`,
+  /// Writes a stand-in for an installer-produced binary into `dir`,
   /// executable on Unix so it clears the same bar `which::which` applies to
   /// a `PATH` hit (see `is_executable_file`). Returns its full path.
-  fn write_go_bin_fixture(dir: &std::path::Path, binary: &str) -> PathBuf {
+  fn write_bin_fixture(dir: &std::path::Path, binary: &str) -> PathBuf {
     let path = dir.join(format!("{binary}{}", std::env::consts::EXE_SUFFIX));
     std::fs::write(&path, b"#!/bin/sh\n").expect("write fixture binary");
     #[cfg(unix)]
@@ -2859,16 +3079,16 @@ mod tests {
   // `refresh_go_install_path` (deleted by this change; it only ever
   // mutated *this* process's `PATH`, which a later `fml` invocation never
   // inherits) could not close. These tests exercise the real filesystem
-  // check (`resolve_go_installed_binary`) and the chain-membership gate
+  // check (`resolve_installed_binary_in`) and the chain-membership gate
   // (`resolve_via_known_install_dir_with`) against a fabricated temp
   // directory, so no real Go toolchain or network access is required.
 
   #[test]
-  fn test_resolve_go_installed_binary_finds_a_real_file() {
+  fn test_resolve_installed_binary_in_finds_a_real_file() {
     let tmp = tempfile::tempdir().expect("tempdir");
-    let fixture = write_go_bin_fixture(tmp.path(), "goimports");
+    let fixture = write_bin_fixture(tmp.path(), "goimports");
 
-    let found = resolve_go_installed_binary("goimports", tmp.path());
+    let found = resolve_installed_binary_in("goimports", tmp.path());
     assert_eq!(
       found,
       Some(fixture),
@@ -2877,10 +3097,10 @@ mod tests {
   }
 
   #[test]
-  fn test_resolve_go_installed_binary_absent_is_none() {
+  fn test_resolve_installed_binary_in_absent_is_none() {
     let tmp = tempfile::tempdir().expect("tempdir");
     assert_eq!(
-      resolve_go_installed_binary("goimports", tmp.path()),
+      resolve_installed_binary_in("goimports", tmp.path()),
       None,
       "an empty GOBIN-equivalent directory must not fabricate a path"
     );
@@ -2888,7 +3108,7 @@ mod tests {
 
   #[test]
   #[cfg(unix)]
-  fn test_resolve_go_installed_binary_rejects_a_non_executable_file() {
+  fn test_resolve_installed_binary_in_rejects_a_non_executable_file() {
     // `which::which` requires the executable bit for a PATH hit, so the
     // fallback must too -- otherwise a mode-0644 leftover in GOBIN would
     // pass the missing-tool guard and then fail to exec, which is the
@@ -2898,7 +3118,7 @@ mod tests {
     std::fs::write(&path, b"#!/bin/sh\n").expect("write fixture");
 
     assert_eq!(
-      resolve_go_installed_binary("goimports", tmp.path()),
+      resolve_installed_binary_in("goimports", tmp.path()),
       None,
       "a non-executable file must not resolve as an installed binary"
     );
@@ -2910,29 +3130,30 @@ mod tests {
     std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o755))
       .expect("chmod fixture");
     assert_eq!(
-      resolve_go_installed_binary("goimports", tmp.path()),
+      resolve_installed_binary_in("goimports", tmp.path()),
       Some(path)
     );
   }
 
   #[test]
-  fn test_resolve_go_installed_binary_rejects_a_directory_of_the_same_name() {
+  fn test_resolve_installed_binary_in_rejects_a_directory_of_the_same_name() {
     // A same-named subdirectory (not a file) must not be reported as the
     // binary -- guards against a `.is_file()` check accidentally becoming
     // an `.exists()` check on some future refactor.
     let tmp = tempfile::tempdir().expect("tempdir");
     std::fs::create_dir(tmp.path().join("goimports")).expect("mkdir");
-    assert_eq!(resolve_go_installed_binary("goimports", tmp.path()), None);
+    assert_eq!(resolve_installed_binary_in("goimports", tmp.path()), None);
   }
 
   #[test]
   fn test_resolve_via_known_install_dir_finds_go_installed_binary() {
     let tmp = tempfile::tempdir().expect("tempdir");
-    let fixture = write_go_bin_fixture(tmp.path(), "goimports");
+    let fixture = write_bin_fixture(tmp.path(), "goimports");
     let dir = tmp.path().to_path_buf();
 
-    let found =
-      resolve_via_known_install_dir_with("goimports", move || Some(dir));
+    let found = resolve_via_known_install_dir_with("goimports", move |_| {
+      Some(dir.clone())
+    });
     assert_eq!(found, Some(fixture));
   }
 
@@ -2943,11 +3164,13 @@ mod tests {
     // GoInstall entry anywhere" gate must still catch it, not just a
     // single-entry chain like goimports's.
     let tmp = tempfile::tempdir().expect("tempdir");
-    let fixture = write_go_bin_fixture(tmp.path(), "golangci-lint");
+    let fixture = write_bin_fixture(tmp.path(), "golangci-lint");
     let dir = tmp.path().to_path_buf();
 
     let found =
-      resolve_via_known_install_dir_with("golangci-lint", move || Some(dir));
+      resolve_via_known_install_dir_with("golangci-lint", move |_| {
+        Some(dir.clone())
+      });
     assert_eq!(found, Some(fixture));
   }
 
@@ -2957,7 +3180,7 @@ mod tests {
     // only) must never even ask for the Go bin directory -- proven here by
     // handing it a closure that panics if called at all, not just by
     // asserting the return value.
-    let found = resolve_via_known_install_dir_with("prettier", || {
+    let found = resolve_via_known_install_dir_with("prettier", |_| {
       panic!(
         "must not query the Go bin directory for a binary with no \
          GoInstall entry in its chain"
@@ -2972,7 +3195,7 @@ mod tests {
     // None) must take the same short-circuit as a registered-but-non-Go
     // chain, not panic on the `Option` unwrap.
     let found =
-      resolve_via_known_install_dir_with("totally-unregistered-tool", || {
+      resolve_via_known_install_dir_with("totally-unregistered-tool", |_| {
         panic!("must not query the Go bin directory for an unregistered binary")
       });
     assert_eq!(found, None);
@@ -2983,8 +3206,414 @@ mod tests {
     // `go` not on PATH, or `go env` failing -- go_install_bin_dir's
     // contract is `None`, and the fallback must propagate that rather than
     // panicking on a missing directory.
-    let found = resolve_via_known_install_dir_with("goimports", || None);
+    let found = resolve_via_known_install_dir_with("goimports", |_| None);
     assert_eq!(found, None);
+  }
+
+  // --- the non-Go install methods (#297) ----------------------------------
+  //
+  // #297's acceptance criterion is that the guarantee must not be
+  // Go-specific by construction. Every test below fails if
+  // `KnownInstallDir::for_method`'s `Pipx`/`Uv`/`Pip`/`Pip3` arms go back to
+  // `None`, which is what the shipped code did before this change.
+
+  #[test]
+  fn test_resolve_via_known_install_dir_finds_a_pipx_or_uv_installed_binary() {
+    // `ruff`, `yamllint` and `clang-format` are the three tools whose chains
+    // run through `uv`/`pipx`/`pip` (`RUFF_CHAIN`, `YAMLLINT_CHAIN`,
+    // `CLANG_FORMAT_CHAIN`) -- all of which install into `~/.local/bin`, the
+    // directory `pipx ensurepath` and `uv tool update-shell` exist precisely
+    // because `PATH` routinely misses.
+    //
+    // The stand-in for `~/.local/bin` is a tempdir, never the machine's real
+    // one. The Go arm is wired to a panic so this cannot pass by way of
+    // `KnownInstallDir::Go` -- none of these three chains has a `GoInstall`
+    // entry, and if one ever did, resolving through it would not prove the
+    // Python-family directories are probed at all.
+    for binary in ["ruff", "yamllint", "clang-format"] {
+      let tmp = tempfile::tempdir().expect("tempdir");
+      let fixture = write_bin_fixture(tmp.path(), binary);
+      let dir = tmp.path().to_path_buf();
+
+      let resolved = resolve_via_known_install_dir_with(binary, |kind| {
+        assert_ne!(
+          kind,
+          KnownInstallDir::Go,
+          "{binary} has no GoInstall entry in its chain; resolving it \
+           through the Go bin directory would prove nothing about #297"
+        );
+        Some(dir.clone())
+      });
+
+      assert_eq!(
+        resolved.as_deref(),
+        Some(fixture.as_path()),
+        "a {binary} installed by pipx/uv/pip into a directory that is not on \
+         PATH must still resolve -- this is #293's `[OK]`-then-unusable \
+         shape reached through a non-Go install method"
+      );
+    }
+  }
+
+  #[test]
+  fn test_create_tool_command_spawns_a_local_bin_installed_binary_by_its_path()
+  {
+    // #297's first acceptance criterion in full: *spawned*, not merely
+    // resolved. PR #296's blocker 1 was a fix that resolved the binary while
+    // `create_tool_command` still spawned the bare name, converting a
+    // `[MISS]` into `Failed to execute <tool>` -- strictly worse. This is
+    // that end-to-end check for a pipx/uv-installed tool rather than a
+    // go-installed one.
+    //
+    // `yamllint` is used rather than `ruff`/`clang-format` because no other
+    // test in this binary resolves it, keeping the brief window in which the
+    // process-global cache holds the fixture path away from surfaces that
+    // actually spawn their tool.
+    let tmp = tempfile::tempdir().expect("tempdir");
+    let fixture = write_bin_fixture(tmp.path(), "yamllint");
+    let dir = tmp.path().to_path_buf();
+
+    let resolved =
+      resolve_via_known_install_dir_with("yamllint", |_| Some(dir.clone()));
+    assert_eq!(
+      resolved.as_deref(),
+      Some(fixture.as_path()),
+      "precondition: the fallback must find the fixture in the fake \
+       ~/.local/bin"
+    );
+
+    set_binary_path_for_test("yamllint", resolved);
+    let cmd = create_tool_command("yamllint");
+    let spawned = PathBuf::from(cmd.get_program());
+    forget_binary("yamllint");
+
+    assert_eq!(
+      spawned, fixture,
+      "a pipx/uv-installed binary found only via ~/.local/bin must be \
+       spawned by that path on every platform, not by the bare name"
+    );
+  }
+
+  /// Records which [`KnownInstallDir`]s a `resolve_via_known_install_dir_with`
+  /// call actually asked for, in order, so the loop's traversal is assertable
+  /// rather than inferred from its return value alone.
+  fn recording_dir_for(
+    answers: Vec<(KnownInstallDir, Option<PathBuf>)>,
+  ) -> (
+    impl Fn(KnownInstallDir) -> Option<PathBuf>,
+    std::sync::Arc<Mutex<Vec<KnownInstallDir>>>,
+  ) {
+    let asked = std::sync::Arc::new(Mutex::new(Vec::new()));
+    let log = std::sync::Arc::clone(&asked);
+    let dir_for = move |kind: KnownInstallDir| {
+      log.lock().unwrap_or_else(|e| e.into_inner()).push(kind);
+      answers
+        .iter()
+        .find(|(k, _)| *k == kind)
+        .and_then(|(_, dir)| dir.clone())
+    };
+    (dir_for, asked)
+  }
+
+  #[test]
+  fn test_resolve_via_known_install_dir_probes_past_an_early_chain_miss() {
+    // The realistic case the loop exists for: `UV_TOOL_BIN_DIR` exported
+    // (so uv's directory is a real, empty directory) while the tool was
+    // actually pipx-installed into `~/.local/bin`. `RUFF_CHAIN`'s order is
+    // Uv, Pipx, Pip, Pip3, so the *first* directory probed misses -- and a
+    // fallback that stops there reports `[MISS]` for a tool that is sitting
+    // right there in the next one.
+    let uv_dir = tempfile::tempdir().expect("tempdir");
+    let pipx_dir = tempfile::tempdir().expect("tempdir");
+    let fixture = write_bin_fixture(pipx_dir.path(), "ruff");
+
+    let (dir_for, asked) = recording_dir_for(vec![
+      (KnownInstallDir::UvTool, Some(uv_dir.path().to_path_buf())),
+      (KnownInstallDir::Pipx, Some(pipx_dir.path().to_path_buf())),
+    ]);
+    let resolved = resolve_via_known_install_dir_with("ruff", dir_for);
+
+    assert_eq!(
+      resolved.as_deref(),
+      Some(fixture.as_path()),
+      "a miss in the first chain directory must not end the search -- the \
+       binary is in the second one"
+    );
+    assert_eq!(
+      *asked.lock().unwrap_or_else(|e| e.into_inner()),
+      vec![KnownInstallDir::UvTool, KnownInstallDir::Pipx],
+      "directories are tried in chain order, and the search stops at the hit"
+    );
+  }
+
+  #[test]
+  fn test_resolve_via_known_install_dir_asks_each_kind_once_in_chain_order() {
+    // `RUFF_CHAIN` is Uv, Pipx, Pip, Pip3 -- and `Pip`/`Pip3` both map to
+    // `KnownInstallDir::PythonUser`. The kind de-duplication is what keeps
+    // that from being asked for (and probed) twice. Every directory misses
+    // here, so the whole chain is walked.
+    let empty = tempfile::tempdir().expect("tempdir");
+    let (dir_for, asked) = recording_dir_for(vec![
+      (KnownInstallDir::UvTool, Some(empty.path().to_path_buf())),
+      (KnownInstallDir::Pipx, None),
+      (KnownInstallDir::PythonUser, None),
+    ]);
+
+    assert_eq!(
+      resolve_via_known_install_dir_with("ruff", dir_for),
+      None,
+      "no chain directory holds the binary, so the answer is a clean miss"
+    );
+    assert_eq!(
+      *asked.lock().unwrap_or_else(|e| e.into_inner()),
+      vec![
+        KnownInstallDir::UvTool,
+        KnownInstallDir::Pipx,
+        KnownInstallDir::PythonUser,
+      ],
+      "each distinct kind is asked exactly once, in chain order; a kind \
+       whose directory is unknown (None) must not end the search either"
+    );
+  }
+
+  #[test]
+  fn test_resolve_via_known_install_dir_probes_a_repeated_directory_once() {
+    // `Pipx` and `PythonUser` both resolve to `~/.local/bin` on a stock
+    // Linux box, so the path de-duplication saves a redundant `stat`.
+    // Ordinarily that is invisible; it is made observable here by creating
+    // the fixture *between* the two answers, from inside the closure. The
+    // second probe would find it -- so a `None` result is proof the second
+    // probe never happened.
+    let shared = tempfile::tempdir().expect("tempdir");
+    let dir = shared.path().to_path_buf();
+    let late_fixture = dir.clone();
+
+    let dir_for = move |kind: KnownInstallDir| match kind {
+      KnownInstallDir::Pipx => Some(dir.clone()),
+      KnownInstallDir::PythonUser => {
+        write_bin_fixture(&late_fixture, "ruff");
+        Some(late_fixture.clone())
+      }
+      _ => None,
+    };
+
+    assert_eq!(
+      resolve_via_known_install_dir_with("ruff", dir_for),
+      None,
+      "a directory already probed this call must not be probed again"
+    );
+  }
+
+  #[test]
+  fn test_apt_and_the_other_audited_methods_contribute_no_directory() {
+    // The `Apt` half of #297's acceptance criteria, as an assertion rather
+    // than prose: a `.deb`'s binaries land under the distribution's own
+    // prefix (`/usr/bin`) -- the prefix `apt-get` itself was invoked from --
+    // so there is nothing for the fallback to probe. #293's prose
+    // enumeration omitted `Apt` entirely, which is part of why it was wrong.
+    //
+    // `clang-tidy`'s chain is `Apt`, `Brew`, `WingetName`, `Scoop`: every
+    // method audited as safe and not one that maps to a `KnownInstallDir`.
+    // The closure panics, so this fails loudly if any of them ever starts
+    // claiming a directory without that decision being made deliberately.
+    let found = resolve_via_known_install_dir_with("clang-tidy", |kind| {
+      panic!(
+        "clang-tidy installs only via apt/brew/winget/scoop, all audited as \
+         writing somewhere already on PATH; none may probe {kind:?}"
+      )
+    });
+    assert_eq!(found, None);
+  }
+
+  #[test]
+  fn test_known_install_dir_for_method_matches_the_documented_audit() {
+    // One representative of every `InstallMethod` variant, mapped to the
+    // conclusion recorded on `KnownInstallDir`. `for_method`'s `match` is
+    // exhaustive with no `_` arm, so a new variant breaks the build there;
+    // this table is what keeps an *existing* variant from being silently
+    // re-classified.
+    let cases: &[(InstallMethod, Option<KnownInstallDir>)] = &[
+      (
+        InstallMethod::GoInstall("x@latest"),
+        Some(KnownInstallDir::Go),
+      ),
+      (InstallMethod::Pipx("x"), Some(KnownInstallDir::Pipx)),
+      (InstallMethod::Uv("x"), Some(KnownInstallDir::UvTool)),
+      (InstallMethod::Pip("x"), Some(KnownInstallDir::PythonUser)),
+      (InstallMethod::Pip3("x"), Some(KnownInstallDir::PythonUser)),
+      // Audited as safe -- see `KnownInstallDir`'s doc comment for each.
+      (InstallMethod::Apt("x"), None),
+      (InstallMethod::Brew("x"), None),
+      (InstallMethod::Npm("x"), None),
+      (InstallMethod::Pnpm("x"), None),
+      (InstallMethod::Yarn("x"), None),
+      (InstallMethod::Bun("x"), None),
+      (InstallMethod::CargoBinstall("x"), None),
+      (
+        InstallMethod::Cargo {
+          package: "x",
+          locked: true,
+        },
+        None,
+      ),
+      (InstallMethod::Rustup("x"), None),
+      (InstallMethod::Scoop("x"), None),
+      (InstallMethod::WingetName("x"), None),
+      (InstallMethod::WingetId("x"), None),
+    ];
+
+    for (method, expected) in cases {
+      assert_eq!(
+        KnownInstallDir::for_method(method),
+        *expected,
+        "{method:?} was re-classified without the audit on \
+         KnownInstallDir being updated to match"
+      );
+    }
+  }
+
+  // --- KnownInstallDir::path precedence (#297) ----------------------------
+  //
+  // Driven through `path_with`, never the real environment: the test binary
+  // is multi-threaded and `HOME` in particular is read by unrelated code, so
+  // `set_var` here would be both racy and contaminating.
+
+  /// Builds a `path_with` environment closure from an explicit table, so a
+  /// variable absent from `vars` reads as genuinely unset.
+  fn fake_env(
+    vars: &[(&'static str, &'static str)],
+  ) -> impl Fn(&str) -> Option<String> + use<> {
+    let vars = vars.to_vec();
+    move |var: &str| {
+      vars
+        .iter()
+        .find(|(name, _)| *name == var)
+        .map(|(_, value)| (*value).to_string())
+    }
+  }
+
+  fn no_go_bin_dir() -> Option<PathBuf> {
+    panic!("a non-Go KnownInstallDir must never ask for the Go bin directory")
+  }
+
+  #[test]
+  fn test_known_install_dir_path_prefers_pipx_bin_dir_over_local_bin() {
+    // `PIPX_BIN_DIR` is pipx's own override; honouring it is the difference
+    // between probing where pipx actually wrote and probing a default that
+    // the user has configured away from.
+    let dir = KnownInstallDir::Pipx.path_with(
+      no_go_bin_dir,
+      fake_env(&[("PIPX_BIN_DIR", "/opt/pipx/bin"), (HOME_VAR, "/home/u")]),
+    );
+    assert_eq!(dir, Some(PathBuf::from("/opt/pipx/bin")));
+  }
+
+  #[test]
+  fn test_known_install_dir_path_defaults_pipx_and_uv_to_local_bin() {
+    // The case #297 was filed over: with nothing configured, both managers
+    // install into `~/.local/bin` -- which is why `pipx ensurepath` and
+    // `uv tool update-shell` exist at all.
+    let expected = Some(PathBuf::from("/home/u").join(".local").join("bin"));
+    let env = fake_env(&[(HOME_VAR, "/home/u")]);
+
+    assert_eq!(
+      KnownInstallDir::Pipx.path_with(no_go_bin_dir, &env),
+      expected
+    );
+    assert_eq!(
+      KnownInstallDir::UvTool.path_with(no_go_bin_dir, &env),
+      expected
+    );
+    assert_eq!(
+      KnownInstallDir::PythonUser.path_with(no_go_bin_dir, &env),
+      if PYTHON_USER_BASE_DEFAULT_IS_DERIVABLE {
+        expected
+      } else {
+        None
+      },
+      "without PYTHONUSERBASE the user scheme's scripts are ~/.local/bin on \
+       Linux; on Windows (%APPDATA%\\Python\\PythonXY) and on macOS \
+       (~/Library/Python/X.Y, framework builds) the default base embeds an \
+       interpreter version this crate cannot derive, so it must decline \
+       rather than guess"
+    );
+  }
+
+  #[test]
+  fn test_known_install_dir_path_uv_precedence_is_uv_then_xdg_then_local() {
+    let all = fake_env(&[
+      ("UV_TOOL_BIN_DIR", "/uv/bin"),
+      ("XDG_BIN_HOME", "/xdg/bin"),
+      (HOME_VAR, "/home/u"),
+    ]);
+    assert_eq!(
+      KnownInstallDir::UvTool.path_with(no_go_bin_dir, all),
+      Some(PathBuf::from("/uv/bin"))
+    );
+
+    let xdg_only =
+      fake_env(&[("XDG_BIN_HOME", "/xdg/bin"), (HOME_VAR, "/home/u")]);
+    assert_eq!(
+      KnownInstallDir::UvTool.path_with(no_go_bin_dir, xdg_only),
+      Some(PathBuf::from("/xdg/bin"))
+    );
+  }
+
+  #[test]
+  fn test_known_install_dir_path_treats_a_blank_override_as_unset() {
+    // An exported-but-empty `PIPX_BIN_DIR` must not become a probe of the
+    // filesystem root -- `PathBuf::from("")` joined with a binary name is a
+    // relative path, resolved against whatever directory fml happens to run
+    // in.
+    let dir = KnownInstallDir::Pipx.path_with(
+      no_go_bin_dir,
+      fake_env(&[("PIPX_BIN_DIR", "   "), (HOME_VAR, "/home/u")]),
+    );
+    assert_eq!(
+      dir,
+      Some(PathBuf::from("/home/u").join(".local").join("bin"))
+    );
+  }
+
+  #[test]
+  fn test_known_install_dir_path_python_user_base_override() {
+    let dir = KnownInstallDir::PythonUser.path_with(
+      no_go_bin_dir,
+      fake_env(&[("PYTHONUSERBASE", "/py/user"), (HOME_VAR, "/home/u")]),
+    );
+    assert_eq!(
+      dir,
+      Some(PathBuf::from("/py/user").join(USER_SCHEME_SCRIPT_DIR))
+    );
+  }
+
+  #[test]
+  fn test_known_install_dir_path_is_none_without_a_home_directory() {
+    // No home and no override is "cannot determine", not a panic and not a
+    // relative path.
+    let env = fake_env(&[]);
+    for kind in [
+      KnownInstallDir::Pipx,
+      KnownInstallDir::UvTool,
+      KnownInstallDir::PythonUser,
+    ] {
+      assert_eq!(
+        kind.path_with(no_go_bin_dir, &env),
+        None,
+        "{kind:?} must decline rather than fabricate a path"
+      );
+    }
+  }
+
+  #[test]
+  fn test_known_install_dir_path_go_reads_no_environment() {
+    // Go's directory comes from `go env`, not from any variable this type
+    // reads; proven by an env closure that panics if consulted at all.
+    let dir = KnownInstallDir::Go.path_with(
+      || Some(PathBuf::from("/go/bin")),
+      |var| panic!("KnownInstallDir::Go must not read the environment: {var}"),
+    );
+    assert_eq!(dir, Some(PathBuf::from("/go/bin")));
   }
 
   #[test]
