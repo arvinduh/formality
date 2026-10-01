@@ -224,23 +224,21 @@ regardless.
    3 parallel jobs on every PR. Branch protection on `main` requires
    `Library Tests` and `Formality Dogfooding`; see
    [`AGENTS.md`](AGENTS.md#ci-and-merging) for the merge rules.
-   - **`Library Tests`** (_required status check_): Runs
-     `cargo clippy --all-targets -- -D warnings` and the full unit/integration
-     test suite (`cargo test --verbose`).
-   - **`Formality Dogfooding`** (_required status check_): Runs
-     `fml fmt --check` and `fml lint` against this repository's live tree,
-     verifies schema drift (`cargo test --test schema_drift` vs.
-     `schema/formality.schema.json`; regenerate via
-     `UPDATE_SCHEMA=1 cargo test -j 2 --test schema_drift`), and enforces
-     forward `SCHEMA_VERSION` progression in `src/config/schema.rs`.
+   - **`Library Tests`**: Runs `cargo clippy --all-targets -- -D warnings` and
+     the full unit/integration test suite (`cargo test --verbose`).
+   - **`Formality Dogfooding`**: Runs `fml fmt --check` and `fml lint` against
+     this repository's live tree, verifies schema drift
+     (`cargo test --test schema_drift` vs. `schema/formality.schema.json`;
+     regenerate via `UPDATE_SCHEMA=1 cargo test -j 2 --test schema_drift`), and
+     enforces forward `SCHEMA_VERSION` progression in `src/config/schema.rs`.
    - **`Security Audit`**: Runs `cargo audit` against the Rust advisory
      database.
 
-   `Fresh-Install Regression` is a separate, path-filtered workflow
-   (`.github/workflows/install-regression.yml`): a 3-OS matrix that exercises
-   `fml doctor --install`, triggered only by PRs touching its `paths` list
-   (install, lookup, version-probe and spawn code). It is not a required status
-   check, so a PR it skips is never left waiting on it.
+   The separate `Install Regression` workflow
+   (`.github/workflows/install-regression.yml`) runs only on PRs touching its
+   `paths` list. Its `Fresh-Install Regression` jobs, a 3-OS matrix, exercise
+   `fml doctor --install`; they are not required status checks, so a PR the
+   workflow skips is never left waiting on them.
 
 ---
 
