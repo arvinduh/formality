@@ -1545,10 +1545,7 @@ fn test_render_probe_args_resolution() {
     .expect("literal args should always render");
   assert_eq!(
     rendered,
-    vec![
-      std::ffi::OsString::from("version"),
-      std::ffi::OsString::from("-m")
-    ]
+    vec![OsString::from("version"), OsString::from("-m")]
   );
 
   // Missing binary with ToolPath must return None (clean degradation).

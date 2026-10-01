@@ -51,6 +51,7 @@ semver = "1.0.28"
 missing_docs = "warn"
 unexpected_cfgs = { level = "warn", check-cfg = ['cfg(test)'] }
 unsafe_op_in_unsafe_fn = "deny"
+unused_qualifications = "warn"
 
 [lints.clippy]
 # Docs

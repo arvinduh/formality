@@ -217,7 +217,7 @@ impl FormalityConfig {
       .lang
       .keys()
       .filter(|name| registry.resolve_canonical_name(name).is_none())
-      .map(std::string::String::as_str)
+      .map(String::as_str)
       .collect()
   }
 

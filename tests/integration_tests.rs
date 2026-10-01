@@ -492,7 +492,7 @@ fn test_schema_command() {
     0
   );
   assert!(
-    std::fs::read_to_string(temp.path())
+    fs::read_to_string(temp.path())
       .unwrap()
       .contains("FormalityConfig")
   );
