@@ -645,7 +645,7 @@ struct ToolChain {
 ///   `checkstyle`, `rustfmt`, `clippy-driver` — every entry in these chains
 ///   is an unpinned system-package-manager/rustup install.
 /// - `None`, unverified even though internally consistent: `clang-format`
-///   — its `Pipx`/`Pip`/`Pip3` entries agree on `22.1.8`, and the PyPI
+///   — its `Pipx`/`Pip`/`Pip3` entries agree on `22.1.8`, and the `PyPI`
 ///   `clang-format` wheel plausibly bundles a matching prebuilt binary, but
 ///   that hasn't been independently confirmed the way taplo/ktlint's
 ///   mismatches were, and the apt/brew/winget/scoop fallbacks in the same
@@ -964,8 +964,8 @@ pub fn tool_missing_guard(
 ///
 /// The value is deliberately *not* compared against the one `fml` passes.
 /// Today's only caller is biome's `--linter-enabled`, and biome rejects that
-/// flag given twice outright (`argument \`--linter-enabled\` cannot be used
-/// multiple times in this context`) — before parsing either value. So a
+/// flag given twice outright ("argument `--linter-enabled` cannot be used
+/// multiple times in this context") — before parsing either value. So a
 /// restatement is exactly as broken as a contradiction, and matching on the
 /// value would let half the broken spellings through.
 ///
@@ -1069,7 +1069,7 @@ pub fn chain_wants_cargo_binstall(chain: &[InstallMethod]) -> bool {
 /// bootstrapping it never itself falls back to compiling `cargo-binstall`
 /// from source. Uses the same `curl ... | sh` pattern rustup's own installer
 /// documents (`--proto '=https' --tlsv1.2 -sSf`) on Linux/macOS, and the
-/// equivalent PowerShell script on Windows. Returns `false` (rather than
+/// equivalent `PowerShell` script on Windows. Returns `false` (rather than
 /// propagating an error) on any failure to run the script -- a missing
 /// `curl`/`powershell`, no network, or a non-zero exit -- so the caller can
 /// fall through to the next installer in the chain instead of aborting.
@@ -1391,7 +1391,7 @@ fn go_bin_dir_from_env(gobin: &str, gopath: &str) -> Option<PathBuf> {
 /// for the full per-[`InstallMethod`] audit of which installers write
 /// somewhere `PATH` may not cover. `$GOPATH/bin` is the case #293 was filed
 /// over: Go creates it on demand, and it is on `PATH` only if the user put
-/// it there. On a stock GitHub Actions Linux runner it is not, so
+/// it there. On a stock `GitHub` Actions Linux runner it is not, so
 /// `go install golang.org/x/tools/cmd/goimports@v0.49.0`
 /// succeeds and a lookup for `goimports` from `PATH` alone still finds
 /// nothing -- in this process *or a later one*, since nothing durable ever
@@ -1621,7 +1621,7 @@ const USER_SCHEME_SCRIPT_DIR: &str =
 ///
 /// * **Windows** -- the default base is `%APPDATA%\Python\PythonXY`, whose
 ///   `XY` is the interpreter's version.
-/// * **macOS** -- framework builds of CPython (both python.org's installer
+/// * **macOS** -- framework builds of `CPython` (both python.org's installer
 ///   and Homebrew's) put `site.USER_BASE` at `~/Library/Python/X.Y`, so
 ///   scripts land in e.g. `~/Library/Python/3.13/bin`, *not* `~/.local/bin`.
 ///

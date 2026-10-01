@@ -51,7 +51,7 @@ fn java_version_line() -> Option<String> {
 /// Applied to the result of every `google-java-format` invocation:
 /// google-java-format 1.29 and newer require JDK 21+, and the JDK a
 /// machine happens to have on `PATH` is entirely outside this tool's
-/// control -- a stock `ubuntu-latest` GitHub runner still defaults to JDK
+/// control -- a stock `ubuntu-latest` `GitHub` runner still defaults to JDK
 /// 17, which is exactly where this fires.
 #[must_use]
 fn explain_jvm_incompatibility(result: SurfaceResult) -> SurfaceResult {

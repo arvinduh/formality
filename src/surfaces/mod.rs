@@ -174,8 +174,9 @@ impl ExecutionContext {
   }
 
   /// Returns the files to pass to a directory-walking CLI tool.
-  /// If paths, lang_config files, or lang_config excludes are specified, returns the filtered files;
-  /// otherwise returns an empty Vec so the tool can scan the whole directory.
+  /// If paths, `lang_config` files, or `lang_config` excludes are specified,
+  /// returns the filtered files; otherwise returns an empty Vec so the tool
+  /// can scan the whole directory.
   #[must_use]
   pub fn files_to_pass(&self, files: Vec<PathBuf>) -> Vec<PathBuf> {
     if !self.paths.is_empty()
