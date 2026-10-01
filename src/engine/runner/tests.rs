@@ -775,12 +775,8 @@ fn test_execution_context_staged_files_filtering() {
   std::fs::write(&fixture_rs, "fn mock() {}\n").unwrap();
   std::fs::write(&py_file, "print('hi')\n").unwrap();
 
-  let staged_paths = Arc::new(vec![
-    main_rs.clone(),
-    excluded_rs.clone(),
-    fixture_rs.clone(),
-    py_file.clone(),
-  ]);
+  let staged_paths =
+    Arc::new(vec![main_rs.clone(), excluded_rs, fixture_rs, py_file]);
 
   let mut lang_config = crate::config::ResolvedLangConfig::new("rust");
   lang_config.exclude = vec![PathBuf::from("src/generated.rs")];
