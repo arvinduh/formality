@@ -6,7 +6,7 @@ use super::{SurfaceResult, SurfaceStatus};
 use crate::engine::version::Version;
 use std::collections::HashMap;
 use std::path::PathBuf;
-use std::sync::{Mutex, OnceLock};
+use std::sync::{Mutex, OnceLock, PoisonError};
 use std::time::Instant;
 
 /// A package-manager-level way to install a CLI tool: knows how to detect
@@ -851,7 +851,7 @@ static BINARY_CACHE: OnceLock<Mutex<HashMap<String, Option<PathBuf>>>> =
 pub fn resolve_binary_path(binary: &str) -> Option<PathBuf> {
   let cache = BINARY_CACHE.get_or_init(|| Mutex::new(HashMap::new()));
   {
-    let guard = cache.lock().unwrap_or_else(|e| e.into_inner());
+    let guard = cache.lock().unwrap_or_else(PoisonError::into_inner);
     if let Some(resolved) = guard.get(binary) {
       return resolved.clone();
     }
@@ -860,7 +860,7 @@ pub fn resolve_binary_path(binary: &str) -> Option<PathBuf> {
   let resolved = which::which(binary)
     .ok()
     .or_else(|| resolve_via_known_install_dir(binary));
-  let mut guard = cache.lock().unwrap_or_else(|e| e.into_inner());
+  let mut guard = cache.lock().unwrap_or_else(PoisonError::into_inner);
   guard.insert(binary.to_string(), resolved.clone());
   resolved
 }
@@ -881,7 +881,7 @@ pub fn resolve_binary_path(binary: &str) -> Option<PathBuf> {
 /// `PATH` and a fresh lookup would find it immediately.
 pub fn forget_binary(binary: &str) {
   let cache = BINARY_CACHE.get_or_init(|| Mutex::new(HashMap::new()));
-  let mut guard = cache.lock().unwrap_or_else(|e| e.into_inner());
+  let mut guard = cache.lock().unwrap_or_else(PoisonError::into_inner);
   guard.remove(binary);
 }
 
@@ -889,7 +889,7 @@ pub fn forget_binary(binary: &str) {
 #[doc(hidden)]
 pub fn set_binary_path_for_test(binary: &str, path: Option<PathBuf>) {
   let cache = BINARY_CACHE.get_or_init(|| Mutex::new(HashMap::new()));
-  let mut guard = cache.lock().unwrap_or_else(|e| e.into_inner());
+  let mut guard = cache.lock().unwrap_or_else(PoisonError::into_inner);
   guard.insert(binary.to_string(), path);
 }
 
@@ -1131,7 +1131,7 @@ pub fn ensure_cargo_binstall() -> bool {
   }
 
   let cell = BINSTALL_BOOTSTRAP.get_or_init(|| Mutex::new(None));
-  let mut guard = cell.lock().unwrap_or_else(|e| e.into_inner());
+  let mut guard = cell.lock().unwrap_or_else(PoisonError::into_inner);
   if let Some(available) = *guard {
     return available;
   }
@@ -2754,7 +2754,7 @@ mod tests {
     let result = has_cargo_binstall();
 
     let cache = BINARY_CACHE.get().expect("cache should be initialized");
-    let guard = cache.lock().unwrap_or_else(|e| e.into_inner());
+    let guard = cache.lock().unwrap_or_else(PoisonError::into_inner);
 
     let cargo_on_path = guard.get("cargo").expect(
       "has_cargo_binstall must resolve `cargo` through check_binary_exists",
@@ -2791,7 +2791,7 @@ mod tests {
 
     // Inspect BINARY_CACHE directly to verify process-lifetime memoization
     let cache = BINARY_CACHE.get().expect("cache should be initialized");
-    let guard = cache.lock().unwrap_or_else(|e| e.into_inner());
+    let guard = cache.lock().unwrap_or_else(PoisonError::into_inner);
     assert_eq!(guard.get(non_existent), Some(&None));
     assert_eq!(
       guard.get(existing).map(Option::is_some),
@@ -2814,7 +2814,7 @@ mod tests {
     // still missing: a memoized `None`.
     {
       let cache = BINARY_CACHE.get_or_init(|| Mutex::new(HashMap::new()));
-      let mut guard = cache.lock().unwrap_or_else(|e| e.into_inner());
+      let mut guard = cache.lock().unwrap_or_else(PoisonError::into_inner);
       guard.insert(binary.to_string(), None);
     }
     assert!(
@@ -2828,7 +2828,7 @@ mod tests {
     // `None` behind would be exactly the bug this function exists to fix.
     {
       let cache = BINARY_CACHE.get().expect("cache should be initialized");
-      let guard = cache.lock().unwrap_or_else(|e| e.into_inner());
+      let guard = cache.lock().unwrap_or_else(PoisonError::into_inner);
       assert!(
         !guard.contains_key(binary),
         "forget_binary must remove the cache entry entirely"
@@ -2839,7 +2839,7 @@ mod tests {
     // not just leave it absent forever.
     let _ = check_binary_exists(binary);
     let cache = BINARY_CACHE.get().expect("cache should be initialized");
-    let guard = cache.lock().unwrap_or_else(|e| e.into_inner());
+    let guard = cache.lock().unwrap_or_else(PoisonError::into_inner);
     assert!(
       guard.contains_key(binary),
       "the lookup right after forget_binary must repopulate the cache"
@@ -3477,7 +3477,10 @@ mod tests {
     let asked = std::sync::Arc::new(Mutex::new(Vec::new()));
     let log = std::sync::Arc::clone(&asked);
     let dir_for = move |kind: KnownInstallDir| {
-      log.lock().unwrap_or_else(|e| e.into_inner()).push(kind);
+      log
+        .lock()
+        .unwrap_or_else(PoisonError::into_inner)
+        .push(kind);
       answers
         .iter()
         .find(|(k, _)| *k == kind)
@@ -3511,7 +3514,7 @@ mod tests {
        binary is in the second one"
     );
     assert_eq!(
-      *asked.lock().unwrap_or_else(|e| e.into_inner()),
+      *asked.lock().unwrap_or_else(PoisonError::into_inner),
       vec![KnownInstallDir::UvTool, KnownInstallDir::Pipx],
       "directories are tried in chain order, and the search stops at the hit"
     );
@@ -3536,7 +3539,7 @@ mod tests {
       "no chain directory holds the binary, so the answer is a clean miss"
     );
     assert_eq!(
-      *asked.lock().unwrap_or_else(|e| e.into_inner()),
+      *asked.lock().unwrap_or_else(PoisonError::into_inner),
       vec![
         KnownInstallDir::UvTool,
         KnownInstallDir::Pipx,
@@ -3896,7 +3899,7 @@ mod tests {
     }
 
     let cache = BINARY_CACHE.get().expect("cache should be initialized");
-    let guard = cache.lock().unwrap_or_else(|e| e.into_inner());
+    let guard = cache.lock().unwrap_or_else(PoisonError::into_inner);
     assert!(guard.contains_key("cargo"));
     for i in 0..10 {
       let binary_name = format!("thread_test_binary_{i}");

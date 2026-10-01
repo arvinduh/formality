@@ -311,7 +311,7 @@ mod tests {
     let visible_subcommands: Vec<&str> = cmd
       .get_subcommands()
       .filter(|c| !c.is_hide_set())
-      .map(|c| c.get_name())
+      .map(clap::Command::get_name)
       .collect();
     assert!(
       visible_subcommands.contains(&"schema"),
