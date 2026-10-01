@@ -59,18 +59,6 @@ pub fn glob_for_surface(surface: &dyn LanguageSurface) -> String {
   }
 }
 
-/// Synthesizes a portable root `.editorconfig` file combining `ResolvedGlobalConfig`
-/// and the provided language surfaces' `LayoutFacet` settings.
-#[must_use]
-pub fn generate_editorconfig(
-  global: &ResolvedGlobalConfig,
-  surfaces: &[Box<dyn LanguageSurface>],
-) -> String {
-  generate_editorconfig_internal(global, surfaces, |_| {
-    (global.use_tabs, global.indent_size, global.line_length)
-  })
-}
-
 /// Synthesizes `.editorconfig` from a full `FormalityConfig`, honoring per-language
 /// overrides in addition to global defaults and layout facet capabilities.
 #[must_use]
@@ -221,9 +209,9 @@ mod tests {
 
   #[test]
   fn test_generate_editorconfig_defaults() {
-    let global = ResolvedGlobalConfig::default();
+    let config = FormalityConfig::with_defaults();
     let surfaces = all_surfaces();
-    let ec = generate_editorconfig(&global, &surfaces);
+    let ec = generate_editorconfig_from_config(&config, &surfaces);
 
     assert!(ec.starts_with(AUTO_GENERATED_HEADER));
     assert!(ec.contains("root = true"));
@@ -258,7 +246,8 @@ mod tests {
       Box::new(crate::surfaces::toml::TomlSurface),
       Box::new(crate::surfaces::markdown::MarkdownSurface),
     ];
-    let ec_matching = generate_editorconfig(&global, &matching_surfaces);
+    let ec_matching =
+      generate_editorconfig_from_config(&config, &matching_surfaces);
     assert!(ec_matching.contains("[*]"));
     assert!(!ec_matching.contains("[*.rs]"));
     assert!(!ec_matching.contains("[*.toml]"));
@@ -267,15 +256,14 @@ mod tests {
 
   #[test]
   fn test_generate_editorconfig_fixed_tabs_and_unsupported_line_length() {
-    let global = ResolvedGlobalConfig {
-      use_tabs: true,
-      indent_size: 4,
-      line_length: 100,
-      ..ResolvedGlobalConfig::default()
-    };
+    let toml_str =
+      "[global]\nuse_tabs = true\nindent_size = 4\nline_length = 100\n";
+    let config =
+      FormalityConfig::parse_str(toml_str, Path::new("formality.toml"))
+        .unwrap();
 
     let surfaces = all_surfaces();
-    let ec = generate_editorconfig(&global, &surfaces);
+    let ec = generate_editorconfig_from_config(&config, &surfaces);
 
     // Global has tab
     assert!(ec.contains("[*]\ncharset = utf-8\nend_of_line = lf\ninsert_final_newline = true\ntrim_trailing_whitespace = true\nindent_style = tab\nindent_size = 4\nmax_line_length = 100"));

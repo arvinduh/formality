@@ -99,7 +99,6 @@ the same row once this is decided.
 ```rust
 impl LanguageSurface for FooSurface {
   fn name(&self) -> &'static str { "foo" }
-  fn display_name(&self) -> &'static str { "Foo" } // optional, defaults to name()
   fn aliases(&self) -> &[&'static str] { &["foolang"] } // alternate names
   fn file_extensions(&self) -> &[&'static str] { FOO_EXTENSIONS }
   fn detect(&self, root: &Path) -> bool { /* any file_extensions() present under root? */ }

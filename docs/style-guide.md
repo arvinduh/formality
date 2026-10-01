@@ -166,11 +166,11 @@ surface invocation is wrapped in `Arc`, not cloned per surface.
 
 `LanguageSurface: DeclaresFacets + Send + Sync` (`src/surfaces/mod.rs`) is the
 core abstraction every surface implements. Required methods: `name`, `detect`,
-`tool_info`, `format`, `lint`, `sync_config`, `clone_box`. `display_name`,
-`aliases`, `file_extensions`, and `supports_lint_fix` have defaults, overridden
-only when a surface differs (e.g. `aliases()` returning `&["rs"]` for Rust).
-`clone_box` exists solely so `Box<dyn LanguageSurface>` implements `Clone`;
-every surface implements it as `Box::new(self.clone())`.
+`tool_info`, `format`, `lint`, `sync_config`, `clone_box`. `aliases`,
+`file_extensions`, and `supports_lint_fix` have defaults, overridden only when a
+surface differs (e.g. `aliases()` returning `&["rs"]` for Rust). `clone_box`
+exists solely so `Box<dyn LanguageSurface>` implements `Clone`; every surface
+implements it as `Box::new(self.clone())`.
 
 Surface methods take everything they need as arguments
 (`format`/`lint`/`sync_config` take `&ExecutionContext`; `detect` takes `&Path`;
