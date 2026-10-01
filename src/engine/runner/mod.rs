@@ -857,9 +857,10 @@ fn apply_recheck(
 /// Folds two of a surface's per-pass results into one reported status.
 ///
 /// Applied left-to-right over a [`Plan`]'s passes, so for `fix` this merges
-/// the lint pass's result with the format pass's exactly as before the
-/// `Plan` refactor. Precedence runs errors → violations → config drift →
-/// missing tool → passed, and durations always sum.
+/// the lint pass's result with the format pass's. The status with the higher
+/// [`precedence`] wins and an exact tie keeps `first`, except that two
+/// execution errors, two violation reports or two skips merge their text.
+/// Durations always sum.
 fn combine_pass_results(
   first: SurfaceResult,
   second: SurfaceResult,
@@ -868,19 +869,12 @@ fn combine_pass_results(
   let duration = first.duration + second.duration;
 
   let status = match (first.status, second.status) {
-    // 1. Execution errors take highest precedence
     (
       SurfaceStatus::ExecutionError { message: m1 },
       SurfaceStatus::ExecutionError { message: m2 },
     ) => SurfaceStatus::ExecutionError {
       message: format!("{m1}\n{m2}"),
     },
-    (SurfaceStatus::ExecutionError { message }, _)
-    | (_, SurfaceStatus::ExecutionError { message }) => {
-      SurfaceStatus::ExecutionError { message }
-    }
-
-    // 2. Violations found (e.g. unfixable lint errors or formatting errors)
     (
       SurfaceStatus::ViolationsFound {
         message: m1,
@@ -902,62 +896,19 @@ fn combine_pass_results(
         diff: combined_diff,
       }
     }
-    (SurfaceStatus::ViolationsFound { message, diff }, _)
-    | (_, SurfaceStatus::ViolationsFound { message, diff }) => {
-      SurfaceStatus::ViolationsFound { message, diff }
-    }
-
-    // 3. Config drift or manual config
-    (SurfaceStatus::ConfigDrifted { file, diff }, _)
-    | (_, SurfaceStatus::ConfigDrifted { file, diff }) => {
-      SurfaceStatus::ConfigDrifted { file, diff }
-    }
-    (SurfaceStatus::ManualConfig { file, suggestion }, _)
-    | (_, SurfaceStatus::ManualConfig { file, suggestion }) => {
-      SurfaceStatus::ManualConfig { file, suggestion }
-    }
-
-    // 4. Missing tool binary (non-fatal warning; takes precedence over Passed/Skipped)
-    (
-      SurfaceStatus::ToolMissing {
-        binary,
-        install_hint,
-      },
-      _,
-    )
-    | (
-      _,
-      SurfaceStatus::ToolMissing {
-        binary,
-        install_hint,
-      },
-    ) => SurfaceStatus::ToolMissing {
-      binary,
-      install_hint,
-    },
-
-    // 5. Passed (both passed, or one passed and one was skipped)
-    (
-      SurfaceStatus::Passed | SurfaceStatus::Skipped { .. },
-      SurfaceStatus::Passed,
-    )
-    | (SurfaceStatus::Passed, SurfaceStatus::Skipped { .. }) => {
-      SurfaceStatus::Passed
-    }
-
-    // 6. ConfigSynced
-    (SurfaceStatus::ConfigSynced { files }, _)
-    | (_, SurfaceStatus::ConfigSynced { files }) => {
-      SurfaceStatus::ConfigSynced { files }
-    }
-
-    // 7. Both skipped
     (
       SurfaceStatus::Skipped { reason: r1 },
       SurfaceStatus::Skipped { reason: r2 },
     ) => SurfaceStatus::Skipped {
       reason: format!("{r1}; {r2}"),
     },
+    (first, second) => {
+      if precedence(&second) > precedence(&first) {
+        second
+      } else {
+        first
+      }
+    }
   };
 
   SurfaceResult {
@@ -965,6 +916,24 @@ fn combine_pass_results(
     status,
     duration,
   }
+}
+
+/// Ranks a status for [`combine_pass_results`]: by [`Severity`] first, then,
+/// between statuses of one severity, by which carries the more specific
+/// report (a tool's violations over config drift over a hand-written config;
+/// a config write over a bare pass).
+fn precedence(status: &SurfaceStatus) -> (Severity, u8) {
+  let within_severity = match status {
+    SurfaceStatus::ViolationsFound { .. } => 2,
+    SurfaceStatus::ConfigDrifted { .. }
+    | SurfaceStatus::ConfigSynced { .. } => 1,
+    SurfaceStatus::ManualConfig { .. }
+    | SurfaceStatus::Passed
+    | SurfaceStatus::Skipped { .. }
+    | SurfaceStatus::ToolMissing { .. }
+    | SurfaceStatus::ExecutionError { .. } => 0,
+  };
+  (status.severity(), within_severity)
 }
 
 /// Cleans and standardizes raw CLI tool diagnostics into uniform lines.

@@ -356,7 +356,7 @@ pub enum SurfaceStatus {
 /// The one encoding of severity: [`SurfaceResult::is_success`] and the
 /// runner's tally, exit code and pass-merging precedence all derive from
 /// [`SurfaceStatus::severity`] rather than restating which status is worse.
-#[derive(Debug)]
+#[derive(Debug, PartialEq, PartialOrd)]
 pub enum Severity {
   /// Nothing ran.
   Skipped,
