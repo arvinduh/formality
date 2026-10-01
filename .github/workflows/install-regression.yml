@@ -98,7 +98,7 @@ jobs:
           cache-bin: "false"
 
       - name: Set up a JDK google-java-format can run on
-        # google-java-format 1.28+ requires JDK 21; the stock ubuntu runner
+        # google-java-format 1.29+ requires JDK 21; the stock ubuntu runner
         # image still defaults to JDK 17, on which the formatter dies with a
         # NoClassDefFoundError for an internal javac class. That is a
         # property of the runner image, not of fml's install chain -- but it
