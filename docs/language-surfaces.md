@@ -118,9 +118,9 @@ machine-generated shape.
   author or prettier's prose wrap put it there (`#299)` becomes `\#299)`, which
   renders the same). Otherwise MD018/MD020 report it, and `markdownlint --fix`
   turns the prose into a heading (#314, #413). An unspaced `#Title` that opens
-  its own block is left to the fixer, which makes it `# Title`. `fml fix`'s
-  lint pass escapes before its own `--fix` too. markdownlint picks the lines
-  from the content on stdin, so it never writes the file.
+  its own block is left to the fixer, which makes it `# Title`. `fml fix`'s lint
+  pass escapes before its own `--fix` too. markdownlint picks the lines from the
+  content on stdin, so it never writes the file.
 - **Lint**: `markdownlint-cli2`.
 - **Managed config**: `.markdownlint.json`, plus the shared `.prettierrc.json`
   (see below).
