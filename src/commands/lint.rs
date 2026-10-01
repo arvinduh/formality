@@ -13,6 +13,7 @@ use crate::errors::ExitStatus;
 /// Provisioning missing tools is `fml doctor --install`'s job, not this
 /// command's (v0.3.0, #282).
 #[allow(clippy::too_many_arguments)]
+#[must_use]
 pub fn run_lint(
   root: &Path,
   config: &FormalityConfig,
