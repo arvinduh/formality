@@ -98,7 +98,7 @@ jobs:
           cache-bin: "false"
 
       - name: Set up a JDK google-java-format can run on
-        # google-java-format 1.28+ requires JDK 21; the stock ubuntu runner
+        # google-java-format 1.29+ requires JDK 21; the stock ubuntu runner
         # image still defaults to JDK 17, on which the formatter dies with a
         # NoClassDefFoundError for an internal javac class. That is a
         # property of the runner image, not of fml's install chain -- but it
@@ -180,7 +180,11 @@ jobs:
         # what happens if resolution reaches the existence check but not
         # the spawn (#293). That regression once passed this job while
         # breaking Go formatting outright, because the guard only watched
-        # signature 1.
+        # signature 1. On Windows it also covers a `cmd /C` npm shim whose
+        # target cannot launch: `cmd` exits 1 there, which once read as
+        # `[FAIL] kotlin Violations found` and passed this job while
+        # ktlint never ran (#402); fml now reports that shape as
+        # `Failed to execute <tool>` too.
         #
         # Scoped to the same just-installed intersection as signature 1, and
         # deliberately NOT a bare `[ERR]` grep: an [ERR] names a surface,

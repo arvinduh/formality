@@ -49,7 +49,7 @@ fn java_version_line() -> Option<String> {
 /// it, keeping the original text underneath so nothing is hidden.
 ///
 /// Applied to the result of every `google-java-format` invocation:
-/// google-java-format 1.28 and newer require JDK 21+, and the JDK a
+/// google-java-format 1.29 and newer require JDK 21+, and the JDK a
 /// machine happens to have on `PATH` is entirely outside this tool's
 /// control -- a stock `ubuntu-latest` GitHub runner still defaults to JDK
 /// 17, which is exactly where this fires.
@@ -64,7 +64,7 @@ fn explain_jvm_incompatibility(result: SurfaceResult) -> SurfaceResult {
     format!(
       "google-java-format could not run on the JVM on PATH{found}: it \
        failed to load a javac class that only exists in newer JDKs. \
-       google-java-format 1.28 and newer require JDK 21 or later. Install \
+       google-java-format 1.29 and newer require JDK 21 or later. Install \
        a newer JDK and make sure it is the `java` on PATH.\n\nOriginal \
        error:\n{message}"
     )

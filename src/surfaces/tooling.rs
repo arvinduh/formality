@@ -544,6 +544,29 @@ const KTLINT_CHAIN: &[InstallMethod] = &[
   InstallMethod::Apt("ktlint"),
 ];
 
+/// Where `KTLINT_CHAIN`'s npm wrapper puts ktlint's self-executing jar,
+/// relative to the directory holding npm's `ktlint.cmd` shim.
+///
+/// The jar carries a `#!/bin/sh` launcher, so on Windows npm's cmd-shim runs
+/// it as `"/bin/sh" ...\resources\ktlint`, which `cmd` cannot find (#402).
+/// [`npm_ktlint_jar`] lets [`create_tool_command`] run it with `java -jar`.
+const NPM_KTLINT_JAR: &str =
+  "node_modules/@naturalcycles/ktlint/resources/ktlint";
+
+/// Returns the jar behind `shim` when `binary` is ktlint and `shim` is the
+/// `ktlint.cmd` the `@naturalcycles/ktlint` npm wrapper installed.
+fn npm_ktlint_jar(binary: &str, shim: &std::path::Path) -> Option<PathBuf> {
+  if binary != "ktlint"
+    || !shim
+      .extension()
+      .is_some_and(|ext| ext.eq_ignore_ascii_case("cmd"))
+  {
+    return None;
+  }
+  let jar = shim.parent()?.join(NPM_KTLINT_JAR);
+  jar.is_file().then_some(jar)
+}
+
 /// One row of the tool-chain registry: the canonical binary name, its
 /// ordered installer preference chain, and (if known) the exact version
 /// `<binary> --version` is expected to report once installed via that
@@ -1737,7 +1760,8 @@ pub fn refresh_path_after_install(program: &str) {
 ///
 /// Windows additionally keeps its batch-file handling: `npm`/`pnpm`/`yarn`/
 /// `npx` and any resolved `.cmd`/`.bat` shim must be run through `cmd /C`
-/// rather than spawned directly.
+/// rather than spawned directly, except npm's `ktlint.cmd`, whose jar is run
+/// with `java -jar` because the shim itself cannot launch (#402).
 #[must_use]
 pub fn create_tool_command(binary: &str) -> std::process::Command {
   #[cfg(windows)]
@@ -1756,6 +1780,12 @@ pub fn create_tool_command(binary: &str) -> std::process::Command {
   let Some(path) = resolve_binary_path(binary) else {
     return std::process::Command::new(binary);
   };
+
+  if let Some(jar) = npm_ktlint_jar(binary, &path) {
+    let mut cmd = create_tool_command("java");
+    cmd.arg("-jar").arg(jar);
+    return cmd;
+  }
 
   #[cfg(windows)]
   {
@@ -1883,6 +1913,19 @@ pub fn run_tool_command_classified(
 
       let stdout = String::from_utf8_lossy(&output.stdout);
       let stderr = String::from_utf8_lossy(&output.stderr);
+      if is_cmd_shim_launch_failure(cmd, &stdout, &stderr) {
+        return SurfaceResult {
+          surface_name,
+          status: SurfaceStatus::ExecutionError {
+            message: format!(
+              "Failed to execute {}: {}",
+              spawned_binary_name(cmd),
+              stderr.trim()
+            ),
+          },
+          duration,
+        };
+      }
       let message = merge_tool_streams(
         &stdout,
         &stderr,
@@ -1917,11 +1960,57 @@ pub fn run_tool_command_classified(
   }
 }
 
+/// `cmd.exe`'s own messages for a command line it could not launch: a
+/// program path whose directory does not exist, and a bare name found on
+/// neither `PATH` nor `PATHEXT`. A Windows npm shim whose interpreter is
+/// missing (npm's `ktlint.cmd` runs `"/bin/sh"`, #402) prints the first.
+const CMD_LAUNCH_FAILURES: &[&str] = &[
+  "The system cannot find the path specified.",
+  "is not recognized as an internal or external command",
+];
+
+/// Returns whether a non-zero exit from a `cmd /C <shim>` wrapper (see
+/// [`create_tool_command`]) is `cmd` failing to launch the shim's target
+/// rather than the tool's own verdict.
+///
+/// `cmd` exits `1` in that case, which a tool's classifier would otherwise
+/// read as "violations found". Scoped to the wrapper, to empty stdout, and
+/// to stderr opening with one of [`CMD_LAUNCH_FAILURES`], so a tool that ran
+/// and printed findings is never reclassified.
+#[must_use]
+fn is_cmd_shim_launch_failure(
+  cmd: &std::process::Command,
+  stdout: &str,
+  stderr: &str,
+) -> bool {
+  let Some(first_line) = stderr.trim().lines().next() else {
+    return false;
+  };
+  is_cmd_wrapper(cmd)
+    && stdout.trim().is_empty()
+    && CMD_LAUNCH_FAILURES.iter().any(|m| first_line.contains(m))
+}
+
+/// Returns whether `cmd` is a `cmd /C <target>` wrapper built by
+/// [`create_tool_command`].
+#[must_use]
+fn is_cmd_wrapper(cmd: &std::process::Command) -> bool {
+  std::path::Path::new(cmd.get_program())
+    .file_stem()
+    .is_some_and(|stem| stem.eq_ignore_ascii_case("cmd"))
+    && cmd.get_args().next().is_some_and(|arg| arg == "/C")
+}
+
 /// Names the tool `cmd` runs, as the bare binary name (`goimports`, not
 /// `/home/u/go/bin/goimports` or `ktlint.exe`), so a spawn failure is
 /// attributable to the tool `fml doctor --install` reports by that name.
+/// For a `cmd /C <target>` wrapper that is the target, not `cmd`.
 fn spawned_binary_name(cmd: &std::process::Command) -> String {
-  let program = cmd.get_program();
+  let program = if is_cmd_wrapper(cmd) {
+    cmd.get_args().nth(1).unwrap_or(cmd.get_program())
+  } else {
+    cmd.get_program()
+  };
   std::path::Path::new(program)
     .file_stem()
     .unwrap_or(program)
@@ -2523,6 +2612,83 @@ mod tests {
       "a go-installed binary found only via $GOBIN/$GOPATH/bin must be \
        spawned by that path; spawning the bare name is what turned #293's \
        `[MISS]` into `Failed to execute goimports: No such file or directory`"
+    );
+  }
+
+  #[test]
+  fn test_npm_ktlint_jar_finds_the_wrapper_jar_behind_ktlint_cmd() {
+    let tmp = tempfile::tempdir().expect("tempdir");
+    let shim = tmp.path().join("ktlint.cmd");
+    std::fs::write(&shim, b"@ECHO off\r\n").expect("write shim");
+    assert_eq!(
+      npm_ktlint_jar("ktlint", &shim),
+      None,
+      "no wrapper jar installed next to the shim"
+    );
+
+    let jar = tmp.path().join(NPM_KTLINT_JAR);
+    std::fs::create_dir_all(jar.parent().expect("jar dir")).expect("mkdir");
+    std::fs::write(&jar, b"#!/bin/sh\n").expect("write jar");
+    assert_eq!(npm_ktlint_jar("ktlint", &shim), Some(jar));
+    assert_eq!(npm_ktlint_jar("prettier", &shim), None);
+    assert_eq!(
+      npm_ktlint_jar("ktlint", &tmp.path().join("ktlint")),
+      None,
+      "only the Windows `.cmd` shim is bypassed; the Unix bin link runs"
+    );
+  }
+
+  /// Runs a stand-in `cmd` (a shell script named `cmd`, so
+  /// [`is_cmd_wrapper`] sees the same program stem as on Windows) as
+  /// `cmd /C <dir>/ktlint.cmd`; the stand-in prints `stdout`/`stderr` and
+  /// exits `1`, as Windows `cmd` does when the shim's target cannot launch.
+  #[cfg(unix)]
+  fn run_stub_cmd_shim(stdout: &str, stderr: &str) -> SurfaceStatus {
+    let tmp = tempfile::tempdir().expect("tempdir");
+    let stub = write_bin_fixture(tmp.path(), "cmd");
+    std::fs::write(
+      &stub,
+      format!("#!/bin/sh\nprintf '{stdout}'\nprintf '{stderr}' >&2\nexit 1\n"),
+    )
+    .expect("write stub cmd");
+    let mut cmd = std::process::Command::new(&stub);
+    cmd.arg("/C").arg(tmp.path().join("ktlint.cmd"));
+    run_tool_command_classified(
+      "kotlin",
+      &mut cmd,
+      classify_exit_one_as_violation,
+    )
+    .status
+  }
+
+  #[cfg(unix)]
+  #[test]
+  fn test_cmd_shim_launch_failure_is_an_execution_error_naming_the_tool() {
+    // #402: npm's `ktlint.cmd` runs `"/bin/sh"`, which `cmd` cannot find;
+    // it exits 1, and kotlin's classifier read that as violations found.
+    let status =
+      run_stub_cmd_shim("", "The system cannot find the path specified.\\r\\n");
+    match status {
+      SurfaceStatus::ExecutionError { message } => assert_eq!(
+        message,
+        "Failed to execute ktlint: The system cannot find the path specified."
+      ),
+      other => panic!("expected ExecutionError naming ktlint, got {other:?}"),
+    }
+  }
+
+  #[cfg(unix)]
+  #[test]
+  fn test_cmd_shim_tool_verdict_stays_a_violation() {
+    // The tool ran and reported findings on stdout: its exit 1 is its
+    // verdict, even if it also echoed a cmd-like line on stderr.
+    let status = run_stub_cmd_shim(
+      "Sample.kt:1:1: Unexpected blank line\\n",
+      "The system cannot find the path specified.\\n",
+    );
+    assert!(
+      matches!(status, SurfaceStatus::ViolationsFound { .. }),
+      "a shim'd tool's own findings must stay ViolationsFound, got {status:?}"
     );
   }
 
