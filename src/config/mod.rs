@@ -23,11 +23,7 @@ pub use options::{
   TypstOptions, YamlOptions,
 };
 pub use resolve::{find_project_config, find_user_config};
-pub use schema::{
-  SCHEMA_VERSION, SchemaStatus, apply_schema_pin, check_schema_version_content,
-  check_schema_version_file, generate_schema, parse_schema_version,
-  print_schema_notice, rewrite_schema_line, schema_url, spawn_schema_check,
-};
+pub use schema::generate_schema;
 
 use lang_table::{impl_lang_accessors, impl_lang_merge, lang_options_table};
 use schemars::JsonSchema;

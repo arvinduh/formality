@@ -13,8 +13,7 @@ use std::collections::BTreeSet;
 use std::path::Path;
 use std::process::Command;
 
-const SCHEMA_LINE: &str =
-  "#:schema https://formality.dev/s1.1/formality.schema.json\n";
+const SCHEMA_LINE: &str = "#:schema https://github.com/arvinduh/formality/releases/latest/download/formality.schema.json\n";
 
 /// A polyglot tree whose surfaces overlap on `.prettierrc.json` (json,
 /// markdown and yaml all format via prettier) and which also contains a

@@ -287,7 +287,7 @@ fn golden_failing_fml_lint_process_output_is_framed_within_80() {
     .unwrap();
   std::fs::write(
     dir.path().join("formality.toml"),
-    "#:schema https://formality.dev/s1.1/formality.schema.json\n\
+    "#:schema https://github.com/arvinduh/formality/releases/latest/download/formality.schema.json\n\
      languages = [\"json\"]\n",
   )
   .unwrap();
