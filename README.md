@@ -463,10 +463,29 @@ generated output rather than derive it from `formality.toml`.
 
 ### GitHub Actions
 
-The only prerequisite is `fml` itself. Once it's on `PATH`,
-`fml doctor --install` handles every downstream tool (`ruff`, `prettier`,
+For most surfaces the only prerequisite is `fml` itself. Once it's on `PATH`,
+`fml doctor --install` handles the downstream tools (`ruff`, `prettier`,
 `markdownlint-cli2`, `taplo`, …) — no extra `setup-ruff`, `setup-node`, or
 `npm install` steps required.
+
+A few surfaces run tools that ship with, run on, or install through a language
+toolchain that `fml doctor --install` does not install. Add the matching setup
+step before `fml doctor --install` if your project uses one of them:
+
+| Surface | Tools that need it                                                                                                                | Toolchain        | Setup action                                                         |
+| :------ | :-------------------------------------------------------------------------------------------------------------------------------- | :--------------- | :------------------------------------------------------------------- |
+| Rust    | `cargo` (ships with Rust), `rustfmt`, `clippy` (installed only via `rustup`)                                                      | Rust, via rustup | `dtolnay/rust-toolchain@stable` with `components: rustfmt, clippy`   |
+| Typst   | `typstyle`, `tinymist` (without Homebrew, Scoop or winget: installed via `cargo`)                                                 | Rust             | `dtolnay/rust-toolchain@stable`                                      |
+| Go      | `gofmt` (ships with Go), `goimports` (installed only via `go install`), `golangci-lint` (without Homebrew or Scoop: `go install`) | Go               | `actions/setup-go@v7` with `go-version`                              |
+| Java    | `google-java-format`                                                                                                              | JDK 21+          | `actions/setup-java@v6` with `distribution` and `java-version: "21"` |
+| Kotlin  | `ktlint`                                                                                                                          | JVM              | `actions/setup-java@v6` with `distribution` and `java-version`       |
+
+On GitHub-hosted Ubuntu runners the Java row always needs its setup step: the
+default JDK there is 17. For the other rows, check the runner image's
+preinstalled software list, or just add the setup action; it is harmless when
+the toolchain is already there. Self-hosted and container runners need every row
+that applies, plus Node and Python for the npm- and pip-installed tools when
+Homebrew is absent.
 
 ```yaml
 - name: Install fml
@@ -474,6 +493,12 @@ The only prerequisite is `fml` itself. Once it's on `PATH`,
     curl --proto '=https' --tlsv1.2 -LsSf
     https://github.com/arvinduh/formality/releases/latest/download/fml-installer.sh
     | sh
+
+# Only for Java projects; see the table above.
+# - uses: actions/setup-java@v6
+#   with:
+#     distribution: temurin
+#     java-version: "21"
 
 - name: Install tool dependencies
   run: fml doctor --install
