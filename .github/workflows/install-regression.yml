@@ -252,15 +252,6 @@ jobs:
             echo "::error::fml failed to execute tools it had just installed within the same invocation: $(nonempty "$broken" | tr '\n' ' ')-- see the log above. Finding a binary without being able to spawn it is the same install-then-unusable regression as a [MISS], only spelled differently."
             exit 1
           fi
-          # Not a failure, but worth surfacing: fml has one execution-error
-          # spelling that does not name the binary it tried to run
-          # (`run_tool_command_classified`'s "Failed to execute command:"),
-          # so a spawn failure reported through that path cannot be
-          # attributed to an installed tool and is invisible to the check
-          # above.
-          if grep -q 'Failed to execute command:' fml-output.log; then
-            echo "::notice::fml reported an execution failure that does not name the binary ('Failed to execute command:'), so it could not be attributed to a just-installed tool -- inspect the log above by hand."
-          fi
           if grep -q 'unparseable version' fml-output.log; then
             echo "::error::fml could not resolve/run a tool it just installed (reported 'an unparseable version', meaning the post-install probe found nothing to run at all, not just unexpected --version output) -- see the log above."
             exit 1
