@@ -9,14 +9,14 @@
 //!
 //! [`lang_options_table!`] is now the single source of truth for those
 //! three call sites, and for the per-surface options check in
-//! `super::strict`, which defines its own callback. It doesn't generate code itself — it's an "X-macro":
-//! it just hands its table rows (plus any call-site-specific arguments,
-//! see below) to whichever `$callback` macro is passed in, and each
-//! callback below emits the logic specific to one call site from the same
-//! rows. Adding a language surface with typed options now means adding
-//! one row here, plus hand-adding the two struct fields on
-//! `LangConfig`/`ResolvedLangConfig` (deliberately kept hand-written, see
-//! below) — nothing else.
+//! `super::strict`, which defines its own callback. It doesn't generate
+//! code itself — it's an "X-macro": it just hands its table rows (plus
+//! any call-site-specific arguments, see below) to whichever `$callback`
+//! macro is passed in, and each callback below emits the logic specific
+//! to one call site from the same rows. Adding a language surface with
+//! typed options now means adding one row here, plus hand-adding the two
+//! struct fields on `LangConfig`/`ResolvedLangConfig` (deliberately kept
+//! hand-written, see below) — nothing else.
 //!
 //! ## Table columns
 //!
