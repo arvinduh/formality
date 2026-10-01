@@ -218,7 +218,8 @@ jobs:
       # checksum for the .ps1 (sha256.sum lists archives only), so nothing
       # else needs regenerating. The anchor check fails the release if a
       # dist upgrade moves the line, instead of shipping a silent installer.
-      # After a dist bump: re-run `dist generate --mode=ci --allow-dirty`
+      # After a dist bump: follow "Regeneration procedure" in docs/release.md
+      # (with allow-dirty set, `dist generate` leaves this file untouched)
       # and re-add this step; tests/release_workflow_local_edits.rs fails
       # until you do.
       - name: Explain the x64 fallback on ARM64 in the PowerShell installer
@@ -321,8 +322,10 @@ jobs:
         #   2. `--notes-start-tag <prev v* tag>` to explicitly bound the notes
         #      range to the previous binary release. Needs the `fetch-depth: 0`
         #      checkout above.
-        # After a dist bump: re-run `dist generate --mode=ci --allow-dirty`
-        # and re-apply this step plus the tag-glob and fetch-depth edits.
+        # After a dist bump: follow "Regeneration procedure" in
+        # docs/release.md (with allow-dirty set, `dist generate` leaves this
+        # file untouched) and re-apply this step plus the tag-glob and
+        # fetch-depth edits.
         # tests/release_workflow_local_edits.rs asserts those
         # edits survive, and runs in the `Library Tests` job (issue #164), so
         # a regeneration that drops one fails the PR, not the next release.
