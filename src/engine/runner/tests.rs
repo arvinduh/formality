@@ -261,6 +261,22 @@ fn test_combine_pass_results_same_variant_merges_or_keeps_first() {
 }
 
 #[test]
+fn test_exit_floor_agrees_with_is_success_and_rises_with_precedence() {
+  let mut previous_floor = 0;
+  for status in every_status_by_precedence("x") {
+    let floor = exit_floor(status.severity(), false);
+    let result = SurfaceResult {
+      surface_name: "test",
+      status,
+      duration: Duration::ZERO,
+    };
+    assert_eq!(result.is_success(), floor == 0, "{:?}", result.status);
+    assert!(floor >= previous_floor, "{:?}", result.status);
+    previous_floor = floor;
+  }
+}
+
+#[test]
 fn test_normalize_diagnostics_keeps_error_signal_lines() {
   // Issue #146, #179: normalization must de-noise (trailing whitespace,
   // consecutive blank lines, formatter banners) while preserving structural

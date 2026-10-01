@@ -11,7 +11,7 @@
 
 use crate::config::FormalityConfig;
 use crate::surfaces::{
-  ExecutionContext, LanguageSurface, SurfaceResult, SurfaceStatus,
+  ExecutionContext, LanguageSurface, Severity, SurfaceResult, SurfaceStatus,
 };
 use colored::Colorize;
 use rayon::prelude::*;
@@ -361,16 +361,15 @@ impl Runner {
       remaining.record(&res.status, tally);
       let spec = row_spec(&res.status, plan, tally);
 
-      match spec.tally {
-        Some(Tally::Pass) => pass_count += 1,
-        Some(Tally::Violation) => violation_count += 1,
-        Some(Tally::ToolMissing) => tool_missing_count += 1,
-        Some(Tally::Error) => error_count += 1,
-        None => {}
+      let severity = res.status.severity();
+      match severity {
+        Severity::Skipped => {}
+        Severity::Passed => pass_count += 1,
+        Severity::ToolMissing => tool_missing_count += 1,
+        Severity::Violation => violation_count += 1,
+        Severity::Error => error_count += 1,
       }
-      if let Some(floor) = spec.exit_floor {
-        exit_code = exit_code.max(floor);
-      }
+      exit_code = exit_code.max(exit_floor(severity, plan.allow_missing));
 
       runner_table.add_row(crate::ui::table::Row::new(vec![
         crate::ui::table::Cell::styled(spec.tag, spec.tag_style),
@@ -472,38 +471,44 @@ impl Runner {
   }
 }
 
-/// Which run-level counter a row's status contributes to, if any.
+/// The lowest exit code a row of `severity` forces on the run.
 ///
-/// `Skipped` and `Passed`/`ConfigSynced` don't all map to the same bucket —
-/// `Passed`/`ConfigSynced` both count as "passed", the others each get their
-/// own tally, and `Skipped` contributes to none of them (it never did, in
-/// the pre-collapse arms either).
-#[derive(Clone, Copy)]
-enum Tally {
-  Pass,
-  Violation,
-  ToolMissing,
-  Error,
+/// The results-row loop in [`Runner::run`] folds it in with
+/// `exit_code.max(..)`, so the worst row decides the exit code.
+fn exit_floor(severity: Severity, allow_missing: bool) -> i32 {
+  match severity {
+    Severity::Skipped | Severity::Passed => 0,
+    // An unmet precondition, not an operational fault (#252) — the
+    // surface correctly determined it could not proceed. Exit 1
+    // (`ExitStatus::Violations`), the same as a real violation, so a
+    // missing tool never lets the process exit clean; 2 stays reserved
+    // for `Severity::Error`, which still wins if one occurs elsewhere.
+    //
+    // `--allow-missing` (#163) is the one opt-out: a machine missing an
+    // optional linter must not fail *every* commit that touches that
+    // surface. It only silences this severity's contribution to the
+    // exit code — a real violation elsewhere still sets it via its own
+    // floor, and the row stays visible either way (silence is the
+    // original bug, not the fix). The tally is untouched by this flag:
+    // a missing tool is still counted, just not floored into a nonzero
+    // exit.
+    Severity::ToolMissing if allow_missing => 0,
+    Severity::ToolMissing | Severity::Violation => 1,
+    Severity::Error => 2,
+  }
 }
 
-/// Everything one results-table row needs, decided once per [`SurfaceStatus`]
-/// instead of once per hand-built arm (#277).
+/// Everything one results-table row renders, decided once per
+/// [`SurfaceStatus`] instead of once per hand-built arm (#277).
 ///
-/// This is data, not behavior: the results-row loop in [`Runner::run`] is
-/// the only place that reads it, folding `tally` into the run counters and
-/// `exit_floor` into `exit_code` (`exit_code = exit_code.max(floor)`,
-/// matching every original arm's `if exit_code < floor { exit_code = floor
-/// }`) before building the row itself. `exit_floor` already has
-/// `--allow-missing` (#163) applied for `ToolMissing` — the gate lives here,
-/// in the one place a status becomes a floor, rather than in that loop.
+/// This is display data only: the row's tally bucket and exit floor come
+/// from [`SurfaceStatus::severity`], not from here.
 struct RowSpec {
   tag: &'static str,
   tag_style: crate::ui::table::Style,
   name_style: crate::ui::table::Style,
   detail: String,
   detail_style: crate::ui::table::Style,
-  tally: Option<Tally>,
-  exit_floor: Option<i32>,
 }
 
 /// Builds the row data for one surface's [`SurfaceStatus`] (#277).
@@ -526,8 +531,6 @@ fn row_spec(
       name_style: Style::Strong,
       detail: passed_detail(plan).to_string(),
       detail_style: Style::Dim,
-      tally: Some(Tally::Pass),
-      exit_floor: None,
     },
     SurfaceStatus::ConfigSynced { files } => RowSpec {
       tag: "[SYNC] ",
@@ -539,8 +542,6 @@ fn row_spec(
       // config files.
       detail: synced_files_detail(files),
       detail_style: Style::Info,
-      tally: Some(Tally::Pass),
-      exit_floor: None,
     },
     SurfaceStatus::ConfigDrifted { file, .. } => RowSpec {
       tag: "[DRIFT]",
@@ -548,8 +549,6 @@ fn row_spec(
       name_style: Style::Strong,
       detail: format!("{file} out of sync"),
       detail_style: Style::Warn,
-      tally: Some(Tally::Violation),
-      exit_floor: Some(1),
     },
     SurfaceStatus::ManualConfig { file, .. } => RowSpec {
       tag: "[MANUAL]",
@@ -557,8 +556,6 @@ fn row_spec(
       name_style: Style::Strong,
       detail: format!("{file} is manually managed"),
       detail_style: Style::Warn,
-      tally: Some(Tally::Violation),
-      exit_floor: Some(1),
     },
     SurfaceStatus::ViolationsFound { .. } => RowSpec {
       tag: "[FAIL] ",
@@ -566,8 +563,6 @@ fn row_spec(
       name_style: Style::Strong,
       detail: violations_detail(tally),
       detail_style: Style::Error,
-      tally: Some(Tally::Violation),
-      exit_floor: Some(1),
     },
     SurfaceStatus::ToolMissing { binary, .. } => RowSpec {
       tag: "[MISS] ",
@@ -575,22 +570,6 @@ fn row_spec(
       name_style: Style::Strong,
       detail: format!("Missing binary: {binary}"),
       detail_style: Style::Warn,
-      tally: Some(Tally::ToolMissing),
-      // An unmet precondition, not an operational fault (#252) — the
-      // surface correctly determined it could not proceed. Exit 1
-      // (`ExitStatus::Violations`), the same as a real violation, so a
-      // missing tool never lets the process exit clean; reserve 2 for
-      // `ExecutionError`, which still wins if one occurs elsewhere.
-      //
-      // `--allow-missing` (#163) is the one opt-out: a machine missing an
-      // optional linter must not fail *every* commit that touches that
-      // surface. It only silences this status's contribution to
-      // `exit_code` — a real violation elsewhere still sets it via its own
-      // floor, and the row stays visible either way (silence is the
-      // original bug, not the fix). The tally above is untouched by this
-      // flag: a missing tool is still counted, just not floored into a
-      // nonzero exit.
-      exit_floor: if plan.allow_missing { None } else { Some(1) },
     },
     SurfaceStatus::ExecutionError { .. } => RowSpec {
       tag: "[ERR]  ",
@@ -598,11 +577,6 @@ fn row_spec(
       name_style: Style::Strong,
       detail: "Execution error".to_string(),
       detail_style: Style::Error,
-      tally: Some(Tally::Error),
-      // The original arm assigned `exit_code = 2` unconditionally rather
-      // than flooring; 2 is the run's ceiling, so a floor of 2 is
-      // equivalent — nothing can push `exit_code` past it before or after.
-      exit_floor: Some(2),
     },
     SurfaceStatus::Skipped { reason } => RowSpec {
       tag: "[SKIP] ",
@@ -610,8 +584,6 @@ fn row_spec(
       name_style: Style::Dim,
       detail: reason.clone(),
       detail_style: Style::Dim,
-      tally: None,
-      exit_floor: None,
     },
   }
 }
