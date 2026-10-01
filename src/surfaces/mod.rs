@@ -60,9 +60,8 @@ use std::time::{Duration, Instant};
 
 pub use glob::{
   STANDARD_IGNORED_DIRS, build_repo_gitignore, filter_candidates_with_ext,
-  filter_files_for_surface, find_files_with_ext, find_manifest_upwards,
-  is_excluded, is_repo_ignored, is_standard_ignored, is_temp_file,
-  matches_pattern, simple_glob_match, walk_candidate_files,
+  find_files_with_ext, find_manifest_upwards, is_standard_ignored,
+  is_temp_file, matches_pattern, simple_glob_match, walk_candidate_files,
 };
 pub(crate) use registry::matches_name_or_alias;
 pub use registry::{
