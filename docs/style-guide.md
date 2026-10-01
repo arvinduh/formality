@@ -101,8 +101,9 @@ Extracted from what all 12 language surfaces do consistently — see
 ## 3. Documentation requirements
 
 The doc lints (`missing_docs`, `clippy::missing_errors_doc`,
-`clippy::missing_panics_doc`) are enabled by a crate-level `#![warn(...)]` in
-`src/lib.rs`. On top of `rust-guide`:
+`clippy::missing_panics_doc`) are enabled in `Cargo.toml`'s `[lints]` table,
+which reaches every target (lib, bin, and each `tests/*.rs` crate). On top of
+`rust-guide`:
 
 - Every `pub mod` declaration carries an outer `///` doc comment above the `mod`
   keyword, though `missing_docs` does not require it. **Tier 2 (enforced by
