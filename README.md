@@ -463,10 +463,21 @@ generated output rather than derive it from `formality.toml`.
 
 ### GitHub Actions
 
-The only prerequisite is `fml` itself. Once it's on `PATH`,
-`fml doctor --install` handles every downstream tool (`ruff`, `prettier`,
+For most surfaces the only prerequisite is `fml` itself. Once it's on `PATH`,
+`fml doctor --install` handles the downstream tools (`ruff`, `prettier`,
 `markdownlint-cli2`, `taplo`, …) — no extra `setup-ruff`, `setup-node`, or
 `npm install` steps required.
+
+A few surfaces run tools that ship with, or run on, a language toolchain that
+`fml doctor --install` does not install. Add the matching setup step before
+`fml doctor --install` if your project uses one of them:
+
+| Surface | Tools that need it                                                           | Toolchain                                | Setup action                                                         |
+| :------ | :--------------------------------------------------------------------------- | :--------------------------------------- | :------------------------------------------------------------------- |
+| Rust    | `cargo` (ships with Rust), `rustfmt`, `clippy` (installed only via `rustup`) | Rust, via rustup                         | `dtolnay/rust-toolchain@stable` with `components: rustfmt, clippy`   |
+| Go      | `gofmt` (ships with Go), `goimports` (installed only via `go install`)       | Go                                       | `actions/setup-go@v7` with `go-version`                              |
+| Java    | `google-java-format`, `checkstyle`                                           | JDK (21+ for `google-java-format` 1.28+) | `actions/setup-java@v6` with `distribution` and `java-version: "21"` |
+| Kotlin  | `ktlint`                                                                     | JVM                                      | `actions/setup-java@v6` with `distribution` and `java-version`       |
 
 ```yaml
 - name: Install fml
