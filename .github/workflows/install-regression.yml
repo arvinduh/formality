@@ -241,6 +241,10 @@ jobs:
             done
             fmt_path="$clean_path"
           fi
+          echo "DEBUG PATH before: $PATH"
+          echo "DEBUG PATH after: $fmt_path"
+          echo "DEBUG which ruff: $(PATH="$fmt_path" which ruff 2>&1 || true)"
+          echo "DEBUG find ruff: $(find /home/runner -name ruff 2>/dev/null || true)"
           PATH="$fmt_path" "$fml_bin" fmt >> fml-output.log 2>&1 || true
           cat fml-output.log
 
