@@ -90,30 +90,22 @@ cargo-dist-version = "0.32.0"
 # CI backends to support
 ci = "github"
 # The installers to generate for each app
-installers = ["shell", "powershell", "msi"]
+installers = ["shell", "powershell"]
 # Target platforms to build apps for (Rust target-triple syntax)
 targets = [
   "x86_64-unknown-linux-gnu",
-  "aarch64-unknown-linux-gnu",
-  "x86_64-apple-darwin",
   "aarch64-apple-darwin",
   "x86_64-pc-windows-msvc",
 ]
-# Path(s) installers place binaries in, tried in order. `~/.local/bin` first
-# because the old install.sh and every README recipe put `fml` there - keep
-# upgrading that copy instead of dropping a second one elsewhere and letting
-# PATH order decide which wins. (dist rejects the `CARGO_HOME` keyword when
-# combined with other paths, so the cargo bin dir is spelled out literally.)
+# Path(s) installers place binaries in, tried in order. `~/.local/bin` first:
+# the per-user bin dir most Linux distros already put on PATH, and it needs no
+# Rust toolchain. (dist rejects the `CARGO_HOME` keyword when combined with
+# other paths, so the cargo bin dir is spelled out literally.)
 install-path = ["$HOME/.local/bin", "$HOME/.cargo/bin"]
 # Whether to install an updater program (kept out of scope - see issue #121)
 install-updater = false
 # Skip checking whether the specified configuration files are up to date
 allow-dirty = ["ci"]
-# Keep archive names as `fml-<target>.tar.gz` / `.zip` so existing
-# `releases/latest/download/fml-<target>...` URLs and the
-# `[package.metadata.binstall]` block above stay valid.
-unix-archive = ".tar.gz"
-windows-archive = ".zip"
 
 [profile.dist]
 inherits = "release"
