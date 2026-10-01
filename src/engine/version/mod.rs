@@ -396,10 +396,11 @@ impl Version {
     }
   }
 
-  /// Create a `Version` with prerelease metadata. The prerelease must be a
-  /// valid SemVer identifier (what the parse path always yields); one `semver`
-  /// rejects still constructs but makes [`Version::to_semver`] lossy, so
-  /// ordering stops matching structural equality — a `debug_assert` catches it.
+  /// Create a `Version` with prerelease metadata. The prerelease must be
+  /// a valid `SemVer` identifier (what the parse path always yields); one
+  /// `semver` rejects still constructs but makes [`Version::to_semver`] lossy,
+  /// so ordering stops matching structural equality — a `debug_assert`
+  /// catches it.
   pub fn with_prerelease(
     major: u64,
     minor: u64,
