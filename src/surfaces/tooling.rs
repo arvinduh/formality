@@ -1906,12 +1906,38 @@ pub fn run_tool_command_classified(
       SurfaceResult {
         surface_name,
         status: SurfaceStatus::ExecutionError {
-          message: format!("Failed to execute command: {err}"),
+          message: format!(
+            "Failed to execute {}: {err}",
+            spawned_binary_name(cmd)
+          ),
         },
         duration,
       }
     }
   }
+}
+
+/// Names the tool `cmd` runs, as the bare binary name (`goimports`, not
+/// `/home/u/go/bin/goimports` or `ktlint.exe`), so a spawn failure is
+/// attributable to the tool `fml doctor --install` reports by that name.
+///
+/// [`create_tool_command`] wraps Windows `.cmd`/`.bat` shims (and npm-family
+/// launchers) as `cmd /C <target>`; the target is named there, not `cmd`.
+fn spawned_binary_name(cmd: &std::process::Command) -> String {
+  let mut program = cmd.get_program();
+  let mut args = cmd.get_args();
+  if program.eq_ignore_ascii_case("cmd")
+    && args.next().is_some_and(|a| a.eq_ignore_ascii_case("/C"))
+    && let Some(target) = args.next()
+  {
+    program = target;
+  }
+  let path = std::path::Path::new(program);
+  path
+    .file_stem()
+    .unwrap_or(program)
+    .to_string_lossy()
+    .into_owned()
 }
 
 #[cfg(test)]
@@ -3926,6 +3952,35 @@ mod tests {
       }
       other => panic!("expected ExecutionError, got {other:?}"),
     }
+  }
+
+  #[test]
+  fn test_run_tool_command_classified_spawn_failure_names_binary() {
+    // The `Fresh-Install Regression` guard attributes execution failures
+    // by `sed 's/.*Failed to execute \([^ :]*\).*/\1/p'`, matched against
+    // the bare names `doctor --install` reports. A resolved absolute path
+    // must therefore surface as its bare binary name.
+    let mut cmd =
+      std::process::Command::new("/nonexistent-fml-dir/not-a-real-tool");
+    let res =
+      run_tool_command_classified("t", &mut cmd, classify_all_nonzero_as_error);
+    match res.status {
+      SurfaceStatus::ExecutionError { message } => {
+        assert!(
+          message.starts_with("Failed to execute not-a-real-tool: "),
+          "{message}"
+        );
+      }
+      other => panic!("expected ExecutionError, got {other:?}"),
+    }
+  }
+
+  #[test]
+  fn test_spawned_binary_name_unwraps_cmd_shim() {
+    let mut cmd = std::process::Command::new("cmd");
+    // Forward slashes so the path parses identically on every host OS.
+    cmd.arg("/C").arg("C:/npm/prettier.cmd").arg("--write");
+    assert_eq!(spawned_binary_name(&cmd), "prettier");
   }
 
   #[test]
