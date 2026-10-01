@@ -9,7 +9,6 @@
 #   - formality.schema.json  ->  `#:schema .../releases/latest/download/
 #     formality.schema.json` and `releases/download/v<x>/...` directives
 
-
 name: Release Extras
 
 on:
