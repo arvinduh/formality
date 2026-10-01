@@ -135,7 +135,6 @@ jobs:
           ./target/debug/fml fmt schema/formality.schema.json
           git diff --exit-code schema/formality.schema.json
 
-
   security-audit:
     name: Security Audit
     runs-on: ubuntu-latest
