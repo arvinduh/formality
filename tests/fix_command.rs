@@ -1,3 +1,7 @@
+//! End-to-end coverage for `fml fix`: per-surface lint-then-format
+//! lifecycles, path targeting, `--staged`/`--changed` filtering, and the
+//! post-fix re-check that reports what remains unfixed.
+
 mod common;
 
 use common::{fix_cmd, fmt_cmd, init_git_repo, lint_cmd, run_cli, temp_repo};

@@ -1,3 +1,7 @@
+//! End-to-end coverage for the CLI's subcommands (`init`, `sync`, `fmt`,
+//! `lint`, `doctor`, `schema`) and the surface registry, run against
+//! synthetic repositories and the fixtures under `tests/fixtures`.
+
 mod common;
 
 use common::{

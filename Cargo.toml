@@ -48,7 +48,21 @@ serde_yaml = "0.9.34"
 semver = "1.0.28"
 
 [lints.rust]
+missing_docs = "warn"
 unexpected_cfgs = { level = "warn", check-cfg = ['cfg(test)'] }
+unsafe_op_in_unsafe_fn = "deny"
+
+[lints.clippy]
+# Docs
+missing_errors_doc = "warn"
+missing_panics_doc = "warn"
+# Imports
+wildcard_imports = "deny"
+single_component_path_imports = "allow" # `use some_crate;` manifests
+# Hygiene
+dbg_macro = "deny"
+todo = "warn"
+undocumented_unsafe_blocks = "deny"
 
 [package.metadata.binstall]
 pkg-url = "{ repo }/releases/download/v{ version }/{ name }-{ target }.tar.gz"

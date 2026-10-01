@@ -1,7 +1,5 @@
 //! Formality (`fml`) is a unified CLI for formatting, linting, and syncing configurations across multiple language surfaces.
 
-#![warn(missing_docs, clippy::missing_errors_doc, clippy::missing_panics_doc)]
-
 /// Command-line argument parsing definitions.
 pub mod cli;
 /// CLI command implementations.
