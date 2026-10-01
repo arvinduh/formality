@@ -47,7 +47,8 @@ that this repo follows it.
   session without a separate label.
 - No single label query lists in-progress work. "Doing" and "review" come from
   the PR list (draft vs. ready), not from issue labels.
-- Migration: the `triage`, `design`, and `ready` labels do not exist yet, and
-  open issues still carry `status:*` labels. Map `status:ready` to `ready`,
-  `status:design-phase` to `design`, turn each `Blocked-by: #N` line into a
-  native blocker, then delete the `status:*` labels.
+- Migrated 2026-10-01: `status:ready` became `ready` and `status:design-phase`
+  became `design`, each `Blocked-by: #N` line a native blocker, stale premises
+  `triage`, and the `status:*` labels were deleted. Ready issues were rewritten
+  into Goal, Done, Files, Not with the original body kept in a `<details>`
+  block.
