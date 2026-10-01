@@ -87,9 +87,9 @@ impl DeclaresFacets for FooSurface {
 }
 ```
 
-There is no wildcard fallback arm — the `match` must be exhaustive over
-`Facet::ALL`, by design, so a new surface cannot accidentally skip declaring a
-position on any facet. Every arm needs an honest answer: does the real tool
+There is no wildcard fallback arm — the `match` must be exhaustive over every
+`Facet` variant, by design, so a new surface cannot accidentally skip declaring
+a position on any facet. Every arm needs an honest answer: does the real tool
 support configuring this, does it enforce one fixed value (document _why_ in a
 comment, the way `go.rs`/`java.rs`/`kotlin.rs` do), or is the concept simply
 absent for this language. Update [docs/facet-rosetta.md](facet-rosetta.md) with
@@ -359,8 +359,8 @@ Add tests across the test suites:
 1. **Per-surface unit tests**: Inline in `src/surfaces/<lang>.rs`
    (`#[cfg(test)] mod tests { ... }` — see
    [Style Guide §1](style-guide.md#1-modulefile-hierarchy)), test
-   `facet_support()` across all `Facet::ALL`, `detect()` with positive/negative
-   temp fixtures, `tool_info()`, and `supports_lint_fix()`.
+   `facet_support()` for every `Facet` variant, `detect()` with
+   positive/negative temp fixtures, `tool_info()`, and `supports_lint_fix()`.
 2. **Registry tests (inline in `src/surfaces/registry.rs`)**:
    - In `test_all_fleet_surfaces_present()`: update
      `assert_eq!(surfaces.len(), N)` and add `"foo"` to the `expected` list.
