@@ -12,7 +12,7 @@
 //! the published release body would simply be empty and nobody would notice
 //! until a user looked at a release page.
 //!
-//! This test is the tooling behind the `# LOCAL EDIT (issue #134)` comments
+//! This test is the tooling behind the `# LOCAL EDIT (issue #N)` comments
 //! in that workflow: a comment explains the edit, this asserts it is still
 //! there. It runs in the `Library Tests` job (`cargo test --verbose`), one of
 //! the repo's required status checks, so losing an edit blocks the merge that
@@ -29,10 +29,11 @@
 use std::fs;
 use std::path::PathBuf;
 
-/// The comment marker each local edit carries in the workflow. The count of
-/// these is asserted to equal `EDITS.len()`, so an edit and its explanatory
-/// comment can never drift apart.
-const MARKER: &str = "# LOCAL EDIT (issue #134)";
+/// The comment marker each local edit carries in the workflow, up to the
+/// issue number that introduced it. The count of these is asserted to equal
+/// `EDITS.len()`, so an edit and its explanatory comment can never drift
+/// apart.
+const MARKER: &str = "# LOCAL EDIT (issue #";
 
 /// One hand-applied edit to the dist-generated release workflow.
 struct LocalEdit {
@@ -74,6 +75,17 @@ const EDITS: &[LocalEdit] = &[
     consequence: "reverting to dist's --notes-file changelog body FAILS SILENTLY — this \
        repo has no committed CHANGELOG.md, so releases would publish with an \
        empty body and nothing would fail loudly.",
+  },
+  LocalEdit {
+    name: "ARM64 Windows x64-fallback note patched into fml-installer.ps1",
+    required: &[
+      "installer=target/distrib/fml-installer.ps1",
+      "runs under Windows' built-in x64 emulation. This is deliberate",
+    ],
+    forbidden: &[],
+    consequence: "dist's PowerShell installer silently installs the x64 build on \
+       ARM64 Windows; without this note users get an emulated binary they \
+       never chose and are never told about (issue #166).",
   },
 ];
 
@@ -185,7 +197,7 @@ fn test_release_yml_local_edits_survive() {
      without warning, and `allow-dirty = [\"ci\"]` in Cargo.toml means `dist generate --check` cannot report it. \
      To re-apply: each edit is described in a `{}` comment in the workflow explaining exactly what to change. \
      If those comments are gone too, recover them with `git log -p -- .github/workflows/release.yml` \
-     (they were introduced in PR #156), and see docs/release.md for the release procedure.\n\
+     (see the issue each marker names), and see docs/release.md for the release procedure.\n\
      If a cargo-dist upgrade genuinely made an edit unnecessary, delete its entry from EDITS in \
      tests/release_workflow_local_edits.rs in the same commit that drops the edit.\n",
     failures.len(),
