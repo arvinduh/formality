@@ -534,6 +534,7 @@ impl BlockScan {
 
 /// Whether `rest`, a line with its indent stripped, is an ATX heading: one
 /// to six `#` followed by a space, a tab or the end of the line.
+#[must_use]
 fn is_atx_heading(rest: &str) -> bool {
   let hashes = rest.bytes().take_while(|&b| b == b'#').count();
   (1..=6).contains(&hashes)
@@ -542,6 +543,7 @@ fn is_atx_heading(rest: &str) -> bool {
 
 /// Whether `rest`, a line with its indent stripped, is a thematic break:
 /// three or more of one of `*`, `-`, `_`, with only spaces or tabs between.
+#[must_use]
 fn is_thematic_break(rest: &str) -> bool {
   let Some(mark) = rest.chars().next().filter(|c| matches!(c, '*' | '-' | '_'))
   else {
