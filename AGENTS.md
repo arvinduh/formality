@@ -28,17 +28,16 @@ cargo run -q -- fmt
 - Always run the freshly built binary (`cargo run -q -- ...`), never a global
   `fml` on `PATH`.
 - Schema drift: `cargo test --test schema_drift`; regenerate with
-  `UPDATE_SCHEMA=1 cargo test -j 2 --test schema_drift`. A changed schema needs
-  a forward `SCHEMA_VERSION` bump in `src/config/schema.rs`.
+  `UPDATE_SCHEMA=1 cargo test -j 2 --test schema_drift`.
 - The root carries only `formality.toml`, no generated native configs
   (`.rustfmt.toml`, `.prettierrc`, ...), so `fml sync --check` is not run here.
 
 ## Compatibility
 
-Until fml's first official release nothing keeps backwards compatibility, CLI
-flags and the `formality.toml` schema included: no shims, deprecated aliases,
-tailored "removed in vX" errors, migration paths or compatibility URLs. Removing
-something removes it outright.
+Until fml's first official release, 1.0.0, nothing keeps backwards
+compatibility, CLI flags and the `formality.toml` schema included: no shims,
+deprecated aliases, tailored "removed in vX" errors, migration paths or
+compatibility URLs. Removing something removes it outright.
 
 ## Pre-commit hook
 
@@ -55,7 +54,7 @@ builds the binary, then runs `fml fmt --staged --allow-missing` and
 
 - `.github/workflows/pr-check.yml` runs `Library Tests` (clippy + full
   `cargo test`), `Formality Dogfooding` (`fml fmt --check`, `fml lint`, schema
-  drift and version progression), and `Security Audit`.
+  drift), and `Security Audit`.
 - `.github/workflows/install-regression.yml` runs `Fresh-Install Regression`
   (3-OS matrix) only on PRs touching its `paths` list: install, lookup,
   version-probe and spawn code. Code that can break installs belongs on that
