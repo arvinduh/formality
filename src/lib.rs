@@ -453,9 +453,9 @@ mod tests {
     );
   }
 
-  // Tier-2 enforcement for the `//!` module-doc rule documented in
-  // docs/style-guide.md §3 ("Every file with meaningful crate-level content
-  // ... opens with a `//!` module-level doc comment"), promoted from tier 3
+  // Tier-2 enforcement for the rust-guide rule that every file opens with a
+  // `//!` module-level doc comment (docs/style-guide.md §3 records this test
+  // and its `tests.rs` exemption), promoted from tier 3
   // during #201's QA follow-up [pre-recreation]: a QA review of #201 [pre-recreation] found the rule was
   // ~80% unmet across the tree (41 of 50 files at the time) despite the PR
   // claiming a clean style-guide sweep, precisely because nothing mechanical

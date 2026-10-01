@@ -21,10 +21,10 @@ re-derive is already written down.
 - **[table-spec.md](table-spec.md)** — What's the JSON schema `fml::ui::table`
   consumes, and what styling rules (`src/ui/table`) does it apply? Read this
   before generating table JSON from a script, or touching table rendering.
-- **[style-guide.md](style-guide.md)** — Beyond `rustfmt`/`clippy`, what does
-  this codebase itself require (module/file hierarchy, naming, doc-comment
-  conventions, `ExecutionContext` Arc-sharing, error-handling patterns)? Read
-  this before writing new code, and cite it by section number in review.
+- **[style-guide.md](style-guide.md)** — Where does `fml` deviate from the
+  global `rust-guide`, and what does this codebase itself require (test layout,
+  naming, schema doc comments, `ExecutionContext` Arc-sharing, error handling)?
+  Read this before writing new code, and cite it by section number in review.
 - **[release.md](release.md)** — How is a release actually cut — binary (`v*`)
   tags via cargo-dist, schema (`s*`) tags, GitHub `--generate-notes` release
   notes? Read this before cutting a release, or when you need to know what a
