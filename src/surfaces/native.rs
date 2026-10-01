@@ -4,8 +4,7 @@
 
 use crate::errors::{FormalityError, SurfaceError};
 pub use crate::surfaces::editorconfig::{
-  EDITORCONFIG_FILE_NAME, generate_editorconfig,
-  generate_editorconfig_from_config, sync_editorconfig,
+  EDITORCONFIG_FILE_NAME, generate_editorconfig_from_config, sync_editorconfig,
 };
 use crate::surfaces::{
   ExecutionContext, SurfaceResult, SurfaceStatus, sync_file_helper,

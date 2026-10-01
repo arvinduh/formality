@@ -43,8 +43,8 @@ pub mod yaml;
 
 pub use native::{
   AUTO_GENERATED_HEADER, AUTO_GENERATED_JSON_COMMENT, EDITORCONFIG_FILE_NAME,
-  NativeConfig, generate_editorconfig, generate_editorconfig_from_config,
-  render_native_config, serialize_json_pretty, serialize_toml_with_header,
+  NativeConfig, generate_editorconfig_from_config, render_native_config,
+  serialize_json_pretty, serialize_toml_with_header,
   serialize_yaml_with_header, sync_editorconfig, sync_native_config,
 };
 pub use prettier::{
@@ -60,14 +60,13 @@ use std::time::{Duration, Instant};
 
 pub use glob::{
   STANDARD_IGNORED_DIRS, build_repo_gitignore, filter_candidates_with_ext,
-  filter_files_for_surface, find_files_with_ext, find_manifest_upwards,
-  is_excluded, is_repo_ignored, is_standard_ignored, is_temp_file,
-  matches_pattern, simple_glob_match, walk_candidate_files,
+  find_files_with_ext, find_manifest_upwards, is_standard_ignored,
+  is_temp_file, matches_pattern, simple_glob_match, walk_candidate_files,
 };
 pub(crate) use registry::matches_name_or_alias;
 pub use registry::{
-  SurfaceRegistry, all_surfaces, default_registry, detect_surfaces,
-  detect_surfaces_smart, get_surface_by_name, resolve_canonical_name,
+  SurfaceRegistry, all_surfaces, default_registry, detect_surfaces_smart,
+  get_surface_by_name,
 };
 pub use sync::{
   diff_check_via_tempcopy, diff_check_via_tempcopy_classified,
@@ -120,12 +119,6 @@ pub struct ExecutionContext {
 }
 
 impl ExecutionContext {
-  /// Returns whether explicit file or directory paths were targeted.
-  #[must_use]
-  pub fn is_scoped(&self) -> bool {
-    !self.paths.is_empty()
-  }
-
   /// Discovers target files for the surface matching extensions, honoring scoped paths, files, and excludes.
   #[must_use]
   pub fn matched_files(&self, extensions: &[&str]) -> Vec<PathBuf> {
@@ -440,10 +433,6 @@ impl SurfaceResult {
 pub trait LanguageSurface: DeclaresFacets + Send + Sync {
   /// Canonical surface identifier name (e.g. `"rust"`, `"python"`).
   fn name(&self) -> &'static str;
-  /// Human-readable display name.
-  fn display_name(&self) -> &'static str {
-    self.name()
-  }
   /// Alternative alias names recognized for this surface.
   fn aliases(&self) -> &[&'static str] {
     &[]
