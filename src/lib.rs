@@ -1,7 +1,5 @@
 //! Formality (`fml`) is a unified CLI for formatting, linting, and syncing configurations across multiple language surfaces.
 
-#![warn(missing_docs, clippy::missing_errors_doc, clippy::missing_panics_doc)]
-
 /// Command-line argument parsing definitions.
 pub mod cli;
 /// CLI command implementations.
@@ -58,9 +56,9 @@ pub fn run_with_args(args: Cli) -> ExitStatus {
   // that was *mostly* uncolored but still carried bold/color runs around
   // every status token -- honoring neither mode, and defeating the point
   // of NO_COLOR for anything parsing the output.
-  if crate::ui::no_color_requested() {
+  if ui::no_color_requested() {
     colored::control::set_override(false);
-  } else if crate::ui::color_forced() {
+  } else if ui::color_forced() {
     colored::control::set_override(true);
   }
 
@@ -284,7 +282,7 @@ mod tests {
   // this test keeps that convention from silently drifting back.
   #[test]
   fn test_no_stray_test_files_outside_sanctioned_pattern() {
-    let manifest_dir = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+    let manifest_dir = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
     let src_dir = manifest_dir.join("src");
 
     let mut violations = Vec::new();
@@ -343,7 +341,7 @@ mod tests {
   // the rule's own named exemplar. See docs/style-guide.md §2.
   #[test]
   fn test_is_predicate_methods_carry_must_use() {
-    let manifest_dir = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+    let manifest_dir = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
     let src_dir = manifest_dir.join("src");
 
     // Strips a leading `pub`/`pub(...)` visibility modifier and any
@@ -472,7 +470,7 @@ mod tests {
   // "meaningful crate-level content" in the production sense.
   #[test]
   fn test_files_carry_module_doc_comment() {
-    let manifest_dir = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+    let manifest_dir = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
     let src_dir = manifest_dir.join("src");
 
     let mut violations = Vec::new();
@@ -515,7 +513,7 @@ mod tests {
   // module is for").
   #[test]
   fn test_pub_mod_declarations_carry_doc_comments() {
-    let manifest_dir = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+    let manifest_dir = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
     let src_dir = manifest_dir.join("src");
 
     let mut violations = Vec::new();
@@ -589,7 +587,7 @@ mod tests {
   // directly under the `#[cfg(test)]` attribute").
   #[test]
   fn test_test_modules_carry_allow_doc_lints() {
-    let manifest_dir = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+    let manifest_dir = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
     let src_dir = manifest_dir.join("src");
 
     let mut violations = Vec::new();
@@ -662,7 +660,7 @@ mod tests {
   // never a crate-root shortcut").
   #[test]
   fn test_internal_code_uses_canonical_module_paths() {
-    let manifest_dir = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+    let manifest_dir = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
     let src_dir = manifest_dir.join("src");
 
     let mut violations = Vec::new();
@@ -715,7 +713,7 @@ mod tests {
   // unrelated issues.
   #[test]
   fn test_source_files_do_not_contain_bare_pre_recreation_issue_citations() {
-    let manifest_dir = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+    let manifest_dir = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
     let src_dir = manifest_dir.join("src");
 
     const PRE_RECREATION_NUMBERS: &[u32] = &[

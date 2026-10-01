@@ -4,5 +4,4 @@ src/**
 test/**
 tsconfig.json
 eslint.config.mjs
-.npmrc
 node_modules/**

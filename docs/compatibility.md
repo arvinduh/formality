@@ -41,9 +41,10 @@ line_length = 80
 
 ## Compatibility Guarantees
 
-1. **Backwards Compatibility**: Newer `fml` binaries retain backwards
-   compatibility with configurations valid under older `s{major}.{minor}` schema
-   releases.
+1. **Backwards Compatibility**: None before fml's first official release
+   ([AGENTS.md](../AGENTS.md#compatibility)). From that release on, newer `fml`
+   binaries retain backwards compatibility with configurations valid under older
+   `s{major}.{minor}` schema releases.
 2. **Schema Evolution**: Non-breaking schema additions (such as adding new
    optional surface settings) bump the `minor` component (e.g. `s1.0` -> `s1.1`)
    and stay within the active major range. Breaking schema structure changes

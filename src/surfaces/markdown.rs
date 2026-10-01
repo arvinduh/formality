@@ -376,10 +376,7 @@ impl LanguageSurface for MarkdownSurface {
       || !find_files_with_ext(root, MD_EXTENSIONS, &[], &[], &[]).is_empty()
   }
 
-  fn tool_info(
-    &self,
-    _config: &crate::config::ResolvedLangConfig,
-  ) -> Vec<ToolInfo> {
+  fn tool_info(&self, _config: &ResolvedLangConfig) -> Vec<ToolInfo> {
     vec![
       ToolInfo {
         binary: "prettier",

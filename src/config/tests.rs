@@ -732,7 +732,7 @@ fn test_generate_sample_omits_languages() {
   assert!(sample.contains("# formality configuration file"));
   assert!(sample.contains(&format!(
     "#:schema https://github.com/arvinduh/formality/releases/download/s{}/formality.schema.json",
-    crate::config::schema::SCHEMA_VERSION
+    SCHEMA_VERSION
   )));
   assert!(sample.contains("[global]"));
   assert!(!sample.contains("languages ="));

@@ -197,10 +197,7 @@ impl LanguageServer for FormalityLsp {
     let path = params.text_document.uri.to_file_path().unwrap_or_default();
 
     let root = self.root.lock().await.clone().unwrap_or_else(|| {
-      path
-        .parent()
-        .map(std::path::Path::to_path_buf)
-        .unwrap_or_default()
+      path.parent().map(Path::to_path_buf).unwrap_or_default()
     });
 
     // Read the current file content so we can diff it after formatting.
@@ -253,10 +250,7 @@ impl LanguageServer for FormalityLsp {
   async fn did_save(&self, params: DidSaveTextDocumentParams) {
     let path = params.text_document.uri.to_file_path().unwrap_or_default();
     let root = self.root.lock().await.clone().unwrap_or_else(|| {
-      path
-        .parent()
-        .map(std::path::Path::to_path_buf)
-        .unwrap_or_default()
+      path.parent().map(Path::to_path_buf).unwrap_or_default()
     });
     let uri = params.text_document.uri.clone();
     let config = self.get_or_load_config(Some(&root)).await;
@@ -406,7 +400,7 @@ pub fn compute_formatting_edits(before: &str, after: &str) -> Vec<TextEdit> {
 /// Panics if the underlying Tokio runtime fails to initialize.
 // Takes owned Option<PathBuf> from the top-level CLI command runner for uniform handler signature.
 #[allow(clippy::needless_pass_by_value)]
-pub fn run_lsp_server(root: Option<std::path::PathBuf>) {
+pub fn run_lsp_server(root: Option<PathBuf>) {
   // Print a startup banner to stderr (not stdout — that's the LSP channel).
   eprintln!(
     "{} LSP server starting (stdio transport, v{SERVER_VERSION})",
@@ -944,7 +938,7 @@ mod tests {
 
   #[test]
   fn test_lsp_module_does_not_spawn_fml_child_process() {
-    let manifest_dir = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+    let manifest_dir = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
     let lsp_rs_path = manifest_dir.join("src/commands/lsp.rs");
     let content = std::fs::read_to_string(lsp_rs_path).unwrap();
 

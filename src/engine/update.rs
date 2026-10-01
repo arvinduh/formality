@@ -75,7 +75,7 @@ fn write_cached_tag_at(path: &Path, tag: Option<&str>) {
     .map_or(0, |d| d.as_secs());
   let cache = UpdateCache {
     last_checked_unix: now,
-    latest_tag: tag.map(std::string::ToString::to_string),
+    latest_tag: tag.map(ToString::to_string),
     failed: false,
   };
   if let Ok(json) = serde_json::to_string(&cache) {
