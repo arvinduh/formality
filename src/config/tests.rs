@@ -1061,6 +1061,63 @@ fn test_parse_str_unknown_key_names_key_path_line_and_fix() {
 }
 
 #[test]
+fn test_parse_str_removed_flat_lang_key_is_unknown() {
+  // `format_tool` left `LangConfig` in #280; the flattened `extra` map used
+  // to swallow it without a word.
+  let toml = "[lang.python]\nquote_style = \"double\"\nformat_tool = \
+              \"black\"\n";
+  let err =
+    FormalityConfig::parse_str(toml, Path::new("formality.toml")).unwrap_err();
+  assert_eq!(
+    err.to_string(),
+    "unknown key `lang.python.format_tool` in formality.toml:3. It may need \
+     a newer fml (`fml --version`), or it is misspelled or was removed; \
+     `fml schema` lists the keys this fml accepts."
+  );
+}
+
+#[test]
+fn test_parse_str_flat_lang_keys_follow_their_own_surface() {
+  // A key valid for one surface is unknown under another.
+  let toml = "[lang.rust]\nedition = \"2024\"\nquote_style = \"double\"\n";
+  let err =
+    FormalityConfig::parse_str(toml, Path::new("formality.toml")).unwrap_err();
+  assert!(
+    matches!(
+      &err,
+      ConfigError::UnknownKey { key, line: 3, .. }
+        if key == "lang.rust.quote_style"
+    ),
+    "{err:?}"
+  );
+
+  let toml = "[lang.python]\ntarget_version = 310\n";
+  let err =
+    FormalityConfig::parse_str(toml, Path::new("formality.toml")).unwrap_err();
+  assert!(
+    matches!(
+      &err,
+      ConfigError::InvalidValue { key, line: 2, .. }
+        if key == "lang.python.target_version"
+    ),
+    "{err:?}"
+  );
+
+  let toml = "[lang.go.options]\nlocal_prefixes = \"example.com\"\n\
+              shadow = true\n";
+  let err =
+    FormalityConfig::parse_str(toml, Path::new("formality.toml")).unwrap_err();
+  assert!(
+    matches!(
+      &err,
+      ConfigError::UnknownKey { key, line: 3, .. }
+        if key == "lang.go.options.shadow"
+    ),
+    "{err:?}"
+  );
+}
+
+#[test]
 fn test_parse_str_wrong_type_names_nested_key_path_and_line() {
   let toml = "[global]\nline_length = 80\n\n[lang.rust.layout]\n\
                 indent_size = \"four\"\n";

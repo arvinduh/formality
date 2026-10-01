@@ -10,6 +10,8 @@ use serde::Deserialize;
 use std::path::Path;
 use toml::de::{DeTable, DeValue};
 
+use super::lang_table::lang_options_table;
+use super::options::MarkdownOptions;
 use super::{ConfigError, FormalityConfig};
 
 /// Parses `content`, read from `path`, into a [`FormalityConfig`].
@@ -28,7 +30,69 @@ pub fn parse(
     source,
   })?;
   FormalityConfig::deserialize(toml::de::Deserializer::from(doc.clone()))
+    .and_then(|config| {
+      check_lang_options(&config, doc.get_ref()).map(|()| config)
+    })
     .map_err(|source| locate(path, content, doc.get_ref(), source))
+}
+
+/// Deserializes each `[lang.<name>]` section's surface-specific keys, the
+/// flattened ones `LangConfig` collects into `extra` and its `options`
+/// table, into that surface's typed options. The lenient accessors that
+/// read them later drop what does not fit; this rejects it up front.
+fn check_lang_options(
+  config: &FormalityConfig,
+  doc: &DeTable<'_>,
+) -> Result<(), toml::de::Error> {
+  let Some(DeValue::Table(sections)) =
+    doc.get("lang").map(toml::Spanned::get_ref)
+  else {
+    return Ok(());
+  };
+  for (name, section) in sections {
+    let (DeValue::Table(table), Some(lang)) =
+      (section.get_ref(), config.lang.get(name.get_ref().as_ref()))
+    else {
+      continue;
+    };
+    let flat = table
+      .iter()
+      .filter(|(key, _)| lang.extra.contains_key(key.get_ref().as_ref()))
+      .map(|(key, value)| (key.clone(), value.clone()))
+      .collect();
+    check_options(name.get_ref(), toml::Spanned::new(section.span(), flat))?;
+    if let Some(options) = table.get("options")
+      && let DeValue::Table(options_table) = options.get_ref()
+    {
+      check_options(
+        name.get_ref(),
+        toml::Spanned::new(options.span(), options_table.clone()),
+      )?;
+    }
+  }
+  Ok(())
+}
+
+/// Expands to a `match` on a surface name that deserializes into that row's
+/// typed options, plus `markdown`, which `lang_options_table!` leaves out.
+macro_rules! check_by_name {
+  ([$name:expr, $de:expr] $( $lang:ident { $ty:ty, $accessor:ident, $is_empty:expr } )*) => {
+    match $name {
+      $( stringify!($lang) => <$ty>::deserialize($de).map(drop), )*
+      "markdown" => MarkdownOptions::deserialize($de).map(drop),
+      _ => Ok(()),
+    }
+  };
+}
+
+/// Deserializes `table` into surface `name`'s typed options. A name with
+/// none, an alias or an unknown section, is not checked.
+fn check_options(
+  name: &str,
+  table: toml::Spanned<DeTable<'_>>,
+) -> Result<(), toml::de::Error> {
+  let de = toml::de::Deserializer::from(table);
+  lang_options_table!(check_by_name, name, de)
 }
 
 /// Attributes a deserialization error to the key it occurred under, falling
