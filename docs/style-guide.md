@@ -230,9 +230,9 @@ was reverted.
 
 The same holds for prose: doc comments, `--help` text, and `docs/` describe
 behavior that exists today. A planned capability belongs in an issue, and no CI
-check (drift test, generated table, schema pin) may exist only to keep
-speculative prose in sync. **Motivating case:** `#123` — `fml lsp`'s docs
-described a child-LSP router that was never built.
+check (drift test, generated table) may exist only to keep speculative prose in
+sync. **Motivating case:** `#123` — `fml lsp`'s docs described a child-LSP
+router that was never built.
 
 ### `Runner` dispatch
 
