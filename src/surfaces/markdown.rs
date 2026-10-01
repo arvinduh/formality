@@ -383,21 +383,55 @@ fn hash_rule_lines(output: &str) -> Vec<usize> {
     .collect()
 }
 
-/// Prefixes the leading `#` of each listed 1-based line with a backslash,
-/// when that line passes [`is_unspaced_hash_line`].
+/// Whether `prev` was the immediate preceding line of an ongoing
+/// paragraph, rather than a block boundary.
 ///
-/// `\#` renders exactly as the bare `#` of such a line (neither is an ATX
-/// heading). Prettier 3.9.6 keeps the escape: `prettier --parser markdown
-/// --prose-wrap always` leaves `\#299) ok.` at a line start unchanged, and
-/// `short \#tag mid and \# alone.` keeps both escapes mid-line, so the
-/// result is stable across runs.
+/// In Markdown, a line starts its own block when it is at the start of the
+/// document (`prev` is `None`), is preceded by a blank line, or follows a
+/// block delimiter (front matter `---` / `+++`, or a code block fence).
+#[must_use]
+fn is_paragraph_continuation(prev: Option<&str>) -> bool {
+  let Some(prev) = prev else {
+    return false;
+  };
+  let trimmed = prev.trim();
+  if trimmed.is_empty() {
+    return false;
+  }
+  if trimmed == "---"
+    || trimmed == "+++"
+    || trimmed.starts_with("```")
+    || trimmed.starts_with("~~~")
+  {
+    return false;
+  }
+  true
+}
+
+/// Prefixes the leading `#` of each listed 1-based line with a backslash,
+/// when that line passes [`is_unspaced_hash_line`] and continues an ongoing
+/// paragraph ([`is_paragraph_continuation`]).
+///
+/// Findings that start their own block (preceded by a blank line or block
+/// delimiter) are left unescaped so markdownlint's MD018/MD020 autofixers can
+/// space them into headings (`# Title`). Continuation lines are escaped so
+/// that CommonMark paragraph text is not turned into headings (#413).
+/// Prettier 3.9.6 keeps the escape: `prettier --parser markdown --prose-wrap
+/// always` leaves `\#299) ok.` at a line start unchanged, and `short \#tag
+/// mid and \# alone.` keeps both escapes mid-line, so the result is stable
+/// across runs.
 fn escape_line_hashes(content: &str, lines: &[usize]) -> String {
   let mut out = String::with_capacity(content.len() + lines.len());
+  let mut prev: Option<&str> = None;
   for (idx, line) in content.split_inclusive('\n').enumerate() {
-    if is_unspaced_hash_line(line) && lines.contains(&(idx + 1)) {
+    if is_unspaced_hash_line(line)
+      && lines.contains(&(idx + 1))
+      && is_paragraph_continuation(prev)
+    {
       out.push('\\');
     }
     out.push_str(line);
+    prev = Some(line);
   }
   out
 }
@@ -1364,6 +1398,18 @@ README.md:7 error MD025/single-title/single-h1 Multiple top-level headings";
     assert_eq!(
       escape_line_hashes(src, &[2, 4, 5]),
       "a\n\\#1 b\n#2 c\n# Title#\n\\##x\r\n"
+    );
+  }
+
+  #[test]
+  fn test_escape_line_hashes_skips_standalone_block_headings() {
+    // #413: `#Title` on its own block (file start, preceded by a blank line,
+    // or following front matter) is left unescaped so markdownlint's fixer
+    // can space it into a heading. Only continuation lines are escaped.
+    let src = "#Title\n\n#Sub\n\n---\n#AfterFrontMatter\n\nprose\n#299) ok\n";
+    assert_eq!(
+      escape_line_hashes(src, &[1, 3, 6, 9]),
+      "#Title\n\n#Sub\n\n---\n#AfterFrontMatter\n\nprose\n\\#299) ok\n"
     );
   }
 
