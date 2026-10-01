@@ -254,8 +254,7 @@ impl ToolInfo {
   pub fn effective_install_hint(&self) -> String {
     self
       .install_hint
-      .map(str::to_string)
-      .unwrap_or_else(|| install_hint_for(self.binary))
+      .map_or_else(|| install_hint_for(self.binary), str::to_string)
   }
 
   /// Returns the (program, args) for the first available installer in this
