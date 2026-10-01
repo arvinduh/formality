@@ -92,7 +92,7 @@ mind:
 3. **Install tool dependencies (optional/on-demand)**:
 
    ```bash
-   cargo run -q -- install
+   cargo run -q -- doctor --install
    ```
 
 ---
@@ -104,8 +104,8 @@ mind:
 - `src/surfaces`: Per-language surface implementations (1 file per surface). See
   [`docs/new-surface-guide.md`](docs/new-surface-guide.md) to add a surface.
 - `src/ui`: CLI table rendering and user interface formatting.
-- `src/commands`: Subcommand implementations (`fmt`, `lint`, `sync`, `install`,
-  `table`, etc.).
+- `src/commands`: Subcommand implementations (`fmt`, `lint`, `fix`, `sync`,
+  `doctor`, `init`, etc.).
 - `docs/`: In-depth specification docs
   ([`facet-rosetta.md`](docs/facet-rosetta.md),
   [`language-surfaces.md`](docs/language-surfaces.md),
