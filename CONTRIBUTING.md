@@ -92,7 +92,7 @@ mind:
 3. **Install tool dependencies (optional/on-demand)**:
 
    ```bash
-   cargo run -q -- install
+   cargo run -q -- doctor --install
    ```
 
 ---
@@ -104,8 +104,8 @@ mind:
 - `src/surfaces`: Per-language surface implementations (1 file per surface). See
   [`docs/new-surface-guide.md`](docs/new-surface-guide.md) to add a surface.
 - `src/ui`: CLI table rendering and user interface formatting.
-- `src/commands`: Subcommand implementations (`fmt`, `lint`, `sync`, `install`,
-  `table`, etc.).
+- `src/commands`: Subcommand implementations (`fmt`, `lint`, `fix`, `sync`,
+  `doctor`, `init`, etc.).
 - `docs/`: In-depth specification docs
   ([`facet-rosetta.md`](docs/facet-rosetta.md),
   [`language-surfaces.md`](docs/language-surfaces.md),
@@ -220,11 +220,12 @@ regardless.
    gh pr create --title "fix(config): resolve editorconfig drift false positive" --body "Fixes #88"
    ```
 
-7. **CI PR Checks (Tier 2 Quality Gate)**: GitHub Actions executes 3 parallel
-   jobs on every PR:
-   - **`Library Tests`** (_required branch protection status check_): Runs
-     `cargo clippy --all-targets -- -D warnings` and the full unit/integration
-     test suite (`cargo test --verbose`).
+7. **CI PR Checks (Tier 2 Quality Gate)**: `.github/workflows/pr-check.yml` runs
+   3 parallel jobs on every PR. Branch protection on `main` requires
+   `Library Tests` and `Formality Dogfooding`; see
+   [`AGENTS.md`](AGENTS.md#ci-and-merging) for the merge rules.
+   - **`Library Tests`**: Runs `cargo clippy --all-targets -- -D warnings` and
+     the full unit/integration test suite (`cargo test --verbose`).
    - **`Formality Dogfooding`**: Runs `fml fmt --check` and `fml lint` against
      this repository's live tree, verifies schema drift
      (`cargo test --test schema_drift` vs. `schema/formality.schema.json`;
@@ -232,6 +233,12 @@ regardless.
      enforces forward `SCHEMA_VERSION` progression in `src/config/schema.rs`.
    - **`Security Audit`**: Runs `cargo audit` against the Rust advisory
      database.
+
+   The separate `Install Regression` workflow
+   (`.github/workflows/install-regression.yml`) runs only on PRs touching its
+   `paths` list. Its `Fresh-Install Regression` jobs, a 3-OS matrix, exercise
+   `fml doctor --install`; they are not required status checks, so a PR the
+   workflow skips is never left waiting on them.
 
 ---
 
@@ -269,8 +276,9 @@ The issue reference goes in the PR body as `Fixes #N`, not in each commit.
   requests.
 - **Ask before modifying**:
   - Branch protection rules or required CI status check names.
-  - Project version bumps (managed by dedicated release automation, not manual
-    edits).
+  - Project version bumps: no tool bumps the version; a bump is a hand edit in a
+    dedicated `chore(release)` PR (see [`docs/release.md`](docs/release.md) and
+    [`AGENTS.md`](AGENTS.md#ask-first)).
 - **Never rely on global binaries**: Always test with `cargo run -q -- ...`.
 - **Preserve API contracts**: When modifying signatures, search and update all
   invocation sites across the repository.
