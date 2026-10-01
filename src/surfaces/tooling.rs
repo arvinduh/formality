@@ -497,8 +497,18 @@ const GOOGLE_JAVA_FORMAT_CHAIN: &[InstallMethod] = &[
 // that consume some *other* tool's output and reformat it as Checkstyle XML,
 // not a wrapper that installs the actual `checkstyle` Java tool). Dropped
 // rather than pinned: no npm distribution of this tool exists, and the
-// Brew/Apt entries above already cover the platforms that have a real
+// Brew/Apt entries below already cover the platforms that have a real
 // install path.
+//
+// No Windows entry, because no Windows package exists (#324). winget has
+// none: `winget install checkstyle --accept-source-agreements
+// --accept-package-agreements` on the windows-2025-vs2026 20260925.250.1
+// runner image prints "No package found matching input criteria." and
+// exits -1978335212 (APPINSTALLER_CLI_ERROR_NO_APPLICATIONS_FOUND),
+// searching both the `winget` and `msstore` sources (PR #431, Fresh-Install
+// Regression windows-latest). Scoop's official Main, Extras and Java buckets
+// carry no `checkstyle` manifest either (2026-10-01); only unofficial
+// buckets do, which `scoop install checkstyle` never reaches.
 const CHECKSTYLE_CHAIN: &[InstallMethod] = &[
   InstallMethod::Brew("checkstyle"),
   InstallMethod::Apt("checkstyle"),

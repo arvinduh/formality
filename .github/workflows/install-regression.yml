@@ -127,6 +127,13 @@ jobs:
         # toolchains require it: ktlint's standard:filename rule fails a
         # lowercase .kt outright (a violation that says nothing about
         # installs, which is all this job is here to test).
+        #
+        # go.mod is what lets `fml lint` reach golangci-lint at all: without
+        # one the go surface reports an ExecutionError before spawning
+        # anything, so the tool would install and still never run. The Go
+        # file sits in its own package directory because golangci-lint
+        # typechecks a package, and a package directory holding sample.cpp
+        # fails with "C++ source files not allowed when not using cgo".
         shell: bash
         run: |
           set -e
@@ -145,7 +152,9 @@ jobs:
           printf 'x = 1\n' > sample.py
           printf 'int main() { return 0; }\n' > sample.cpp
           printf 'public class Sample {\n  public static void main(String[] args) {}\n}\n' > Sample.java
-          printf 'package main\n\nfunc main() {}\n' > sample.go
+          printf 'module example.com/sample\n\ngo 1.21\n' > go.mod
+          mkdir -p hello
+          printf 'package main\n\nfunc main() {}\n' > hello/main.go
           printf '# Title\n\nSome text.\n' > sample.md
           printf 'key: value\n' > sample.yaml
           printf '{}\n' > sample.json
@@ -154,7 +163,15 @@ jobs:
           printf 'const x = 1;\n' > sample.js
           printf 'fun main() {}\n' > Sample.kt
 
-      - name: fml doctor --install then fml fmt on a runner with none of the tools pre-cached
+      - name: fml doctor --install then fml fmt and fml lint on a runner with none of the tools pre-cached
+        # `fml lint` runs after `fml fmt`, under the same PATH and into the
+        # same log, because `fml fmt` runs formatters only: a lint-only tool
+        # (checkstyle, golangci-lint, yamllint, clang-tidy) would otherwise
+        # install, pass the PATH lookup and never be spawned, so none of the
+        # signatures below could fire for it. A lint finding on a sample
+        # file is not an install regression and matches no signature, so it
+        # does not fail this step.
+        #
         # Deliberately does NOT gate on fml's own exit code: a tool that
         # installs but doesn't land on its exact pinned version (a stale
         # Homebrew bottle, an npm registry lag, ...) is a real but separate
@@ -245,6 +262,7 @@ jobs:
             fmt_path="$clean_path"
           fi
           PATH="$fmt_path" "$fml_bin" fmt >> fml-output.log 2>&1 || true
+          PATH="$fmt_path" "$fml_bin" lint >> fml-output.log 2>&1 || true
           cat fml-output.log
 
           # Only a [MISS] for a tool fml *itself just installed in this same
