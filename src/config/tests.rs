@@ -730,10 +730,9 @@ fn test_yaml_options_document_start_and_truthy_rules() {
 fn test_generate_sample_omits_languages() {
   let sample = FormalityConfig::generate_sample();
   assert!(sample.contains("# formality configuration file"));
-  assert!(sample.contains(&format!(
-    "#:schema https://github.com/arvinduh/formality/releases/download/s{}/formality.schema.json",
-    SCHEMA_VERSION
-  )));
+  assert!(sample.contains(
+    "#:schema https://github.com/arvinduh/formality/releases/latest/download/formality.schema.json",
+  ));
   assert!(sample.contains("[global]"));
   assert!(!sample.contains("languages ="));
   assert!(sample.contains("indent_size = 2"));
