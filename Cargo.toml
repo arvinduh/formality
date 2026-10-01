@@ -57,6 +57,7 @@ undocumented_unsafe_blocks = "deny"
 redundant_closure_for_method_calls = "warn"
 # Performance
 format_collect = "warn"
+redundant_clone = "warn"
 
 # Config for 'dist' (cargo-dist): GitHub Releases are the only channel - no
 # crates.io publish. See docs/release.md and issue #134.

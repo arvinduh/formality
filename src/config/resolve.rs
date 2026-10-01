@@ -116,7 +116,7 @@ impl FormalityConfig {
       indent_size: Some(indent_size),
       line_length: Some(line_length),
       use_tabs: Some(use_tabs),
-      prose_wrap: prose_wrap.clone(),
+      prose_wrap,
     };
 
     ResolvedGlobalConfig {
