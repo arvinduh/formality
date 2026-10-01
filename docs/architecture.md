@@ -110,8 +110,8 @@ this directory also holds shared helpers used by more than one command handler.
 
 ## Cross-cutting: process and release docs
 
-Two things intentionally live outside `src/` and this map: the multi-agent
-orchestration process (worktrees, QA gate, dispatch order — see
-`.agents/orchestrate.md`) and the release procedure (binary `v*` tags, schema
-`s*` tags — see [release.md](release.md)). Neither is a code module, so neither
-gets a paragraph here; both are linked from [docs/INDEX.md](INDEX.md).
+Two things intentionally live outside `src/` and this map: the repo's process
+facts (gate, CI checks, merge rules — see `AGENTS.md`) and the release procedure
+(binary `v*` tags, schema `s*` tags — see [release.md](release.md)). Neither is
+a code module, so neither gets a paragraph here; both are linked from
+[docs/INDEX.md](INDEX.md).

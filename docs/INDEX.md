@@ -62,8 +62,6 @@ where several common questions actually get answered:
 
 - `README.md` — project overview, installation, quick start. Its own "Further
   reading" section links every doc listed above.
-- `AGENTS.md` — the short agent-facing brief (commands, layout, conventions,
-  ask-first list) that points at this index.
-- `.agents/orchestrate.md` — the multi-agent orchestration process: worktree
-  isolation, the maker-checker QA gate, dispatch order, issue/label conventions.
+- `AGENTS.md` — this repo's process facts: the gate, the pre-commit hook,
+  required CI checks and merge rules, layout, ask-first list.
 - `CONTRIBUTING.md` — contribution workflow.
