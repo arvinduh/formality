@@ -9,7 +9,7 @@ use common::{
   temp_repo,
 };
 use fml::cli::Commands;
-use fml::config::{FormalityConfig, SCHEMA_VERSION};
+use fml::config::FormalityConfig;
 use fml::errors::ExitStatus;
 use fml::surfaces::{
   SurfaceRegistry, all_surfaces, default_registry, detect_surfaces_smart,
@@ -210,58 +210,20 @@ fn test_init_command() {
   assert!(config_file.is_file());
 
   let content = fs::read_to_string(&config_file).unwrap();
+  assert!(content.contains(
+    "#:schema https://github.com/arvinduh/formality/releases/latest/download/formality.schema.json"
+  ));
   assert!(content.contains("[global]"));
   // auto-detect mode: no hardcoded languages list
   assert!(!content.contains("languages ="));
   assert!(content.contains("indent_size = 2"));
 
-  // 2. Test --hidden creates .formality.toml with --force
+  // 2. Running init again without --force refuses to overwrite existing config
+  assert_eq!(run_cli(root, init_cmd(false, false)), 1);
+
+  // 3. Test --hidden creates .formality.toml with --force
   assert_eq!(run_cli(root, init_cmd(true, true)), 0);
   assert!(root.join(".formality.toml").is_file());
-}
-
-#[test]
-fn test_init_applies_schema_pin_when_config_exists_stale() {
-  let temp = temp_repo(&[(
-    "formality.toml",
-    "#:schema https://github.com/arvinduh/formality/releases/download/s0.9/formality.schema.json\n[global]\nindent_size = 4\n",
-  )]);
-  let root = temp.path();
-
-  // Run fml init without --force: updates schema pin in existing config
-  assert_eq!(run_cli(root, init_cmd(false, false)), 0);
-
-  let content = fs::read_to_string(root.join("formality.toml")).unwrap();
-  assert!(
-    content.contains(&format!("s{SCHEMA_VERSION}/formality.schema.json"))
-  );
-  assert!(content.contains("[global]\nindent_size = 4"));
-
-  // Idempotent: running a second time does not modify file and succeeds cleanly
-  assert_eq!(run_cli(root, init_cmd(false, false)), 0);
-  let content_second = fs::read_to_string(root.join("formality.toml")).unwrap();
-  assert_eq!(content, content_second);
-}
-
-#[test]
-fn test_init_inserts_schema_pin_when_config_missing_schema() {
-  let temp = temp_repo(&[("formality.toml", "[global]\nindent_size = 4\n")]);
-  let root = temp.path();
-
-  // Run fml init without --force: inserts schema pin at top of existing config
-  assert_eq!(run_cli(root, init_cmd(false, false)), 0);
-
-  let content = fs::read_to_string(root.join("formality.toml")).unwrap();
-  assert!(content.starts_with("#:schema "));
-  assert!(
-    content.contains(&format!("s{SCHEMA_VERSION}/formality.schema.json"))
-  );
-  assert!(content.contains("[global]\nindent_size = 4"));
-
-  // Idempotent: running a second time does not modify file and succeeds cleanly
-  assert_eq!(run_cli(root, init_cmd(false, false)), 0);
-  let content_second = fs::read_to_string(root.join("formality.toml")).unwrap();
-  assert_eq!(content, content_second);
 }
 
 #[test]
@@ -689,7 +651,8 @@ fn test_relative_root_preserves_ancestor_manifest_walks_and_display() {
     ),
     (
       "formality.toml",
-      "#:schema https://formality.dev/s1.1/formality.schema.json\n\
+      "#:schema https://github.com/arvinduh/formality/releases/latest/download/formality.schema.json\n\
+       [global]\n\
        languages = [\"rust\"]\n",
     ),
     (

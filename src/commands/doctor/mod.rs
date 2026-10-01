@@ -588,9 +588,6 @@ pub fn run_doctor(
   // .gitignore Cache Hygiene Check
   print_gitignore_hygiene(root, &surfaces, &frame, &palette);
 
-  // Configuration Schema Version Check
-  print_schema_version_check(root, &frame, &palette);
-
   // Auto-install mode. Genuinely `[MISS]`ing tools and `[STALE]` tools whose
   // selected installer carries a matching pin are reinstalled. If a stale tool's
   // selected installer cannot pin to `expected_binary_version`, reinstall is
@@ -1232,46 +1229,6 @@ fn print_gitignore_hygiene(
     "{}",
     frame.section(
       &"Gitignore Cache Hygiene:".yellow().bold().to_string(),
-      &frame.wrap_body(&body),
-      palette,
-    )
-  );
-}
-
-fn print_schema_version_check(root: &Path, frame: &Frame, palette: &Palette) {
-  let Some(config_path) = crate::config::find_project_config(root) else {
-    return;
-  };
-  let status = crate::config::schema::check_schema_version_file(&config_path);
-  let crate::config::schema::SchemaStatus::Stale { version, expected } = status
-  else {
-    return;
-  };
-  let filename = config_path
-    .file_name()
-    .and_then(|n| n.to_str())
-    .unwrap_or("formality.toml");
-
-  let mut body = String::new();
-  let _ = writeln!(
-    body,
-    "  • {} {} references outdated schema version 's{}' (current: 's{}')",
-    "[WARN] ".yellow().bold(),
-    filename.bold(),
-    version.to_string().yellow().bold(),
-    expected.to_string().green().bold()
-  );
-  let _ = write!(
-    body,
-    "    {} Update #:schema directive in {} to pin 's{}'.",
-    "Tip:".cyan().bold(),
-    filename.bold(),
-    expected.to_string().bold()
-  );
-  println!(
-    "{}",
-    frame.section(
-      &"Configuration Schema Version:".yellow().bold().to_string(),
       &frame.wrap_body(&body),
       palette,
     )

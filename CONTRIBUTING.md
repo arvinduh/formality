@@ -227,10 +227,9 @@ regardless.
    - **`Library Tests`**: Runs `cargo clippy --all-targets -- -D warnings` and
      the full unit/integration test suite (`cargo test --verbose`).
    - **`Formality Dogfooding`**: Runs `fml fmt --check` and `fml lint` against
-     this repository's live tree, verifies schema drift
+     this repository's live tree, and verifies schema drift
      (`cargo test --test schema_drift` vs. `schema/formality.schema.json`;
-     regenerate via `UPDATE_SCHEMA=1 cargo test -j 2 --test schema_drift`), and
-     enforces forward `SCHEMA_VERSION` progression in `src/config/schema.rs`.
+     regenerate via `UPDATE_SCHEMA=1 cargo test -j 2 --test schema_drift`).
    - **`Security Audit`**: Runs `cargo audit` against the Rust advisory
      database.
 

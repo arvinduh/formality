@@ -144,7 +144,7 @@ pub enum Commands {
     install: bool,
   },
 
-  /// Scaffold a new formality.toml or update the schema pin in an existing one
+  /// Scaffold a new formality.toml
   Init {
     /// Overwrite existing configuration file if it already exists
     #[arg(short = 'f', long)]

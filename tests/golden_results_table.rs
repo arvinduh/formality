@@ -70,8 +70,7 @@ use std::process::Command;
 
 use fml::ui::table::{Palette, Style};
 
-const SCHEMA_LINE: &str =
-  "#:schema https://formality.dev/s1.1/formality.schema.json\n";
+const SCHEMA_LINE: &str = "#:schema https://github.com/arvinduh/formality/releases/latest/download/formality.schema.json\n";
 
 /// The opening SGR escape `Palette::truecolor()` renders `style` with.
 ///

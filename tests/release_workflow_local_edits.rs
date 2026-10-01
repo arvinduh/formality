@@ -80,9 +80,9 @@ const EDITS: &[LocalEdit] = &[
     name: "tag glob constrained to a leading `v`",
     required: &["- 'v[0-9]+.[0-9]+.[0-9]+*'"],
     forbidden: &["- '**[0-9]+.[0-9]+.[0-9]+*'"],
-    consequence: "dist's default prefix-less glob also matches the `s*` schema tags owned \
-       by schema-release.yml, so publishing a schema release would kick off a \
-       full binary release.",
+    consequence: "dist's default prefix-less glob matches any tag ending in a version, \
+       so a non-`v` tag would kick off a binary release that \
+       release-extras.yml (`v*` only) never adds its assets to.",
     site: Site::PushTag("v[0-9]+.[0-9]+.[0-9]+*"),
   },
   LocalEdit {
