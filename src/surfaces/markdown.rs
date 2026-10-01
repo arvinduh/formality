@@ -265,6 +265,152 @@ fn markdownlint_fix_pass_failed(
   }
 }
 
+/// markdownlint config enabling only MD018/no-missing-space-atx, the rule
+/// [`escape_wrapped_hashes`] asks about.
+const MD018_ONLY_CONFIG: &str = "{\"default\": false, \"MD018\": true}\n";
+
+/// Whether any line outside a fenced code block starts with `#` followed by
+/// neither `#` nor whitespace, the only shape MD018 reports.
+///
+/// A cheap filter in front of [`escape_wrapped_hashes`]'s markdownlint spawn:
+/// a file with no such line cannot hold an MD018 finding, so the common case
+/// costs a read and no process. Fences are tracked by marker character and
+/// run length so a shebang or `#include` inside a code block does not count.
+fn has_unspaced_hash_line(content: &str) -> bool {
+  let mut fence: Option<(char, usize)> = None;
+  for line in content.lines() {
+    let trimmed = line.trim_start_matches(' ');
+    let marker = trimmed.chars().next().filter(|c| matches!(c, '`' | '~'));
+    if line.len() - trimmed.len() <= 3
+      && let Some(c) = marker
+    {
+      let run = trimmed.chars().take_while(|&x| x == c).count();
+      if run >= 3 {
+        match fence {
+          None => fence = Some((c, run)),
+          Some((open, len))
+            if open == c && run >= len && trimmed[run..].trim().is_empty() =>
+          {
+            fence = None;
+          }
+          Some(_) => {}
+        }
+        continue;
+      }
+    }
+    if fence.is_none()
+      && let Some(rest) = line.strip_prefix('#')
+      && rest
+        .chars()
+        .next()
+        .is_some_and(|c| c != '#' && !c.is_whitespace())
+    {
+      return true;
+    }
+  }
+  false
+}
+
+/// The 1-based line numbers of every MD018 finding in one file's
+/// markdownlint output.
+///
+/// Each finding's first token is `path:line` or `path:line:col` (both
+/// markdownlint-cli2 and the legacy markdownlint CLI); the line is read from
+/// the right so a drive-letter colon in `path` cannot shift it.
+fn md018_lines(output: &str) -> Vec<usize> {
+  output
+    .lines()
+    .filter(|l| l.contains("MD018/"))
+    .filter_map(|l| {
+      let token = l.split_whitespace().next()?;
+      let mut parts = token.rsplitn(3, ':');
+      let last = parts.next()?;
+      let prev = parts.next()?;
+      prev.parse().or_else(|_| last.parse()).ok()
+    })
+    .collect()
+}
+
+/// Prefixes the leading `#` of each listed 1-based line with a backslash.
+///
+/// `\#` renders exactly as the bare `#` of a line MD018 flags (neither is an
+/// ATX heading), and prettier preserves the escape wherever a later rewrap
+/// moves it, so the result is stable across runs. A listed line that does
+/// not start with `#` is left alone.
+fn escape_line_hashes(content: &str, lines: &[usize]) -> String {
+  let mut out = String::with_capacity(content.len() + lines.len());
+  for (idx, line) in content.split_inclusive('\n').enumerate() {
+    if line.starts_with('#') && lines.contains(&(idx + 1)) {
+      out.push('\\');
+    }
+    out.push_str(line);
+  }
+  out
+}
+
+/// Escapes every `#` that `prettier --write` wrapped to the start of a line
+/// in `file`, before markdownlint's MD018 fixer can see it (#314).
+///
+/// Prettier's prose wrap can break a line right before a token such as
+/// `#299)`. The result is no heading, but MD018 reports it, so `fml fix`
+/// called it an unfixable violation and the *next* `markdownlint --fix`
+/// inserted a space, turning prose into an H1 (#309). Running the fixer
+/// again after prettier would do that damage in one pass, so the format pass
+/// escapes the hash instead. markdownlint itself decides which lines qualify
+/// (only MD018 findings are escaped), so code blocks, HTML blocks and front
+/// matter are classified by the same parser that would have "fixed" them.
+///
+/// # Errors
+///
+/// Returns an error when `file` cannot be read or rewritten, the temporary
+/// config cannot be written, or markdownlint fails to run (any exit other
+/// than 0 or 1).
+///
+/// # Side Effects
+///
+/// Rewrites `file` in place when it holds an MD018 finding, and spawns
+/// `bin` only for a file that passes [`has_unspaced_hash_line`].
+fn escape_wrapped_hashes(
+  bin: &str,
+  file: &Path,
+  root: &Path,
+) -> std::io::Result<()> {
+  use std::io::Write;
+
+  let content = std::fs::read_to_string(file)?;
+  if !has_unspaced_hash_line(&content) {
+    return Ok(());
+  }
+
+  let mut cfg = tempfile::Builder::new()
+    .prefix(".markdownlint-")
+    .suffix(".json")
+    .tempfile()?;
+  cfg.write_all(MD018_ONLY_CONFIG.as_bytes())?;
+  cfg.flush()?;
+
+  let outcome = create_tool_command(bin)
+    .arg("--config")
+    .arg(cfg.path())
+    .arg(file)
+    .current_dir(root)
+    .output();
+  if markdownlint_fix_pass_failed(&outcome) {
+    return Err(outcome.err().unwrap_or_else(|| {
+      std::io::Error::other(format!("{bin} failed while checking MD018"))
+    }));
+  }
+  let output = outcome?;
+
+  let mut findings = String::from_utf8_lossy(&output.stdout).into_owned();
+  findings.push_str(&String::from_utf8_lossy(&output.stderr));
+  let lines = md018_lines(&findings);
+  if lines.is_empty() {
+    return Ok(());
+  }
+  std::fs::write(file, escape_line_hashes(&content, &lines))
+}
+
 /// markdownlint-cli2 line prefixes that carry only progress chatter, never a
 /// per-violation finding. It has no `--quiet` flag and `noBanner: true`
 /// suppresses only the first of these (verified against v0.23.2), so `fml`
@@ -499,7 +645,15 @@ impl LanguageSurface for MarkdownSurface {
             .arg(scratch);
           cmd.args(&ctx.lang_config.extra_args);
           cmd.current_dir(ctx.root.as_path());
-          cmd.output()
+          let output = cmd.output()?;
+          // #314: the same post-prettier step as the write branch below, so
+          // `--check` reports exactly the diff a real `fml fmt` writes.
+          if output.status.success()
+            && let Some(bin) = md_binary
+          {
+            escape_wrapped_hashes(bin, scratch, ctx.root.as_path())?;
+          }
+          Ok(output)
         },
         self.name(),
         start,
@@ -544,11 +698,32 @@ impl LanguageSurface for MarkdownSurface {
     // `--config`, unreadable file) — no "found drift" exit code, same as the
     // `--check` path above. Every non-zero exit here is therefore an
     // `ExecutionError`, not a lint-style `ViolationsFound` (Fixes #155).
-    run_tool_command_classified(
+    let res = run_tool_command_classified(
       self.name(),
       &mut cmd,
       classify_all_nonzero_as_error,
-    )
+    );
+    if !res.is_success() {
+      return res;
+    }
+
+    // #314: prettier's wrap can leave a `#` at a line start, which the next
+    // `markdownlint --fix` would turn into a heading. See
+    // `escape_wrapped_hashes`.
+    if let Some(bin) = md_binary
+      && let Err(e) = files
+        .iter()
+        .try_for_each(|f| escape_wrapped_hashes(bin, f, ctx.root.as_path()))
+    {
+      return SurfaceResult {
+        surface_name: self.name(),
+        status: SurfaceStatus::ExecutionError {
+          message: format!("Failed to escape prettier-wrapped `#`: {e}"),
+        },
+        duration: start.elapsed(),
+      };
+    }
+    res
   }
 
   fn lint(&self, ctx: &ExecutionContext, fix: bool) -> SurfaceResult {
@@ -1023,6 +1198,117 @@ README.md:7 error MD025/single-title/single-h1 Multiple top-level headings";
     assert!(
       !message.contains(&*temp.path().to_string_lossy()),
       "no absolute input path may appear, got: {message}"
+    );
+  }
+
+  #[test]
+  fn test_has_unspaced_hash_line_ignores_headings_and_fenced_code() {
+    assert!(has_unspaced_hash_line("text\n#299) ok.\n"));
+    assert!(!has_unspaced_hash_line("# T\n\n## Sub\n\n#\n"));
+    assert!(!has_unspaced_hash_line("```sh\n#!/bin/sh\n```\n"));
+    // A shorter or different marker does not close the outer fence.
+    assert!(!has_unspaced_hash_line("````\n```\n#x\n~~~\n#y\n````\n"));
+    assert!(has_unspaced_hash_line("```\ncode\n```\n#after\n"));
+  }
+
+  #[test]
+  fn test_md018_lines_reads_line_from_both_cli_formats() {
+    let out = "Summary: 2 issues in 1 file\n\
+      a.md:4:1 error MD018/no-missing-space-atx No space [Context: \"#1\"]\n\
+      a.md:6 error MD025/single-title Multiple top-level headings\n\
+      C:\\x\\a.md:9 MD018/no-missing-space-atx No space\n";
+    assert_eq!(md018_lines(out), vec![4, 9]);
+  }
+
+  #[test]
+  fn test_escape_line_hashes_touches_only_listed_hash_lines() {
+    let src = "a\n#1 b\n#2 c\nd\n";
+    assert_eq!(escape_line_hashes(src, &[2, 4]), "a\n\\#1 b\n#2 c\nd\n");
+  }
+
+  /// Prose whose `prose_wrap = "always"` reflow at 80 columns puts `#299)`
+  /// at the start of a line: the exact shape #309 reported and #314 traced.
+  const WRAPS_HASH_TO_LINE_START: &str = "# T\n\nThis line is long enough \
+    that the next token wraps onto the next line here, see #299) ok.\n";
+
+  /// Runs the markdown half of `fml fix`: the fixing lint pass, then the
+  /// format pass.
+  fn fix_once(ctx: &ExecutionContext) {
+    let _ = MarkdownSurface.lint(ctx, true);
+    let res = MarkdownSurface.format(ctx);
+    assert!(res.is_success(), "format failed: {:?}", res.status);
+  }
+
+  #[test]
+  fn test_format_escapes_hash_that_prettier_wraps_to_line_start() {
+    // #314: prettier wrapped `#299)` to a line start, where MD018 reported
+    // it as unfixable and the next `markdownlint --fix` made it an H1.
+    if !check_binary_exists("markdownlint-cli2")
+      || !check_binary_exists("prettier")
+    {
+      return;
+    }
+
+    let temp = TempDir::new().unwrap();
+    let file = temp.path().join("doc.md");
+    std::fs::write(&file, WRAPS_HASH_TO_LINE_START).unwrap();
+    let ctx = test_ctx(temp.path(), ResolvedLangConfig::new("markdown"));
+
+    fix_once(&ctx);
+    let first = std::fs::read_to_string(&file).unwrap();
+    assert!(
+      first.contains("\n\\#299) ok.\n"),
+      "the wrapped hash must be escaped, got: {first}"
+    );
+    let recheck = MarkdownSurface.lint(&ctx, false);
+    assert!(
+      recheck.is_success(),
+      "the post-format recheck must be clean, got: {:?}",
+      recheck.status
+    );
+
+    // Convergence: further fix runs change nothing, so no heading appears.
+    for _ in 0..2 {
+      fix_once(&ctx);
+      assert_eq!(std::fs::read_to_string(&file).unwrap(), first);
+    }
+
+    let mut check_ctx = ctx;
+    check_ctx.check_only = true;
+    let check = MarkdownSurface.format(&check_ctx);
+    assert!(
+      check.is_success(),
+      "fmt --check drifted: {:?}",
+      check.status
+    );
+  }
+
+  #[test]
+  fn test_format_check_reports_the_escape_as_drift() {
+    // The `--check` branch must apply the same escape as the write branch,
+    // or `fml fmt --check` would report a diff `fml fmt` never writes.
+    if !check_binary_exists("markdownlint-cli2")
+      || !check_binary_exists("prettier")
+    {
+      return;
+    }
+
+    let temp = TempDir::new().unwrap();
+    std::fs::write(temp.path().join("doc.md"), WRAPS_HASH_TO_LINE_START)
+      .unwrap();
+    let mut ctx = test_ctx(temp.path(), ResolvedLangConfig::new("markdown"));
+    ctx.check_only = true;
+
+    let res = MarkdownSurface.format(&ctx);
+    let SurfaceStatus::ViolationsFound {
+      diff: Some(diff), ..
+    } = &res.status
+    else {
+      panic!("expected drift with a diff, got: {:?}", res.status);
+    };
+    assert!(
+      diff.contains("+\\#299) ok."),
+      "the drift must be the escape, got: {diff}"
     );
   }
 
