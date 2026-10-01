@@ -248,7 +248,7 @@ impl ToolInfo {
   /// Returns the first available installer in this tool's preference chain.
   #[must_use]
   pub fn selected_install_method(&self) -> Option<InstallMethod> {
-    tooling::selected_install_method_for(self.binary)
+    selected_install_method_for(self.binary)
   }
 
   /// The install hint to actually print: `install_hint` when this tool
@@ -262,7 +262,7 @@ impl ToolInfo {
     self
       .install_hint
       .map(str::to_string)
-      .unwrap_or_else(|| tooling::install_hint_for(self.binary))
+      .unwrap_or_else(|| install_hint_for(self.binary))
   }
 
   /// Returns the (program, args) for the first available installer in this
@@ -523,7 +523,7 @@ mod tests {
       SurfaceResult {
         surface_name: "test",
         status,
-        duration: std::time::Duration::from_millis(0),
+        duration: Duration::from_millis(0),
       }
     }
 

@@ -404,13 +404,13 @@ mod tests {
     assert_eq!(reg.len(), 0);
     assert_eq!(reg.all_surfaces().len(), 0);
 
-    reg.register_surface::<crate::surfaces::rust::RustSurface>();
+    reg.register_surface::<rust::RustSurface>();
     assert_eq!(reg.len(), 1);
     assert!(!reg.is_empty());
     assert!(reg.get_surface_by_name("rs").is_some());
     assert!(reg.get_surface_by_name("python").is_none());
 
-    reg.register(Box::new(crate::surfaces::python::PythonSurface));
+    reg.register(Box::new(python::PythonSurface));
     assert_eq!(reg.len(), 2);
     assert!(reg.get_surface_by_name("py").is_some());
 
@@ -449,8 +449,7 @@ mod tests {
       ignore_languages = ["go"]
     "#;
     let config =
-      FormalityConfig::parse_str(toml, std::path::Path::new("test.toml"))
-        .unwrap();
+      FormalityConfig::parse_str(toml, Path::new("test.toml")).unwrap();
 
     let reg = SurfaceRegistry::default();
     let selected = reg.detect_surfaces_smart(root, &config);
@@ -481,8 +480,7 @@ mod tests {
       enabled = false
     "#;
     let config =
-      FormalityConfig::parse_str(toml, std::path::Path::new("test.toml"))
-        .unwrap();
+      FormalityConfig::parse_str(toml, Path::new("test.toml")).unwrap();
 
     let reg = SurfaceRegistry::default();
     let selected = reg.detect_surfaces_smart(root, &config);
@@ -510,8 +508,7 @@ mod tests {
       enabled = false
     "#;
     let config =
-      FormalityConfig::parse_str(toml, std::path::Path::new("test.toml"))
-        .unwrap();
+      FormalityConfig::parse_str(toml, Path::new("test.toml")).unwrap();
 
     let reg = SurfaceRegistry::default();
     let selected = reg.detect_surfaces_smart(root, &config);

@@ -594,9 +594,7 @@ mod tests {
       "--edition flag must be passed to rustfmt"
     );
     assert_eq!(
-      args
-        .get(edition_idx.unwrap() + 1)
-        .map(std::string::String::as_str),
+      args.get(edition_idx.unwrap() + 1).map(String::as_str),
       Some("2024"),
       "edition value must be 2024"
     );
@@ -606,9 +604,7 @@ mod tests {
       "--config flag must be passed to rustfmt"
     );
     assert_eq!(
-      args
-        .get(config_idx.unwrap() + 1)
-        .map(std::string::String::as_str),
+      args.get(config_idx.unwrap() + 1).map(String::as_str),
       Some("max_width=80")
     );
     assert!(!args.contains(&"--check".to_string()));
@@ -630,7 +626,7 @@ mod tests {
     assert_eq!(
       check_args
         .get(check_edition_idx.unwrap() + 1)
-        .map(std::string::String::as_str),
+        .map(String::as_str),
       Some("2021")
     );
     assert!(check_args.contains(&"--check".to_string()));

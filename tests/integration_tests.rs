@@ -1,3 +1,7 @@
+//! End-to-end coverage for the CLI's subcommands (`init`, `sync`, `fmt`,
+//! `lint`, `doctor`, `schema`) and the surface registry, run against
+//! synthetic repositories and the fixtures under `tests/fixtures`.
+
 mod common;
 
 use common::{
@@ -488,7 +492,7 @@ fn test_schema_command() {
     0
   );
   assert!(
-    std::fs::read_to_string(temp.path())
+    fs::read_to_string(temp.path())
       .unwrap()
       .contains("FormalityConfig")
   );

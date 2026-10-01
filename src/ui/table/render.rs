@@ -587,7 +587,7 @@ pub fn render(spec: &Table, palette: &Palette) -> String {
       let t = s.trim();
       !t.is_empty() && !t.chars().all(|c| c == '\u{2500}' || c == ' ')
     })
-    .map(|s| unicode_width::UnicodeWidthStr::width(s.as_str()))
+    .map(|s| UnicodeWidthStr::width(s.as_str()))
     .max()
     .unwrap_or(0);
   let table_width = content_width.min(render_width);
@@ -747,7 +747,7 @@ pub fn max_line_display_width(s: &str) -> usize {
   s.lines()
     .map(|line| {
       let stripped = strip_ansi_escapes(line);
-      unicode_width::UnicodeWidthStr::width(stripped.as_str())
+      UnicodeWidthStr::width(stripped.as_str())
     })
     .max()
     .unwrap_or(0)

@@ -33,6 +33,13 @@ cargo run -q -- fmt
 - The root carries only `formality.toml`, no generated native configs
   (`.rustfmt.toml`, `.prettierrc`, ...), so `fml sync --check` is not run here.
 
+## Compatibility
+
+Until fml's first official release nothing keeps backwards compatibility, CLI
+flags and the `formality.toml` schema included: no shims, deprecated aliases,
+tailored "removed in vX" errors, migration paths or compatibility URLs. Removing
+something removes it outright.
+
 ## Pre-commit hook
 
 Activate with `git config core.hooksPath .githooks`. `.githooks/pre-commit`

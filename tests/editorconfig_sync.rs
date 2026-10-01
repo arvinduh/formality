@@ -1,3 +1,6 @@
+//! End-to-end coverage for `.editorconfig` generation by `fml sync`: global
+//! facets, per-language overrides, and protection of hand-written files.
+
 mod common;
 
 use common::{run_cli, sync_cmd, temp_repo};
