@@ -295,12 +295,12 @@ fn test_distro_revision_vs_genuine_prerelease() {
     let status = evaluate_tool_status(parsed, None, Some(&base), None);
     if *is_prerelease {
       assert!(
-        status.is_outdated(),
+        matches!(status, ToolStatus::Outdated { .. }),
         "{input:?} (genuine prerelease) must be Outdated vs MSTV {base}, got {status:?}"
       );
     } else {
       assert!(
-        status.is_compatible(),
+        matches!(status, ToolStatus::Compatible { .. }),
         "{input:?} (distro revision or plain release) must be Compatible vs MSTV {base}, got {status:?}"
       );
     }
@@ -416,7 +416,7 @@ fn test_mstv_fleet_declarations() {
   );
   assert_eq!(minimum_supported_tool_version("unknown-tool"), None);
 
-  assert!(all_mstv_entries().len() >= 16);
+  assert!(TOOL_MSTV_REGISTRY.len() >= 16);
 }
 
 #[test]
@@ -426,11 +426,7 @@ fn test_evaluate_tool_status_basic_evaluation() {
   let v_ok = Version::new(1, 7, 0);
   let status_ok =
     evaluate_tool_status(Some(v_ok.clone()), None, Some(&min), None);
-  assert!(status_ok.is_compatible());
-  assert!(!status_ok.is_outdated());
-  assert!(!status_ok.is_not_found());
-  assert!(!status_ok.is_unknown_version());
-  assert!(!status_ok.is_stale());
+  assert!(matches!(status_ok, ToolStatus::Compatible { .. }));
   assert_eq!(
     status_ok,
     ToolStatus::Compatible {
@@ -446,11 +442,7 @@ fn test_evaluate_tool_status_basic_evaluation() {
   let v_old = Version::new(1, 3, 9);
   let status_old =
     evaluate_tool_status(Some(v_old.clone()), None, Some(&min), None);
-  assert!(!status_old.is_compatible());
-  assert!(status_old.is_outdated());
-  assert!(!status_old.is_not_found());
-  assert!(!status_old.is_unknown_version());
-  assert!(!status_old.is_stale());
+  assert!(matches!(status_old, ToolStatus::Outdated { .. }));
   assert_eq!(
     status_old,
     ToolStatus::Outdated {
@@ -464,11 +456,7 @@ fn test_evaluate_tool_status_basic_evaluation() {
   );
 
   let status_none = evaluate_tool_status(None, None, Some(&min), None);
-  assert!(status_none.is_not_found());
-  assert!(!status_none.is_compatible());
-  assert!(!status_none.is_outdated());
-  assert!(!status_none.is_unknown_version());
-  assert!(!status_none.is_stale());
+  assert!(matches!(status_none, ToolStatus::NotFound));
   assert_eq!(status_none.to_string(), "Not Found");
 
   let status_unknown = evaluate_tool_status(
@@ -477,11 +465,7 @@ fn test_evaluate_tool_status_basic_evaluation() {
     Some(&min),
     None,
   );
-  assert!(status_unknown.is_unknown_version());
-  assert!(!status_unknown.is_compatible());
-  assert!(!status_unknown.is_outdated());
-  assert!(!status_unknown.is_not_found());
-  assert!(!status_unknown.is_stale());
+  assert!(matches!(status_unknown, ToolStatus::UnknownVersion(_)));
   assert_eq!(
     status_unknown.to_string(),
     "Unknown Version (custom build vX.Y)"
@@ -498,8 +482,7 @@ fn test_evaluate_tool_status_mstv_boundary_is_compatible() {
 
   let status =
     evaluate_tool_status(Some(exact.clone()), None, Some(&min), None);
-  assert!(status.is_compatible());
-  assert!(!status.is_outdated());
+  assert!(matches!(status, ToolStatus::Compatible { .. }));
   assert_eq!(
     status,
     ToolStatus::Compatible {
@@ -514,13 +497,13 @@ fn test_evaluate_tool_status_mstv_boundary_is_compatible() {
     Some(&min),
     None,
   );
-  assert!(status_raw.is_compatible());
+  assert!(matches!(status_raw, ToolStatus::Compatible { .. }));
 
   // One patch below the boundary must be Outdated.
   let just_below = Version::new(1, 3, 9);
   let status_below =
     evaluate_tool_status(Some(just_below), None, Some(&min), None);
-  assert!(status_below.is_outdated());
+  assert!(matches!(status_below, ToolStatus::Outdated { .. }));
 
   // A prerelease *at* the boundary triple stays below it (semver precedence
   // rule 9), matching the pre-semver verdict — the floor check is delegated
@@ -528,7 +511,7 @@ fn test_evaluate_tool_status_mstv_boundary_is_compatible() {
   let at_boundary_pre = Version::with_prerelease(1, 4, 0, "rc.1");
   let status_pre =
     evaluate_tool_status(Some(at_boundary_pre), None, Some(&min), None);
-  assert!(status_pre.is_outdated());
+  assert!(matches!(status_pre, ToolStatus::Outdated { .. }));
 }
 
 #[test]
@@ -544,8 +527,7 @@ fn test_salvaged_distro_build_still_gets_a_real_mstv_verdict() {
   let min = Version::new(14, 0, 0);
   let status =
     evaluate_tool_status(current, Some(raw.to_string()), Some(&min), None);
-  assert!(status.is_compatible());
-  assert!(!status.is_unknown_version());
+  assert!(matches!(status, ToolStatus::Compatible { .. }));
 }
 
 #[test]
@@ -554,13 +536,13 @@ fn test_evaluate_tool_status_raw_and_none_paths() {
 
   // Neither a parsed version nor raw output at all: NotFound.
   let status_neither = evaluate_tool_status(None, None, Some(&min), None);
-  assert!(status_neither.is_not_found());
+  assert!(matches!(status_neither, ToolStatus::NotFound));
 
   // Raw output present but empty/whitespace-only: still NotFound, not
   // UnknownVersion — an empty banner carries no diagnostic value.
   let status_blank =
     evaluate_tool_status(None, Some("   ".to_string()), Some(&min), None);
-  assert!(status_blank.is_not_found());
+  assert!(matches!(status_blank, ToolStatus::NotFound));
 
   // A parsed current version takes precedence over raw output entirely,
   // even when both are present.
@@ -570,7 +552,7 @@ fn test_evaluate_tool_status_raw_and_none_paths() {
     Some(&min),
     None,
   );
-  assert!(status_both.is_compatible());
+  assert!(matches!(status_both, ToolStatus::Compatible { .. }));
 }
 
 #[test]
@@ -612,8 +594,7 @@ fn test_evaluate_tool_status_pin_match_is_compatible() {
     Some(&minimum),
     Some(&pinned),
   );
-  assert!(status.is_compatible());
-  assert!(!status.is_stale());
+  assert!(matches!(status, ToolStatus::Compatible { .. }));
   assert_eq!(
     status,
     ToolStatus::Compatible {
@@ -636,9 +617,7 @@ fn test_evaluate_tool_status_pin_mismatch_is_stale() {
     Some(&minimum),
     Some(&pinned),
   );
-  assert!(status.is_stale());
-  assert!(!status.is_compatible());
-  assert!(!status.is_outdated());
+  assert!(matches!(status, ToolStatus::Stale { .. }));
   assert_eq!(
     status,
     ToolStatus::Stale {
@@ -666,8 +645,7 @@ fn test_evaluate_tool_status_below_mstv_outdated_beats_pin_mismatch() {
     Some(&minimum),
     Some(&pinned),
   );
-  assert!(status.is_outdated());
-  assert!(!status.is_stale());
+  assert!(matches!(status, ToolStatus::Outdated { .. }));
 }
 
 #[test]
@@ -677,7 +655,7 @@ fn test_evaluate_tool_status_absent_tool_is_not_found_regardless_of_pin() {
   let minimum = Version::new(2, 0, 0);
   let pinned = Version::new(3, 9, 6);
   let status = evaluate_tool_status(None, None, Some(&minimum), Some(&pinned));
-  assert!(status.is_not_found());
+  assert!(matches!(status, ToolStatus::NotFound));
 }
 
 #[test]
@@ -694,8 +672,7 @@ fn test_evaluate_tool_status_no_pinned_version_configured_never_stale() {
     Some(&minimum),
     None,
   );
-  assert!(status.is_compatible());
-  assert!(!status.is_stale());
+  assert!(matches!(status, ToolStatus::Compatible { .. }));
 }
 
 #[test]
@@ -710,7 +687,7 @@ fn test_evaluate_tool_status_unparsed_version_fails_soft_to_unknown() {
     None,
     Some(&pinned),
   );
-  assert!(status.is_unknown_version());
+  assert!(matches!(status, ToolStatus::UnknownVersion(_)));
 
   // The regression this refactor must not introduce: even with an MSTV floor
   // present, an unparseable version is UnknownVersion -- never Compatible,
@@ -721,8 +698,7 @@ fn test_evaluate_tool_status_unparsed_version_fails_soft_to_unknown() {
     Some(&Version::new(1, 4, 0)),
     Some(&pinned),
   );
-  assert!(floored.is_unknown_version());
-  assert!(!floored.is_compatible() && !floored.is_outdated());
+  assert!(matches!(floored, ToolStatus::UnknownVersion(_)));
 }
 
 #[test]
@@ -731,11 +707,7 @@ fn test_tool_status_stale_display_and_predicate() {
     current: Version::new(3, 8, 1),
     pinned: Version::new(3, 9, 6),
   };
-  assert!(status.is_stale());
-  assert!(!status.is_compatible());
-  assert!(!status.is_outdated());
-  assert!(!status.is_not_found());
-  assert!(!status.is_unknown_version());
+  assert!(matches!(status, ToolStatus::Stale { .. }));
   assert_eq!(status.to_string(), "Stale (3.8.1 != pinned 3.9.6)");
 }
 
@@ -747,22 +719,21 @@ fn test_live_probe_rustfmt() {
     let mstv = minimum_supported_tool_version("rustfmt").unwrap();
     let raw = get_raw_tool_version("rustfmt");
     let status = evaluate_tool_status(ver, raw, Some(&mstv), None);
-    assert!(status.is_compatible(), "rustfmt should satisfy MSTV 1.4.0");
+    assert!(
+      matches!(status, ToolStatus::Compatible { .. }),
+      "rustfmt should satisfy MSTV 1.4.0"
+    );
   }
 }
 
 #[test]
 fn test_tool_status_unknown_version_display_and_predicates() {
   let status_raw = ToolStatus::UnknownVersion("nightly-2026".to_string());
-  assert!(status_raw.is_unknown_version());
-  assert!(!status_raw.is_compatible());
-  assert!(!status_raw.is_not_found());
+  assert!(matches!(status_raw, ToolStatus::UnknownVersion(_)));
   assert_eq!(status_raw.to_string(), "Unknown Version (nightly-2026)");
 
   let status_empty = ToolStatus::UnknownVersion(String::new());
-  assert!(status_empty.is_unknown_version());
-  assert!(!status_empty.is_compatible());
-  assert!(!status_empty.is_not_found());
+  assert!(matches!(status_empty, ToolStatus::UnknownVersion(_)));
   assert_eq!(status_empty.to_string(), "Unknown Version (probe failed)");
 }
 
@@ -1146,7 +1117,7 @@ fn test_registry_probe_strategies_match_what_each_tool_supports() {
     ])
   );
 
-  for entry in all_mstv_entries() {
+  for entry in TOOL_MSTV_REGISTRY {
     if matches!(
       entry.binary,
       "gofmt" | "goimports" | "golangci-lint" | "clippy"
@@ -1205,7 +1176,7 @@ fn test_every_declared_probe_is_structurally_well_formed() {
     }
   }
 
-  for entry in all_mstv_entries() {
+  for entry in TOOL_MSTV_REGISTRY {
     check(entry.binary, &entry.probe);
   }
   check("<default>", &DEFAULT_VERSION_PROBE);
@@ -1407,7 +1378,7 @@ fn probe_leaf_commands(
 /// that is not a declaration bug.
 #[test]
 fn test_no_installed_registry_tool_prints_a_version_the_probe_discards() {
-  for entry in all_mstv_entries() {
+  for entry in TOOL_MSTV_REGISTRY {
     let leaves = probe_leaf_commands(entry.binary, &entry.probe);
     if !leaves.iter().any(|(bin, _)| which::which(bin).is_ok()) {
       continue;

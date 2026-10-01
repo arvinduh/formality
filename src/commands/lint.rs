@@ -1,8 +1,6 @@
 //! `fml lint` command: lints the resolved target surfaces via [`Runner`].
 //!
-//! `lint` never writes. The deprecated `--fix` spelling is handled by
-//! [`crate::run_command_inner`], which dispatches it to [`super::fix`]
-//! rather than giving `lint` a writing form of its own.
+//! `lint` never writes; applying fixes is [`super::fix`]'s job.
 
 use std::path::{Path, PathBuf};
 

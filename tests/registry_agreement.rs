@@ -196,7 +196,7 @@ fn test_mstv_entries_correspond_to_a_checked_binary() {
     .collect();
 
   let mut orphans = Vec::new();
-  for entry in mstv::all_mstv_entries() {
+  for entry in mstv::TOOL_MSTV_REGISTRY {
     // Any exemption at all (not just an MstvOnly/Both one) skips this
     // check: EXEMPTIONS documents that binary as a known special case
     // already, and none of today's rows both carry an MSTV entry *and*

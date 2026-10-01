@@ -219,15 +219,6 @@ have a real lint auto-fix mode (`supports_lint_fix()`) versus which only
 reformat under `fml fix` because their linter is diagnostics-only (e.g. Java's
 `checkstyle`, YAML's `yamllint`, TOML's `taplo lint`).
 
-### Removed spellings
-
-`fml lint --fix`, `fml list-surfaces`, `fml surfaces`, `fml table`,
-`fml install`, and `fml migrate` were all removed outright in `v0.3.0` (tracked
-in #255 and #299) — each now fails with a message naming its replacement
-(`fml fix`, `fml doctor`, `fml doctor`, the `fml::ui::table` library API,
-`fml doctor --install`, and `fml init`, respectively) rather than a bare
-"unexpected argument".
-
 ---
 
 ## Configuration (`formality.toml` or `.formality.toml`)

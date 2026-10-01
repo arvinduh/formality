@@ -8,14 +8,6 @@ license = "MIT"
 readme = "README.md"
 repository = "https://github.com/arvinduh/formality"
 
-[lib]
-name = "fml"
-path = "src/lib.rs"
-
-[[bin]]
-name = "fml"
-path = "src/main.rs"
-
 [dependencies]
 clap = { version = "4.6.6", features = [
   "derive",
@@ -36,20 +28,17 @@ similar = { version = "3.1.2", features = ["text"] }
 tempfile = "3.27.0"
 toml = "1.1.4"
 tower-lsp = "0.20"
-tokio = { version = "1", features = [
-  "rt-multi-thread",
-  "io-std",
-  "sync",
-  "macros",
-] }
+tokio = { version = "1", features = ["rt-multi-thread", "io-std", "sync"] }
 unicode-width = "0.2"
 which = "8.0.5"
 serde_yaml = "0.9.34"
 semver = "1.0.28"
 
+[dev-dependencies]
+tokio = { version = "1", features = ["macros"] }
+
 [lints.rust]
 missing_docs = "warn"
-unexpected_cfgs = { level = "warn", check-cfg = ['cfg(test)'] }
 unsafe_op_in_unsafe_fn = "deny"
 unused_qualifications = "warn"
 

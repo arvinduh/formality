@@ -39,13 +39,6 @@ pub fn run() -> ExitStatus {
 }
 
 /// Executes the CLI command specified by the provided [`Cli`] arguments.
-///
-/// Validates `args` first, so this entry point is safe for callers that
-/// build a [`Cli`] value directly instead of going through
-/// [`Cli::parse_checked`]. Without it, an external caller could construct a
-/// removed variant (`Install`, `ListSurfaces`, `Table`) and reach a dispatch
-/// arm that is `unreachable!()` precisely because validation rejects those
-/// spellings first — a library panic instead of an exit status.
 #[must_use]
 pub fn run_with_args(args: Cli) -> ExitStatus {
   // NO_COLOR wins over every force-color signal, matching the precedence
@@ -60,14 +53,6 @@ pub fn run_with_args(args: Cli) -> ExitStatus {
     colored::control::set_override(false);
   } else if ui::color_forced() {
     colored::control::set_override(true);
-  }
-
-  // `run` reaches here via `Cli::parse_checked`, which already validated and
-  // exited on failure; this re-check costs nothing there and is the whole
-  // guarantee for a library caller that built `args` by hand.
-  if let Err(e) = args.validate() {
-    let _ = e.print();
-    return ExitStatus::Error;
   }
 
   let root = resolve_root(args.root.clone());
@@ -128,27 +113,8 @@ fn run_command_inner(
       commands::doctor::run_doctor(root, all, install, &config)
     }
 
-    // Removed in v0.3.0 (#255) — see the `ListSurfaces` arm below for why
-    // this arm still exists.
-    Commands::Install { .. } => {
-      unreachable!(
-        "`fml install` is rejected by `Cli::validate()` before dispatch"
-      )
-    }
-
     Commands::Init { force, hidden } => {
       commands::init::run_init(root, &config, force, hidden)
-    }
-
-    // Removed in v0.3.0 (#255): `Cli::validate()` rejects this variant by
-    // name, so nothing dispatches it. Both entry points validate — the CLI
-    // through `Cli::parse_checked`, a library caller through
-    // `run_with_args` — and `run_command_inner` is private with that one
-    // caller, so this arm exists only to keep the match exhaustive.
-    Commands::ListSurfaces => {
-      unreachable!(
-        "`fml list-surfaces`/`fml surfaces` is rejected by `Cli::validate()` before dispatch"
-      )
     }
 
     Commands::Fmt {
@@ -158,7 +124,6 @@ fn run_command_inner(
       lang,
       allow_missing,
       paths,
-      ..
     } => commands::fmt::run_fmt(
       root,
       &config,
@@ -177,7 +142,6 @@ fn run_command_inner(
       lang,
       allow_missing,
       paths,
-      ..
     } => commands::fix::run_fix(
       root,
       &config,
@@ -213,22 +177,6 @@ fn run_command_inner(
     Commands::Lsp => {
       commands::lsp::run_lsp_server(Some(root.to_path_buf()));
       ExitStatus::Clean
-    }
-
-    // Removed in v0.3.0 (#255) — see the `ListSurfaces` arm above for why
-    // this arm still exists.
-    Commands::Table { .. } => {
-      unreachable!(
-        "`fml table` is rejected by `Cli::validate()` before dispatch"
-      )
-    }
-
-    // Removed in v0.3.0 (#299) — see the `ListSurfaces` arm above for why
-    // this arm still exists.
-    Commands::Migrate { .. } => {
-      unreachable!(
-        "`fml migrate`/`fml migrate schema` is rejected by `Cli::validate()` before dispatch"
-      )
     }
   }
 }
@@ -847,33 +795,6 @@ mod tests {
       let resolved = resolve_root(Some(PathBuf::from(relative)));
       assert!(resolved.is_absolute(), "`{relative}` stayed relative");
       assert_eq!(resolved, expected);
-    }
-  }
-
-  #[test]
-  fn test_run_with_args_rejects_removed_variants_instead_of_panicking() {
-    // `run_with_args` is `pub`, so an external library consumer can build a
-    // removed variant directly, bypassing `Cli::parse_checked`. Each such
-    // variant's dispatch arm is `unreachable!()`; validating on entry is
-    // what keeps that from being a panic in a library (#255, #299).
-    for command in [
-      Commands::Install { all: false },
-      Commands::ListSurfaces,
-      Commands::Table { json: None },
-      Commands::Migrate {
-        command: cli::MigrateCommands::Schema,
-      },
-    ] {
-      let args = Cli {
-        config: None,
-        root: None,
-        command,
-      };
-      assert_eq!(
-        run_with_args(args),
-        ExitStatus::Error,
-        "a removed spelling should exit with an error, never panic"
-      );
     }
   }
 }
