@@ -407,19 +407,17 @@ fn write_shim(dir: &Path, binary: &str, code: i32) {
     .unwrap();
 }
 
-/// The three statuses that need a real tool invocation, plus `Passed`'s
-/// format-plan spelling, from one `fml fmt` run over a `PATH` containing
-/// nothing but shims this test wrote.
+/// A tree whose `fml fmt` run yields one row each of `ToolMissing`,
+/// `ExecutionError`, `ViolationsFound` and `Passed`, plus the shim directory
+/// that is the run's whole `PATH`. Returns both temp dirs so neither is
+/// dropped early.
 ///
 /// Hermetic by construction: the run cannot see a real `rustfmt`,
 /// `clang-format`, `typstyle` or `taplo`, so these statuses do not depend on
 /// what the machine happens to have installed.
-///
-/// Unix-only: the shims are `#!/bin/sh` scripts. The `NO_COLOR` process
-/// tests remain cross-platform; this is the colour-asserting addition.
 #[cfg(unix)]
-#[test]
-fn golden_fmt_renders_missing_error_and_violation_rows_with_styles() {
+fn missing_error_violation_repo()
+-> (tempfile::TempDir, tempfile::TempDir, PathBuf) {
   let shims = tempfile::tempdir().expect("tempdir");
   // `clang-format` cannot do its job -> `ExecutionError` (#151); `typstyle`
   // exits non-zero through the unclassified `run_tool_command` path ->
@@ -437,7 +435,19 @@ fn golden_fmt_renders_missing_error_and_violation_rows_with_styles() {
   std::fs::write(dir.path().join("doc.typ"), "#let x = 1\n").unwrap();
   std::fs::write(dir.path().join("thing.toml"), "a = 1\n").unwrap();
   let root = temp_root(&dir);
+  (dir, shims, root)
+}
 
+/// The three statuses that need a real tool invocation, plus `Passed`'s
+/// format-plan spelling, from one `fml fmt` run over a `PATH` containing
+/// nothing but shims this test wrote.
+///
+/// Unix-only: the shims are `#!/bin/sh` scripts. The `NO_COLOR` process
+/// tests remain cross-platform; this is the colour-asserting addition.
+#[cfg(unix)]
+#[test]
+fn golden_fmt_renders_missing_error_and_violation_rows_with_styles() {
+  let (_dir, shims, root) = missing_error_violation_repo();
   let stdout = run_fml(&root, &["fmt"], Some(shims.path()));
   let rows = rendered_rows(&stdout);
 
@@ -478,6 +488,28 @@ fn golden_fmt_renders_missing_error_and_violation_rows_with_styles() {
     Style::Strong,
     Style::Dim,
   );
+}
+
+/// The run summary keeps a missing tool and an execution error in counters
+/// of their own, apart from the failures (#438), and `--allow-missing` marks
+/// the missing tool as allowed without dropping it from the count.
+///
+/// Folding either one into `failed` would read `2 failed` with that status's
+/// own part gone, and no row assertion above would notice.
+#[cfg(unix)]
+#[test]
+fn golden_fmt_summary_counts_missing_tools_and_errors_apart_from_failures() {
+  let (_dir, shims, root) = missing_error_violation_repo();
+  for (args, expected) in [
+    (&["fmt"][..], "1 passed, 1 failed, 1 missing tool, 1 error"),
+    (
+      &["fmt", "--allow-missing"][..],
+      "1 passed, 1 failed, 1 missing tool (allowed), 1 error",
+    ),
+  ] {
+    let stdout = run_fml(&root, args, Some(shims.path()));
+    assert_eq!(summary_line(&stdout), expected, "fml {args:?}");
+  }
 }
 
 /// Writes an executable shim that prints `stdout` and exits with `code`.
