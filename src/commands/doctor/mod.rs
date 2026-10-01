@@ -183,7 +183,7 @@ fn install_missing_tools_framed(
           // the binary isn't resolvable: there is nothing to probe, and an
           // unpinned tool must not pay for a probe it never needed.
           let expected = if on_path {
-            crate::surfaces::pinned_version_for(tool.binary)
+            pinned_version_for(tool.binary)
           } else {
             None
           };
@@ -697,14 +697,14 @@ pub fn run_doctor(
     Vec::new();
 
   for tool in &scan.stale {
-    let expected = crate::surfaces::pinned_version_for(tool.binary);
+    let expected = pinned_version_for(tool.binary);
     let selected_pin =
       crate::surfaces::selected_pinned_version_for(tool.binary);
     if let Some(ref exp) = expected {
       if selected_pin.as_ref() == Some(exp) {
         to_install.push(tool.clone());
       } else {
-        let current = crate::engine::version::probe_tool_version(tool.binary)
+        let current = probe_tool_version(tool.binary)
           .unwrap_or_else(|| Version::new(0, 0, 0));
         unpinnable_stale_tools.push((tool.clone(), current, exp.clone()));
       }

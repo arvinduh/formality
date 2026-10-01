@@ -66,9 +66,7 @@ pub fn dispatch_plan(
   let for_fmt = plan.includes(Pass::Format);
   let for_lint = plan.includes(Pass::Lint);
 
-  crate::commands::doctor::preflight_warn_stale_tools(
-    &surfaces, config, for_fmt, for_lint,
-  );
+  doctor::preflight_warn_stale_tools(&surfaces, config, for_fmt, for_lint);
 
   Runner::run(surfaces, root, &target_paths, plan, config)
 }

@@ -659,7 +659,7 @@ mod tests {
     // would otherwise go unguarded. Reuses the same `ignore::WalkBuilder`
     // walk `test_no_stray_test_files_outside_sanctioned_pattern` (src/lib.rs)
     // already establishes for this kind of whole-tree source-textual check.
-    let manifest_dir = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+    let manifest_dir = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
     let src_dir = manifest_dir.join("src");
     for entry in ignore::WalkBuilder::new(&src_dir)
       .standard_filters(false)

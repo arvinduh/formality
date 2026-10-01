@@ -317,8 +317,8 @@ impl LangConfig {
       self.markdown.clone(),
       self.options.as_ref(),
       &self.extra,
-      options::MarkdownOptions::merge,
-      options::MarkdownOptions::is_empty,
+      MarkdownOptions::merge,
+      MarkdownOptions::is_empty,
     );
     if opts.is_none() {
       if let Some(ref pw) = self.prose_wrap {

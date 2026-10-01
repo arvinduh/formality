@@ -125,7 +125,7 @@ impl InstallMethod {
   #[must_use]
   pub fn command(&self) -> (String, Vec<String>) {
     fn strs(v: &[&str]) -> Vec<String> {
-      v.iter().map(std::string::ToString::to_string).collect()
+      v.iter().map(ToString::to_string).collect()
     }
     match self {
       InstallMethod::CargoBinstall(pkg) => {
