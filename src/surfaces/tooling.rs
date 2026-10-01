@@ -1530,9 +1530,9 @@ impl KnownInstallDir {
   fn for_method(method: &InstallMethod) -> Option<Self> {
     match method {
       InstallMethod::GoInstall(_) => Some(Self::Go),
-      InstallMethod::Pipx(_) => Some(Self::Pipx),
-      InstallMethod::Uv(_) => Some(Self::UvTool),
-      InstallMethod::Pip(_) | InstallMethod::Pip3(_) => Some(Self::PythonUser),
+      InstallMethod::Pipx(_) => None,
+      InstallMethod::Uv(_) => None,
+      InstallMethod::Pip(_) | InstallMethod::Pip3(_) => None,
       InstallMethod::CargoBinstall(_)
       | InstallMethod::Npm(_)
       | InstallMethod::Pnpm(_)
