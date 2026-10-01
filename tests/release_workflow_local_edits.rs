@@ -50,6 +50,23 @@ struct LocalEdit {
   /// What silently breaks if this edit is lost — quoted verbatim in the
   /// failure message so the reader does not have to go dig for the stakes.
   consequence: &'static str,
+  /// Where in the parsed workflow the edit must sit to take effect; a
+  /// needle found anywhere else does not count.
+  site: Site,
+}
+
+/// The place in the workflow's YAML structure that an edit only works in.
+enum Site {
+  /// The top-level `on.push.tags` trigger lists exactly this glob.
+  PushTag(&'static str),
+  /// A single step of `job` holds every `required` needle, and runs after
+  /// the step whose `id` or `name` is `after` and before the one that is
+  /// `before`.
+  Step {
+    job: &'static str,
+    after: Option<&'static str>,
+    before: Option<&'static str>,
+  },
 }
 
 const EDITS: &[LocalEdit] = &[
@@ -60,6 +77,7 @@ const EDITS: &[LocalEdit] = &[
     consequence: "dist's default prefix-less glob also matches the `s*` schema tags owned \
        by schema-release.yml, so publishing a schema release would kick off a \
        full binary release.",
+    site: Site::PushTag("v[0-9]+.[0-9]+.[0-9]+*"),
   },
   LocalEdit {
     name: "`fetch-depth: 0` on the host job's checkout",
@@ -67,6 +85,11 @@ const EDITS: &[LocalEdit] = &[
     forbidden: &[],
     consequence: "the shallow default checkout has no tag history, so the release step \
        cannot resolve the previous `v*` tag for --notes-start-tag.",
+    site: Site::Step {
+      job: "host",
+      after: None,
+      before: Some("Create GitHub Release"),
+    },
   },
   LocalEdit {
     name: "`gh release create --generate-notes --notes-start-tag`",
@@ -75,6 +98,11 @@ const EDITS: &[LocalEdit] = &[
     consequence: "reverting to dist's --notes-file changelog body FAILS SILENTLY — this \
        repo has no committed CHANGELOG.md, so releases would publish with an \
        empty body and nothing would fail loudly.",
+    site: Site::Step {
+      job: "host",
+      after: Some("Download GitHub Artifacts"),
+      before: None,
+    },
   },
   LocalEdit {
     name: "ARM64 Windows x64-fallback note patched into fml-installer.ps1",
@@ -86,6 +114,11 @@ const EDITS: &[LocalEdit] = &[
     consequence: "dist's PowerShell installer silently installs the x64 build on \
        ARM64 Windows; without this note users get an emulated binary they \
        never chose and are never told about (issue #166).",
+    site: Site::Step {
+      job: "build-global-artifacts",
+      after: Some("cargo-dist"),
+      before: Some("Upload artifacts"),
+    },
   },
 ];
 
@@ -127,6 +160,94 @@ fn read_release_extras_workflow() -> String {
   );
   fs::read_to_string(&path)
     .expect("Failed to read .github/workflows/release-extras.yml")
+}
+
+/// Flattens a step into searchable text: every scalar leaf as both
+/// `key: value` and bare `value`, so a needle like `fetch-depth: 0` or a
+/// fragment of a `run:` script matches the parsed step, not raw lines.
+fn step_texts(value: &serde_yaml::Value, key: &str, out: &mut Vec<String>) {
+  let scalar = match value {
+    serde_yaml::Value::String(s) => Some(s.clone()),
+    serde_yaml::Value::Number(n) => Some(n.to_string()),
+    serde_yaml::Value::Bool(b) => Some(b.to_string()),
+    _ => None,
+  };
+  if let Some(scalar) = scalar {
+    out.push(format!("{key}: {scalar}"));
+    out.push(scalar);
+  } else if let Some(map) = value.as_mapping() {
+    for (k, v) in map {
+      step_texts(v, k.as_str().unwrap_or_default(), out);
+    }
+  } else if let Some(seq) = value.as_sequence() {
+    for v in seq {
+      step_texts(v, key, out);
+    }
+  }
+}
+
+/// Finds the index of the step whose `id` or `name` is `label`.
+fn step_index(steps: &[serde_yaml::Value], label: &str) -> Option<usize> {
+  steps.iter().position(|step| {
+    ["id", "name"]
+      .iter()
+      .any(|field| step.get(field).and_then(|v| v.as_str()) == Some(label))
+  })
+}
+
+/// Explains how `edit` misses its `site`, or returns `None` when it sits
+/// there. `push_tags` is the workflow's parsed `on.push.tags` list.
+fn misplacement(
+  workflow: &serde_yaml::Value,
+  push_tags: &[String],
+  edit: &LocalEdit,
+) -> Option<String> {
+  let (job, after, before) = match edit.site {
+    Site::PushTag(glob) => {
+      return (!push_tags.iter().any(|tag| tag == glob)).then(|| {
+        format!("`on.push.tags` does not list `{glob}` (found {push_tags:?})")
+      });
+    }
+    Site::Step { job, after, before } => (job, after, before),
+  };
+  let Some(steps) = workflow
+    .get("jobs")
+    .and_then(|jobs| jobs.get(job))
+    .and_then(|j| j.get("steps"))
+    .and_then(|s| s.as_sequence())
+  else {
+    return Some(format!("job `{job}` has no `steps`"));
+  };
+  let Some(at) = steps.iter().position(|step| {
+    let mut texts = Vec::new();
+    step_texts(step, "", &mut texts);
+    edit
+      .required
+      .iter()
+      .all(|needle| texts.iter().any(|t| t.contains(needle)))
+  }) else {
+    return Some(format!(
+      "no single step of job `{job}` holds all of {:?}",
+      edit.required
+    ));
+  };
+  for (label, side) in [(after, "after"), (before, "before")] {
+    let Some(label) = label else { continue };
+    let Some(other) = step_index(steps, label) else {
+      return Some(format!("job `{job}` has no step `{label}`"));
+    };
+    let in_order = if side == "after" {
+      at > other
+    } else {
+      at < other
+    };
+    if !in_order {
+      return Some(format!(
+        "its step in job `{job}` is not {side} step `{label}`"
+      ));
+    }
+  }
+  None
 }
 
 /// Extracts the list of tag filter globs under `on.push.tags` from a workflow YAML string.
@@ -200,6 +321,40 @@ fn test_release_yml_local_edits_survive() {
      (see the issue each marker names), and see docs/release.md for the release procedure.\n\
      If a cargo-dist upgrade genuinely made an edit unnecessary, delete its entry from EDITS in \
      tests/release_workflow_local_edits.rs in the same commit that drops the edit.\n",
+    failures.len(),
+    failures.join("\n\n  "),
+    MARKER
+  );
+}
+
+/// Asserts each local edit sits in the job, and the step order, it only
+/// works in: a re-application after `dist generate` that lands an edit on
+/// the wrong job, or below the upload of the file it patches, keeps every
+/// substring present but ships dist's behaviour (issue #412).
+#[test]
+fn test_release_yml_local_edits_are_in_place() {
+  let raw = read_workflow();
+  let workflow: serde_yaml::Value = serde_yaml::from_str(&raw)
+    .expect("Failed to parse .github/workflows/release.yml as YAML");
+  let push_tags = extract_push_tags(&raw, ".github/workflows/release.yml");
+
+  let failures: Vec<String> = EDITS
+    .iter()
+    .filter_map(|edit| {
+      misplacement(&workflow, &push_tags, edit).map(|why| {
+        format!(
+          "MISPLACED: {}\n    {why}\n    why it matters: {}",
+          edit.name, edit.consequence
+        )
+      })
+    })
+    .collect();
+
+  assert!(
+    failures.is_empty(),
+    "\n\n.github/workflows/release.yml has {} local edit(s) present but out of \
+     place:\n\n  {}\n\nMove each back to the job and step order its `{}` \
+     comment describes.\n",
     failures.len(),
     failures.join("\n\n  "),
     MARKER
