@@ -208,6 +208,36 @@ fn every_status_by_precedence(tag: &str) -> Vec<SurfaceStatus> {
   ]
 }
 
+/// The position `status` holds in [`every_status_by_precedence`].
+///
+/// Exhaustive with no wildcard, so a new `SurfaceStatus` does not compile
+/// until it is given a position here; placing it shifts every later arm,
+/// which fails `test_every_status_by_precedence_lists_each_variant_in_order`
+/// until the fixture lists it at that position too. A variant placed last
+/// shifts nothing, and stable Rust cannot count an enum's variants, so that
+/// one case still needs its fixture entry added by hand.
+fn variant_index(status: &SurfaceStatus) -> usize {
+  match status {
+    SurfaceStatus::Skipped { .. } => 0,
+    SurfaceStatus::Passed => 1,
+    SurfaceStatus::ConfigSynced { .. } => 2,
+    SurfaceStatus::ToolMissing { .. } => 3,
+    SurfaceStatus::ManualConfig { .. } => 4,
+    SurfaceStatus::ConfigDrifted { .. } => 5,
+    SurfaceStatus::ViolationsFound { .. } => 6,
+    SurfaceStatus::ExecutionError { .. } => 7,
+  }
+}
+
+#[test]
+fn test_every_status_by_precedence_lists_each_variant_in_order() {
+  let indices: Vec<usize> = every_status_by_precedence("x")
+    .iter()
+    .map(variant_index)
+    .collect();
+  assert_eq!(indices, (0..indices.len()).collect::<Vec<_>>());
+}
+
 fn combine_statuses(
   first: SurfaceStatus,
   second: SurfaceStatus,
