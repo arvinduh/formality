@@ -74,9 +74,10 @@ committed `CHANGELOG.md`.
    dist plan
    ```
 
-   Confirm all five target archives (`fml-<target>.tar.gz` / `.zip`), the three
-   installers (`fml-installer.sh`, `fml-installer.ps1`,
-   `fml-x86_64-pc-windows-msvc.msi`), and the checksum files are listed.
+   Confirm the three target archives (`fml-<target>.tar.xz` / `.zip` for
+   `x86_64-unknown-linux-gnu`, `aarch64-apple-darwin` and
+   `x86_64-pc-windows-msvc`), the two installers (`fml-installer.sh`,
+   `fml-installer.ps1`), and the checksum files are listed.
 
 4. **Tag the release.**
 
@@ -88,11 +89,10 @@ committed `CHANGELOG.md`.
    Pushing the tag triggers two workflows in parallel:
 
    `.github/workflows/release.yml` (cargo-dist), which:
-   - Builds the `fml` binary for Linux (x86_64, aarch64), macOS (x86_64,
-     aarch64), and Windows (x86_64), packaging each as `fml-<target>.tar.gz`
-     (`.zip` on Windows) with a `.sha256` sidecar.
-   - Builds the `shell` / `powershell` / `msi` installers and a combined
-     `sha256.sum`.
+   - Builds the `fml` binary for Linux (x86_64), macOS (aarch64), and Windows
+     (x86_64), packaging each as `fml-<target>.tar.xz` (`.zip` on Windows) with
+     a `.sha256` sidecar.
+   - Builds the `shell` / `powershell` installers and a combined `sha256.sum`.
    - Creates the GitHub Release for the tag with
      `gh release create --generate-notes` (GitHub groups the merged PRs into the
      body, starting from the previous `v*` tag so an `s*` schema release
@@ -109,9 +109,9 @@ committed `CHANGELOG.md`.
 5. **Verify the published release.**
 
    Check the [Releases page](https://github.com/arvinduh/formality/releases) for
-   the new tag: confirm all five platform archives, the three installers, the
-   `.msi`, the checksum files, the `.vsix`, and `schema/formality.schema.json`
-   are attached, and that the release notes look correct.
+   the new tag: confirm all three platform archives, the two installers, the
+   checksum files, the `.vsix`, and `schema/formality.schema.json` are attached,
+   and that the release notes look correct.
 
 6. **Announce / update references.**
 
@@ -217,44 +217,44 @@ no such file exists today, so the notes use GitHub's default grouping.
 ## Regenerating `release.yml` and local edits
 
 The release workflow (`.github/workflows/release.yml`) is generated from
-`[workspace.metadata.dist]` in `Cargo.toml` via
-`dist generate --mode=ci --allow-dirty`. However, it carries three hand-applied
-local edits marked with `# LOCAL EDIT (issue #134)` comments:
+`[workspace.metadata.dist]` in `Cargo.toml` by `dist generate --mode=ci`. It
+carries four hand-applied local edits, each marked with a
+`# LOCAL EDIT (issue #N)` comment that explains it:
 
-1. **Tag glob constrained to a leading `v`** (`- 'v[0-9]+.[0-9]+.[0-9]+*'`) so
-   independent schema releases (`s*` tags handled by `schema-release.yml`)
-   cannot trigger binary release builds.
-2. **`fetch-depth: 0` on the `host` job checkout** to ensure full tag history is
-   available for `--notes-start-tag`.
-3. **`gh release create --generate-notes --notes-start-tag`** instead of dist's
-   default `--notes-file` changelog body. Because this repository has no
-   committed `CHANGELOG.md`, reverting to `--notes-file` would silently publish
-   releases with an empty body.
+1. **Tag glob constrained to a leading `v`** (`- 'v[0-9]+.[0-9]+.[0-9]+*'`,
+   issue #134) so independent schema releases (`s*` tags handled by
+   `schema-release.yml`) cannot trigger binary release builds.
+2. **`fetch-depth: 0` on the `host` job checkout** (issue #134) so the full tag
+   history is available for `--notes-start-tag`.
+3. **`gh release create --generate-notes --notes-start-tag`** (issue #134)
+   instead of dist's default `--notes-file` changelog body. Because this
+   repository has no committed `CHANGELOG.md`, reverting to `--notes-file` would
+   silently publish releases with an empty body.
+4. **ARM64 note in the PowerShell installer** (issue #166): a step in the
+   `build-global-artifacts` job, after `cargo-dist` and before
+   `Upload artifacts`, that patches a note into `fml-installer.ps1` saying ARM64
+   Windows gets the x64 build on purpose.
 
-### Reversion risk and drift detection
+### `allow-dirty` makes regeneration a no-op
 
-`Cargo.toml` specifies `allow-dirty = ["ci"]` so cargo-dist tolerates local
-modifications to the generated workflow. Because of this setting,
-`dist generate --mode=ci --check` refuses to run rather than reporting drift.
-Consequently, re-running `dist generate --mode=ci --allow-dirty` after upgrading
-`cargo-dist-version` silently reverts all three edits to cargo-dist's default
-templates.
+`Cargo.toml` sets `allow-dirty = ["ci"]` so cargo-dist accepts the edited
+workflow. With that setting, `dist generate --mode=ci` (with or without
+`--allow-dirty`) leaves `release.yml` untouched and prints nothing, so a
+`cargo-dist-version` bump alone never reaches the workflow.
 
 ### Regeneration procedure
 
-When bumping `cargo-dist-version`:
+When `[workspace.metadata.dist]` or `cargo-dist-version` changes:
 
-1. Update `cargo-dist-version` in `Cargo.toml`.
-2. Regenerate the release workflow:
-
-   ```sh
-   dist generate --mode=ci --allow-dirty
-   ```
-
-3. Re-apply the three local edits to `.github/workflows/release.yml` using the
-   `# LOCAL EDIT (issue #134)` comments as a guide (or inspect
-   `git log -p -- .github/workflows/release.yml` if comments were lost).
-4. Run the guard test to verify that the edits are intact:
+1. Save a copy of the current `release.yml`.
+2. Comment out `allow-dirty = ["ci"]` in `Cargo.toml`, then run
+   `dist generate --mode=ci`. This writes the pristine template, without any
+   local edit.
+3. Diff the pristine output against the saved copy. Every hunk outside the four
+   `# LOCAL EDIT` sites is a real template change; Dependabot's `actions/*`
+   version bumps also show up here and are kept.
+4. Re-apply all four local edits in their places, restore `allow-dirty`, and run
+   the guard test:
 
    ```sh
    cargo test --test release_workflow_local_edits
@@ -269,7 +269,8 @@ asserts that:
   `release.yml`.
 - Reverted dist-generated defaults (such as `--notes-file` or prefix-less globs)
   are absent.
-- The number of `# LOCAL EDIT (issue #134)` marker comments matches the expected
+- Each edit sits in the job, and the step order, it only works in.
+- The number of `# LOCAL EDIT (issue #N)` marker comments matches the expected
   edit count, ensuring each edit remains documented with re-application
   instructions.
 

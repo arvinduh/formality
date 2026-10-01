@@ -245,8 +245,7 @@ pub fn print_update_notice(notifier: Option<UpdateNotifier>) {
 /// The OS-appropriate one-liner that re-runs the official installer in place.
 ///
 /// Points at the canonical cargo-dist installer **release assets**
-/// (`releases/latest/download/fml-installer.{sh,ps1}`), not the
-/// `raw.githubusercontent.com/.../main/install.*` shims — the dist installer
+/// (`releases/latest/download/fml-installer.{sh,ps1}`): the dist installer
 /// resolves OS/arch, fetches the matching prebuilt archive from the latest
 /// release, and drops the binary on `PATH` with no Rust toolchain involved.
 /// The shell installer (Linux & macOS) also verifies the download's checksum;
@@ -517,19 +516,14 @@ mod tests {
   #[test]
   fn test_update_command_points_at_the_dist_installer_release_asset() {
     // The notice must point at the cargo-dist installer assets attached to
-    // the latest release, never the `raw.githubusercontent.com/.../main`
-    // shims (which only exist for backwards compatibility) and never a
-    // versioned URL that would pin the upgrade to a stale release.
+    // the latest release, never a versioned URL that would pin the upgrade
+    // to a stale release.
     for cmd in [update_command(true), update_command(false)] {
       assert!(
         cmd.contains(
           "github.com/arvinduh/formality/releases/latest/download/fml-installer."
         ),
         "update command must fetch the latest dist installer asset: {cmd}"
-      );
-      assert!(
-        !cmd.contains("raw.githubusercontent.com"),
-        "update command must not use the raw.githubusercontent shim: {cmd}"
       );
     }
   }
