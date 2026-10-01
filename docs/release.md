@@ -198,6 +198,20 @@ Releases space, workflow configuration enforces a strict invariant:
    Individual users don't need to hand-edit their own `formality.toml` —
    `fml init` rewrites their `#:schema` line to the current tag.
 
+   Then move this repository's own pin. On a branch off `main`, run at the repo
+   root:
+
+   ```sh
+   cargo run -q -- init
+   ```
+
+   With `formality.toml` already present, `init` only rewrites its `#:schema`
+   line to the `SCHEMA_VERSION` the binary was built with. Commit the moved line
+   in the PR carrying the documentation updates above, or in a follow-up. Do
+   this only after step 4 has confirmed the asset: until the `s{major}.{minor}`
+   release exists, the new pin URL returns 404, and taplo and Even Better TOML
+   lose schema validation.
+
 ## Release notes
 
 Release notes are produced by GitHub's own `gh release create --generate-notes`
