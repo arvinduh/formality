@@ -36,7 +36,9 @@ re-derive is already written down.
 - **[adr/](adr/README.md)** — Why was a specific non-obvious architectural or
   process decision made, and who/what PR made it? Read one when you're about to
   second-guess or rework something that was already a deliberate choice, before
-  redoing that debate from scratch.
+  redoing that debate from scratch. How issue workflow state is tracked (labels
+  vs. assignees, draft PRs, native blockers) is
+  [0006](adr/0006-derived-issue-state.md).
 
 ## Note on pre-recreation issue/PR numbers
 
