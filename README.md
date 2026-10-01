@@ -14,7 +14,7 @@ cross-language config vocabulary) ·
 and behavior) · [Adding a New Surface](docs/new-surface-guide.md) ·
 [Table Spec](docs/table-spec.md) (`fml::ui::table`) ·
 [Style Guide](docs/style-guide.md) · [Release Procedure](docs/release.md) ·
-[Compatibility Matrix](docs/compatibility.md) · [ADRs](docs/adr/README.md)
+[ADRs](docs/adr/README.md)
 
 ---
 

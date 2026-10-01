@@ -39,7 +39,7 @@ Two independent tag namespaces, not one and not three:
   additive/compatible one.
 
 See [release.md](../release.md) for the full cutting procedure for each tag
-type, and [compatibility.md](../compatibility.md) for the binary-version-to-
+type, and `compatibility.md` (deleted under ADR 0007) for the binary-version-to-
 schema-version compatibility matrix this split makes necessary.
 
 ## Consequences
