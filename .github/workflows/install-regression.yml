@@ -218,6 +218,9 @@ jobs:
         run: |
           set +o pipefail
           cd "$RUNNER_TEMP/fml-install-regress"
+          # Unset PIPX_BIN_DIR so pipx installs into its stock default ~/.local/bin
+          # rather than the runner-image /opt/pipx_bin pre-configuration.
+          unset PIPX_BIN_DIR
           fml_bin="$GITHUB_WORKSPACE/target/debug/fml"
           if [ "$RUNNER_OS" = "Windows" ]; then
             fml_bin="$GITHUB_WORKSPACE/target/debug/fml.exe"
@@ -235,16 +238,12 @@ jobs:
             clean_path=""
             IFS=: read -ra parts <<< "$PATH"
             for p in "${parts[@]}"; do
-              if [ "$p" != "$HOME/.local/bin" ] && [ "$p" != "$HOME/.local/bin/" ]; then
+              if [ "$p" != "$HOME/.local/bin" ] && [ "$p" != "$HOME/.local/bin/" ] && [ "$p" != "/opt/pipx_bin" ] && [ "$p" != "/opt/pipx_bin/" ]; then
                 clean_path="${clean_path:+${clean_path}:}$p"
               fi
             done
             fmt_path="$clean_path"
           fi
-          echo "DEBUG PATH before: $PATH"
-          echo "DEBUG PATH after: $fmt_path"
-          echo "DEBUG which ruff: $(PATH="$fmt_path" which ruff 2>&1 || true)"
-          echo "DEBUG find ruff: $(find /home/runner -name ruff 2>/dev/null || true)"
           PATH="$fmt_path" "$fml_bin" fmt >> fml-output.log 2>&1 || true
           cat fml-output.log
 
