@@ -83,9 +83,8 @@ Extracted from what all 12 language surfaces do consistently — see
   just the function (`test_get_surface_by_name_canonical_and_aliases`, not
   `test_get_surface`).
 - **Registry/lookup functions**: free functions in `registry.rs`
-  (`get_surface_by_name`, `resolve_canonical_name`, `detect_surfaces`,
-  `detect_surfaces_smart`) rather than static methods on `SurfaceRegistry` when
-  no registry instance is needed.
+  (`get_surface_by_name`, `detect_surfaces_smart`) rather than static methods on
+  `SurfaceRegistry` when no registry instance is needed.
 - **Predicate methods (tier 2, enforced by
   `test_is_predicate_methods_carry_must_use` in `src/lib.rs`):** `is_*`
   returning `bool` carries `#[must_use]`. The scan normalizes visibility,

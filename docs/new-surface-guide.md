@@ -38,8 +38,7 @@ repository:
     (`json`) is the one sanctioned exception, named explicitly in that test.
   - `src/surfaces/editorconfig.rs`: `glob_for_surface()` match arm and
     `CANONICAL_FLEET_ORDER` entry.
-  - Prose surface counts in doc comments and documentation (e.g.
-    `SurfaceRegistry::new()` doc comment).
+  - Prose surface counts in doc comments and documentation.
 - [ ] **6. Test coverage** (see
       [Style Guide §1](style-guide.md#1-modulefile-hierarchy) for the
       inline-`mod tests`-vs-sibling-`tests.rs` convention):
@@ -347,8 +346,7 @@ nothing for that file. See "Shared config files" in
   - Add `"foo"` to `CANONICAL_FLEET_ORDER`.
 
 - **Prose surface counts**: Update doc comments and prose mentioning the fleet
-  count (e.g. `SurfaceRegistry::new()` doc comment "default fleet of 12 language
-  surfaces", `cli.rs`, `README.md`).
+  count (e.g. `cli.rs`, `README.md`).
 
 ---
 

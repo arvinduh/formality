@@ -65,8 +65,8 @@ pub use glob::{
 };
 pub(crate) use registry::matches_name_or_alias;
 pub use registry::{
-  SurfaceRegistry, all_surfaces, default_registry, detect_surfaces,
-  detect_surfaces_smart, get_surface_by_name, resolve_canonical_name,
+  SurfaceRegistry, all_surfaces, default_registry, detect_surfaces_smart,
+  get_surface_by_name,
 };
 pub use sync::{
   diff_check_via_tempcopy, diff_check_via_tempcopy_classified,
