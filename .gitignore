@@ -12,3 +12,4 @@ editors/vscode/*.vsix
 # directory. Use the `*` form so a committed convention file (e.g.
 # .claude/settings.json) can still be un-ignored later.
 /.claude/*
+/.worktrees/
