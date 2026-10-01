@@ -21,7 +21,7 @@ pub fn no_color_requested() -> bool {
 }
 
 /// Returns whether the environment asks for color even though stdout may
-/// not be a TTY: `FORCE_COLOR`, `CLICOLOR_FORCE`, or running under GitHub
+/// not be a TTY: `FORCE_COLOR`, `CLICOLOR_FORCE`, or running under `GitHub`
 /// Actions (whose log viewer renders ANSI but whose steps are not TTYs).
 #[must_use]
 pub fn color_forced() -> bool {
