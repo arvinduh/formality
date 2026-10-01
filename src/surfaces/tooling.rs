@@ -502,6 +502,7 @@ const GOOGLE_JAVA_FORMAT_CHAIN: &[InstallMethod] = &[
 const CHECKSTYLE_CHAIN: &[InstallMethod] = &[
   InstallMethod::Brew("checkstyle"),
   InstallMethod::Apt("checkstyle"),
+  InstallMethod::WingetName("checkstyle"),
 ];
 
 const RUSTFMT_CHAIN: &[InstallMethod] = &[InstallMethod::Rustup("rustfmt")];
