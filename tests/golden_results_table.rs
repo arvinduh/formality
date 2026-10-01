@@ -38,6 +38,32 @@
 //! that does both). The run summary's remaining-violations clause is
 //! asserted alongside them, from the same runs, because its whole contract
 //! is that it equals the sum of the rows.
+//!
+//! # Why the `PATH`-shim tests are Unix-only (#306)
+//!
+//! `ToolMissing`, `ExecutionError` and `ViolationsFound` come from a `PATH`
+//! of `#!/bin/sh` shims, so those tests are `#[cfg(unix)]`; on Windows only
+//! the five sync statuses run. That is sufficient, and deliberately not
+//! ported to cross-platform shims:
+//!
+//! - What this file pins, the status-to-row mapping (tag, detail text and
+//!   `Style`), lives in `engine::runner` and `ui::table`, which have no
+//!   platform-conditional code. A row renders the same on every OS once the
+//!   status exists, and `Library Tests` (pr-check.yml, ubuntu) asserts all
+//!   eight on every PR.
+//! - What does differ on Windows is how a status is reached: `.cmd`/`.bat`
+//!   shims spawned through `cmd /C` (#103) and `cmd`'s launch failures
+//!   classified as `ExecutionError` (#419). `surfaces::tooling`'s unit tests
+//!   cover the classification, and `Fresh-Install Regression
+//!   (windows-latest)` in install-regression.yml covers it end to end: real
+//!   `fml` against real installed tools, failing on a `[MISS]` or
+//!   `Failed to execute` row for a tool it just installed. Its `paths`
+//!   filter includes `src/surfaces`, `src/engine` and `src/ui`.
+//! - No workflow runs `cargo test` on Windows, so cross-platform shims here
+//!   would run only on a developer's Windows machine, at the cost of a shim
+//!   helper binary or `.cmd` shims, the latter the failure class #103 hit.
+//!
+//! Revisit if a Windows `cargo test` job is ever added.
 
 use std::path::{Path, PathBuf};
 use std::process::Command;
@@ -443,8 +469,9 @@ fn missing_error_violation_repo()
 /// format-plan spelling, from one `fml fmt` run over a `PATH` containing
 /// nothing but shims this test wrote.
 ///
-/// Unix-only: the shims are `#!/bin/sh` scripts. The `NO_COLOR` process
-/// tests remain cross-platform; this is the colour-asserting addition.
+/// Unix-only: the shims are `#!/bin/sh` scripts; the module docs say why
+/// that is sufficient. The `NO_COLOR` process tests remain cross-platform;
+/// this is the colour-asserting addition.
 #[cfg(unix)]
 #[test]
 fn golden_fmt_renders_missing_error_and_violation_rows_with_styles() {
