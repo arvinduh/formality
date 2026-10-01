@@ -468,16 +468,22 @@ For most surfaces the only prerequisite is `fml` itself. Once it's on `PATH`,
 `markdownlint-cli2`, `taplo`, …) — no extra `setup-ruff`, `setup-node`, or
 `npm install` steps required.
 
-A few surfaces run tools that ship with, or run on, a language toolchain that
-`fml doctor --install` does not install. Add the matching setup step before
-`fml doctor --install` if your project uses one of them:
+A few surfaces run tools that ship with, run on, or install through a language
+toolchain that `fml doctor --install` does not install. Add the matching setup
+step before `fml doctor --install` if your project uses one of them:
 
-| Surface | Tools that need it                                                           | Toolchain                                | Setup action                                                         |
-| :------ | :--------------------------------------------------------------------------- | :--------------------------------------- | :------------------------------------------------------------------- |
-| Rust    | `cargo` (ships with Rust), `rustfmt`, `clippy` (installed only via `rustup`) | Rust, via rustup                         | `dtolnay/rust-toolchain@stable` with `components: rustfmt, clippy`   |
-| Go      | `gofmt` (ships with Go), `goimports` (installed only via `go install`)       | Go                                       | `actions/setup-go@v7` with `go-version`                              |
-| Java    | `google-java-format`, `checkstyle`                                           | JDK (21+ for `google-java-format` 1.28+) | `actions/setup-java@v6` with `distribution` and `java-version: "21"` |
-| Kotlin  | `ktlint`                                                                     | JVM                                      | `actions/setup-java@v6` with `distribution` and `java-version`       |
+| Surface | Tools that need it                                                                                                                | Toolchain        | Setup action                                                         |
+| :------ | :-------------------------------------------------------------------------------------------------------------------------------- | :--------------- | :------------------------------------------------------------------- |
+| Rust    | `cargo` (ships with Rust), `rustfmt`, `clippy` (installed only via `rustup`)                                                      | Rust, via rustup | `dtolnay/rust-toolchain@stable` with `components: rustfmt, clippy`   |
+| Typst   | `typstyle`, `tinymist` (without Homebrew, Scoop or winget: installed via `cargo`)                                                 | Rust             | `dtolnay/rust-toolchain@stable`                                      |
+| Go      | `gofmt` (ships with Go), `goimports` (installed only via `go install`), `golangci-lint` (without Homebrew or Scoop: `go install`) | Go               | `actions/setup-go@v7` with `go-version`                              |
+| Java    | `google-java-format`                                                                                                              | JDK 21+          | `actions/setup-java@v6` with `distribution` and `java-version: "21"` |
+| Kotlin  | `ktlint`                                                                                                                          | JVM              | `actions/setup-java@v6` with `distribution` and `java-version`       |
+
+GitHub-hosted Ubuntu runners already put Node, Python and Rust on `PATH`, so
+there the table matters for Go (cached but not on `PATH`) and Java (default JDK
+17). Self-hosted and container runners need every row that applies, plus Node
+and Python for the npm- and pip-installed tools when Homebrew is absent.
 
 ```yaml
 - name: Install fml
@@ -485,6 +491,12 @@ A few surfaces run tools that ship with, or run on, a language toolchain that
     curl --proto '=https' --tlsv1.2 -LsSf
     https://github.com/arvinduh/formality/releases/latest/download/fml-installer.sh
     | sh
+
+# Only for Java projects; see the table above.
+# - uses: actions/setup-java@v6
+#   with:
+#     distribution: temurin
+#     java-version: "21"
 
 - name: Install tool dependencies
   run: fml doctor --install
