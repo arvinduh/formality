@@ -141,7 +141,7 @@ fn test_find_project_config_candidates() {
   // Test .formality.toml
   let hidden = root.join(".formality.toml");
   fs::write(&hidden, "[global]\nindent_size = 4\n").unwrap();
-  assert_eq!(find_project_config(root), Some(hidden.clone()));
+  assert_eq!(find_project_config(root), Some(hidden));
 
   // Test formality.toml (higher precedence than .formality.toml)
   let standard = root.join("formality.toml");
