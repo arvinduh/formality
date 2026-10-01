@@ -55,6 +55,7 @@ dbg_macro = "deny"
 todo = "warn"
 undocumented_unsafe_blocks = "deny"
 # Idioms
+case_sensitive_file_extension_comparisons = "warn"
 fn_params_excessive_bools = "warn"
 map_unwrap_or = "warn"
 must_use_candidate = "warn"
