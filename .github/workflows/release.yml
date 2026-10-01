@@ -318,9 +318,9 @@ jobs:
         #   1. `--generate-notes` (GitHub's own PR-based notes) instead of
         #      dist's changelog body: this repo has no committed CHANGELOG.md
         #      and dropped the git-cliff job.
-        #   2. `--notes-start-tag <prev v* tag>` so the notes range can't be
-        #      widened by an `s*` schema release published between two `v*`
-        #      tags. Needs the `fetch-depth: 0` checkout above.
+        #   2. `--notes-start-tag <prev v* tag>` to explicitly bound the notes
+        #      range to the previous binary release. Needs the `fetch-depth: 0`
+        #      checkout above.
         # After a dist bump: re-run `dist generate --mode=ci --allow-dirty`
         # and re-apply this step plus the tag-glob and fetch-depth edits.
         # tests/release_workflow_local_edits.rs asserts those
