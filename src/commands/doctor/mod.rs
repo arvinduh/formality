@@ -206,9 +206,10 @@ fn install_missing_tools_framed(
               });
             }
             InstallOutcome::Warn => {
-              let actual_str = actual
-                .map(|v| v.to_string())
-                .unwrap_or_else(|| "an unparseable version".to_string());
+              let actual_str = actual.map_or_else(
+                || "an unparseable version".to_string(),
+                |v| v.to_string(),
+              );
               let expected_str =
                 expected.map(|v| v.to_string()).unwrap_or_default();
               println!(
