@@ -4,8 +4,8 @@
 > unrelated new issues — see
 > [`docs/INDEX.md`](../INDEX.md#note-on-pre-recreation-issuepr-numbers).
 
-**Status:** Accepted **Decided in:** `#126 [pre-recreation]`, landed via PR
-`#139 [pre-recreation]`.
+**Status:** Superseded by [0007](0007-one-current-schema.md) **Decided in:**
+`#126 [pre-recreation]`, landed via PR `#139 [pre-recreation]`.
 
 ## Context
 
