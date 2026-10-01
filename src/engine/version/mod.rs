@@ -198,6 +198,7 @@ pub fn parse_go_version_m(output: &str) -> Option<String> {
 /// Renders a list of [`ProbeArg`]s into arguments for command execution.
 /// Resolves [`ProbeArg::ToolPath`] using the path to `binary` found on PATH.
 /// Returns `None` if [`ProbeArg::ToolPath`] is needed but the binary cannot be resolved.
+#[must_use]
 pub fn render_probe_args(
   binary: &str,
   args: &[ProbeArg],
