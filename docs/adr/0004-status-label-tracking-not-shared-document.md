@@ -4,10 +4,11 @@
 > unrelated new issues — see
 > [`docs/INDEX.md`](../INDEX.md#note-on-pre-recreation-issuepr-numbers).
 
-**Status:** Accepted **Decided in:** repo-original design (per-issue `status:*`
-labels, `.agents/orchestrate.md` §11), reaffirmed and the last remnant of the
-alternative removed via PR `#167 [pre-recreation]` (closing tracking issue
-`#134 [pre-recreation]`).
+**Status:** Superseded by [0006](0006-derived-issue-state.md). The
+`.agents/orchestrate.md` paths below no longer exist. **Decided in:**
+repo-original design (per-issue `status:*` labels, `.agents/orchestrate.md`
+§11), reaffirmed and the last remnant of the alternative removed via PR
+`#167 [pre-recreation]` (closing tracking issue `#134 [pre-recreation]`).
 
 ## Context
 

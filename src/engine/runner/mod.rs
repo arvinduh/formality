@@ -205,7 +205,7 @@ impl Runner {
     // One pass at a time, each fanned out across every surface in parallel.
     // A later pass sees what an earlier one wrote, which is the whole point
     // of `fix`'s ordering: lint fixes first, then format, so the tree is
-    // never left lint-fixed-but-unformatted (`.agents/orchestrate.md` §5).
+    // never left lint-fixed-but-unformatted (Smart Format, `AGENTS.md`).
     let mut pass_results: Vec<(Pass, Vec<SurfaceResult>)> = Vec::new();
     for &pass in &plan.passes {
       let results = run_pass(pass, plan.mode, &surfaces, &shared);

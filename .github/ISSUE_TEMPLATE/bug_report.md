@@ -1,67 +1,29 @@
 ---
 name: Bug Report
-about: Create a report to help us improve formality (fml)
+about: Report something formality (fml) gets wrong
 title: 'fix(<scope>): '
-labels: 'bug'
+labels: 'bug, triage'
 assignees: ''
 ---
 
-## Bug Description
+## Goal
 
-A clear and concise description of what the bug is.
-
-## Language Surface(s) Involved
-
-Select or list the affected language surface(s):
-
-- [ ] Rust
-- [ ] Python
-- [ ] C / C++
-- [ ] Java
-- [ ] Go
-- [ ] JavaScript / TypeScript
-- [ ] Kotlin
-- [ ] Markdown
-- [ ] YAML
-- [ ] JSON
-- [ ] TOML
-- [ ] Typst
-- [ ] Core Engine / Config Sync / CLI UI
-
-## Configuration (`formality.toml`)
-
-If applicable, paste your `formality.toml` or `.formality.toml` snippet below:
-
-```toml
-# Paste configuration here
-```
-
-## Steps to Reproduce
-
-Steps to reproduce the behavior:
-
-1. Run command `fml ...`
-2. See error output...
-
-## Expected Behavior
-
-A clear description of what you expected to happen.
-
-## Actual Behavior / Error Output
-
-Paste exact logs, terminal output, or stack traces below:
+<!-- One sentence: what should work and doesn't. Then the evidence: the exact
+`fml ...` command, its output, what you expected, `fml --version`, OS, the
+affected surface(s) and tool versions, and your `formality.toml` if relevant. -->
 
 ```text
-# Paste error output here
+# command and output
 ```
 
-## Environment Details
+## Done
 
-- **`fml` Version**: `fml --version`
-- **OS**: (e.g., Ubuntu 24.04, macOS Sonoma 14.5, Windows 11)
-- **Tool Version(s)**: (e.g., `ruff 0.4.0`, `rustfmt 1.7.0`, `prettier 3.2.5`)
-- **Rust Version** (if building from source): `rustc --version`
+- [ ] <!-- observable acceptance criterion, e.g. "`fml lint` on X exits 0" -->
 
-## Additional Context
+## Files
 
-Add any other context or screenshots about the problem here.
+<!-- Paths in scope, if known. -->
+
+## Not
+
+<!-- What this issue deliberately leaves out. -->

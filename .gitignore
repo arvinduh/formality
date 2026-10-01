@@ -6,15 +6,9 @@ editors/vscode/*.vsix
 .ruff_cache
 .vscode/
 /.artifacts/
-# .agents/orchestrate.md and .agents/start.md are the committed process
-# files every harness/human references directly — must ship with the
-# repo. Only ignore other loose scratch files dropped in .agents/.
-/.agents/*
-!/.agents/orchestrate.md
-!/.agents/start.md
+/.agents/
 # Directory form (`/.claude/`) would permanently block any future
 # `!/.claude/<file>` negation — git never descends into an excluded
 # directory. Use the `*` form so a committed convention file (e.g.
-# .claude/settings.json) can still be un-ignored later, same shape as
-# /.agents/* above.
+# .claude/settings.json) can still be un-ignored later.
 /.claude/*
