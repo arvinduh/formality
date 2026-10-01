@@ -601,7 +601,7 @@ fn is_genuine_prerelease(pre: &str) -> bool {
   };
   let leading_alpha: String = first
     .chars()
-    .take_while(|c| c.is_ascii_alphabetic())
+    .take_while(char::is_ascii_alphabetic)
     .collect();
   if leading_alpha.is_empty() {
     return false;
