@@ -90,9 +90,6 @@ Extracted from what all 12 language surfaces do consistently — see
   `const`/`async`/`unsafe` modifiers and joins multi-line signatures; its first
   version matched only single-line `pub fn` signatures and stayed green with
   `#[must_use]` deleted from `ExitStatus::is_clean` (`#201 [pre-recreation]`).
-- **Tier 3:** a pure getter or predicate (no I/O, no mutation) beyond the `is_*`
-  family also carries `#[must_use]`. `clippy::must_use_candidate` is not enabled
-  in this crate, and a name scan cannot tell a pure getter from an impure one.
 
 ---
 

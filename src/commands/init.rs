@@ -14,6 +14,7 @@ use crate::surfaces::detect_surfaces_smart;
 /// by default, or the dotfile variant with `hidden`) pre-populated with the
 /// auto-detected surfaces, refusing to overwrite an existing config unless
 /// `force` is set.
+#[must_use]
 pub fn run_init(
   root: &Path,
   config: &FormalityConfig,

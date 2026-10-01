@@ -34,6 +34,7 @@ use crate::surfaces::{
 /// tool requirements. Provisioning missing tools is `fml doctor --install`'s
 /// job now, not these commands' — see #282; this dispatch only warns about
 /// stale tools, never installs.
+#[must_use]
 pub fn dispatch_plan(
   root: &Path,
   config: &FormalityConfig,
