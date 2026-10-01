@@ -821,12 +821,8 @@ mod tests {
     std::fs::write(&ignored_rs, "fn ig() {}\n").unwrap();
     std::fs::write(root.join(".gitignore"), "ignored.rs\n").unwrap();
 
-    let specific_staged = vec![
-      main_rs.clone(),
-      excluded_rs.clone(),
-      fixture_rs.clone(),
-      ignored_rs.clone(),
-    ];
+    let specific_staged =
+      vec![main_rs.clone(), excluded_rs, fixture_rs, ignored_rs];
     let exclude = vec![PathBuf::from("src/generated.rs")];
 
     let matched =

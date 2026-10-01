@@ -436,7 +436,7 @@ mod tests {
     let surface = TomlSurface;
     let mut ctx =
       test_ctx(temp.path(), crate::config::ResolvedLangConfig::new("toml"));
-    ctx.paths = Arc::new(vec![file_path.clone()]);
+    ctx.paths = Arc::new(vec![file_path]);
     ctx.check_only = true;
 
     let res = surface.format(&ctx);
