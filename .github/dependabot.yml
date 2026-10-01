@@ -30,6 +30,11 @@ updates:
         update-types:
           - "version-update:semver-major"
           - "version-update:semver-minor"
+      # Held at ^11: mocha 12 require()s ES modules, which the engines.vscode
+      # ^1.91.0 test host (Node 20.9) cannot load. See #367.
+      - dependency-name: "mocha"
+        update-types:
+          - "version-update:semver-major"
 
   # GitHub Actions used in workflows
   - package-ecosystem: "github-actions"
