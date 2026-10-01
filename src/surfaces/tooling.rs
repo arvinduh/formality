@@ -1125,7 +1125,7 @@ pub fn ensure_cargo_binstall() -> bool {
 /// `cargo-binstall` isn't on `PATH` yet the first *available* method is
 /// `Brew`, whose core-tap bottle routinely trails the crates.io pin
 /// (`typstyle` 0.15.0 vs. the pinned 0.15.1). Installing via that lagging
-/// Homebrew formula then trips `install_missing_tools`' post-install
+/// Homebrew formula then trips `install_missing_tools_framed`' post-install
 /// convergence guard -- a spurious `[WARN]` + non-clean exit on every macOS
 /// `fml doctor --install` until the bottle catches up. Bootstrapping `cargo-binstall`
 /// up front lets the already-first, pin-carrying prebuilt win instead;
@@ -1318,7 +1318,7 @@ fn merge_into_process_path(additional: &str) {
   let current = std::env::var("PATH").unwrap_or_default();
   let merged = merge_path_entries(&current, additional);
   if merged != current {
-    // SAFETY: single-threaded call site (`install_missing_tools` runs its
+    // SAFETY: single-threaded call site (`install_missing_tools_framed` runs its
     // per-tool loop sequentially, not from a `rayon` fan-out like
     // `Runner::run`'s per-surface dispatch), and no other code in this
     // crate reads `PATH` concurrently with a call to this function.
@@ -2546,26 +2546,6 @@ mod tests {
   }
 
   #[test]
-  fn test_doctor_tool_missing_table_generation() {
-    use crate::commands::doctor::install_missing_tools;
-    use crate::surfaces::ToolInfo;
-
-    let missing_tool = ToolInfo {
-      binary: "__missing_dummy_binary_test__",
-      description: "Dummy Missing Tool Test",
-      install_hint: Some("Run npm install -g dummy"),
-      is_required_for_fmt: true,
-      is_required_for_lint: true,
-    };
-
-    let ok = install_missing_tools(&[missing_tool]);
-    assert!(
-      !ok,
-      "Should return false when tool cannot be auto-installed"
-    );
-  }
-
-  #[test]
   fn test_has_cargo_binstall_is_pure_path_lookup() {
     // has_cargo_binstall must resolve purely via check_binary_exists
     // (which::which under the hood) for both "cargo" and "cargo-binstall" --
@@ -2677,7 +2657,7 @@ mod tests {
 
   #[test]
   fn test_forget_binary_is_a_noop_for_a_binary_never_looked_up() {
-    // Must not panic when called for a binary `install_missing_tools` is
+    // Must not panic when called for a binary `install_missing_tools_framed` is
     // about to install but that was never actually looked up this process
     // (e.g. a tool added to `missing` via a path that skipped the usual
     // `lookup_tool_info` preflight probe).
