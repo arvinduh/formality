@@ -220,18 +220,27 @@ regardless.
    gh pr create --title "fix(config): resolve editorconfig drift false positive" --body "Fixes #88"
    ```
 
-7. **CI PR Checks (Tier 2 Quality Gate)**: GitHub Actions executes 3 parallel
-   jobs on every PR:
-   - **`Library Tests`** (_required branch protection status check_): Runs
+7. **CI PR Checks (Tier 2 Quality Gate)**: `.github/workflows/pr-check.yml` runs
+   3 parallel jobs on every PR. Branch protection on `main` requires
+   `Library Tests` and `Formality Dogfooding`; see
+   [`AGENTS.md`](AGENTS.md#ci-and-merging) for the merge rules.
+   - **`Library Tests`** (_required status check_): Runs
      `cargo clippy --all-targets -- -D warnings` and the full unit/integration
      test suite (`cargo test --verbose`).
-   - **`Formality Dogfooding`**: Runs `fml fmt --check` and `fml lint` against
-     this repository's live tree, verifies schema drift
-     (`cargo test --test schema_drift` vs. `schema/formality.schema.json`;
-     regenerate via `UPDATE_SCHEMA=1 cargo test -j 2 --test schema_drift`), and
-     enforces forward `SCHEMA_VERSION` progression in `src/config/schema.rs`.
+   - **`Formality Dogfooding`** (_required status check_): Runs
+     `fml fmt --check` and `fml lint` against this repository's live tree,
+     verifies schema drift (`cargo test --test schema_drift` vs.
+     `schema/formality.schema.json`; regenerate via
+     `UPDATE_SCHEMA=1 cargo test -j 2 --test schema_drift`), and enforces
+     forward `SCHEMA_VERSION` progression in `src/config/schema.rs`.
    - **`Security Audit`**: Runs `cargo audit` against the Rust advisory
      database.
+
+   `Fresh-Install Regression` is a separate, path-filtered workflow
+   (`.github/workflows/install-regression.yml`): a 3-OS matrix that exercises
+   `fml doctor --install`, triggered only by PRs touching its `paths` list
+   (install, lookup, version-probe and spawn code). It is not a required status
+   check, so a PR it skips is never left waiting on it.
 
 ---
 
