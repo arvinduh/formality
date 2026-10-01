@@ -31,6 +31,61 @@ env:
   FORCE_COLOR: "1"
 
 jobs:
+  # TEMPORARY (#422): records cmd.exe's exit codes for shim launch failures.
+  shim-probe:
+    name: Shim Probe (windows-latest)
+    runs-on: windows-latest
+    steps:
+      - name: Install cmd-shim generators
+        shell: bash
+        run: npm install --prefix "$RUNNER_TEMP/probe" cmd-shim@8 @zkochan/cmd-shim
+      - name: Probe cmd exit codes
+        shell: node {0}
+        run: |
+          const fs = require('fs');
+          const path = require('path');
+          const cp = require('child_process');
+          const root = path.join(process.env.RUNNER_TEMP, 'probe');
+          const req = (m) => { const x = require(path.join(root, 'node_modules', m)); return x.default || x; };
+          const npmShim = req('cmd-shim');
+          const pnpmShim = req('@zkochan/cmd-shim');
+          const w = path.join(root, 'w');
+          fs.mkdirSync(path.join(w, 'gone'), { recursive: true });
+          const src = (n, body) => { const p = path.join(w, n); fs.writeFileSync(p, body); return p; };
+          const run = (label, args) => {
+            const r = cp.spawnSync('cmd', args, { encoding: 'utf8' });
+            console.log(`PROBE ${label}: status=${r.status} stdout=${JSON.stringify(r.stdout)} stderr=${JSON.stringify(r.stderr)}`);
+          };
+          (async () => {
+            run('ver', ['/C', 'ver']);
+            console.log('PROBE ui-culture:', Intl.DateTimeFormat().resolvedOptions().locale);
+            const sh = src('sh-tool', '#!/bin/sh\necho hi\n');
+            const env = src('envmiss-tool', '#!/usr/bin/env fml-no-such-interp\n');
+            const e1 = src('exit1.js', '#!/usr/bin/env node\nprocess.exit(1)\n');
+            const e3 = src('exit3.js', '#!/usr/bin/env node\nprocess.exit(3)\n');
+            const e9009 = src('exit9009.js', '#!/usr/bin/env node\nprocess.exit(9009)\n');
+            const exe = src('missing.exe', 'MZ');
+            const goneExe = src(path.join('gone', 'tool.exe'), 'MZ');
+            const shims = [
+              ['npm-sh', npmShim, sh], ['pnpm-sh', pnpmShim, sh],
+              ['npm-envmiss', npmShim, env], ['pnpm-envmiss', pnpmShim, env],
+              ['npm-exit1', npmShim, e1], ['pnpm-exit1', pnpmShim, e1],
+              ['npm-exit3', npmShim, e3], ['npm-exit9009', npmShim, e9009],
+              ['npm-exe-missing', npmShim, exe], ['pnpm-exe-missing', pnpmShim, exe],
+              ['npm-exe-dirgone', npmShim, goneExe], ['pnpm-exe-dirgone', pnpmShim, goneExe],
+            ];
+            for (const [n, f, s] of shims) await f(s, path.join(w, n));
+            fs.rmSync(exe);
+            fs.rmSync(path.join(w, 'gone'), { recursive: true });
+            for (const n of ['npm-sh', 'pnpm-sh', 'npm-envmiss', 'npm-exe-missing']) {
+              console.log(`SHIM ${n}.cmd:\n` + fs.readFileSync(path.join(w, n + '.cmd'), 'utf8'));
+            }
+            for (const [n] of shims) run(n, ['/C', path.join(w, n + '.cmd')]);
+            run('direct-dirgone', ['/C', 'D:\\fml-nope\\x.exe']);
+            run('direct-unknown', ['/C', 'fml-no-such-cmd']);
+            run('direct-slash-bin-sh', ['/C', '/bin/sh']);
+          })().catch((e) => { console.error(e); process.exit(1); });
+
   install-regression:
     # Not currently a required branch-protection status check (only
     # "Library Tests" and "Formality Dogfooding" are) -- adding one is a call
