@@ -52,8 +52,7 @@ fn header_count(plain: &str) -> usize {
   let inner = line
     .rsplit_once('(')
     .and_then(|(_, rest)| rest.split_once(' '))
-    .map(|(n, _)| n)
-    .unwrap_or_else(|| panic!("unparseable header line {line:?}"));
+    .map_or_else(|| panic!("unparseable header line {line:?}"), |(n, _)| n);
   inner
     .parse()
     .unwrap_or_else(|e| panic!("unparseable count in {line:?}: {e}"))
@@ -151,7 +150,7 @@ fn generated_config_files(root: &Path) -> BTreeSet<String> {
   std::fs::read_dir(root)
     .expect("read_dir")
     .filter_map(Result::ok)
-    .filter(|e| e.file_type().map(|t| t.is_file()).unwrap_or(false))
+    .filter(|e| e.file_type().is_ok_and(|t| t.is_file()))
     .map(|e| e.file_name().to_string_lossy().into_owned())
     .filter(|n| !fixtures.contains(n.as_str()))
     .collect()

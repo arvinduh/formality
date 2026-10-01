@@ -54,8 +54,7 @@ pub fn init_git_repo(path: impl AsRef<Path>) -> bool {
     .arg("init")
     .current_dir(root)
     .output()
-    .map(|o| o.status.success())
-    .unwrap_or(false);
+    .is_ok_and(|o| o.status.success());
   if !init_ok {
     return false;
   }
