@@ -14,8 +14,8 @@
 //!
 //! This test is the tooling behind the `# LOCAL EDIT (issue #134)` comments
 //! in that workflow: a comment explains the edit, this asserts it is still
-//! there. It runs in the `Library Tests` job (`cargo test --verbose`), the
-//! repo's required status check, so losing an edit blocks the merge that
+//! there. It runs in the `Library Tests` job (`cargo test --verbose`), one of
+//! the repo's required status checks, so losing an edit blocks the merge that
 //! lost it instead of surfacing at the next release.
 //!
 //! **If a future cargo-dist version makes one of these edits unnecessary,

@@ -32,10 +32,10 @@ name: PR Check
 #      paired with a SCHEMA_VERSION bump in src/config/schema.rs (see #185).
 #   3. Security Audit - cargo audit against the advisory database.
 #
-# "Library Tests" is the required branch-protection status check name -
-# GitHub branch protection matches on job `name`, not job id, so keep that
-# name exactly if this job is ever renamed or restructured, or update
-# branch protection in lockstep.
+# "Library Tests" and "Formality Dogfooding" are the required
+# branch-protection status check names - GitHub branch protection matches on
+# job `name`, not job id, so keep those names exactly if either job is ever
+# renamed or restructured, or update branch protection in lockstep.
 on:
   pull_request:
     branches: ["main"]
