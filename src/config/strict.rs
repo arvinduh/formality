@@ -38,7 +38,7 @@ pub fn parse(
 
 /// Deserializes each `[lang.<name>]` section's surface-specific keys, the
 /// flattened ones `LangConfig` collects into `extra` and its `options`
-/// table, into that surface's typed options. The lenient accessors that
+/// value, into that surface's typed options. The lenient accessors that
 /// read them later drop what does not fit; this rejects it up front.
 fn check_lang_options(
   config: &FormalityConfig,
@@ -60,14 +60,12 @@ fn check_lang_options(
       .filter(|(key, _)| lang.extra.contains_key(key.get_ref().as_ref()))
       .map(|(key, value)| (key.clone(), value.clone()))
       .collect();
-    check_options(name.get_ref(), toml::Spanned::new(section.span(), flat))?;
-    if let Some(options) = table.get("options")
-      && let DeValue::Table(options_table) = options.get_ref()
-    {
-      check_options(
-        name.get_ref(),
-        toml::Spanned::new(options.span(), options_table.clone()),
-      )?;
+    check_options(
+      name.get_ref(),
+      toml::Spanned::new(section.span(), DeValue::Table(flat)),
+    )?;
+    if let Some(options) = table.get("options") {
+      check_options(name.get_ref(), options.clone())?;
     }
   }
   Ok(())
@@ -85,13 +83,14 @@ macro_rules! check_by_name {
   };
 }
 
-/// Deserializes `table` into surface `name`'s typed options. A name with
+/// Deserializes `value` into surface `name`'s typed options, so a value
+/// that is not a table fails as a wrong type at its own span. A name with
 /// none, an alias or an unknown section, is not checked.
 fn check_options(
   name: &str,
-  table: toml::Spanned<DeTable<'_>>,
+  value: toml::Spanned<DeValue<'_>>,
 ) -> Result<(), toml::de::Error> {
-  let de = toml::de::Deserializer::from(table);
+  let de = toml::de::ValueDeserializer::from(value);
   lang_options_table!(check_by_name, name, de)
 }
 

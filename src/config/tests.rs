@@ -1118,6 +1118,19 @@ fn test_parse_str_flat_lang_keys_follow_their_own_surface() {
 }
 
 #[test]
+fn test_parse_str_non_table_lang_options_is_invalid_value() {
+  let toml = "[lang.python]\nquote_style = \"double\"\noptions = \"oops\"\n";
+  let err =
+    FormalityConfig::parse_str(toml, Path::new("formality.toml")).unwrap_err();
+  assert_eq!(
+    err.to_string(),
+    "invalid value for `lang.python.options` in formality.toml:3: \
+     invalid type: string \"oops\", expected struct PythonOptions. Check \
+     `fml schema` for the type this fml expects."
+  );
+}
+
+#[test]
 fn test_parse_str_wrong_type_names_nested_key_path_and_line() {
   let toml = "[global]\nline_length = 80\n\n[lang.rust.layout]\n\
                 indent_size = \"four\"\n";
