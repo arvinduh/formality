@@ -80,4 +80,5 @@ jobs:
           ./target/debug/fml fmt schema/formality.schema.json
           git diff --exit-code schema/formality.schema.json
 
-
+      - name: Run test suite
+        run: cargo test --verbose
