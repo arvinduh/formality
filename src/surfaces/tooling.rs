@@ -544,6 +544,29 @@ const KTLINT_CHAIN: &[InstallMethod] = &[
   InstallMethod::Apt("ktlint"),
 ];
 
+/// Where `KTLINT_CHAIN`'s npm wrapper puts ktlint's self-executing jar,
+/// relative to the directory holding npm's `ktlint.cmd` shim.
+///
+/// The jar carries a `#!/bin/sh` launcher, so on Windows npm's cmd-shim runs
+/// it as `"/bin/sh" ...\resources\ktlint`, which `cmd` cannot find (#402).
+/// [`npm_ktlint_jar`] lets [`create_tool_command`] run it with `java -jar`.
+const NPM_KTLINT_JAR: &str =
+  "node_modules/@naturalcycles/ktlint/resources/ktlint";
+
+/// Returns the jar behind `shim` when `binary` is ktlint and `shim` is the
+/// `ktlint.cmd` the `@naturalcycles/ktlint` npm wrapper installed.
+fn npm_ktlint_jar(binary: &str, shim: &std::path::Path) -> Option<PathBuf> {
+  if binary != "ktlint"
+    || !shim
+      .extension()
+      .is_some_and(|ext| ext.eq_ignore_ascii_case("cmd"))
+  {
+    return None;
+  }
+  let jar = shim.parent()?.join(NPM_KTLINT_JAR);
+  jar.is_file().then_some(jar)
+}
+
 /// One row of the tool-chain registry: the canonical binary name, its
 /// ordered installer preference chain, and (if known) the exact version
 /// `<binary> --version` is expected to report once installed via that
@@ -1737,7 +1760,8 @@ pub fn refresh_path_after_install(program: &str) {
 ///
 /// Windows additionally keeps its batch-file handling: `npm`/`pnpm`/`yarn`/
 /// `npx` and any resolved `.cmd`/`.bat` shim must be run through `cmd /C`
-/// rather than spawned directly.
+/// rather than spawned directly, except npm's `ktlint.cmd`, whose jar is run
+/// with `java -jar` because the shim itself cannot launch (#402).
 #[must_use]
 pub fn create_tool_command(binary: &str) -> std::process::Command {
   #[cfg(windows)]
@@ -1756,6 +1780,12 @@ pub fn create_tool_command(binary: &str) -> std::process::Command {
   let Some(path) = resolve_binary_path(binary) else {
     return std::process::Command::new(binary);
   };
+
+  if let Some(jar) = npm_ktlint_jar(binary, &path) {
+    let mut cmd = create_tool_command("java");
+    cmd.arg("-jar").arg(jar);
+    return cmd;
+  }
 
   #[cfg(windows)]
   {
@@ -2582,6 +2612,29 @@ mod tests {
       "a go-installed binary found only via $GOBIN/$GOPATH/bin must be \
        spawned by that path; spawning the bare name is what turned #293's \
        `[MISS]` into `Failed to execute goimports: No such file or directory`"
+    );
+  }
+
+  #[test]
+  fn test_npm_ktlint_jar_finds_the_wrapper_jar_behind_ktlint_cmd() {
+    let tmp = tempfile::tempdir().expect("tempdir");
+    let shim = tmp.path().join("ktlint.cmd");
+    std::fs::write(&shim, b"@ECHO off\r\n").expect("write shim");
+    assert_eq!(
+      npm_ktlint_jar("ktlint", &shim),
+      None,
+      "no wrapper jar installed next to the shim"
+    );
+
+    let jar = tmp.path().join(NPM_KTLINT_JAR);
+    std::fs::create_dir_all(jar.parent().expect("jar dir")).expect("mkdir");
+    std::fs::write(&jar, b"#!/bin/sh\n").expect("write jar");
+    assert_eq!(npm_ktlint_jar("ktlint", &shim), Some(jar));
+    assert_eq!(npm_ktlint_jar("prettier", &shim), None);
+    assert_eq!(
+      npm_ktlint_jar("ktlint", &tmp.path().join("ktlint")),
+      None,
+      "only the Windows `.cmd` shim is bypassed; the Unix bin link runs"
     );
   }
 
