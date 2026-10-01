@@ -35,9 +35,15 @@ line_length = 80
 
 ## Version Compatibility Matrix
 
-| `fml` Binary Version | Recommended Schema Tag | Schema Release URL                                                                   | Status & Notes                                                                          |
-| :------------------- | :--------------------- | :----------------------------------------------------------------------------------- | :-------------------------------------------------------------------------------------- |
-| `v0.1.x`             | `s1.0`                 | `https://github.com/arvinduh/formality/releases/download/s1.0/formality.schema.json` | Active (Initial schema revision covering canonical globals and per-language overrides). |
+Each binary expects the schema tag in its `SCHEMA_VERSION`
+(`src/config/schema.rs`) and warns when a `#:schema` directive names an older
+one.
+
+| `fml` Binary Version | Expected Schema Tag | Notes                                   |
+| :------------------- | :------------------ | :-------------------------------------- |
+| `v0.1.0`             | none                | Predates the `#:schema` version check.  |
+| `v0.2.0`, `v0.2.1`   | `s1.1`              | Schema release `s1.1` is published.     |
+| unreleased `main`    | `s1.3`              | No `s1.3` schema release is tagged yet. |
 
 ## Compatibility Guarantees
 

@@ -73,22 +73,19 @@ surface? See [docs/new-surface-guide.md](docs/new-surface-guide.md).
 
 ## Installation
 
-### 1-Line Quick Install
+Each command downloads the prebuilt binary from the latest
+[GitHub Release](https://github.com/arvinduh/formality/releases/latest) and puts
+`fml` on your `PATH`. No Rust toolchain required. The shell installer also
+verifies the download's checksum; the PowerShell installer does not. Both are
+generated and published by [cargo-dist](https://opensource.axo.dev/cargo-dist/).
 
-These download the matching prebuilt binary from the latest
-[GitHub Release](https://github.com/arvinduh/formality/releases/latest) and put
-`fml` on your `PATH`. No Rust toolchain required. The shell installer (Linux &
-macOS) also verifies the download's checksum; the PowerShell installer (Windows)
-does not. The installer scripts are generated and published by
-[cargo-dist](https://opensource.axo.dev/cargo-dist/).
-
-#### Linux & macOS
+### Linux (x64) and macOS (Apple Silicon)
 
 ```bash
 curl --proto '=https' --tlsv1.2 -LsSf https://github.com/arvinduh/formality/releases/latest/download/fml-installer.sh | sh
 ```
 
-#### Windows (PowerShell)
+### Windows (x64)
 
 ```powershell
 powershell -c "irm https://github.com/arvinduh/formality/releases/latest/download/fml-installer.ps1 | iex"
@@ -96,70 +93,6 @@ powershell -c "irm https://github.com/arvinduh/formality/releases/latest/downloa
 
 There is no native ARM64 Windows build. On ARM64 Windows the installer installs
 the x64 build, which runs under Windows' built-in x64 emulation.
-
-#### Windows (`.msi`)
-
-Download and run
-[`fml-x86_64-pc-windows-msvc.msi`](https://github.com/arvinduh/formality/releases/latest/download/fml-x86_64-pc-windows-msvc.msi)
-from the latest release.
-
-> The shorter
-> `raw.githubusercontent.com/arvinduh/formality/main/install.{sh,ps1}` URLs
-> still work — they now forward to the installers above.
-
-### Build from source via `cargo`
-
-`fml` is not published to crates.io; build it from the Git repository (needs a
-Rust toolchain). The trailing `fml` package name is required — the repository
-carries more than one binary-bearing manifest, so the bare form errors.
-
-```bash
-cargo install --git https://github.com/arvinduh/formality fml
-```
-
-### Direct Prebuilt Binaries
-
-Prebuilt standalone binaries are attached to every
-[GitHub Release](https://github.com/arvinduh/formality/releases/latest). Each
-archive holds the `fml` binary plus `LICENSE` and `README.md`; the commands
-below pull out only the binary.
-
-#### macOS (Apple Silicon / ARM64)
-
-```bash
-curl -fsSL https://github.com/arvinduh/formality/releases/latest/download/fml-aarch64-apple-darwin.tar.gz | tar -xz fml
-mkdir -p ~/.local/bin && mv fml ~/.local/bin/fml
-```
-
-#### macOS (Intel / x86_64)
-
-```bash
-curl -fsSL https://github.com/arvinduh/formality/releases/latest/download/fml-x86_64-apple-darwin.tar.gz | tar -xz fml
-mkdir -p ~/.local/bin && mv fml ~/.local/bin/fml
-```
-
-#### Linux (x86_64)
-
-```bash
-curl -fsSL https://github.com/arvinduh/formality/releases/latest/download/fml-x86_64-unknown-linux-gnu.tar.gz | tar -xz fml
-mkdir -p ~/.local/bin && mv fml ~/.local/bin/fml
-```
-
-#### Linux (ARM64 / aarch64)
-
-```bash
-curl -fsSL https://github.com/arvinduh/formality/releases/latest/download/fml-aarch64-unknown-linux-gnu.tar.gz | tar -xz fml
-mkdir -p ~/.local/bin && mv fml ~/.local/bin/fml
-```
-
-#### Windows (x86_64 / PowerShell)
-
-```powershell
-Invoke-WebRequest -Uri https://github.com/arvinduh/formality/releases/latest/download/fml-x86_64-pc-windows-msvc.zip -OutFile fml.zip
-Expand-Archive fml.zip -DestinationPath fml-tmp -Force
-mkdir $HOME\bin -Force; Move-Item fml-tmp\fml.exe $HOME\bin\fml.exe -Force
-Remove-Item -Recurse fml.zip, fml-tmp
-```
 
 ---
 
