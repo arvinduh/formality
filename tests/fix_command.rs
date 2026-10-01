@@ -496,3 +496,43 @@ fn test_fix_check_and_fix_agree_when_no_pass_can_fix() {
     "neither run should have modified an unfixable file"
   );
 }
+
+/// Issue #394: with `indent_size = 4`, prettier's `tabWidth` is 4, so prettier
+/// indents a nested bullet list by 4 spaces. markdownlint's MD007 `indent`
+/// must match so `fml fix` followed by `fml lint` passes without oscillation.
+#[test]
+fn test_fix_command_markdown_nested_list_indent_sync() {
+  if !markdown_toolchain_available() {
+    eprintln!(
+      "SKIP: test_fix_command_markdown_nested_list_indent_sync        — markdownlint/prettier not on PATH"
+    );
+    return;
+  }
+
+  for indent_size in [2, 4] {
+    let config = format!(
+      "[global]
+indent_size = {indent_size}
+"
+    );
+    let doc = "# Title
+
+* item
+    * nested
+";
+    let temp =
+      temp_repo(&[("formality.toml", config.as_str()), ("doc.md", doc)]);
+    let root = temp.path();
+
+    assert_eq!(
+      run_cli(root, fix_cmd(false, &["markdown"])),
+      0,
+      "fml fix failed for indent_size = {indent_size}"
+    );
+    assert_eq!(
+      run_cli(root, lint_cmd(&["markdown"])),
+      0,
+      "subsequent fml lint failed for indent_size = {indent_size}"
+    );
+  }
+}

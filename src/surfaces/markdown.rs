@@ -26,6 +26,13 @@ pub struct MarkdownlintComment {
   pub description: String,
 }
 
+/// MD007 (ul-indent) rule options for markdownlint.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct MarkdownlintMd007 {
+  /// Number of spaces for list indentation.
+  pub indent: usize,
+}
+
 /// MD013 (line length) rule options for markdownlint.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct MarkdownlintMd013 {
@@ -45,6 +52,11 @@ pub struct MarkdownlintConfig {
   pub comment: MarkdownlintComment,
   /// Default rule enablement setting.
   pub default: bool,
+  /// MD007 (ul-indent) list indentation rule settings. Synced with
+  /// prettier's `tabWidth` (`indent_size`) so nested lists agree across both
+  /// tools (#394).
+  #[serde(rename = "MD007")]
+  pub md007: MarkdownlintMd007,
   /// MD013 line length rule settings.
   #[serde(rename = "MD013")]
   pub md013: MarkdownlintMd013,
@@ -93,6 +105,9 @@ fn markdownlint_config_for_lang(
       description: AUTO_GENERATED_JSON_COMMENT.to_string(),
     },
     default: true,
+    md007: MarkdownlintMd007 {
+      indent: lang_config.indent_size,
+    },
     md013: MarkdownlintMd013 {
       line_length: lang_config.line_length,
       code_blocks: false,
@@ -900,6 +915,7 @@ mod tests {
         description: "desc".to_string(),
       },
       default: true,
+      md007: MarkdownlintMd007 { indent: 2 },
       md013: MarkdownlintMd013 {
         line_length: 120,
         code_blocks: false,
@@ -911,6 +927,8 @@ mod tests {
     assert!(rendered.contains("\"$comment\":"));
     assert!(rendered.contains("\"description\": \"desc\""));
     assert!(rendered.contains("\"default\": true"));
+    assert!(rendered.contains("\"MD007\":"));
+    assert!(rendered.contains("\"indent\": 2"));
     assert!(rendered.contains("\"MD013\":"));
     assert!(rendered.contains("\"line_length\": 120"));
     assert!(rendered.contains("\"MD033\": false"));
@@ -1025,6 +1043,57 @@ mod tests {
     });
     let cfg = markdownlint_config_for_lang(&lang_cfg);
     assert!(cfg.md033, "MD033 must be re-enabled when opted back in");
+  }
+
+  #[test]
+  fn test_markdownlint_config_for_lang_syncs_md007_indent_with_indent_size() {
+    // Issue #394: prettier indents nested lists using tabWidth (indent_size),
+    // so markdownlint's MD007 indent must match indent_size to avoid oscillation.
+    let mut lang_cfg = ResolvedLangConfig::new("markdown");
+    lang_cfg.indent_size = 4;
+    let cfg = markdownlint_config_for_lang(&lang_cfg);
+    assert_eq!(cfg.md007.indent, 4);
+
+    let rendered = cfg.render().unwrap();
+    let parsed: serde_json::Value = serde_json::from_str(&rendered).unwrap();
+    assert_eq!(parsed["MD007"]["indent"], 4);
+  }
+
+  #[test]
+  fn test_markdown_nested_list_indent_agrees_at_configured_indent_size() {
+    // Issue #394 acceptance criterion: fml fix followed by fml lint passes
+    // on a nested list fixture at indent_size 2 and 4 without oscillation.
+    if !check_binary_exists("prettier")
+      || (!check_binary_exists("markdownlint-cli2")
+        && !check_binary_exists("markdownlint"))
+    {
+      return;
+    }
+
+    for indent_size in [2, 4] {
+      let temp = TempDir::new().unwrap();
+      let file = temp.path().join("list.md");
+      std::fs::write(&file, "# Title\n\n* item\n    * nested\n").unwrap();
+
+      let mut lang_cfg = ResolvedLangConfig::new("markdown");
+      lang_cfg.indent_size = indent_size;
+      let ctx = test_ctx(temp.path(), lang_cfg);
+      let surface = MarkdownSurface;
+
+      let fmt_res = surface.format(&ctx);
+      assert!(
+        fmt_res.is_success(),
+        "format failed for indent_size = {indent_size}: {:?}",
+        fmt_res.status
+      );
+
+      let lint_res = surface.lint(&ctx, false);
+      assert!(
+        lint_res.is_success(),
+        "lint failed for indent_size = {indent_size}: {:?}",
+        lint_res.status
+      );
+    }
   }
 
   /// Fixture README containing a centered badge block and a `<details>`
