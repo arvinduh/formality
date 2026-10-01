@@ -68,30 +68,6 @@ pub enum Facet {
   Standard,
 }
 
-impl Facet {
-  /// The canonical `snake_case` identifier for this facet.
-  #[must_use]
-  pub const fn name(&self) -> &'static str {
-    match self {
-      Facet::IndentTabs => "indent_tabs",
-      Facet::IndentWidth => "indent_width",
-      Facet::LineLength => "line_length",
-      Facet::QuoteStyle => "quote_style",
-      Facet::TrailingComma => "trailing_comma",
-      Facet::ImportSort => "import_sort",
-      Facet::ProseWrap => "prose_wrap",
-      Facet::Edition => "edition",
-      Facet::Standard => "standard",
-    }
-  }
-}
-
-impl std::fmt::Display for Facet {
-  fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-    write!(f, "{}", self.name())
-  }
-}
-
 /// Level of support a surface provides for a given facet.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum FacetSupport {
@@ -101,16 +77,6 @@ pub enum FacetSupport {
   Fixed(&'static str),
   /// The concept does not exist or cannot be configured for this tool/language.
   Unsupported,
-}
-
-impl std::fmt::Display for FacetSupport {
-  fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-    match self {
-      FacetSupport::Configurable => write!(f, "configurable"),
-      FacetSupport::Fixed(val) => write!(f, "fixed({val})"),
-      FacetSupport::Unsupported => write!(f, "unsupported"),
-    }
-  }
 }
 
 /// Trait implemented by language surfaces to declare their facet capabilities.
