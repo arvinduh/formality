@@ -3,8 +3,8 @@ name: VS Code Extension Check
 # TypeScript compile, lint, and test checks for the VS Code extension.
 # Separate from pr-check.yml's Library Tests (Rust) so this doesn't run on
 # every PR -- only ones that actually touch editors/vscode. Not a required
-# status check (see .agents/orchestrate.md §3 -- that's an orchestrator/
-# repo-owner decision, not this workflow's).
+# status check (see AGENTS.md "CI and merging" -- that's a repo-owner
+# decision, not this workflow's).
 on:
   pull_request:
     branches: ["main"]

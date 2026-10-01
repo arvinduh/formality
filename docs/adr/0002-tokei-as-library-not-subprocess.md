@@ -11,11 +11,11 @@ issue `#131 [pre-recreation]`.
 ## Context
 
 A future `fml stat` command (referenced as an example of new user-facing CLI
-surface in `.agents/orchestrate.md` §10's "Applied-feature checkpoint" rule)
-would need to count lines of code per language.
-[`tokei`](https://github.com/XAMPPRocky/tokei) already does this and is the
-natural tool to reach for. The choice is between shelling out to a `tokei`
-binary the way `fml` shells out to per-surface tools (`rustfmt`, `ruff`,
+surface under the applied-feature checkpoint, now the global `orchestrate`
+skill's stop rule for new user-facing surface) would need to count lines of code
+per language. [`tokei`](https://github.com/XAMPPRocky/tokei) already does this
+and is the natural tool to reach for. The choice is between shelling out to a
+`tokei` binary the way `fml` shells out to per-surface tools (`rustfmt`, `ruff`,
 `clang-format`, ...) via `src/surfaces/tooling.rs`, or depending on the `tokei`
 crate directly as a library and calling its counting logic in-process.
 
@@ -55,7 +55,7 @@ Depend on `tokei` as a library crate, not invoke it as a subprocess.
   shape of command, closer to `fml::ui::table`'s self-contained rendering than
   to a `LanguageSurface` (as above, this text originally said `fml table`; that
   CLI command was removed in v0.3.0, #255, and only the library API remains).
-- Per `.agents/orchestrate.md` §10, the concrete `fml stat` proposal (example
+- Per the applied-feature checkpoint, the concrete `fml stat` proposal (example
   invocation, example output) still needs to be presented to the user for
   confirmation before implementation begins — this ADR records the
   library-vs-subprocess choice only, not the command's design.
@@ -75,9 +75,8 @@ issue/PR search: zero hits outside this directory).
 The **Rationale** section above is therefore reconstructed from `fml`'s existing
 conventions (see [language-surfaces.md](../language-surfaces.md) and
 [table-spec.md](../table-spec.md)) — it is not a transcript of the original
-argument. That, together with `fml stat` not existing yet and
-`.agents/orchestrate.md` §10's applied-feature checkpoint still being
-outstanding for it, is why this ADR's status is `Proposed` rather than
-`Accepted`. If a future implementation PR for `fml stat` surfaces different or
-more specific reasoning, update this ADR (or mark it superseded) rather than
-treating it as settled history.
+argument. That, together with `fml stat` not existing yet and the
+applied-feature checkpoint still being outstanding for it, is why this ADR's
+status is `Proposed` rather than `Accepted`. If a future implementation PR for
+`fml stat` surfaces different or more specific reasoning, update this ADR (or
+mark it superseded) rather than treating it as settled history.

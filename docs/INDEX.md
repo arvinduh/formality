@@ -21,10 +21,10 @@ re-derive is already written down.
 - **[table-spec.md](table-spec.md)** — What's the JSON schema `fml::ui::table`
   consumes, and what styling rules (`src/ui/table`) does it apply? Read this
   before generating table JSON from a script, or touching table rendering.
-- **[style-guide.md](style-guide.md)** — Beyond `rustfmt`/`clippy`, what does
-  this codebase itself require (module/file hierarchy, naming, doc-comment
-  conventions, `ExecutionContext` Arc-sharing, error-handling patterns)? Read
-  this before writing new code, and cite it by section number in review.
+- **[style-guide.md](style-guide.md)** — Where does `fml` deviate from the
+  global `rust-guide`, and what does this codebase itself require (test layout,
+  naming, schema doc comments, `ExecutionContext` Arc-sharing, error handling)?
+  Read this before writing new code, and cite it by section number in review.
 - **[release.md](release.md)** — How is a release actually cut — binary (`v*`)
   tags via cargo-dist, schema (`s*`) tags, GitHub `--generate-notes` release
   notes? Read this before cutting a release, or when you need to know what a
@@ -36,7 +36,9 @@ re-derive is already written down.
 - **[adr/](adr/README.md)** — Why was a specific non-obvious architectural or
   process decision made, and who/what PR made it? Read one when you're about to
   second-guess or rework something that was already a deliberate choice, before
-  redoing that debate from scratch.
+  redoing that debate from scratch. How issue workflow state is tracked (labels
+  vs. assignees, draft PRs, native blockers) is
+  [0006](adr/0006-derived-issue-state.md).
 
 ## Note on pre-recreation issue/PR numbers
 
@@ -60,8 +62,6 @@ where several common questions actually get answered:
 
 - `README.md` — project overview, installation, quick start. Its own "Further
   reading" section links every doc listed above.
-- `AGENTS.md` — the short agent-facing brief (commands, layout, conventions,
-  ask-first list) that points at this index.
-- `.agents/orchestrate.md` — the multi-agent orchestration process: worktree
-  isolation, the maker-checker QA gate, dispatch order, issue/label conventions.
+- `AGENTS.md` — this repo's process facts: the gate, the pre-commit hook,
+  required CI checks and merge rules, layout, ask-first list.
 - `CONTRIBUTING.md` — contribution workflow.

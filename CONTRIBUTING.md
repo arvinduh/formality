@@ -120,13 +120,14 @@ Before committing or submitting a pull request, you **must** run and pass the
 presubmit suite:
 
 ```bash
-cargo test --lib -q && cargo clippy --all-targets -- -D warnings
+cargo test && cargo clippy --all-targets -- -D warnings
 cargo run -q -- fmt
 ```
 
 ### Explanation of Presubmit Commands
 
-1. `cargo test --lib -q`: Runs library unit tests silently.
+1. `cargo test`: Runs the full unit and integration suite (`--lib` alone skips
+   `tests/`).
 2. `cargo clippy --all-targets -- -D warnings`: Ensures zero Clippy warnings
    across all targets (lib, bins, tests, examples).
 3. `cargo run -q -- fmt`: Dogfoods the freshly built `fml` binary to format the
@@ -188,12 +189,14 @@ regardless.
 
 ## Pull Request Process
 
-1. **Create a topic branch**: Branch off `main` with a descriptive name:
+1. **Create a topic branch** off `main`, named `<type>/<slug>`: the Conventional
+   Commit type, then the fewest words that identify the change. No issue number;
+   the PR body carries `Fixes #N`.
 
    ```bash
-   git checkout -b feat/my-new-feature
+   git checkout -b feat/diagnostics
    # or
-   git checkout -b fix/issue-123
+   git checkout -b fix/spawn
    ```
 
 2. **Make your changes**: Ensure all existing comments and docstrings unrelated
@@ -210,10 +213,11 @@ regardless.
    git push -u origin <branch-name>
    ```
 
-6. **Open a Pull Request**: Use `gh pr create`:
+6. **Open a Pull Request**: title it `<type>(<scope>): <summary>` (it becomes
+   the squash commit subject) and put `Fixes #N` in the body:
 
    ```bash
-   gh pr create --title "type(scope): summary (#issue)" --body "Description of changes... Closes #issue"
+   gh pr create --title "fix(config): resolve editorconfig drift false positive" --body "Fixes #88"
    ```
 
 7. **CI PR Checks (Tier 2 Quality Gate)**: GitHub Actions executes 3 parallel
@@ -237,24 +241,25 @@ Commits **must** strictly follow the
 [Conventional Commits](https://www.conventionalcommits.org/) specification:
 
 ```text
-<type>(<scope>): <description> (Fixes #<issue>)
+<type>(<scope>): <description>
 ```
+
+The issue reference goes in the PR body as `Fixes #N`, not in each commit.
 
 ### Commit Types
 
 - `feat`: A new feature or surface capability
 - `fix`: A bug fix
-- `docs`: Documentation updates (e.g.,
-  `docs(community): add CONTRIBUTING.md (Fixes #129)`)
+- `docs`: Documentation updates (e.g., `docs(community): add CONTRIBUTING.md`)
 - `refactor`: Code restructuring without functional changes
 - `test`: Adding or modifying unit/integration tests
 - `chore`: Maintenance, dependencies, or workflow changes
 
 ### Example Commit Messages
 
-- `feat(engine): add multi-threaded execution for typst surface (Fixes #42)`
-- `fix(config): resolve drift check false positive in editorconfig (Fixes #88)`
-- `docs(community): add CONTRIBUTING.md and issue templates (Fixes #129)`
+- `feat(engine): add multi-threaded execution for typst surface`
+- `fix(config): resolve drift check false positive in editorconfig`
+- `docs(community): add CONTRIBUTING.md and issue templates`
 
 ---
 
