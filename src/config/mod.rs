@@ -41,6 +41,7 @@ pub const CONFIG_FILE_CANDIDATES: &[&str] =
 
 /// Global default settings applicable across all language surfaces.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
 pub struct GlobalConfig {
   /// Explicit list of active language surface names to manage.
   #[serde(skip_serializing_if = "Option::is_none")]
@@ -341,6 +342,7 @@ impl LangConfig {
 #[derive(
   Debug, Clone, Default, PartialEq, Serialize, Deserialize, JsonSchema,
 )]
+#[serde(deny_unknown_fields)]
 pub struct FormalityConfig {
   /// Global defaults block (`[global]`).
   #[serde(skip_serializing_if = "Option::is_none")]
@@ -459,6 +461,16 @@ pub enum ConfigError {
     /// Underlying TOML error.
     source: toml::de::Error,
   },
+  /// A key this `fml` does not accept: misspelled, removed, or added by a
+  /// newer `fml`.
+  UnknownKey {
+    /// File path of the config holding the key.
+    path: PathBuf,
+    /// Dotted key path, e.g. `lang.python.format_tool`.
+    key: String,
+    /// One-based line of the key.
+    line: usize,
+  },
   /// A known key whose value has the wrong type or shape.
   InvalidValue {
     /// File path of the config holding the value.
@@ -492,6 +504,13 @@ impl std::fmt::Display for ConfigError {
           source
         )
       }
+      ConfigError::UnknownKey { path, key, line } => write!(
+        f,
+        "unknown key `{key}` in {}:{line}. It may need a newer fml (`fml \
+         --version`), or it is misspelled or was removed; `fml schema` lists \
+         the keys this fml accepts.",
+        path.display()
+      ),
       ConfigError::InvalidValue {
         path,
         key,

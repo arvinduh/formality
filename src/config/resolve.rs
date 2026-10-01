@@ -39,7 +39,8 @@ impl FormalityConfig {
   ///
   /// # Errors
   ///
-  /// Returns a [`ConfigError::Parse`] if the TOML is invalid, or
+  /// Returns a [`ConfigError::Parse`] if the TOML is invalid,
+  /// [`ConfigError::UnknownKey`] for a key this `fml` does not accept, or
   /// [`ConfigError::InvalidValue`] if a value has the wrong type.
   pub fn parse_str(content: &str, path: &Path) -> Result<Self, ConfigError> {
     super::strict::parse(content, path)

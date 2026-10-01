@@ -1035,6 +1035,32 @@ fn test_layered_config_with_corrupted_project_file() {
 }
 
 #[test]
+fn test_parse_str_unknown_key_names_key_path_line_and_fix() {
+  let toml = "[global]\nline_length = 80\nmax_width = 100\n";
+  let err =
+    FormalityConfig::parse_str(toml, Path::new("formality.toml")).unwrap_err();
+  assert_eq!(
+    err.to_string(),
+    "unknown key `global.max_width` in formality.toml:3. It may need a \
+     newer fml (`fml --version`), or it is misspelled or was removed; `fml \
+     schema` lists the keys this fml accepts."
+  );
+
+  let nested = "[lang.python.python]\nquote_style = \"double\"\n\
+                ignore_rulez = [\"E501\"]\n";
+  let err = FormalityConfig::parse_str(nested, Path::new("formality.toml"))
+    .unwrap_err();
+  assert!(
+    matches!(
+      &err,
+      ConfigError::UnknownKey { key, line: 3, .. }
+        if key == "lang.python.python.ignore_rulez"
+    ),
+    "{err:?}"
+  );
+}
+
+#[test]
 fn test_parse_str_wrong_type_names_nested_key_path_and_line() {
   let toml = "[global]\nline_length = 80\n\n[lang.rust.layout]\n\
                 indent_size = \"four\"\n";

@@ -651,7 +651,8 @@ fn test_relative_root_preserves_ancestor_manifest_walks_and_display() {
     ),
     (
       "formality.toml",
-      "#:schema https://formality.dev/s1.1/formality.schema.json\n\
+      "#:schema https://github.com/arvinduh/formality/releases/latest/download/formality.schema.json\n\
+       [global]\n\
        languages = [\"rust\"]\n",
     ),
     (

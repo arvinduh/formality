@@ -16,7 +16,8 @@ use super::{ConfigError, FormalityConfig};
 ///
 /// # Errors
 ///
-/// Returns [`ConfigError::InvalidValue`] for a value of the wrong type, or
+/// Returns [`ConfigError::UnknownKey`] for a key this `fml` does not accept,
+/// [`ConfigError::InvalidValue`] for a value of the wrong type, or
 /// [`ConfigError::Parse`] for invalid TOML.
 pub fn parse(
   content: &str,
@@ -47,6 +48,15 @@ fn locate(
         .filter(|&b| b == b'\n')
         .count()
         + 1;
+      // serde's `de::Error::unknown_field` wording; the typed structs
+      // reject extra keys with `deny_unknown_fields`.
+      if source.message().starts_with("unknown field ") {
+        return ConfigError::UnknownKey {
+          path: path.to_path_buf(),
+          key: key.join("."),
+          line,
+        };
+      }
       ConfigError::InvalidValue {
         path: path.to_path_buf(),
         key: key.join("."),
