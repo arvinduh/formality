@@ -53,6 +53,8 @@ single_component_path_imports = "allow" # `use some_crate;` manifests
 dbg_macro = "deny"
 todo = "warn"
 undocumented_unsafe_blocks = "deny"
+# Idioms
+redundant_closure_for_method_calls = "warn"
 
 # Config for 'dist' (cargo-dist): GitHub Releases are the only channel - no
 # crates.io publish. See docs/release.md and issue #134.
