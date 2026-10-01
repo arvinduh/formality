@@ -529,63 +529,65 @@ fn test_runner_single_walk_polyglot_repo() {
   );
 
   // Filter in-memory for each surface
-  let rust_files = crate::surfaces::filter_files_for_surface(
+  let rust_files = crate::surfaces::filter_candidates_with_ext(
     &candidates,
-    &crate::surfaces::rust::RustSurface,
+    LanguageSurface::file_extensions(&crate::surfaces::rust::RustSurface),
     &[],
     &[],
   );
   assert_eq!(rust_files.len(), 1);
   assert!(rust_files[0].ends_with("main.rs"));
 
-  let py_files = crate::surfaces::filter_files_for_surface(
+  let py_files = crate::surfaces::filter_candidates_with_ext(
     &candidates,
-    &crate::surfaces::python::PythonSurface,
+    LanguageSurface::file_extensions(&crate::surfaces::python::PythonSurface),
     &[],
     &[],
   );
   assert_eq!(py_files.len(), 1);
   assert!(py_files[0].ends_with("script.py"));
 
-  let md_files = crate::surfaces::filter_files_for_surface(
+  let md_files = crate::surfaces::filter_candidates_with_ext(
     &candidates,
-    &crate::surfaces::markdown::MarkdownSurface,
+    LanguageSurface::file_extensions(
+      &crate::surfaces::markdown::MarkdownSurface,
+    ),
     &[],
     &[],
   );
   assert_eq!(md_files.len(), 1);
   assert!(md_files[0].ends_with("README.md"));
 
-  let yaml_files = crate::surfaces::filter_files_for_surface(
+  let yaml_files = crate::surfaces::filter_candidates_with_ext(
     &candidates,
-    &crate::surfaces::yaml::YamlSurface,
+    LanguageSurface::file_extensions(&crate::surfaces::yaml::YamlSurface),
     &[],
     &[],
   );
   assert_eq!(yaml_files.len(), 1);
   assert!(yaml_files[0].ends_with("config.yaml"));
 
-  let json_files = crate::surfaces::filter_files_for_surface(
+  let json_files = crate::surfaces::filter_candidates_with_ext(
     &candidates,
-    &crate::surfaces::json::JsonSurface,
+    LanguageSurface::file_extensions(&crate::surfaces::json::JsonSurface),
     &[],
     &[],
   );
   assert_eq!(json_files.len(), 1);
   assert!(json_files[0].ends_with("data.json"));
 
-  let typst_files = crate::surfaces::filter_files_for_surface(
+  let typst_files = crate::surfaces::filter_candidates_with_ext(
     &candidates,
-    &crate::surfaces::typst::TypstSurface,
+    LanguageSurface::file_extensions(&crate::surfaces::typst::TypstSurface),
     &[],
     &[],
   );
   assert_eq!(typst_files.len(), 1);
   assert!(typst_files[0].ends_with("doc.typ"));
 
-  let toml_files = crate::surfaces::filter_files_for_surface(
+  let toml_files = crate::surfaces::filter_candidates_with_ext(
     &candidates,
-    &crate::surfaces::toml::TomlSurface,
+    LanguageSurface::file_extensions(&crate::surfaces::toml::TomlSurface),
     &[],
     &[],
   );

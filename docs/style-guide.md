@@ -83,9 +83,8 @@ Extracted from what all 12 language surfaces do consistently — see
   just the function (`test_get_surface_by_name_canonical_and_aliases`, not
   `test_get_surface`).
 - **Registry/lookup functions**: free functions in `registry.rs`
-  (`get_surface_by_name`, `resolve_canonical_name`, `detect_surfaces`,
-  `detect_surfaces_smart`) rather than static methods on `SurfaceRegistry` when
-  no registry instance is needed.
+  (`get_surface_by_name`, `detect_surfaces_smart`) rather than static methods on
+  `SurfaceRegistry` when no registry instance is needed.
 - **Predicate methods (tier 2, enforced by
   `test_is_predicate_methods_carry_must_use` in `src/lib.rs`):** `is_*`
   returning `bool` carries `#[must_use]`. The scan normalizes visibility,
@@ -167,11 +166,11 @@ surface invocation is wrapped in `Arc`, not cloned per surface.
 
 `LanguageSurface: DeclaresFacets + Send + Sync` (`src/surfaces/mod.rs`) is the
 core abstraction every surface implements. Required methods: `name`, `detect`,
-`tool_info`, `format`, `lint`, `sync_config`, `clone_box`. `display_name`,
-`aliases`, `file_extensions`, and `supports_lint_fix` have defaults, overridden
-only when a surface differs (e.g. `aliases()` returning `&["rs"]` for Rust).
-`clone_box` exists solely so `Box<dyn LanguageSurface>` implements `Clone`;
-every surface implements it as `Box::new(self.clone())`.
+`tool_info`, `format`, `lint`, `sync_config`, `clone_box`. `aliases`,
+`file_extensions`, and `supports_lint_fix` have defaults, overridden only when a
+surface differs (e.g. `aliases()` returning `&["rs"]` for Rust). `clone_box`
+exists solely so `Box<dyn LanguageSurface>` implements `Clone`; every surface
+implements it as `Box::new(self.clone())`.
 
 Surface methods take everything they need as arguments
 (`format`/`lint`/`sync_config` take `&ExecutionContext`; `detect` takes `&Path`;

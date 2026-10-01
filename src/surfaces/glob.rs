@@ -1,7 +1,6 @@
 //! File-discovery helpers: extension-based directory walking, exclude-list
 //! matching, and a small dependency-free glob matcher for `exclude` patterns.
 
-use super::LanguageSurface;
 use std::path::{Path, PathBuf};
 
 /// Standard directories ignored across all surfaces during file discovery.
@@ -68,33 +67,6 @@ pub fn build_repo_gitignore(
   builder.build().ok()
 }
 
-/// Returns whether a path is ignored by repository ignore rules:
-/// - conventional ignored directories (`target`, `node_modules`, `.git`, `.venv`, `vendor`, `fixtures`)
-/// - temporary files (`.tmp`, `.fml-check-tmp.`)
-/// - `.gitignore` / git exclusion rules
-#[must_use]
-pub fn is_repo_ignored(path: &Path, root: &Path) -> bool {
-  if is_standard_ignored(path, root) || is_temp_file(path) {
-    return true;
-  }
-  if let Some(gi) =
-    build_repo_gitignore(root, std::slice::from_ref(&path.to_path_buf()))
-  {
-    let full_p = if path.is_absolute() {
-      path.to_path_buf()
-    } else {
-      root.join(path)
-    };
-    if gi
-      .matched_path_or_any_parents(&full_p, full_p.is_dir())
-      .is_ignore()
-    {
-      return true;
-    }
-  }
-  false
-}
-
 /// Walks the workspace filesystem once, discovering all regular candidate files
 /// respecting gitignore rules, standard ignored directories (`target`, `node_modules`, etc.),
 /// and global exclude patterns.
@@ -140,22 +112,6 @@ pub fn walk_candidate_files(
       .filter(|file| !is_excluded_normalized(file, root, &normalized_exclude))
       .collect()
   }
-}
-
-/// Matches candidate files against surface extensions and include/exclude globs in-memory without disk I/O.
-#[must_use]
-pub fn filter_files_for_surface(
-  candidates: &[PathBuf],
-  surface: &dyn LanguageSurface,
-  includes: &[String],
-  excludes: &[PathBuf],
-) -> Vec<PathBuf> {
-  filter_candidates_with_ext(
-    candidates,
-    surface.file_extensions(),
-    includes,
-    excludes,
-  )
 }
 
 /// Filters in-memory candidate files matching surface extensions, explicit include patterns, and exclude patterns.
@@ -309,11 +265,9 @@ pub fn find_files_with_ext(
   if exclude.is_empty() {
     raw_files
   } else {
-    // Normalize each exclude pattern once up front instead of inside
-    // `is_excluded`, which used to re-derive `to_string_lossy()` /
-    // `replace('\\', "/")` allocations for every (file, pattern) pair —
-    // O(files * excludes) allocations for what only needs to happen
-    // O(excludes) times per invocation.
+    // Normalize each exclude pattern once up front instead of re-deriving
+    // `to_string_lossy()` / `replace('\\', "/")` allocations for every
+    // (file, pattern) pair: O(excludes) allocations, not O(files * excludes).
     let normalized_exclude: Vec<NormalizedExclude<'_>> = exclude
       .iter()
       .map(|ex| NormalizedExclude::new(ex, root))
@@ -473,24 +427,6 @@ fn glob_match_slices(pattern: &[u8], text: &[u8]) -> bool {
   }
 
   false
-}
-
-/// Checks a single path against a raw exclude list.
-///
-/// This normalizes `exclude` on every call, so callers checking many paths
-/// against the same exclude list (e.g. [`find_files_with_ext`]'s internal
-/// filter) should normalize once via [`NormalizedExclude`] and call
-/// [`is_excluded_normalized`] directly instead of this function in a loop.
-#[must_use]
-pub fn is_excluded(path: &Path, root: &Path, exclude: &[PathBuf]) -> bool {
-  if exclude.is_empty() {
-    return false;
-  }
-  let normalized: Vec<NormalizedExclude<'_>> = exclude
-    .iter()
-    .map(|ex| NormalizedExclude::new(ex, root))
-    .collect();
-  is_excluded_normalized(path, root, &normalized)
 }
 
 /// Walks `start` and each of its ancestor directories looking for a manifest
@@ -692,17 +628,18 @@ mod tests {
   }
 
   #[test]
-  fn test_is_excluded_standalone_function() {
+  fn test_is_excluded_normalized_matches_directory_prefix() {
     let temp = tempfile::TempDir::new().unwrap();
     let root = temp.path();
     let excluded_file = root.join("build").join("out.rs");
     let kept_file = root.join("src").join("main.rs");
 
-    let exclude = vec![PathBuf::from("build")];
-    assert!(is_excluded(&excluded_file, root, &exclude));
-    assert!(!is_excluded(&kept_file, root, &exclude));
+    let build = PathBuf::from("build");
+    let exclude = [NormalizedExclude::new(&build, root)];
+    assert!(is_excluded_normalized(&excluded_file, root, &exclude));
+    assert!(!is_excluded_normalized(&kept_file, root, &exclude));
 
-    assert!(!is_excluded(&excluded_file, root, &[]));
+    assert!(!is_excluded_normalized(&excluded_file, root, &[]));
   }
 
   #[test]
@@ -779,7 +716,7 @@ mod tests {
   }
 
   #[test]
-  fn test_filter_files_for_surface_in_memory() {
+  fn test_filter_candidates_with_ext_in_memory() {
     let candidates = vec![
       PathBuf::from("/repo/src/main.rs"),
       PathBuf::from("/repo/src/lib.rs"),
@@ -788,21 +725,25 @@ mod tests {
       PathBuf::from("/repo/README.md"),
     ];
 
-    let rust_surface = crate::surfaces::rust::RustSurface;
-    let python_surface = crate::surfaces::python::PythonSurface;
+    let rust_ext = crate::surfaces::LanguageSurface::file_extensions(
+      &crate::surfaces::rust::RustSurface,
+    );
+    let python_ext = crate::surfaces::LanguageSurface::file_extensions(
+      &crate::surfaces::python::PythonSurface,
+    );
 
     // 1. Rust surface default matching
     let rust_files =
-      filter_files_for_surface(&candidates, &rust_surface, &[], &[]);
+      filter_candidates_with_ext(&candidates, rust_ext, &[], &[]);
     assert_eq!(rust_files.len(), 3);
     assert!(rust_files.contains(&PathBuf::from("/repo/src/main.rs")));
     assert!(rust_files.contains(&PathBuf::from("/repo/src/lib.rs")));
     assert!(rust_files.contains(&PathBuf::from("/repo/src/generated/api.rs")));
 
     // 2. Rust surface with exclude
-    let rust_filtered = filter_files_for_surface(
+    let rust_filtered = filter_candidates_with_ext(
       &candidates,
-      &rust_surface,
+      rust_ext,
       &[],
       &[PathBuf::from("src/generated")],
     );
@@ -811,9 +752,9 @@ mod tests {
     assert!(rust_filtered.contains(&PathBuf::from("/repo/src/lib.rs")));
 
     // 3. Rust surface with explicit includes
-    let rust_included = filter_files_for_surface(
+    let rust_included = filter_candidates_with_ext(
       &candidates,
-      &rust_surface,
+      rust_ext,
       &["src/main.rs".to_string()],
       &[],
     );
@@ -822,7 +763,7 @@ mod tests {
 
     // 4. Python surface
     let py_files =
-      filter_files_for_surface(&candidates, &python_surface, &[], &[]);
+      filter_candidates_with_ext(&candidates, python_ext, &[], &[]);
     assert_eq!(py_files.len(), 1);
     assert_eq!(py_files[0], PathBuf::from("/repo/scripts/run.py"));
   }
@@ -840,29 +781,23 @@ mod tests {
   }
 
   #[test]
-  fn test_is_repo_ignored_conventional_directories() {
+  fn test_standard_ignored_and_temp_files() {
     let temp = tempfile::TempDir::new().unwrap();
     let root = temp.path();
+    let ignored = |p: &Path| is_standard_ignored(p, root) || is_temp_file(p);
 
-    assert!(is_repo_ignored(
-      &root.join("editors/vscode/test/fixtures/bin/mock-fml.js"),
-      root
+    assert!(ignored(
+      &root.join("editors/vscode/test/fixtures/bin/mock-fml.js")
     ));
-    assert!(is_repo_ignored(&root.join("target/debug/fml"), root));
-    assert!(is_repo_ignored(
-      &root.join("node_modules/pkg/index.js"),
-      root
-    ));
-    assert!(is_repo_ignored(&root.join(".venv/lib/python.py"), root));
-    assert!(is_repo_ignored(&root.join("vendor/bundle/x"), root));
-    assert!(is_repo_ignored(&root.join(".git/config"), root));
-    assert!(is_repo_ignored(&root.join("scratch.tmp"), root));
-    assert!(is_repo_ignored(&root.join("main.fml-check-tmp.rs"), root));
-    assert!(!is_repo_ignored(&root.join("src/main.rs"), root));
-    assert!(!is_repo_ignored(
-      &root.join("editors/vscode/src/extension.ts"),
-      root
-    ));
+    assert!(ignored(&root.join("target/debug/fml")));
+    assert!(ignored(&root.join("node_modules/pkg/index.js")));
+    assert!(ignored(&root.join(".venv/lib/python.py")));
+    assert!(ignored(&root.join("vendor/bundle/x")));
+    assert!(ignored(&root.join(".git/config")));
+    assert!(ignored(&root.join("scratch.tmp")));
+    assert!(ignored(&root.join("main.fml-check-tmp.rs")));
+    assert!(!ignored(&root.join("src/main.rs")));
+    assert!(!ignored(&root.join("editors/vscode/src/extension.ts")));
   }
 
   #[test]

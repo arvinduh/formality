@@ -55,12 +55,7 @@ pub fn run_with_args(args: Cli) -> ExitStatus {
     colored::control::set_override(true);
   }
 
-  let root = args.root.clone().unwrap_or_else(|| {
-    std::env::current_dir().unwrap_or_else(|_| PathBuf::from("."))
-  });
-  let root = std::path::absolute(&root).unwrap_or_else(|_| {
-    std::env::current_dir().map_or_else(|_| root.clone(), |cwd| cwd.join(&root))
-  });
+  let root = resolve_root(args.root.clone());
 
   let project_config_path = config::find_project_config(&root);
 
@@ -71,6 +66,17 @@ pub fn run_with_args(args: Cli) -> ExitStatus {
   config::schema::print_schema_notice(schema_notifier);
   engine::update::print_update_notice(update_notifier);
   status
+}
+
+/// Resolves `--root` (or the current directory when it is absent) to an
+/// absolute path, so every command sees the same root however it was spelled.
+fn resolve_root(root: Option<PathBuf>) -> PathBuf {
+  let root = root.unwrap_or_else(|| {
+    std::env::current_dir().unwrap_or_else(|_| PathBuf::from("."))
+  });
+  std::path::absolute(&root).unwrap_or_else(|_| {
+    std::env::current_dir().map_or_else(|_| root.clone(), |cwd| cwd.join(&root))
+  })
 }
 
 // Dispatches all top-level CLI commands (fmt, lint, sync, fix, doctor, init, lsp, schema, etc.).
@@ -779,17 +785,16 @@ mod tests {
 
   #[test]
   fn test_relative_root_resolves_to_absolute() {
-    // `Doctor` is a cheap, side-effect-free read used the same way
-    // elsewhere in this test module.
-    let args = Cli {
-      config: None,
-      root: Some(PathBuf::from(".")),
-      command: Commands::Doctor {
-        all: false,
-        install: false,
-      },
-    };
-    let status = run_with_args(args);
-    assert_eq!(status, ExitStatus::Clean);
+    // Asserts on `resolve_root` itself, not on a full command's exit status:
+    // a `Doctor` run is `Clean` only if every detected surface's tool
+    // resolves at that instant, so it failed whenever a concurrent
+    // `npm install -g` / `doctor --install` was relinking a shared tool
+    // binary (#291).
+    let cwd = std::env::current_dir().expect("current dir");
+    for (relative, expected) in [(".", cwd.clone()), ("src", cwd.join("src"))] {
+      let resolved = resolve_root(Some(PathBuf::from(relative)));
+      assert!(resolved.is_absolute(), "`{relative}` stayed relative");
+      assert_eq!(resolved, expected);
+    }
   }
 }
