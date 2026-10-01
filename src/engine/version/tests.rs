@@ -1501,7 +1501,7 @@ fn test_parse_go_version_m_degrades_cleanly_without_mod_line() {
   );
 }
 
-/// Tests `render_probe_args` handles Literal and ToolPath cleanly without
+/// Tests `render_probe_args` handles `Literal` and `ToolPath` cleanly without
 /// requiring goimports on PATH.
 #[test]
 fn test_render_probe_args_resolution() {
