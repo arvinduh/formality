@@ -65,6 +65,7 @@
 //!
 //! Revisit if a Windows `cargo test` job is ever added.
 
+use std::fmt::Write;
 use std::path::{Path, PathBuf};
 use std::process::Command;
 
@@ -371,11 +372,13 @@ fn golden_sync_check_renders_passed_drifted_and_manual_rows_with_styles() {
   // matches. Keep the header so it stays formality-managed.
   let rustfmt = root.join(".rustfmt.toml");
   let generated = std::fs::read_to_string(&rustfmt).unwrap();
-  let header: String = generated
-    .lines()
-    .take_while(|l| l.starts_with('#'))
-    .map(|l| format!("{l}\n"))
-    .collect();
+  let header = generated.lines().take_while(|l| l.starts_with('#')).fold(
+    String::new(),
+    |mut acc, l| {
+      let _ = writeln!(acc, "{l}");
+      acc
+    },
+  );
   std::fs::write(&rustfmt, format!("{header}\ntab_spaces = 9\n")).unwrap();
 
   // `ManualConfig`: a config that exists but carries no formality header, so
@@ -550,10 +553,10 @@ fn golden_fmt_summary_counts_missing_tools_and_errors_apart_from_failures() {
 fn write_speaking_shim(dir: &Path, binary: &str, stdout: &str, code: i32) {
   use std::os::unix::fs::PermissionsExt;
   let path = dir.join(binary);
-  let script = stdout
-    .lines()
-    .map(|l| format!("echo '{}'\n", l.replace('\'', "'\\''")))
-    .collect::<String>();
+  let script = stdout.lines().fold(String::new(), |mut acc, l| {
+    let _ = writeln!(acc, "echo '{}'", l.replace('\'', "'\\''"));
+    acc
+  });
   std::fs::write(&path, format!("#!/bin/sh\n{script}exit {code}\n")).unwrap();
   std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o755))
     .unwrap();
