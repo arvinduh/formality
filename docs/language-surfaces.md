@@ -113,11 +113,14 @@ machine-generated shape.
 - **Format**: `markdownlint-cli2 --fix` (structural fixes: blank lines, table
   padding) → `prettier --write` (prose formatting), the Smart Format order that
   keeps `fml lint`'s markdownlint pass from immediately failing on cosmetic
-  issues `fml fmt` could have fixed. A last step then escapes a `#` that
-  prettier's prose wrap left at a line start (`#299)` becomes `\#299)`, which
-  renders the same). Otherwise MD018/MD020 report it, and the next
-  `markdownlint --fix` turns the prose into a heading (#314, #309). markdownlint
-  picks the lines from the content on stdin, so it never writes the file.
+  issues `fml fmt` could have fixed. A step before the fixer and another after
+  prettier escape a `#` that starts a paragraph continuation line, whether the
+  author or prettier's prose wrap put it there (`#299)` becomes `\#299)`, which
+  renders the same). Otherwise MD018/MD020 report it, and `markdownlint --fix`
+  turns the prose into a heading (#314, #413). An unspaced `#Title` that opens
+  its own block is left to the fixer, which makes it `# Title`. `fml fix`'s
+  lint pass escapes before its own `--fix` too. markdownlint picks the lines
+  from the content on stdin, so it never writes the file.
 - **Lint**: `markdownlint-cli2`.
 - **Managed config**: `.markdownlint.json`, plus the shared `.prettierrc.json`
   (see below).
