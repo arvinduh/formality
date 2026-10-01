@@ -42,8 +42,11 @@ builds the binary, then runs `fml fmt --staged --allow-missing` and
 
 - `.github/workflows/pr-check.yml` runs `Library Tests` (clippy + full
   `cargo test`), `Formality Dogfooding` (`fml fmt --check`, `fml lint`, schema
-  drift and version progression), `Fresh-Install Regression` (3-OS matrix), and
-  `Security Audit`.
+  drift and version progression), and `Security Audit`.
+- `.github/workflows/install-regression.yml` runs `Fresh-Install Regression`
+  (3-OS matrix) only on PRs touching its `paths` list: install, lookup,
+  version-probe and spawn code. Code that can break installs belongs on that
+  list.
 - Branch protection on `main` requires `Library Tests` and
   `Formality Dogfooding` plus resolved conversations. It requires zero approving
   reviews.
