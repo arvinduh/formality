@@ -564,6 +564,7 @@ fn write_speaking_shim(dir: &Path, binary: &str, stdout: &str, code: i32) {
 
 /// The run summary `fml` prints under the table, with its styling stripped
 /// and its elapsed time normalised away.
+#[cfg(unix)]
 fn summary_line(stdout: &str) -> String {
   let plain = fml::ui::table::strip_ansi_escapes(stdout);
   let line = plain
