@@ -1947,6 +1947,7 @@ const CMD_LAUNCH_FAILURES: &[&str] = &[
 /// read as "violations found". Scoped to the wrapper, to empty stdout, and
 /// to stderr opening with one of [`CMD_LAUNCH_FAILURES`], so a tool that ran
 /// and printed findings is never reclassified.
+#[must_use]
 fn is_cmd_shim_launch_failure(
   cmd: &std::process::Command,
   stdout: &str,
@@ -1962,6 +1963,7 @@ fn is_cmd_shim_launch_failure(
 
 /// Returns whether `cmd` is a `cmd /C <target>` wrapper built by
 /// [`create_tool_command`].
+#[must_use]
 fn is_cmd_wrapper(cmd: &std::process::Command) -> bool {
   std::path::Path::new(cmd.get_program())
     .file_stem()
