@@ -226,10 +226,8 @@ reformat under `fml fix` because their linter is diagnostics-only (e.g. Java's
 ### Minimal setup (zero boilerplate)
 
 ```toml
-# Always pin to a specific schema tag (e.g. s1.0) — the schema is a release
-# asset, not a raw branch file. Tagged independently of the binary's v* release
-# (major.minor: major = breaking schema change, minor = additive/compatible).
-#:schema https://github.com/arvinduh/formality/releases/download/s1.0/formality.schema.json
+# The schema of the latest fml release, as `fml init` writes it.
+#:schema https://github.com/arvinduh/formality/releases/latest/download/formality.schema.json
 
 [global]
 languages = ["rust", "toml", "markdown"]  # Explicit active surfaces
@@ -237,20 +235,18 @@ indent_size = 2
 line_length = 80
 ```
 
-Run `fml init` to rewrite an existing `#:schema` line to point at the current
-release's schema tag (or insert one if it's missing). It only touches that
-single line — it does not attempt to rewrite config content for a breaking
-schema change, since that's a human decision.
+There is one schema, matching the latest release. Before 1.0.0 a config written
+for one `fml` may not load in another: a key or value this `fml` does not accept
+fails with the file, key path and line, and a pointer to `fml --version` and
+`fml schema`:
 
 ```text
-$ fml init
-[OK] Updated formality.toml schema reference: s0.9 -> s1.0
+[ERR] unknown key `lang.python.format_tool` in formality.toml:5. It may need a newer fml (`fml --version`), or it is misspelled or was removed; `fml schema` lists the keys this fml accepts.
 ```
 
-Editors fetch the pinned `#:schema` URL directly, so most projects never need a
-local copy. When you do — working offline or air-gapped, or checking the schema
-into your own repo — `fml schema` writes the same document the release asset
-serves:
+Editors fetch the `#:schema` URL directly, so most projects never need a local
+copy. When you do — working offline or air-gapped, or matching an older `fml` —
+`fml schema` writes the schema of the `fml` you are running:
 
 ```bash
 # Print the JSON Schema to stdout
