@@ -20,7 +20,7 @@ pub use mstv::{
   MSTV_CLANG_TIDY, MSTV_CLIPPY, MSTV_GOFMT, MSTV_GOLANGCI_LINT, MSTV_KTLINT,
   MSTV_MARKDOWNLINT_CLI2, MSTV_PRETTIER, MSTV_RUFF, MSTV_RUSTFMT, MSTV_TAPLO,
   MSTV_TYPSTYLE, MSTV_YAMLLINT, ProbeArg, ProbeExtractor, TOOL_MSTV_REGISTRY,
-  ToolMstvEntry, VersionProbe, all_mstv_entries, get_tool_mstv_entry,
+  ToolMstvEntry, VersionProbe, get_tool_mstv_entry,
 };
 
 use crate::surfaces::create_tool_command;
@@ -746,38 +746,6 @@ pub enum ToolStatus {
     /// Exact version `fml doctor --install` pins this tool to.
     pinned: Version,
   },
-}
-
-impl ToolStatus {
-  /// Returns `true` if tool status is [`ToolStatus::Compatible`].
-  #[must_use]
-  pub fn is_compatible(&self) -> bool {
-    matches!(self, ToolStatus::Compatible { .. })
-  }
-
-  /// Returns `true` if tool status is [`ToolStatus::Outdated`].
-  #[must_use]
-  pub fn is_outdated(&self) -> bool {
-    matches!(self, ToolStatus::Outdated { .. })
-  }
-
-  /// Returns `true` if tool status is [`ToolStatus::NotFound`].
-  #[must_use]
-  pub fn is_not_found(&self) -> bool {
-    matches!(self, ToolStatus::NotFound)
-  }
-
-  /// Returns `true` if tool status is [`ToolStatus::UnknownVersion`].
-  #[must_use]
-  pub fn is_unknown_version(&self) -> bool {
-    matches!(self, ToolStatus::UnknownVersion(_))
-  }
-
-  /// Returns `true` if tool status is [`ToolStatus::Stale`].
-  #[must_use]
-  pub fn is_stale(&self) -> bool {
-    matches!(self, ToolStatus::Stale { .. })
-  }
 }
 
 impl fmt::Display for ToolStatus {

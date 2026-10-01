@@ -260,9 +260,3 @@ pub fn get_tool_mstv_entry(binary: &str) -> Option<&'static ToolMstvEntry> {
     .iter()
     .find(|entry| entry.binary == lookup_bin)
 }
-
-/// Returns a slice of all declared [`ToolMstvEntry`] entries.
-#[must_use]
-pub fn all_mstv_entries() -> &'static [ToolMstvEntry] {
-  TOOL_MSTV_REGISTRY
-}
