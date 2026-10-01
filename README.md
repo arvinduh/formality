@@ -480,10 +480,12 @@ step before `fml doctor --install` if your project uses one of them:
 | Java    | `google-java-format`                                                                                                              | JDK 21+          | `actions/setup-java@v6` with `distribution` and `java-version: "21"` |
 | Kotlin  | `ktlint`                                                                                                                          | JVM              | `actions/setup-java@v6` with `distribution` and `java-version`       |
 
-GitHub-hosted Ubuntu runners already put Node, Python and Rust on `PATH`, so
-there the table matters for Go (cached but not on `PATH`) and Java (default JDK
-17). Self-hosted and container runners need every row that applies, plus Node
-and Python for the npm- and pip-installed tools when Homebrew is absent.
+On GitHub-hosted Ubuntu runners the Java row always needs its setup step: the
+default JDK there is 17. For the other rows, check the runner image's
+preinstalled software list, or just add the setup action; it is harmless when
+the toolchain is already there. Self-hosted and container runners need every row
+that applies, plus Node and Python for the npm- and pip-installed tools when
+Homebrew is absent.
 
 ```yaml
 - name: Install fml
