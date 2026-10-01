@@ -209,6 +209,38 @@ jobs:
           echo "EOF" >> "$GITHUB_OUTPUT"
 
           cp dist-manifest.json "$BUILD_MANIFEST_NAME"
+      # LOCAL EDIT (issue #166) - kept deliberately. dist's generated
+      # fml-installer.ps1 already maps ARM64 Windows
+      # (`aarch64-pc-windows-msvc`) to the x64 zip, since no native ARM64
+      # build exists, but says only "downloading fml X (aarch64-...)". This
+      # step inserts a note after that line saying the x64 build is installed
+      # on purpose and runs under Windows' x64 emulation. dist ships no
+      # checksum for the .ps1 (sha256.sum lists archives only), so nothing
+      # else needs regenerating. The anchor check fails the release if a
+      # dist upgrade moves the line, instead of shipping a silent installer.
+      # After a dist bump: re-run `dist generate --mode=ci --allow-dirty`
+      # and re-add this step; tests/release_workflow_local_edits.rs fails
+      # until you do.
+      - name: Explain the x64 fallback on ARM64 in the PowerShell installer
+        shell: bash
+        run: |
+          installer=target/distrib/fml-installer.ps1
+          anchor='  Write-Information "downloading $app_name $app_version ($arch)"'
+          if [ "$(grep -cxF -- "$anchor" "$installer")" != 1 ]; then
+            echo "::error::anchor not found exactly once in $installer; re-apply LOCAL EDIT (issue #166) against the new dist template"
+            exit 1
+          fi
+          note="$RUNNER_TEMP/arm64-note.ps1"
+          cat > "$note" <<'PS1'
+            if ($arch -like "aarch64-*" -and $platforms[$arch]["artifact_name"] -like "*x86_64-pc-windows*") {
+              Write-Information "note: fml has no native ARM64 Windows build, so this installs the x64 build ($($platforms[$arch]["artifact_name"])), which runs under Windows' built-in x64 emulation. This is deliberate, not a detection error."
+            }
+          PS1
+          awk -v anchor="$anchor" \
+            'NR == FNR { note = note $0 "\n"; next } { print } $0 == anchor { printf "%s", note }' \
+            "$note" "$installer" > "$installer.new"
+          mv "$installer.new" "$installer"
+          grep -qF "runs under Windows' built-in x64 emulation" "$installer"
       - name: "Upload artifacts"
         uses: actions/upload-artifact@v7
         with:
@@ -291,7 +323,7 @@ jobs:
         #      tags. Needs the `fetch-depth: 0` checkout above.
         # After a dist bump: re-run `dist generate --mode=ci --allow-dirty`
         # and re-apply this step plus the tag-glob and fetch-depth edits.
-        # tests/release_workflow_local_edits.rs asserts all three of those
+        # tests/release_workflow_local_edits.rs asserts those
         # edits survive, and runs in the `Library Tests` job (issue #164), so
         # a regeneration that drops one fails the PR, not the next release.
         run: |

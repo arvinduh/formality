@@ -94,6 +94,9 @@ curl --proto '=https' --tlsv1.2 -LsSf https://github.com/arvinduh/formality/rele
 powershell -c "irm https://github.com/arvinduh/formality/releases/latest/download/fml-installer.ps1 | iex"
 ```
 
+There is no native ARM64 Windows build. On ARM64 Windows the installer installs
+the x64 build, which runs under Windows' built-in x64 emulation.
+
 #### Windows (`.msi`)
 
 Download and run

@@ -9,11 +9,11 @@ use common::{
   temp_repo,
 };
 use fml::cli::Commands;
-use fml::config::SCHEMA_VERSION;
+use fml::config::{FormalityConfig, SCHEMA_VERSION};
 use fml::errors::ExitStatus;
 use fml::surfaces::{
-  SurfaceRegistry, all_surfaces, detect_surfaces, get_surface_by_name,
-  resolve_canonical_name,
+  SurfaceRegistry, all_surfaces, default_registry, detect_surfaces_smart,
+  get_surface_by_name,
 };
 use std::fs;
 use std::path::PathBuf;
@@ -24,9 +24,9 @@ fn test_surface_registry_and_aliases() {
   assert_eq!(surfaces.len(), 12);
 
   let registry = SurfaceRegistry::default();
-  assert_eq!(registry.len(), 12);
+  let names: Vec<&str> = registry.surfaces().iter().map(|s| s.name()).collect();
   assert_eq!(
-    registry.supported_languages(),
+    names,
     vec![
       "rust",
       "python",
@@ -88,7 +88,10 @@ fn test_surface_registry_and_aliases() {
     let surface = get_surface_by_name(query);
     assert!(surface.is_some(), "Lookup failed for query '{query}'");
     assert_eq!(surface.unwrap().name(), canonical);
-    assert_eq!(resolve_canonical_name(query), Some(canonical));
+    assert_eq!(
+      default_registry().resolve_canonical_name(query),
+      Some(canonical)
+    );
 
     let reg_surface = registry.get_surface_by_name(query);
     assert!(reg_surface.is_some());
@@ -96,71 +99,96 @@ fn test_surface_registry_and_aliases() {
   }
 
   assert!(get_surface_by_name("nonexistent").is_none());
-  assert!(resolve_canonical_name("nonexistent").is_none());
+  assert!(
+    default_registry()
+      .resolve_canonical_name("nonexistent")
+      .is_none()
+  );
 }
 
 #[test]
 fn test_surface_detection_in_fixtures() {
   let manifest_dir = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+  let config = FormalityConfig::with_defaults();
 
   // Rust fixture
-  let rust_detected =
-    detect_surfaces(&manifest_dir.join("tests/fixtures/rust_repo"));
+  let rust_detected = detect_surfaces_smart(
+    &manifest_dir.join("tests/fixtures/rust_repo"),
+    &config,
+  );
   let rust_names: Vec<&str> = rust_detected.iter().map(|s| s.name()).collect();
   assert!(rust_names.contains(&"rust"));
 
   // Python fixture
-  let py_detected =
-    detect_surfaces(&manifest_dir.join("tests/fixtures/python_repo"));
+  let py_detected = detect_surfaces_smart(
+    &manifest_dir.join("tests/fixtures/python_repo"),
+    &config,
+  );
   let py_names: Vec<&str> = py_detected.iter().map(|s| s.name()).collect();
   assert!(py_names.contains(&"python"));
 
   // C++ fixture
-  let cpp_detected =
-    detect_surfaces(&manifest_dir.join("tests/fixtures/cpp_repo"));
+  let cpp_detected = detect_surfaces_smart(
+    &manifest_dir.join("tests/fixtures/cpp_repo"),
+    &config,
+  );
   let cpp_names: Vec<&str> = cpp_detected.iter().map(|s| s.name()).collect();
   assert!(cpp_names.contains(&"cpp"));
 
   // Typst fixture
-  let typ_detected =
-    detect_surfaces(&manifest_dir.join("tests/fixtures/typst_repo"));
+  let typ_detected = detect_surfaces_smart(
+    &manifest_dir.join("tests/fixtures/typst_repo"),
+    &config,
+  );
   let typ_names: Vec<&str> = typ_detected.iter().map(|s| s.name()).collect();
   assert!(typ_names.contains(&"typst"));
 
   // Java fixture
-  let java_detected =
-    detect_surfaces(&manifest_dir.join("tests/fixtures/java_repo"));
+  let java_detected = detect_surfaces_smart(
+    &manifest_dir.join("tests/fixtures/java_repo"),
+    &config,
+  );
   let java_names: Vec<&str> = java_detected.iter().map(|s| s.name()).collect();
   assert!(java_names.contains(&"java"));
 
   // Go fixture
-  let go_detected =
-    detect_surfaces(&manifest_dir.join("tests/fixtures/go_repo"));
+  let go_detected = detect_surfaces_smart(
+    &manifest_dir.join("tests/fixtures/go_repo"),
+    &config,
+  );
   let go_names: Vec<&str> = go_detected.iter().map(|s| s.name()).collect();
   assert!(go_names.contains(&"go"));
 
   // Kotlin fixture
-  let kotlin_detected =
-    detect_surfaces(&manifest_dir.join("tests/fixtures/kotlin_repo"));
+  let kotlin_detected = detect_surfaces_smart(
+    &manifest_dir.join("tests/fixtures/kotlin_repo"),
+    &config,
+  );
   let kotlin_names: Vec<&str> =
     kotlin_detected.iter().map(|s| s.name()).collect();
   assert!(kotlin_names.contains(&"kotlin"));
 
   // JavaScript fixture
-  let js_detected =
-    detect_surfaces(&manifest_dir.join("tests/fixtures/javascript_repo"));
+  let js_detected = detect_surfaces_smart(
+    &manifest_dir.join("tests/fixtures/javascript_repo"),
+    &config,
+  );
   let js_names: Vec<&str> = js_detected.iter().map(|s| s.name()).collect();
   assert!(js_names.contains(&"javascript"));
 
   // TOML fixture
-  let toml_detected =
-    detect_surfaces(&manifest_dir.join("tests/fixtures/toml_repo"));
+  let toml_detected = detect_surfaces_smart(
+    &manifest_dir.join("tests/fixtures/toml_repo"),
+    &config,
+  );
   let toml_names: Vec<&str> = toml_detected.iter().map(|s| s.name()).collect();
   assert!(toml_names.contains(&"toml"));
 
   // Polyglot fixture
-  let poly_detected =
-    detect_surfaces(&manifest_dir.join("tests/fixtures/polyglot_repo"));
+  let poly_detected = detect_surfaces_smart(
+    &manifest_dir.join("tests/fixtures/polyglot_repo"),
+    &config,
+  );
   let poly_names: Vec<&str> = poly_detected.iter().map(|s| s.name()).collect();
   assert!(poly_names.contains(&"rust"));
   assert!(poly_names.contains(&"python"));
@@ -567,13 +595,13 @@ fn test_ignore_languages_filtering() {
     [global]
     ignore_languages = ["markdown", "yaml", "json"]
   "#;
-  let config = fml::config::FormalityConfig::parse_str(
+  let config = FormalityConfig::parse_str(
     config_str,
     std::path::Path::new("formality.toml"),
   )
   .unwrap();
 
-  let detected = fml::surfaces::detect_surfaces_smart(&poly_root, &config);
+  let detected = detect_surfaces_smart(&poly_root, &config);
   let names: Vec<&str> = detected.iter().map(|s| s.name()).collect();
 
   assert!(names.contains(&"rust"));
@@ -589,10 +617,10 @@ fn test_autodetect_all_workspace_surfaces_by_default() {
   let poly_root = manifest_dir.join("tests/fixtures/polyglot_repo");
 
   // Default config without explicit languages list — auto-detect mode
-  let config = fml::config::FormalityConfig::with_defaults();
+  let config = FormalityConfig::with_defaults();
   assert_eq!(config.resolve_global().languages, None);
 
-  let detected = fml::surfaces::detect_surfaces_smart(&poly_root, &config);
+  let detected = detect_surfaces_smart(&poly_root, &config);
   let names: Vec<&str> = detected.iter().map(|s| s.name()).collect();
 
   assert!(names.contains(&"rust"));
