@@ -65,23 +65,6 @@ dbg_macro = "deny"
 todo = "warn"
 undocumented_unsafe_blocks = "deny"
 
-[package.metadata.binstall]
-pkg-url = "{ repo }/releases/download/v{ version }/{ name }-{ target }.tar.gz"
-bin-dir = "{ bin }{ binary-ext }"
-pkg-fmt = "tgz"
-
-[package.metadata.binstall.overrides.x86_64-pc-windows-msvc]
-pkg-url = "{ repo }/releases/download/v{ version }/{ name }-{ target }.zip"
-pkg-fmt = "zip"
-
-# Windows MSI installer metadata (consumed by cargo-dist via `cargo wix`).
-# GUIDs are unique to this project - freshly generated, never copied.
-[package.metadata.wix]
-upgrade-guid = "16EA66A7-4E4F-4B2D-9EB3-BE52F4992BF8"
-path-guid = "0ADA61F5-692E-40C7-8519-594697CBB30A"
-license = false
-eula = false
-
 # Config for 'dist' (cargo-dist): GitHub Releases are the only channel - no
 # crates.io publish. See docs/release.md and issue #134.
 [workspace.metadata.dist]
