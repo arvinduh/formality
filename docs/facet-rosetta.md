@@ -103,9 +103,9 @@ resolved value, so they can never disagree.
 ## Extending the rosetta
 
 Adding a new canonical facet means touching three things in lockstep: the
-`Facet` enum variant + `name()` arm in `src/config/facets.rs`, an
-`impl DeclaresFacets` arm in **every** surface file under `src/surfaces/` (the
-trait has no default per-facet fallback, by design — every surface must make an
-explicit decision), and this document's rosetta table. See
+`Facet` enum variant in `src/config/facets.rs`, an `impl DeclaresFacets` arm in
+**every** surface file under `src/surfaces/` (the trait has no default per-facet
+fallback, by design — every surface must make an explicit decision), and this
+document's rosetta table. See
 [Adding a new language surface](new-surface-guide.md) for the parallel process
 of adding a whole new _surface_ rather than a new facet.
