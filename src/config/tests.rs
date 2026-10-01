@@ -1061,6 +1061,21 @@ fn test_parse_str_unknown_key_names_key_path_line_and_fix() {
 }
 
 #[test]
+fn test_parse_str_unknown_root_key_is_unknown() {
+  // A `[global]` key written at the root; `deny_unknown_fields` on
+  // `FormalityConfig` is what reports it.
+  let toml = "languages = [\"rust\"]\n";
+  let err =
+    FormalityConfig::parse_str(toml, Path::new("formality.toml")).unwrap_err();
+  assert_eq!(
+    err.to_string(),
+    "unknown key `languages` in formality.toml:1. It may need a newer fml \
+     (`fml --version`), or it is misspelled or was removed; `fml schema` \
+     lists the keys this fml accepts."
+  );
+}
+
+#[test]
 fn test_parse_str_removed_flat_lang_key_is_unknown() {
   // `format_tool` left `LangConfig` in #280; the flattened `extra` map used
   // to swallow it without a word.
