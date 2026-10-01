@@ -61,7 +61,6 @@ fn test_fix_command_targeted_paths() {
     staged: false,
     changed: false,
     lang: vec!["toml".to_string()],
-    install: false,
     allow_missing: false,
     paths: vec![target_file.clone()],
   };
@@ -111,7 +110,6 @@ fn test_fix_command_invalid_surface_and_mutual_exclusion() {
     staged: true,
     changed: true,
     lang: vec![],
-    install: false,
     allow_missing: false,
     paths: vec![],
   };
@@ -183,7 +181,6 @@ fn test_fix_command_staged_with_explicit_paths_filtering() {
     staged: true,
     changed: false,
     lang: vec!["toml".to_string()],
-    install: false,
     allow_missing: false,
     paths: vec![target_file.clone()],
   };
@@ -235,7 +232,6 @@ fn test_fix_command_changed_with_explicit_paths_filtering() {
     staged: false,
     changed: true,
     lang: vec!["toml".to_string()],
-    install: false,
     allow_missing: false,
     paths: vec![target_file.clone()],
   };
@@ -330,7 +326,7 @@ fn test_fix_command_reports_pass_when_format_pass_resolves_lint_violation() {
   );
 
   // ... and a subsequent plain lint agrees the tree is clean.
-  assert_eq!(run_cli(root, lint_cmd(false, &["markdown"])), 0);
+  assert_eq!(run_cli(root, lint_cmd(&["markdown"])), 0);
 }
 
 /// Issue #116, inverse guard: a violation that *neither* pass can fix must
@@ -498,44 +494,5 @@ fn test_fix_check_and_fix_agree_when_no_pass_can_fix() {
     fs::read_to_string(&doc_md).unwrap(),
     before,
     "neither run should have modified an unfixable file"
-  );
-}
-
-/// Issue #255: `fml lint --fix` was removed outright in v0.3.0 — it must
-/// fail with a message naming `fml fix`, never a bare clap "unexpected
-/// argument", and it must never reach the fix plan.
-#[test]
-fn test_lint_fix_is_rejected_by_the_real_binary() {
-  use std::process::Command;
-
-  let temp =
-    temp_repo(&[("doc.md", "# Title\n\nSome paragraph   with   spaces.\n")]);
-  let root = temp.path();
-
-  let out = Command::new(env!("CARGO_BIN_EXE_fml"))
-    .args(["lint", "--fix", "--lang", "markdown"])
-    .current_dir(root)
-    .output()
-    .expect("failed to run fml lint --fix");
-  assert!(!out.status.success());
-  let stderr = String::from_utf8_lossy(&out.stderr);
-  // The message's own sentence, not a bare substring: clap's
-  // `Usage: fml lint [OPTIONS] [PATH]...` line already contains "fml lint",
-  // so `contains("fml lint")` is satisfied no matter what the message says.
-  assert!(
-    stderr.contains("`--fix` was removed from `fml lint`"),
-    "expected removal error naming `--fix` on `fml lint` in stderr, got: {stderr}"
-  );
-  assert!(
-    stderr.contains("fml fix"),
-    "expected the error to name `fml fix` as the replacement, got: {stderr}"
-  );
-
-  // Never dispatched: the file is untouched.
-  let doc_md = root.join("doc.md");
-  assert_eq!(
-    fs::read_to_string(&doc_md).unwrap(),
-    "# Title\n\nSome paragraph   with   spaces.\n",
-    "a rejected command must not write anything"
   );
 }

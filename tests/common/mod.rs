@@ -90,7 +90,6 @@ pub fn fmt_cmd(check: bool, lang: &[&str]) -> Commands {
     staged: false,
     changed: false,
     lang: lang.iter().map(|s| (*s).to_string()).collect(),
-    install: false,
     allow_missing: false,
     paths: vec![],
   }
@@ -103,21 +102,18 @@ pub fn fix_cmd(check: bool, lang: &[&str]) -> Commands {
     staged: false,
     changed: false,
     lang: lang.iter().map(|s| (*s).to_string()).collect(),
-    install: false,
     allow_missing: false,
     paths: vec![],
   }
 }
 
 /// Helper to create a standard `Commands::Lint` command.
-pub fn lint_cmd(fix: bool, lang: &[&str]) -> Commands {
+pub fn lint_cmd(lang: &[&str]) -> Commands {
   Commands::Lint {
-    fix,
     check: false,
     staged: false,
     changed: false,
     lang: lang.iter().map(|s| (*s).to_string()).collect(),
-    install: false,
     allow_missing: false,
     paths: vec![],
   }

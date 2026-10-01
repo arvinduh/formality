@@ -103,10 +103,8 @@ installation lives entirely in `doctor/mod.rs` (`install_missing_tools`,
 `preflight_install`) — `--install` was removed from `fmt`/`lint`/`fix` in v0.3.0
 (#282), so `fml doctor --install` is its only caller now. `fmt`/`lint`/`fix`
 instead call `preflight_warn_stale_tools`, which only warns about stale tools,
-never installs. `fml install`, `fml list-surfaces` and `fml surfaces` used to
-dispatch here directly, but all three were removed outright in v0.3.0 (#255) and
-are now rejected by `Cli::validate()` before dispatch. `mod.rs` at the top of
-this directory also holds shared helpers used by more than one command handler.
+never installs. `mod.rs` at the top of this directory also holds shared helpers
+used by more than one command handler.
 
 ## Cross-cutting: process and release docs
 

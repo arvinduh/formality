@@ -39,9 +39,7 @@ print!("{rendered}");
 ## `fml table` CLI command (removed)
 
 > [!NOTE] The `fml table` CLI command was removed outright in `v0.3.0` (#255).
-> `fml table ...` now fails with a message naming the `fml::ui::table` library
-> API above as the replacement, rather than a bare "unexpected argument". Use
-> [`render_json`](#library-usage-fmluitable) directly instead — it takes the
+> Use [`render_json`](#library-usage-fmluitable) directly instead — it takes the
 > same JSON specification this document describes and returns the rendered
 > string rather than printing to stdout.
 

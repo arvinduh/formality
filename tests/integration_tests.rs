@@ -237,47 +237,6 @@ fn test_init_inserts_schema_pin_when_config_missing_schema() {
 }
 
 #[test]
-fn test_removed_migrate_command_names_init() {
-  // Removed in v0.3.0 (#299). It still parses (declared hidden) so the
-  // error names `fml init` rather than clap's bare "unexpected argument";
-  // exercised against the built binary because that is the path a user
-  // following an old README actually takes.
-  let temp = temp_repo(&[(
-    "formality.toml",
-    "#:schema https://github.com/arvinduh/formality/releases/download/s0.9/formality.schema.json\n[global]\nindent_size = 2\n",
-  )]);
-  let out = std::process::Command::new(env!("CARGO_BIN_EXE_fml"))
-    .args([
-      "migrate",
-      "schema",
-      "--root",
-      &temp.path().to_string_lossy(),
-    ])
-    .env("NO_COLOR", "1")
-    .output()
-    .expect("failed to run fml");
-
-  assert!(!out.status.success());
-  let stderr = String::from_utf8_lossy(&out.stderr);
-  assert!(
-    stderr.contains("`fml migrate` was removed in v0.3.0."),
-    "expected removal error naming `fml migrate` in stderr, got: {stderr}"
-  );
-  assert!(
-    stderr.contains("fml init"),
-    "expected the error to name the replacement, got: {stderr}"
-  );
-  assert!(
-    !stderr.contains("unexpected argument"),
-    "error must not fall back to clap's bare rejection, got: {stderr}"
-  );
-
-  // The config must be left untouched: a rejected command never dispatches.
-  let content = fs::read_to_string(temp.path().join("formality.toml")).unwrap();
-  assert!(content.contains("s0.9/formality.schema.json"));
-}
-
-#[test]
 fn test_sync_config_workflow() {
   let temp = temp_repo(&[
     (
@@ -345,100 +304,6 @@ fn test_sync_config_workflow() {
   )
   .unwrap();
   assert_eq!(run_cli(root, sync_cmd(true, &["rust"])), 1);
-}
-
-#[test]
-fn test_list_surfaces_and_surfaces_are_rejected_by_the_real_binary() {
-  // Removed in v0.3.0 (#255): both spellings must fail with a message
-  // naming the replacement, never a bare clap "unexpected argument".
-  use std::process::Command;
-
-  let out_list_surfaces = Command::new(env!("CARGO_BIN_EXE_fml"))
-    .arg("list-surfaces")
-    .output()
-    .expect("failed to run fml list-surfaces");
-  assert!(!out_list_surfaces.status.success());
-  let stderr_list = String::from_utf8_lossy(&out_list_surfaces.stderr);
-  // The backticked sentence, not a bare substring: clap's
-  // `Usage: fml list-surfaces [OPTIONS]` line already contains
-  // "fml list-surfaces", so a looser assertion passes even when the message
-  // names the wrong spelling.
-  assert!(
-    stderr_list.contains("`fml list-surfaces` was removed"),
-    "expected removal error naming `fml list-surfaces` in stderr, got: {stderr_list}"
-  );
-  assert!(
-    !stderr_list.contains("`fml surfaces` was removed"),
-    "error must not name the alias when `list-surfaces` was typed, got: {stderr_list}"
-  );
-  assert!(
-    stderr_list.contains("fml doctor"),
-    "expected the error to name `fml doctor` as the replacement, got: {stderr_list}"
-  );
-
-  let out_surfaces = Command::new(env!("CARGO_BIN_EXE_fml"))
-    .arg("surfaces")
-    .output()
-    .expect("failed to run fml surfaces");
-  assert!(!out_surfaces.status.success());
-  let stderr_surfaces = String::from_utf8_lossy(&out_surfaces.stderr);
-  assert!(
-    stderr_surfaces.contains("`fml surfaces` was removed"),
-    "expected removal error naming `fml surfaces` in stderr, got: {stderr_surfaces}"
-  );
-  assert!(
-    !stderr_surfaces.contains("`fml list-surfaces` was removed"),
-    "error must not name the canonical spelling when the alias was typed, got: {stderr_surfaces}"
-  );
-}
-
-#[test]
-fn test_removed_install_command_names_doctor_install() {
-  // Removed in v0.3.0 (#255). It still parses (declared hidden) so the
-  // error names `fml doctor --install` rather than clap's bare "unexpected
-  // argument"; exercised against the built binary because that is the path
-  // a user following an old README actually takes.
-  use std::process::Command;
-
-  let out_install = Command::new(env!("CARGO_BIN_EXE_fml"))
-    .arg("install")
-    .output()
-    .expect("failed to run fml install");
-  assert!(!out_install.status.success());
-  let stderr_install = String::from_utf8_lossy(&out_install.stderr);
-  assert!(
-    stderr_install.contains("`fml install` was removed in v0.3.0."),
-    "expected removal error naming `fml install` in stderr, got: {stderr_install}"
-  );
-  assert!(
-    stderr_install.contains("fml doctor --install"),
-    "expected the error to name the replacement, got: {stderr_install}"
-  );
-  assert!(
-    !stderr_install.contains("unexpected argument"),
-    "error must not fall back to clap's bare rejection, got: {stderr_install}"
-  );
-
-  // `--all`/`-a` stays declared purely so it reaches this same error rather
-  // than failing earlier on an unknown flag — which only the real binary
-  // can demonstrate, since that is clap's own parse step.
-  for flag in ["--all", "-a"] {
-    let out = Command::new(env!("CARGO_BIN_EXE_fml"))
-      .args(["install", flag])
-      .output()
-      .unwrap_or_else(|e| panic!("failed to run fml install {flag}: {e}"));
-    assert!(!out.status.success(), "`fml install {flag}` must fail");
-    let stderr = String::from_utf8_lossy(&out.stderr);
-    assert!(
-      stderr.contains("`fml install` was removed in v0.3.0.")
-        && stderr.contains("fml doctor --install"),
-      "`fml install {flag}` should get the same tailored error, got: {stderr}"
-    );
-    assert!(
-      !stderr.contains("unexpected argument"),
-      "`fml install {flag}` must not fall back to clap's bare rejection, got: {stderr}"
-    );
-  }
 }
 
 #[test]
@@ -539,7 +404,6 @@ fn test_targeted_file_and_dir_formatting() {
     staged: false,
     changed: false,
     lang: vec!["rust".to_string()],
-    install: false,
     allow_missing: false,
     paths: vec![target_file],
   };
@@ -551,7 +415,6 @@ fn test_targeted_file_and_dir_formatting() {
     staged: false,
     changed: false,
     lang: vec!["rust".to_string()],
-    install: false,
     allow_missing: false,
     paths: vec![sub],
   };
@@ -749,7 +612,6 @@ fn test_fmt_staged_and_changed_with_explicit_paths_filtering() {
     staged: true,
     changed: false,
     lang: vec!["toml".to_string()],
-    install: false,
     allow_missing: false,
     paths: vec![file_a.clone()],
   };
@@ -788,33 +650,6 @@ fn test_table_library_api_json_valid_and_invalid_syntax() {
 
   // 3. Invalid JSON syntax
   assert!(fml::ui::table::render_json("{ not valid json }").is_err());
-}
-
-#[test]
-fn test_table_is_rejected_by_the_real_binary() {
-  // Removed in v0.3.0 (#255): must fail with a message naming the
-  // replacement, never a bare clap "unexpected argument".
-  use std::process::Command;
-
-  let out = Command::new(env!("CARGO_BIN_EXE_fml"))
-    .arg("table")
-    .arg("--json")
-    .arg("{}")
-    .output()
-    .expect("failed to run fml table");
-  assert!(!out.status.success());
-  let stderr = String::from_utf8_lossy(&out.stderr);
-  // The backticked sentence, not a bare substring: clap's
-  // `Usage: fml table [OPTIONS]` line already contains "fml table", so a
-  // looser assertion holds whatever the message says.
-  assert!(
-    stderr.contains("`fml table` was removed"),
-    "expected removal error naming `fml table` in stderr, got: {stderr}"
-  );
-  assert!(
-    stderr.contains("fml::ui::table"),
-    "expected the error to name the library API replacement, got: {stderr}"
-  );
 }
 
 #[test]
@@ -939,22 +774,18 @@ fn test_missing_tool_exit_code_parity_staged_vs_unstaged() {
 
   // 1. Lint staged vs unstaged parity with missing tool
   let lint_staged = Commands::Lint {
-    fix: false,
     check: false,
     staged: true,
     changed: false,
     lang: vec!["markdown".to_string()],
-    install: false,
     allow_missing: false,
     paths: vec![],
   };
   let lint_unstaged = Commands::Lint {
-    fix: false,
     check: false,
     staged: false,
     changed: false,
     lang: vec!["markdown".to_string()],
-    install: false,
     allow_missing: false,
     paths: vec![],
   };
@@ -985,7 +816,6 @@ fn test_missing_tool_exit_code_parity_staged_vs_unstaged() {
     staged: true,
     changed: false,
     lang: vec!["markdown".to_string()],
-    install: false,
     allow_missing: false,
     paths: vec![],
   };
@@ -994,7 +824,6 @@ fn test_missing_tool_exit_code_parity_staged_vs_unstaged() {
     staged: false,
     changed: false,
     lang: vec!["markdown".to_string()],
-    install: false,
     allow_missing: false,
     paths: vec![],
   };
