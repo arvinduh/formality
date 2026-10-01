@@ -39,12 +39,10 @@ impl FormalityConfig {
   ///
   /// # Errors
   ///
-  /// Returns a [`ConfigError::Parse`] if the TOML is invalid or does not match the schema.
+  /// Returns a [`ConfigError::Parse`] if the TOML is invalid, or
+  /// [`ConfigError::InvalidValue`] if a value has the wrong type.
   pub fn parse_str(content: &str, path: &Path) -> Result<Self, ConfigError> {
-    toml::from_str(content).map_err(|source| ConfigError::Parse {
-      path: path.to_path_buf(),
-      source,
-    })
+    super::strict::parse(content, path)
   }
 
   /// Loads and parses configuration from a file path.

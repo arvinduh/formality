@@ -15,6 +15,8 @@ pub mod options;
 pub mod resolve;
 /// JSON Schema generator for formality.toml configuration validation.
 pub mod schema;
+/// Strict document parsing that locates a rejected key by path and line.
+mod strict;
 
 pub use facets::LayoutFacet;
 pub use options::{
@@ -457,6 +459,18 @@ pub enum ConfigError {
     /// Underlying TOML error.
     source: toml::de::Error,
   },
+  /// A known key whose value has the wrong type or shape.
+  InvalidValue {
+    /// File path of the config holding the value.
+    path: PathBuf,
+    /// Dotted key path, e.g. `global.line_length`.
+    key: String,
+    /// One-based line of the value.
+    line: usize,
+    /// Why the value was rejected, e.g.
+    /// `invalid type: string "80", expected usize`.
+    reason: String,
+  },
 }
 
 impl std::fmt::Display for ConfigError {
@@ -478,6 +492,17 @@ impl std::fmt::Display for ConfigError {
           source
         )
       }
+      ConfigError::InvalidValue {
+        path,
+        key,
+        line,
+        reason,
+      } => write!(
+        f,
+        "invalid value for `{key}` in {}:{line}: {reason}. Check `fml \
+         schema` for the type this fml expects.",
+        path.display()
+      ),
     }
   }
 }

@@ -967,8 +967,15 @@ fn test_corrupted_config_syntax_errors_and_recovery() {
   let path2 = temp.path().join("type_mismatch.toml");
   fs::write(&path2, "[global]\nindent_size = \"two\"\n").unwrap();
   let err2 = FormalityConfig::load_file(&path2).unwrap_err();
-  assert!(matches!(err2, ConfigError::Parse { .. }));
-  assert!(err2.to_string().contains("invalid type"));
+  assert_eq!(
+    err2.to_string(),
+    format!(
+      "invalid value for `global.indent_size` in {}:2: invalid type: \
+       string \"two\", expected usize. Check `fml schema` for the type this \
+       fml expects.",
+      path2.display()
+    )
+  );
 
   // Test 3: Invalid TOML token / syntax error
   let path3 = temp.path().join("bad_syntax.toml");
@@ -1018,8 +1025,27 @@ fn test_layered_config_with_corrupted_project_file() {
   let res = FormalityConfig::load_layered(Some(root));
   assert!(res.is_err());
   let err = res.unwrap_err();
-  assert!(err.to_string().contains("formality.toml"));
-  assert!(err.to_string().contains("Failed to parse"));
+  assert!(
+    err
+      .to_string()
+      .starts_with("invalid value for `global.line_length` in "),
+    "{err}"
+  );
+  assert!(err.to_string().contains("formality.toml:2: "), "{err}");
+}
+
+#[test]
+fn test_parse_str_wrong_type_names_nested_key_path_and_line() {
+  let toml = "[global]\nline_length = 80\n\n[lang.rust.layout]\n\
+                indent_size = \"four\"\n";
+  let err =
+    FormalityConfig::parse_str(toml, Path::new("formality.toml")).unwrap_err();
+  assert_eq!(
+    err.to_string(),
+    "invalid value for `lang.rust.layout.indent_size` in formality.toml:5: \
+         invalid type: string \"four\", expected usize. Check `fml schema` for \
+         the type this fml expects."
+  );
 }
 
 #[test]
