@@ -44,6 +44,7 @@ unused_qualifications = "warn"
 
 [lints.clippy]
 # Docs
+doc_markdown = "warn"
 missing_errors_doc = "warn"
 missing_panics_doc = "warn"
 # Imports
