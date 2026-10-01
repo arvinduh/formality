@@ -7,6 +7,12 @@ Process and Rust style come from the global directives and the `orchestrate` and
 `docs/INDEX.md` before reading source; `docs/style-guide.md` holds the Rust
 deviations and repo-specific code rules.
 
+## Toolchain
+
+`rust-toolchain.toml` pins stable `1.98.1`; CI pins the same version. This repo
+may use nightly for its own development tooling, but fml itself must build and
+run on stable, and must never require nightly from its users.
+
 ## Gate
 
 The full gate, run before a PR is marked ready:
@@ -75,9 +81,15 @@ builds the binary, then runs `fml fmt --staged --allow-missing` and
 ## Issues
 
 Workflow state is derived from GitHub
-([ADR 0006](docs/adr/0006-derived-issue-state.md)). Topical labels:
+([ADR 0006](docs/adr/0006-derived-issue-state.md)): labels `triage`, `design`,
+`ready`, plus native blockers, assignees and draft PRs. Topical labels:
 `architecture`, `dx`, `documentation`, `rust`, `ci`, `compatibility`, `surface`,
 `bug`, `enhancement`.
+
+- A parent issue carries no state label; its Done list names its sub-issues.
+- A blocker in another repository cannot always be linked natively: the issue
+  carries no `ready` label and a comment naming the blocker and how to tell it
+  cleared (#246).
 
 Issue and PR numbers cited in code or docs written before 2026-08-26 predate the
 repo's recreation and point at unrelated issues; see
