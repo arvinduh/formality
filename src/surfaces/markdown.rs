@@ -300,6 +300,7 @@ fn write_hash_rules_temp_config() -> std::io::Result<tempfile::NamedTempFile> {
 ///
 /// A real heading such as `# Title#` (an MD020 finding) fails this test, so
 /// it is never escaped.
+#[must_use]
 fn is_unspaced_hash_line(line: &str) -> bool {
   line.starts_with('#')
     && line
