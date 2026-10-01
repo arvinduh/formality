@@ -46,9 +46,10 @@ jobs:
           const path = require('path');
           const cp = require('child_process');
           const root = path.join(process.env.RUNNER_TEMP, 'probe');
-          const req = (m) => { const x = require(path.join(root, 'node_modules', m)); return x.default || x; };
+          const req = (m) => require(path.join(root, 'node_modules', m));
           const npmShim = req('cmd-shim');
-          const pnpmShim = req('@zkochan/cmd-shim');
+          const zk = req('@zkochan/cmd-shim').cmdShim;
+          const pnpmShim = (s, t) => zk(s, t, { createCmdFile: true });
           const w = path.join(root, 'w');
           fs.mkdirSync(path.join(w, 'gone'), { recursive: true });
           const src = (n, body) => { const p = path.join(w, n); fs.writeFileSync(p, body); return p; };
