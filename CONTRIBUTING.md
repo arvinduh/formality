@@ -278,8 +278,9 @@ The issue reference goes in the PR body as `Fixes #N`, not in each commit.
   requests.
 - **Ask before modifying**:
   - Branch protection rules or required CI status check names.
-  - Project version bumps (managed by dedicated release automation, not manual
-    edits).
+  - Project version bumps: no tool bumps the version; a bump is a hand edit in a
+    dedicated `chore(release)` PR (see [`docs/release.md`](docs/release.md) and
+    [`AGENTS.md`](AGENTS.md#ask-first)).
 - **Never rely on global binaries**: Always test with `cargo run -q -- ...`.
 - **Preserve API contracts**: When modifying signatures, search and update all
   invocation sites across the repository.
