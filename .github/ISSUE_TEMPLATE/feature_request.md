@@ -1,47 +1,25 @@
 ---
 name: Feature Request
-about: Suggest an idea or new feature for formality (fml)
+about: Suggest a new capability for formality (fml)
 title: 'feat(<scope>): '
-labels: 'enhancement'
+labels: 'enhancement, triage'
 assignees: ''
 ---
 
-## Is your feature request related to a problem?
+## Goal
 
-A clear and concise description of what the problem is (e.g., "I always have to manually configure X when working with surface Y...").
+<!-- One sentence: what fml should do and why. For new CLI surface or config
+keys, include an example invocation, its output, or the proposed
+`formality.toml` syntax. -->
 
-## Proposed Feature
+## Done
 
-A clear and concise description of what you want to happen.
+- [ ] <!-- observable acceptance criterion -->
 
-## Target Surface or System Area
+## Files
 
-Select or describe the primary component affected:
+<!-- Paths in scope, if known. -->
 
-- [ ] New Language Surface (specify language and native tools)
-- [ ] Facet Rosetta mapping / canonical config expansion
-- [ ] Config Sync engine (`fml sync`)
-- [ ] Tool Installer (`fml doctor --install`)
-- [ ] Execution Engine / Rayon parallel runner
-- [ ] CLI Output / Table UI (`fml::ui::table`)
-- [ ] Other
+## Not
 
-## Configuration Proposal (`formality.toml`)
-
-If this feature introduces new configuration options or `[lang.<name>]` settings, provide a proposed example:
-
-```toml
-# Proposed formality.toml syntax
-```
-
-## Pitch / Rationale
-
-Why should this feature be added to `fml`? How does it align with `fml`'s design principles (zero-boilerplate defaults, single canonical config, fast parallel execution)?
-
-## Alternatives Considered
-
-A clear description of any alternative solutions or features you've considered.
-
-## Additional Context
-
-Add any other context, tool CLI specs, or reference links here.
+<!-- What this issue deliberately leaves out. -->
