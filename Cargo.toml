@@ -74,6 +74,7 @@ single_char_pattern = "warn"
 single_match_else = "warn"
 uninlined_format_args = "warn"
 unreadable_literal = "warn"
+unused_self = "warn"
 # Performance
 format_collect = "warn"
 format_push_string = "warn"
