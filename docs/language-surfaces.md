@@ -128,7 +128,12 @@ machine-generated shape.
   content on stdin, so it never writes the file.
 - **Lint**: `markdownlint-cli2`.
 - **Managed config**: `.markdownlint.json`, plus the shared `.prettierrc.json`
-  (see below).
+  (see below). `MD010`/`no-hard-tabs` and `MD029`/`ol-prefix` are always off
+  (#479): their fixers change what a list renders as. MD010 swaps a tab for one
+  space, which moves a tab-indented paragraph out of its list item, and MD029
+  renumbers `10.` to `1.`, dropping the list's start number. prettier already
+  turns those tabs into spaces and renumbers the items after the first, both
+  without changing the rendering.
 - **`[lang.markdown]` options**: `prose_wrap` (`"always"` / `"never"` /
   `"preserve"`); `no_inline_html` (bool, default `false`) — controls
   markdownlint's `MD033`/`no-inline-html` rule. Ships **disabled** by default:

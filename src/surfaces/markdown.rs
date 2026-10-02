@@ -56,9 +56,22 @@ pub struct MarkdownlintConfig {
   /// tools (#394).
   #[serde(rename = "MD007")]
   pub md007: MarkdownlintMd007,
+  /// MD010 (no-hard-tabs) rule enablement, always `false` (#479). Its fixer
+  /// swaps each tab for a fixed run of spaces, not the tab stop, so a
+  /// tab-indented paragraph leaves its list item; prettier already turns
+  /// such tabs into spaces that render the same, and a tab left in fenced
+  /// code is content.
+  #[serde(rename = "MD010")]
+  pub md010: bool,
   /// MD013 line length rule settings.
   #[serde(rename = "MD013")]
   pub md013: MarkdownlintMd013,
+  /// MD029 (ol-prefix) rule enablement, always `false` (#479). It demands
+  /// that a list start at 1, which `<ol start>` makes a change in what the
+  /// list renders as, and its fixer can right-align a long marker into
+  /// indented code; prettier already renumbers the items after the first.
+  #[serde(rename = "MD029")]
+  pub md029: bool,
   /// MD033 (no-inline-html) rule enablement. Shipped default is `false` —
   /// see [`crate::config::MarkdownOptions::no_inline_html`] for why, and
   /// how to opt back in from `formality.toml`.
@@ -107,11 +120,13 @@ fn markdownlint_config_for_lang(
     md007: MarkdownlintMd007 {
       indent: lang_config.indent_size,
     },
+    md010: false,
     md013: MarkdownlintMd013 {
       line_length: lang_config.line_length,
       code_blocks: false,
       tables: false,
     },
+    md029: false,
     md033: no_inline_html,
   }
 }
@@ -1201,11 +1216,13 @@ mod tests {
       },
       default: true,
       md007: MarkdownlintMd007 { indent: 2 },
+      md010: false,
       md013: MarkdownlintMd013 {
         line_length: 120,
         code_blocks: false,
         tables: false,
       },
+      md029: false,
       md033: false,
     };
     let rendered = cfg.render().unwrap();
