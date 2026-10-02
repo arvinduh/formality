@@ -484,6 +484,18 @@ pub enum ConfigError {
     /// `invalid type: string "80", expected usize`.
     reason: String,
   },
+  /// A `[lang.<name>]` section spelled as a surface alias or with other
+  /// casing, which no reader would look up.
+  NonCanonicalLang {
+    /// File path of the config holding the section.
+    path: PathBuf,
+    /// The section name as written, e.g. `py`.
+    name: String,
+    /// The surface's canonical name, e.g. `python`.
+    canonical: &'static str,
+    /// One-based line of the section name.
+    line: usize,
+  },
 }
 
 impl std::fmt::Display for ConfigError {
@@ -521,6 +533,17 @@ impl std::fmt::Display for ConfigError {
         f,
         "invalid value for `{key}` in {}:{line}: {reason}. Check `fml \
          schema` for the type this fml expects.",
+        path.display()
+      ),
+      ConfigError::NonCanonicalLang {
+        path,
+        name,
+        canonical,
+        line,
+      } => write!(
+        f,
+        "section `[lang.{name}]` in {}:{line} is not a canonical surface \
+         name; rename it to `[lang.{canonical}]`.",
         path.display()
       ),
     }
