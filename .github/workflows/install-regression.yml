@@ -158,7 +158,7 @@ jobs:
           printf '# Title\n\nSome text.\n' > sample.md
           printf 'key: value\n' > sample.yaml
           printf '{}\n' > sample.json
-          printf 'key = "value"\n' > sample.toml
+          printf 'key   =   "value"\n' > sample.toml
           printf '= Heading\n\nSome text.\n' > sample.typ
           printf 'const x = 1;\n' > sample.js
           printf 'fun main() {}\n' > Sample.kt
@@ -309,6 +309,13 @@ jobs:
           fi
           if grep -q 'unparseable version' fml-output.log; then
             echo "::error::fml could not resolve/run a tool it just installed (reported 'an unparseable version', meaning the post-install probe found nothing to run at all, not just unexpected --version output) -- see the log above."
+            exit 1
+          fi
+          # A formatter can run, exit 0 and touch nothing: taplo once matched
+          # no file on Windows and reported a pass (#501). sample.toml is
+          # scaffolded unformatted so `fml fmt` must visibly rewrite it.
+          if ! grep -q 'Missing binary: taplo' fml-output.log && [ "$(cat sample.toml)" != 'key = "value"' ]; then
+            echo "::error::fml fmt left sample.toml unformatted while taplo was available: $(cat sample.toml)"
             exit 1
           fi
 

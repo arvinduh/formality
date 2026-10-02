@@ -24,7 +24,7 @@ fn test_default_resolution() {
 
 #[test]
 fn test_resolve_for_lang_with_global_equivalence() {
-  let toml = r#"
+  let toml = r"
     [global]
     indent_size = 4
     line_length = 100
@@ -35,7 +35,7 @@ fn test_resolve_for_lang_with_global_equivalence() {
 
     [lang.python]
     line_length = 88
-  "#;
+  ";
   let cfg = FormalityConfig::parse_str(toml, Path::new("test.toml")).unwrap();
   let global = cfg.resolve_global();
 

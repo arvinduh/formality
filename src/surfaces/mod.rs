@@ -190,6 +190,12 @@ impl ExecutionContext {
   }
 }
 
+/// Runs `surface`'s detection on `root` alone, scanning `root` for it.
+#[cfg(test)]
+fn detect_in(surface: &dyn LanguageSurface, root: &Path) -> bool {
+  surface.detect(root, &glob::PresentExtensions::scan(root))
+}
+
 /// Builds a minimal `ExecutionContext` for testing language surfaces.
 #[cfg(test)]
 #[must_use]
@@ -459,17 +465,16 @@ pub trait LanguageSurface: DeclaresFacets + Send + Sync {
   fn marker_files(&self) -> &[&'static str] {
     &[]
   }
-  /// Detects whether this language surface is active in workspace `root`.
+  /// Detects whether this language surface is active in workspace `root`,
+  /// given `present`, the extensions of `root`'s candidate files.
   ///
   /// The default is active when any `marker_files()` entry is a regular file
   /// directly under `root` (a directory of that name does not count), or
-  /// when any non-ignored file under `root` has one of `file_extensions()`.
-  /// Markers are checked first: they are single `stat` calls, while the
-  /// extension check walks the whole tree.
-  fn detect(&self, root: &Path) -> bool {
+  /// when `present` holds one of `file_extensions()`. `present` comes from
+  /// one walk shared by every surface, so an override must not walk again.
+  fn detect(&self, root: &Path, present: &glob::PresentExtensions) -> bool {
     self.marker_files().iter().any(|m| root.join(m).is_file())
-      || !find_files_with_ext(root, self.file_extensions(), &[], &[], &[])
-        .is_empty()
+      || self.file_extensions().iter().any(|e| present.contains(e))
   }
   /// Returns information about required tools for this surface.
   fn tool_info(&self, config: &ResolvedLangConfig) -> Vec<ToolInfo>;
@@ -545,16 +550,16 @@ mod tests {
     let surface = rust::RustSurface;
     let dir_marker = tempfile::TempDir::new().unwrap();
     std::fs::create_dir(dir_marker.path().join("Cargo.toml")).unwrap();
-    assert!(!surface.detect(dir_marker.path()));
+    assert!(!detect_in(&surface, dir_marker.path()));
 
     let nested_marker = tempfile::TempDir::new().unwrap();
     std::fs::create_dir(nested_marker.path().join("sub")).unwrap();
     std::fs::write(nested_marker.path().join("sub/Cargo.toml"), "").unwrap();
-    assert!(!surface.detect(nested_marker.path()));
+    assert!(!detect_in(&surface, nested_marker.path()));
 
     let root_marker = tempfile::TempDir::new().unwrap();
     std::fs::write(root_marker.path().join("Cargo.toml"), "").unwrap();
-    assert!(surface.detect(root_marker.path()));
+    assert!(detect_in(&surface, root_marker.path()));
   }
 
   #[test]
@@ -563,11 +568,11 @@ mod tests {
     let temp = tempfile::TempDir::new().unwrap();
     std::fs::create_dir_all(temp.path().join("target/a")).unwrap();
     std::fs::write(temp.path().join("target/a/doc.typ"), "").unwrap();
-    assert!(!surface.detect(temp.path()));
+    assert!(!detect_in(&surface, temp.path()));
 
     std::fs::create_dir_all(temp.path().join("docs/a")).unwrap();
     std::fs::write(temp.path().join("docs/a/doc.typ"), "").unwrap();
-    assert!(surface.detect(temp.path()));
+    assert!(detect_in(&surface, temp.path()));
   }
 
   #[test]

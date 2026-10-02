@@ -457,14 +457,16 @@ mod tests {
     }
     #[cfg(not(windows))]
     {
+      use std::fmt::Write;
+
       let mut script = String::new();
       if !stdout.is_empty() {
-        script.push_str(&format!("printf '%s\\n' '{stdout}'; "));
+        let _ = write!(script, "printf '%s\\n' '{stdout}'; ");
       }
       if !stderr.is_empty() {
-        script.push_str(&format!("printf '%s\\n' '{stderr}' 1>&2; "));
+        let _ = write!(script, "printf '%s\\n' '{stderr}' 1>&2; ");
       }
-      script.push_str(&format!("exit {code}"));
+      let _ = write!(script, "exit {code}");
       std::process::Command::new("sh")
         .arg("-c")
         .arg(script)

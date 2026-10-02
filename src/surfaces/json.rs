@@ -200,10 +200,10 @@ mod tests {
   fn test_json_surface_detect() {
     let surface = JsonSurface;
     let temp = TempDir::new().unwrap();
-    assert!(!surface.detect(temp.path()));
+    assert!(!crate::surfaces::detect_in(&surface, temp.path()));
 
     std::fs::write(temp.path().join("config.json"), "{}").unwrap();
-    assert!(surface.detect(temp.path()));
+    assert!(crate::surfaces::detect_in(&surface, temp.path()));
   }
 
   #[test]
@@ -211,7 +211,7 @@ mod tests {
     let surface = JsonSurface;
     let temp = TempDir::new().unwrap();
     std::fs::write(temp.path().join("tsconfig.jsonc"), "{ /* c */ }").unwrap();
-    assert!(surface.detect(temp.path()));
+    assert!(crate::surfaces::detect_in(&surface, temp.path()));
   }
 
   #[test]

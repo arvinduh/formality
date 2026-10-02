@@ -507,7 +507,7 @@ impl LanguageSurface for CppSurface {
         let lower = trimmed.to_ascii_lowercase();
         if lower.contains("++") {
           ("-std=c17".to_string(), flag)
-        } else if lower.starts_with("c") || lower.starts_with("gnu") {
+        } else if lower.starts_with('c') || lower.starts_with("gnu") {
           (flag, "-std=c++17".to_string())
         } else {
           ("-std=c17".to_string(), flag)

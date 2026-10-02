@@ -484,11 +484,10 @@ fn test_release_extras_and_release_yml_tag_filters_match() {
   assert_eq!(
     release_tags, release_extras_tags,
     "\n\nTag filter drift detected between release workflows!\n\
-     .github/workflows/release.yml has: {:?}\n\
-     .github/workflows/release-extras.yml has: {:?}\n\n\
+     .github/workflows/release.yml has: {release_tags:?}\n\
+     .github/workflows/release-extras.yml has: {release_extras_tags:?}\n\n\
      These must match exactly so that release-extras.yml does not trigger on tags \
      that cargo-dist ignores (which would burn a 30-minute runner timeout polling for \
-     a release that is never created; see issue #165).\n",
-    release_tags, release_extras_tags
+     a release that is never created; see issue #165).\n"
   );
 }
