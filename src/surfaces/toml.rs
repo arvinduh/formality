@@ -149,6 +149,10 @@ impl LanguageSurface for TomlSurface {
     "toml"
   }
 
+  fn extra_args_tools(&self) -> &'static [&'static str] {
+    &["taplo"]
+  }
+
   fn aliases(&self) -> &[&'static str] {
     &[]
   }

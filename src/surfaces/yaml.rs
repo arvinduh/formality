@@ -159,6 +159,10 @@ impl LanguageSurface for YamlSurface {
     "yaml"
   }
 
+  fn extra_args_tools(&self) -> &'static [&'static str] {
+    &["prettier", "yamllint"]
+  }
+
   fn aliases(&self) -> &[&'static str] {
     &["yml"]
   }

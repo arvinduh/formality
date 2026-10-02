@@ -38,6 +38,10 @@ impl LanguageSurface for JsonSurface {
     "json"
   }
 
+  fn extra_args_tools(&self) -> &'static [&'static str] {
+    &["prettier"]
+  }
+
   fn aliases(&self) -> &[&'static str] {
     &[]
   }

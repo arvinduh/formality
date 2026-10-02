@@ -195,6 +195,20 @@ pub fn get_surface_by_name(name: &str) -> Option<Box<dyn LanguageSurface>> {
 mod tests {
   use super::*;
 
+  /// The trait's default declares no keys, which makes every
+  /// `[lang.<name>.extra_args]` key a config error: a surface that forgets
+  /// to override it would silently become unconfigurable.
+  #[test]
+  fn test_every_surface_declares_extra_args_tools() {
+    for surface in all_surfaces() {
+      assert!(
+        !surface.extra_args_tools().is_empty(),
+        "{} declares no extra_args tools",
+        surface.name()
+      );
+    }
+  }
+
   #[test]
   fn test_all_fleet_surfaces_present() {
     let surfaces = all_surfaces();

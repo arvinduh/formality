@@ -258,6 +258,10 @@ impl LanguageSurface for JavaSurface {
     "java"
   }
 
+  fn extra_args_tools(&self) -> &'static [&'static str] {
+    &["google-java-format", "checkstyle"]
+  }
+
   fn aliases(&self) -> &[&'static str] {
     &["jav"]
   }

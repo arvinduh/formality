@@ -63,6 +63,10 @@ impl LanguageSurface for TypstSurface {
     "typst"
   }
 
+  fn extra_args_tools(&self) -> &'static [&'static str] {
+    &["typstyle"]
+  }
+
   fn aliases(&self) -> &[&'static str] {
     &["typ"]
   }

@@ -364,6 +364,10 @@ impl LanguageSurface for CppSurface {
     "cpp"
   }
 
+  fn extra_args_tools(&self) -> &'static [&'static str] {
+    &["clang-format", "clang-tidy"]
+  }
+
   fn aliases(&self) -> &[&'static str] {
     &["c", "c++", "cxx"]
   }

@@ -137,6 +137,13 @@ impl DeclaresFacets for PythonSurface {
 /// Standard file extensions recognized for Python source files.
 pub const PYTHON_EXTENSIONS: &[&str] = &["py", "pyi"];
 
+/// `[lang.python.extra_args]` key for both `ruff check` invocations: the
+/// `--select I --fix` import-sort pass of `fml fmt`, and `fml lint`.
+const RUFF_CHECK: &str = "ruff-check";
+
+/// `[lang.python.extra_args]` key for the `ruff format` pass of `fml fmt`.
+const RUFF_FORMAT: &str = "ruff-format";
+
 /// Returns true if `extra_args` includes flags that widen or override rule
 /// selection in Ruff (e.g. `--extend-select` or `--select`).
 #[must_use]
@@ -321,6 +328,10 @@ pub fn build_ruff_inline_lint_config_args(cfg: &RuffConfig) -> Vec<String> {
 impl LanguageSurface for PythonSurface {
   fn name(&self) -> &'static str {
     "python"
+  }
+
+  fn extra_args_tools(&self) -> &'static [&'static str] {
+    &[RUFF_CHECK, RUFF_FORMAT]
   }
 
   fn aliases(&self) -> &[&'static str] {

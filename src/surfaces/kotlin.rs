@@ -119,6 +119,10 @@ impl LanguageSurface for KotlinSurface {
     "kotlin"
   }
 
+  fn extra_args_tools(&self) -> &'static [&'static str] {
+    &["ktlint"]
+  }
+
   fn aliases(&self) -> &[&'static str] {
     &["kt"]
   }

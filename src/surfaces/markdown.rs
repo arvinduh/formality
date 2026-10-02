@@ -835,9 +835,20 @@ impl DeclaresFacets for MarkdownSurface {
 
 const MD_EXTENSIONS: &[&str] = &["md", "markdown", "mdown", "mkdn"];
 
+/// `[lang.markdown.extra_args]` key for the markdownlint pass, also used when
+/// the older `markdownlint` binary stands in for markdownlint-cli2.
+const MARKDOWNLINT_CLI2: &str = "markdownlint-cli2";
+
+/// `[lang.markdown.extra_args]` key for the `prettier --write` pass.
+const PRETTIER: &str = "prettier";
+
 impl LanguageSurface for MarkdownSurface {
   fn name(&self) -> &'static str {
     "markdown"
+  }
+
+  fn extra_args_tools(&self) -> &'static [&'static str] {
+    &[MARKDOWNLINT_CLI2, PRETTIER]
   }
 
   fn aliases(&self) -> &[&'static str] {

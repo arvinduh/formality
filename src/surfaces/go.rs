@@ -205,6 +205,10 @@ impl LanguageSurface for GoSurface {
     "go"
   }
 
+  fn extra_args_tools(&self) -> &'static [&'static str] {
+    &["gofmt", "goimports", "golangci-lint"]
+  }
+
   fn aliases(&self) -> &[&'static str] {
     &["golang"]
   }

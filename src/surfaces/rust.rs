@@ -176,6 +176,10 @@ impl LanguageSurface for RustSurface {
     "rust"
   }
 
+  fn extra_args_tools(&self) -> &'static [&'static str] {
+    &["rustfmt", "clippy-driver"]
+  }
+
   fn aliases(&self) -> &[&'static str] {
     &["rs"]
   }

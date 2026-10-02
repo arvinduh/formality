@@ -346,6 +346,10 @@ impl LanguageSurface for JavaScriptSurface {
     "javascript"
   }
 
+  fn extra_args_tools(&self) -> &'static [&'static str] {
+    &["biome"]
+  }
+
   fn aliases(&self) -> &[&'static str] {
     &["js", "ts", "typescript", "jsx", "tsx"]
   }
