@@ -6,8 +6,11 @@
 //! real binary over stdio and parses stdout strictly; the in-process unit
 //! tests in `src/commands/lsp.rs` never see the process's stdout.
 
+mod common;
+
+use common::lsp;
 use std::io::{Read, Write};
-use std::process::{Command, Stdio};
+use std::process::Stdio;
 use std::sync::mpsc;
 use std::time::{Duration, Instant};
 
@@ -91,14 +94,6 @@ impl Transcript {
   }
 }
 
-/// Writes one framed JSON-RPC message to the server.
-fn send(stdin: &mut impl Write, message: &serde_json::Value) {
-  let text = message.to_string();
-  // A child that already exited closes the pipe; the asserts report it.
-  let _ = write!(stdin, "Content-Length: {}\r\n\r\n{text}", text.len());
-  let _ = stdin.flush();
-}
-
 /// Drives initialize, didOpen, formatting and didSave for `file`.
 fn exchange(
   stdin: &mut impl Write,
@@ -111,48 +106,48 @@ fn exchange(
   let is_diagnostics =
     |m: &serde_json::Value| m["method"] == "textDocument/publishDiagnostics";
 
-  send(
+  lsp::send(
     stdin,
-    &serde_json::json!({
+    &[serde_json::json!({
       "jsonrpc": "2.0", "id": 1, "method": "initialize",
       "params": { "capabilities": {}, "rootUri": root_uri },
-    }),
+    })],
   );
   transcript.until(|m| m["id"] == 1)?;
-  send(
+  lsp::send(
     stdin,
-    &serde_json::json!({
+    &[serde_json::json!({
       "jsonrpc": "2.0", "method": "initialized", "params": {},
-    }),
+    })],
   );
-  send(
+  lsp::send(
     stdin,
-    &serde_json::json!({
+    &[serde_json::json!({
       "jsonrpc": "2.0", "method": "textDocument/didOpen",
       "params": { "textDocument": {
         "uri": file_uri, "languageId": "python", "version": 1,
         "text": "x=1\n",
       } },
-    }),
+    })],
   );
   transcript.until(is_diagnostics)?;
-  send(
+  lsp::send(
     stdin,
-    &serde_json::json!({
+    &[serde_json::json!({
       "jsonrpc": "2.0", "id": 2, "method": "textDocument/formatting",
       "params": {
         "textDocument": { "uri": file_uri },
         "options": { "tabSize": 4, "insertSpaces": true },
       },
-    }),
+    })],
   );
   transcript.until(|m| m["id"] == 2)?;
-  send(
+  lsp::send(
     stdin,
-    &serde_json::json!({
+    &[serde_json::json!({
       "jsonrpc": "2.0", "method": "textDocument/didSave",
       "params": { "textDocument": { "uri": file_uri } },
-    }),
+    })],
   );
   transcript.until(is_diagnostics)
 }
@@ -171,20 +166,11 @@ fn test_lsp_stdout_carries_only_json_rpc_frames() {
   std::fs::create_dir(&empty_path).unwrap();
   std::fs::create_dir(&home).unwrap();
 
-  let mut child = Command::new(env!("CARGO_BIN_EXE_fml"))
-    .arg("lsp")
-    .current_dir(root)
+  let mut child = lsp::no_color(&mut lsp::command(root, &home))
     .env("PATH", &empty_path)
     .env("HOME", &home)
-    .env("XDG_CONFIG_HOME", &home)
     .env("XDG_DATA_HOME", &home)
     .env("XDG_CACHE_HOME", &home)
-    .env("FORMALITY_NO_UPDATE_CHECK", "1")
-    .env("NO_COLOR", "1")
-    .env_remove("FORCE_COLOR")
-    .env_remove("CLICOLOR_FORCE")
-    .stdin(Stdio::piped())
-    .stdout(Stdio::piped())
     .stderr(Stdio::piped())
     .spawn()
     .expect("failed to spawn fml lsp");
@@ -215,9 +201,7 @@ fn test_lsp_stdout_carries_only_json_rpc_frames() {
   });
 
   let outcome = exchange(&mut stdin, &mut transcript, root, &file);
-  let status = child.try_wait().unwrap();
-  let _ = child.kill();
-  let _ = child.wait();
+  let status = lsp::stop(&mut child);
   let log = stderr_reader.join().unwrap();
 
   if let Err(reason) = outcome {
