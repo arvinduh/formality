@@ -339,10 +339,10 @@ fn has_unspaced_hash_line(content: &str) -> bool {
     .any(|line| !in_fence(&mut fence, line) && is_unspaced_hash_line(line))
 }
 
-/// Splits `line` into its leading indent width in columns (a tab advances to
-/// the next multiple of 4, `CommonMark`'s tab stop) and the text after it.
-fn split_indent(line: &str) -> (usize, &str) {
-  let mut width = 0;
+/// Splits `line` into its leading indent width in columns, advancing from
+/// start column `width` (a tab advances to the next multiple of 4,
+/// `CommonMark`'s tab stop), and the text after it.
+fn split_indent_at(mut width: usize, line: &str) -> (usize, &str) {
   for (i, c) in line.char_indices() {
     match c {
       ' ' => width += 1,
@@ -351,6 +351,12 @@ fn split_indent(line: &str) -> (usize, &str) {
     }
   }
   (width, "")
+}
+
+/// Splits `line` into its leading indent width in columns (a tab advances to
+/// the next multiple of 4, `CommonMark`'s tab stop) and the text after it.
+fn split_indent(line: &str) -> (usize, &str) {
+  split_indent_at(0, line)
 }
 
 /// Advances the fenced-code state `fence` (marker character and run length
