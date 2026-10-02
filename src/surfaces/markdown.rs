@@ -971,10 +971,6 @@ fn parse_markdown(src: &str) -> Parser<'_> {
 fn extract_html_block_ranges(src: &str) -> Vec<(usize, usize)> {
   let mut spans = Vec::new();
   let mut depth = 0usize;
-  // Where the current top-level block's next `Html` chunk must start;
-  // `None` once a chunk is not a verbatim slice of `src`. Defence in depth
-  // for the container rule: prettier must see exactly the block's HTML.
-  let mut next: Option<usize> = None;
   // `<!-- prettier-ignore -->` shields the next top-level block, whatever
   // its kind; `-start`/`-end` shield every block between them.
   let (mut ignore_next, mut ignore_range) = (false, false);
@@ -1005,23 +1001,12 @@ fn extract_html_block_ranges(src: &str) -> Vec<(usize, usize)> {
             rest = after;
           }
           if tag == Tag::HtmlBlock && !skip {
-            next = Some(range.start);
+            spans.push((range.start, range.end));
           }
         }
         depth += 1;
       }
       Event::Rule if depth == 0 => ignore_next = false,
-      Event::Html(text) if depth == 1 => {
-        next = next
-          .filter(|&at| src[at..].starts_with(&*text))
-          .map(|at| at + text.len());
-      }
-      Event::End(TagEnd::HtmlBlock) if depth == 1 => {
-        depth -= 1;
-        if next.take() == Some(range.end) {
-          spans.push((range.start, range.end));
-        }
-      }
       Event::End(_) => depth -= 1,
       _ => {}
     }
@@ -2842,9 +2827,26 @@ README.md:7 error MD025/single-title/single-h1 Multiple top-level headings";
       "> <div align=\"center\">\n> <img src=\"a.png\">\n> </div>\n",
       "- item\n\n  <div align=\"center\">\n  <img src=\"a.png\">\n  </div>\n",
       "Text[^1].\n\n[^1]: <div>\n    <img src=\"a.png\">\n    </div>\n",
+      // One-line blocks carry no prefix inside their span, so only the
+      // depth rule keeps prettier from growing them out of the container.
+      "> <p align=\"center\"><img src=\"a.png\"></p>\n",
+      "- item\n\n  <img src=\"a.png\"     alt=\"b\">\n",
     ] {
       assert_eq!(extract_html_block_ranges(src), vec![], "in: {src}");
     }
+  }
+
+  #[test]
+  fn test_format_block_html_formats_crlf_files() {
+    if !check_binary_exists("prettier") {
+      return;
+    }
+    let src = "<p align=\"center\">\r\n<img src=\"a.png\"     alt=\"b\">\r\n</p>\r\n";
+    let crlf = ["--end-of-line=crlf".to_string()];
+    assert_eq!(
+      format_block_html(src, Path::new("."), &crlf, &[]),
+      "<p align=\"center\">\r\n  <img src=\"a.png\" alt=\"b\" />\r\n</p>\r\n"
+    );
   }
 
   #[test]
