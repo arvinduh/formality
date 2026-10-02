@@ -56,9 +56,27 @@ pub struct MarkdownlintConfig {
   /// tools (#394).
   #[serde(rename = "MD007")]
   pub md007: MarkdownlintMd007,
+  /// MD010 (no-hard-tabs) rule enablement, `false` in the config fml
+  /// generates (#479). Its fixer swaps each tab for a fixed run of spaces,
+  /// not the tab stop, so a tab-indented paragraph leaves its list item;
+  /// prettier already turns such tabs into spaces that render the same, and
+  /// a tab left in fenced code is content. A project's own `.markdownlint.*`
+  /// replaces this config entirely, so it brings the rule and its fixer back
+  /// unless it also sets `MD010` to `false`.
+  #[serde(rename = "MD010")]
+  pub md010: bool,
   /// MD013 line length rule settings.
   #[serde(rename = "MD013")]
   pub md013: MarkdownlintMd013,
+  /// MD029 (ol-prefix) rule enablement, `false` in the config fml generates
+  /// (#479). It demands that a list start at 1, which `<ol start>` makes a
+  /// change in what the list renders as, and its fixer can right-align a
+  /// long marker into indented code; prettier already renumbers the items
+  /// after the first. A project's own `.markdownlint.*` replaces this config
+  /// entirely, so it brings the rule and its fixer back unless it also sets
+  /// `MD029` to `false`.
+  #[serde(rename = "MD029")]
+  pub md029: bool,
   /// MD033 (no-inline-html) rule enablement. Shipped default is `false` —
   /// see [`crate::config::MarkdownOptions::no_inline_html`] for why, and
   /// how to opt back in from `formality.toml`.
@@ -107,11 +125,13 @@ fn markdownlint_config_for_lang(
     md007: MarkdownlintMd007 {
       indent: lang_config.indent_size,
     },
+    md010: false,
     md013: MarkdownlintMd013 {
       line_length: lang_config.line_length,
       code_blocks: false,
       tables: false,
     },
+    md029: false,
     md033: no_inline_html,
   }
 }
@@ -318,7 +338,7 @@ fn has_unspaced_hash_line(content: &str) -> bool {
   let mut fence = None;
   content
     .lines()
-    .any(|line| !in_fence(&mut fence, line) && is_unspaced_hash_line(line))
+    .any(|line| !in_fence(&mut fence, 0, line) && is_unspaced_hash_line(line))
 }
 
 /// Splits `line` into its leading indent width in columns, advancing from
@@ -341,30 +361,43 @@ fn split_indent(line: &str) -> (usize, &str) {
   split_indent_at(0, line)
 }
 
-/// Advances the fenced-code state `fence` (marker character and run length
-/// of the open fence) past `line`, returning whether `line` is a fence
-/// marker or code inside a fence rather than Markdown content.
+/// Advances the fenced-code state `fence` (marker character, run length and
+/// container column of the open fence) past `line`, returning whether
+/// `line` is a fence marker or code inside a fence rather than Markdown
+/// content.
 ///
-/// `CommonMark` rules: a fence is three or more backticks or tildes behind at
-/// most three columns of indent (four make it indented code, or paragraph
-/// text), a backtick opener's info string holds no backtick (else it is an
-/// inline code span), and the closer uses the opener's character, is at
-/// least as long, and carries nothing else.
-fn in_fence(fence: &mut Option<(char, usize)>, line: &str) -> bool {
+/// `base` is the content column of the list item a new fence would open in
+/// (0 outside any item); an open fence measures its closer from the column
+/// it was opened with. `CommonMark` rules: a fence is three or more
+/// backticks or tildes behind at most three columns of indent past that
+/// column (four make it indented code, or paragraph text), a backtick
+/// opener's info string holds no backtick (else it is an inline code span),
+/// and the closer uses the opener's character, is at least as long, and
+/// carries nothing else.
+fn in_fence(
+  fence: &mut Option<(char, usize, usize)>,
+  base: usize,
+  line: &str,
+) -> bool {
   let (indent, rest) = split_indent(line);
   let marker = rest.chars().next().filter(|c| matches!(c, '`' | '~'));
   let run = marker.map_or(0, |c| rest.chars().take_while(|&x| x == c).count());
   let tail = &rest[run..];
   match (*fence, marker) {
     (None, Some(c))
-      if indent <= 3 && run >= 3 && (c == '~' || !tail.contains('`')) =>
+      if (base..=base + 3).contains(&indent)
+        && run >= 3
+        && (c == '~' || !tail.contains('`')) =>
     {
-      *fence = Some((c, run));
+      *fence = Some((c, run, base));
       true
     }
     (None, _) => false,
-    (Some((open, len)), Some(c))
-      if indent <= 3 && c == open && run >= len && tail.trim().is_empty() =>
+    (Some((open, len, col)), Some(c))
+      if indent.saturating_sub(col) <= 3
+        && c == open
+        && run >= len
+        && tail.trim().is_empty() =>
     {
       *fence = None;
       true
@@ -470,7 +503,7 @@ struct BlockScan {
   /// only continue it lazily.
   quoted: bool,
   /// The open code fence, as [`in_fence`] tracks it.
-  fence: Option<(char, usize)>,
+  fence: Option<(char, usize, usize)>,
   /// The end marker of an open HTML block, from [`html_block_end`].
   html_end: Option<&'static str>,
 }
@@ -502,14 +535,36 @@ impl BlockScan {
       }
       return false;
     }
-    if in_fence(&mut self.fence, line) {
+    let (indent, rest) = split_indent(line);
+    if self
+      .fence
+      .is_some_and(|(_, _, col)| indent < col && !rest.is_empty())
+    {
+      // Left of the item holding the fence: it closes both (#481).
+      self.fence = None;
+    }
+    // The innermost item this line is indented into.
+    let base = self.items.iter().rev().find(|&&col| col <= indent);
+    let base = base.map_or(0, |&col| col);
+    let fenced = self.fence.is_some();
+    if in_fence(&mut self.fence, base, line) {
+      if !fenced {
+        // An opener is never lazy, so it closes the items it is not in.
+        self.items.retain(|&col| col <= indent);
+      }
       return false;
     }
-    let (indent, rest) = split_indent(line);
     if rest.is_empty() {
       return false;
     }
-    if opens {
+    // A block that can interrupt a paragraph is never a lazy continuation,
+    // so it too closes the items it is not inside (#481).
+    let interrupts = indent < base + 4
+      && (is_atx_heading(rest)
+        || is_thematic_break(rest)
+        || rest.starts_with('>')
+        || html_block_end(rest).is_some());
+    if opens || interrupts {
       // Not a lazy continuation, so it closes the items it is not inside.
       self.items.retain(|&col| col <= indent);
     }
@@ -1203,11 +1258,13 @@ mod tests {
       },
       default: true,
       md007: MarkdownlintMd007 { indent: 2 },
+      md010: false,
       md013: MarkdownlintMd013 {
         line_length: 120,
         code_blocks: false,
         tables: false,
       },
+      md029: false,
       md033: false,
     };
     let rendered = cfg.render().unwrap();
@@ -1688,6 +1745,17 @@ README.md:7 error MD025/single-title/single-h1 Multiple top-level headings";
       "<PRE>\nc\n</pre>\n#a\n",
       "+++\nx = 1\n+++\n#a\n",
       "---\nx: 1\n---\n#a\n",
+      // #481: a block that is not inside the item closes it.
+      "- a\n* * *\n\n    code\n#a\n",
+      "- a\n## H\n\n    code\n#a\n",
+      "- a\n\n```\nx\n```\n\n    code\n#a\n",
+      "- a\n```\nx\n```\n\n    code\n#a\n",
+      "- a\n> q\n\n    code\n#a\n",
+      "- a\n<!-- c -->\n\n    code\n#a\n",
+      "- a\n\n  ```\nx\n\n    code\n#a\n",
+      "- a\n\n      ```\n#a\n",
+      "10. a\n\n    ```\n    ```\n#a\n",
+      "10. a\n    ```\n    ```\n#a\n",
     ];
     let continues = [
       "p\n#a\n",
@@ -1708,6 +1776,10 @@ README.md:7 error MD025/single-title/single-h1 Multiple top-level headings";
       "- i\n===\n#a\n",
       "- > q\n  ===\n#a\n",
       "<span>x</span>\n#a\n",
+      "- a\n  ## H\n  p\n#a\n",
+      "- a\n\n  ```\n  ```\n  p\n#a\n",
+      "10. a\n    ```\n    #x\n    ```\n    p\n#a\n",
+      "- a\n  1.    b\n      ## H\n\n          x\n#a\n",
     ];
     for src in opens_block.into_iter().chain(continues) {
       let last = src.lines().count();
@@ -1949,6 +2021,43 @@ README.md:7 error MD025/single-title/single-h1 Multiple top-level headings";
       std::fs::read_to_string(&file).unwrap(),
       "# Title\n\nText.\n"
     );
+  }
+
+  /// #479: lists whose rendering markdownlint's MD010 and MD029 fixers
+  /// changed, each with what `fml fmt` must leave. micromark renders every
+  /// pair the same: a tab-indented paragraph stays in its item, and each
+  /// ordered list keeps its start number.
+  const LIST_RENDER_CASES: [(&str, &str); 4] = [
+    ("# T\n\n- item\n\n\tmore\n", "# T\n\n- item\n\n  more\n"),
+    (
+      "# T\n\n123456789. item\n\n           more\n",
+      "# T\n\n123456789. item\n\n           more\n",
+    ),
+    ("# T\n\n10. a\n11. b\n", "# T\n\n10. a\n11. b\n"),
+    (
+      "# T\n\n1. a\n\n```text\nx\n```\n\n2. b\n",
+      "# T\n\n1. a\n\n```text\nx\n```\n\n2. b\n",
+    ),
+  ];
+
+  #[test]
+  fn test_format_keeps_list_rendering_and_lints_clean() {
+    if !have_markdown_tools() {
+      return;
+    }
+
+    for (src, want) in LIST_RENDER_CASES {
+      let temp = TempDir::new().unwrap();
+      let file = temp.path().join("doc.md");
+      std::fs::write(&file, src).unwrap();
+      let ctx = test_ctx(temp.path(), ResolvedLangConfig::new("markdown"));
+
+      let res = MarkdownSurface.format(&ctx);
+      assert!(res.is_success(), "format failed: {:?}", res.status);
+      assert_eq!(std::fs::read_to_string(&file).unwrap(), want, "for {src:?}");
+      let lint = MarkdownSurface.lint(&ctx, false);
+      assert!(lint.is_success(), "lint after fmt: {:?}", lint.status);
+    }
   }
 
   #[test]

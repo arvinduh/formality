@@ -128,7 +128,15 @@ machine-generated shape.
   content on stdin, so it never writes the file.
 - **Lint**: `markdownlint-cli2`.
 - **Managed config**: `.markdownlint.json`, plus the shared `.prettierrc.json`
-  (see below).
+  (see below). `MD010`/`no-hard-tabs` and `MD029`/`ol-prefix` are off in the
+  config fml generates (`fml fmt`/`fix`/`lint`/`lsp`, and the
+  `.markdownlint.json` that `fml sync` writes) (#479): their fixers change what
+  a list renders as. MD010 swaps a tab for one space, which moves a tab-indented
+  paragraph out of its list item, and MD029 renumbers `10.` to `1.`, dropping
+  the list's start number. prettier already turns those tabs into spaces and
+  renumbers the items after the first, both without changing the rendering. A
+  project's own `.markdownlint.*` replaces that config entirely, so it brings
+  both rules and their fixers back unless it also sets them to `false`.
 - **`[lang.markdown]` options**: `prose_wrap` (`"always"` / `"never"` /
   `"preserve"`); `no_inline_html` (bool, default `false`) — controls
   markdownlint's `MD033`/`no-inline-html` rule. Ships **disabled** by default:
@@ -380,9 +388,19 @@ explicitly in `formality.toml`: is one of its `marker_files()` a regular file at
 `root`, or does at least one candidate file with one of its `file_extensions()`
 exist under `root` (excluding common ignore directories). `present` is the set
 of extensions from one walk of `root`, shared by every surface, so
-auto-detection walks the tree once. `fml doctor` shows detection and tool status
-for active surfaces, and `fml doctor --all` shows both for every surface in the
-fleet.
+auto-detection walks the tree once.
+
+For `fml fmt`, `fml lint`, `fml fix` and `fml sync` with no path arguments,
+`present` comes from the runner's own candidate list, so the whole run walks the
+tree once. That list has `global.exclude` applied: an extension seen only in
+globally excluded files no longer activates its surface, since fml ignores
+excluded files everywhere. A marker file at the root (`Cargo.toml`,
+`pyproject.toml`, ...) still activates its surface even when `global.exclude`
+matches it, because markers are checked at the root, not in the candidate list.
+A surface's own `exclude` does not affect detection.
+
+`fml doctor` shows detection and tool status for active surfaces, and
+`fml doctor --all` shows both for every surface in the fleet.
 
 ## Adding a 13th surface
 
