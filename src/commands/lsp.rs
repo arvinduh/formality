@@ -11,8 +11,12 @@
 //!    `fml lint` (or a structured per-surface parser, see
 //!    `lsp_diagnostics.rs`) in-process against the changed file.
 //! 4. **Watches** `formality.toml` / `.formality.toml` via
-//!    `did_change_watched_files` and invalidates the cached configuration
+//!    `did_change_watched_files` and reloads the cached configuration
 //!    when the canonical config changes.
+//!
+//! An invalid config is never silently dropped: each failed load sends one
+//! `window/showMessage` error. At initialize the server then uses the
+//! built-in defaults; on a failed reload it keeps the previous config.
 //!
 //! This server is a formatting and diagnostics provider, meant to run
 //! *alongside* the user's existing language servers (rust-analyzer, pyright,
@@ -61,8 +65,9 @@ pub struct FormalityLsp {
   client: Client,
   /// Workspace root detected at `initialize` time.
   root: tokio::sync::Mutex<Option<PathBuf>>,
-  /// Cached formality configuration, loaded at initialize/initialized time
-  /// and invalidated when `formality.toml` / `.formality.toml` changes.
+  /// Cached formality configuration, loaded at initialize time and replaced
+  /// only by a successful reload after `formality.toml` /
+  /// `.formality.toml` changes.
   config: Arc<tokio::sync::RwLock<Option<FormalityConfig>>>,
 }
 
@@ -122,11 +127,6 @@ impl FormalityLsp {
         None
       }
     }
-  }
-
-  /// Invalidates the cached configuration.
-  pub async fn invalidate_config(&self) {
-    *self.config.write().await = None;
   }
 }
 
@@ -357,15 +357,19 @@ impl LanguageServer for FormalityLsp {
     });
 
     if has_config_change {
-      self.invalidate_config().await;
       let root = self.root.lock().await.clone();
-      let _ = self.get_or_load_config(root.as_deref()).await;
+      // A failed reload keeps the previous config; editing the file mid-way
+      // must not throw away a working setup.
+      let Some(config) = self
+        .load_config(root.as_deref(), "keeping the previous config")
+        .await
+      else {
+        return;
+      };
+      *self.config.write().await = Some(config);
       self
         .client
-        .log_message(
-          MessageType::INFO,
-          "[formality] configuration invalidated and reloaded",
-        )
+        .log_message(MessageType::INFO, "[formality] configuration reloaded")
         .await;
     }
   }
