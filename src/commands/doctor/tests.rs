@@ -381,7 +381,7 @@ fn test_install_missing_tools_framed_fails_for_tool_without_installer() {
     is_required_for_lint: true,
   };
 
-  let report = install_missing_tools_framed(&[missing_tool], &Frame::capped());
+  let report = install_missing_tools_framed(&[missing_tool], Frame::capped());
   assert!(
     !report.all_ok,
     "Should report failure when tool cannot be auto-installed"

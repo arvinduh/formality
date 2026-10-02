@@ -71,6 +71,7 @@ unreadable_literal = "warn"
 format_collect = "warn"
 implicit_hasher = "warn"
 redundant_clone = "warn"
+trivially_copy_pass_by_ref = "warn"
 
 # Config for 'dist' (cargo-dist): GitHub Releases are the only channel - no
 # crates.io publish. See docs/release.md and issue #134.

@@ -1951,7 +1951,7 @@ pub fn merge_tool_streams(
 
 /// Plain-text description of a non-zero [`std::process::ExitStatus`] with no
 /// `Display`-stutter (`ExitStatus`'s own `Display` is already `exit code: N`).
-fn exit_status_summary(status: &std::process::ExitStatus) -> String {
+fn exit_status_summary(status: std::process::ExitStatus) -> String {
   status.code().map_or_else(
     || "Command failed (terminated by signal)".to_string(),
     |code| format!("Command failed with exit code {code}"),
@@ -2025,7 +2025,7 @@ pub fn run_tool_command_classified(
       let message = merge_tool_streams(
         &stdout,
         &stderr,
-        &exit_status_summary(&output.status),
+        &exit_status_summary(output.status),
       );
       let status = match classify(output.status.code()) {
         ExitClass::ViolationsFound => SurfaceStatus::ViolationsFound {
