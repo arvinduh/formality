@@ -2723,6 +2723,38 @@ mod tests {
     );
   }
 
+  #[cfg(windows)]
+  #[test]
+  fn test_windows_shim_launch_failure_exit_codes() {
+    // Real cmd.exe: prints each observed exit code as `SHIM-SIGNAL` (run
+    // with --nocapture) so a CI log shows the signal detection relies on.
+    let tmp = tempfile::tempdir().expect("tempdir");
+    for (name, body, want) in [
+      ("dirgone", "@\"%~dp0\\gone\\tool.exe\" %*\r\n", 3),
+      ("notfound", "@fml-no-such-interp %*\r\n", 9009),
+      ("exit1", "@exit /b 1\r\n", 1),
+    ] {
+      let shim = tmp.path().join(format!("{name}.cmd"));
+      std::fs::write(&shim, body).expect("write shim");
+      let mut probe = std::process::Command::new(&shim);
+      std::os::windows::process::CommandExt::raw_arg(
+        &mut probe,
+        BATCH_EXIT_SUFFIX,
+      );
+      let code = probe.output().expect("spawn shim").status.code();
+      println!("SHIM-SIGNAL {name}: exit={code:?}");
+      assert_eq!(code, Some(want), "{name}");
+      let status =
+        run_tool_command("kotlin", &mut std::process::Command::new(&shim))
+          .status;
+      assert_eq!(
+        matches!(status, SurfaceStatus::ExecutionError { .. }),
+        want != 1,
+        "{name}: {status:?}"
+      );
+    }
+  }
+
   #[test]
   fn test_is_batch_launch_failure_needs_a_batch_file_and_cmd_code() {
     let shim = std::process::Command::new("bin/ktlint.CMD");
