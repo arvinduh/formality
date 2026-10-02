@@ -7,10 +7,13 @@
 
 use std::process;
 
+use fml;
+use fml::errors;
+
 fn main() -> process::ExitCode {
   match fml::run() {
-    fml::errors::ExitStatus::Clean => process::ExitCode::SUCCESS,
-    fml::errors::ExitStatus::Violations => process::ExitCode::from(1),
-    fml::errors::ExitStatus::Error => process::ExitCode::from(2),
+    errors::ExitStatus::Clean => process::ExitCode::SUCCESS,
+    errors::ExitStatus::Violations => process::ExitCode::from(1),
+    errors::ExitStatus::Error => process::ExitCode::from(2),
   }
 }
