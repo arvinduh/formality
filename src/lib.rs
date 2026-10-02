@@ -790,4 +790,43 @@ mod tests {
       assert_eq!(resolved, expected);
     }
   }
+
+  // Tier-2 enforcement for the `src/` half of docs/style-guide.md §6's
+  // exit-status rule (#291): unit tests reach the deciding private function,
+  // so never dispatch a full command. Scans `tests.rs` files and code after
+  // `mod tests {`; no runtime assertion can observe what a test calls.
+  #[test]
+  fn test_unit_tests_do_not_dispatch_full_commands() {
+    let needle = concat!("run_with", "_args(");
+    let mut violations = Vec::new();
+    for entry in ignore::WalkBuilder::new(
+      Path::new(env!("CARGO_MANIFEST_DIR")).join("src"),
+    )
+    .standard_filters(false)
+    .build()
+    .filter_map(Result::ok)
+    .filter(|e| e.path().extension().is_some_and(|ext| ext == "rs"))
+    {
+      let path = entry.path();
+      let content = std::fs::read_to_string(path).unwrap();
+      let start = if path.file_name().is_some_and(|n| n == "tests.rs") {
+        0
+      } else if let Some(idx) = content.find("mod tests {") {
+        content[..idx].matches('\n').count()
+      } else {
+        continue;
+      };
+      for (i, line) in content.lines().enumerate().skip(start) {
+        let code = line.split("//").next().unwrap_or_default();
+        if code.contains(needle) {
+          violations.push(format!("{}:{}", path.display(), i + 1));
+        }
+      }
+    }
+    assert!(
+      violations.is_empty(),
+      "unit test dispatches a full command — see docs/style-guide.md §6:\n{}",
+      violations.join("\n")
+    );
+  }
 }

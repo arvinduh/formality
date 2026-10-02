@@ -64,6 +64,7 @@ must_use_candidate = "warn"
 redundant_closure_for_method_calls = "warn"
 # Performance
 format_collect = "warn"
+implicit_hasher = "warn"
 redundant_clone = "warn"
 
 # Config for 'dist' (cargo-dist): GitHub Releases are the only channel - no
