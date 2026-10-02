@@ -909,6 +909,11 @@ fn scan_tools_and_build_table(
   let detected = detect_surfaces_smart(root, config);
   let detected_names: HashSet<&str> =
     detected.iter().map(|s| s.name()).collect();
+  // Only a surface outside the registry needs its own detect; walk for it
+  // at most once.
+  let present = std::cell::LazyCell::new(|| {
+    crate::surfaces::glob::PresentExtensions::scan(root)
+  });
 
   let mut doctor_table = Table::new(vec![
     Column::new(Cell::text("")).width(WidthPolicy::Fixed(10)),
@@ -924,7 +929,7 @@ fn scan_tools_and_build_table(
       || (default_registry()
         .get_surface_by_name(surface.name())
         .is_none()
-        && surface.detect(root));
+        && surface.detect(root, &present));
     let detected_cell = if is_detected {
       Cell::styled("detected", Style::Ok)
     } else {
@@ -1084,11 +1089,14 @@ fn print_unconfigured_languages(
     return;
   };
   let mut unconfigured = Vec::new();
+  let present = std::cell::LazyCell::new(|| {
+    crate::surfaces::glob::PresentExtensions::scan(root)
+  });
   for surface in all_surfaces() {
     if !explicit_langs
       .iter()
       .any(|l| matches_name_or_alias(surface.name(), surface.aliases(), l))
-      && surface.detect(root)
+      && surface.detect(root, &present)
     {
       unconfigured.push(surface.name());
     }

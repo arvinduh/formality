@@ -587,11 +587,11 @@ mod tests {
   fn test_javascript_surface_detect() {
     let temp = TempDir::new().unwrap();
     let surface = JavaScriptSurface;
-    assert!(!surface.detect(temp.path()));
+    assert!(!crate::surfaces::detect_in(&surface, temp.path()));
 
     let file = temp.path().join("index.ts");
     std::fs::write(&file, "export const x: number = 1;\n").unwrap();
-    assert!(surface.detect(temp.path()));
+    assert!(crate::surfaces::detect_in(&surface, temp.path()));
   }
 
   #[test]

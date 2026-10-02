@@ -2,8 +2,8 @@
 //! registered [`LanguageSurface`] implementations.
 
 use super::{
-  LanguageSurface, cpp, go, java, javascript, json, kotlin, markdown, python,
-  rust, toml, typst, yaml,
+  LanguageSurface, cpp, glob, go, java, javascript, json, kotlin, markdown,
+  python, rust, toml, typst, yaml,
 };
 use crate::config::FormalityConfig;
 use std::path::Path;
@@ -141,7 +141,9 @@ impl SurfaceRegistry {
       return selected;
     }
 
-    // 2. Otherwise auto-detect all project surfaces minus ignore_languages
+    // 2. Otherwise auto-detect all project surfaces minus ignore_languages,
+    // every surface reading the same single walk of `root`.
+    let present = glob::PresentExtensions::scan(root);
     self
       .surfaces
       .iter()
@@ -149,7 +151,7 @@ impl SurfaceRegistry {
         if is_ignored(surface.name(), surface.aliases()) {
           return false;
         }
-        if !surface.detect(root) {
+        if !surface.detect(root, &present) {
           return false;
         }
         let resolved =

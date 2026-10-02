@@ -202,10 +202,10 @@ mod tests {
   fn test_typst_surface_detect() {
     let surface = TypstSurface;
     let temp = TempDir::new().unwrap();
-    assert!(!surface.detect(temp.path()));
+    assert!(!crate::surfaces::detect_in(&surface, temp.path()));
 
     std::fs::write(temp.path().join("main.typ"), "= Title").unwrap();
-    assert!(surface.detect(temp.path()));
+    assert!(crate::surfaces::detect_in(&surface, temp.path()));
   }
 
   #[test]

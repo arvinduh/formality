@@ -677,12 +677,12 @@ mod tests {
     assert_eq!(surface.file_extensions(), &["py", "pyi"]);
 
     let temp = TempDir::new().unwrap();
-    assert!(!surface.detect(temp.path()));
+    assert!(!crate::surfaces::detect_in(&surface, temp.path()));
 
     // Create a .pyi stub file
     let pyi_file = temp.path().join("types.pyi");
     std::fs::write(&pyi_file, "def foo(x: int) -> str: ...").unwrap();
-    assert!(surface.detect(temp.path()));
+    assert!(crate::surfaces::detect_in(&surface, temp.path()));
   }
   #[test]
   fn test_build_ruff_import_sort_args() {
