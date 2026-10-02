@@ -213,14 +213,20 @@ pub(crate) fn write_markdownlint_temp_config(
   Ok(file)
 }
 
-/// Builds argument vector for prettier format invocation, ending with the
-/// `prettier` extra args.
+/// Builds the prettier `--write` argv shared by `fml fmt` and `fml fmt
+/// --check`: inline config, files, then the `prettier` extra args.
+///
+/// Prettier honours the last copy of a repeated flag, so the user's args come
+/// last to override the inline config, and both paths must use this one order
+/// or `--check` disagrees with what `fml fmt` writes (#210).
 #[must_use]
 pub fn build_prettier_fmt_args(
+  inline_config: &[String],
   files: &[PathBuf],
   lang: &ResolvedLangConfig,
 ) -> Vec<String> {
   let mut args = vec!["--write".to_string()];
+  args.extend(inline_config.iter().cloned());
   for f in files {
     args.push(f.to_string_lossy().to_string());
   }
@@ -973,12 +979,13 @@ impl LanguageSurface for MarkdownSurface {
 
           let mut cmd = create_tool_command("prettier");
           cmd
-            .arg("--write")
             .arg("--parser")
             .arg("markdown")
-            .args(&inline_config)
-            .arg(scratch);
-          cmd.args(ctx.lang_config.tool_args(PRETTIER));
+            .args(build_prettier_fmt_args(
+              &inline_config,
+              &[scratch.to_path_buf()],
+              &ctx.lang_config,
+            ));
           cmd.current_dir(ctx.root.as_path());
           let output = cmd.output()?;
           // #314: the same post-prettier step as the write branch below, so
@@ -1035,8 +1042,11 @@ impl LanguageSurface for MarkdownSurface {
     }
 
     let mut cmd = create_tool_command("prettier");
-    cmd.args(build_prettier_fmt_args(&files, &ctx.lang_config));
-    cmd.args(&inline_config);
+    cmd.args(build_prettier_fmt_args(
+      &inline_config,
+      &files,
+      &ctx.lang_config,
+    ));
     cmd.current_dir(ctx.root.as_path());
 
     // `prettier --write` exits 0 whether or not it reformatted anything and
@@ -1950,11 +1960,15 @@ README.md:7 error MD025/single-title/single-h1 Multiple top-level headings";
       vec!["--loglevel".to_string(), "warn".to_string()],
     )]
     .into();
-    let args = build_prettier_fmt_args(&files, &lang);
+    // Prettier honours the last copy of a flag, so the user's args come
+    // after the inline config to win over it (#210).
+    let inline = vec!["--print-width=80".to_string()];
+    let args = build_prettier_fmt_args(&inline, &files, &lang);
     assert_eq!(
       args,
       vec![
         "--write".to_string(),
+        "--print-width=80".to_string(),
         "readme.md".to_string(),
         "--loglevel".to_string(),
         "warn".to_string(),
@@ -2202,7 +2216,7 @@ README.md:7 error MD025/single-title/single-h1 Multiple top-level headings";
       ]
     );
     assert_eq!(
-      build_prettier_fmt_args(&files, &lang),
+      build_prettier_fmt_args(&[], &files, &lang),
       vec![
         "--write".to_string(),
         "a.md".to_string(),
