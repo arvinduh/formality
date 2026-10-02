@@ -232,6 +232,10 @@ pub fn diff_check_via_tempcopy(
 ///
 /// Uses an isolated temporary directory under [`std::env::temp_dir()`] so that
 /// scratch files do not pollute the workspace, and guarantees cleanup on all
+/// return paths and panics. When `local: true`, scratch files are placed in an
+/// isolated temporary subfolder under the file's parent directory rather than
+/// [`std::env::temp_dir()`], guaranteeing cleanup on all return paths and
+/// panics.
 fn diff_check_classified_impl(
   files: &[PathBuf],
   run_in_place: &(impl Fn(&Path) -> std::io::Result<std::process::Output> + Sync),
