@@ -19,7 +19,10 @@ pub mod schema;
 /// Native configuration synchronization CLI command handler.
 pub mod sync;
 
+use std::io::Write;
 use std::path::{Path, PathBuf};
+
+use colored::Colorize;
 
 use crate::config::FormalityConfig;
 use crate::engine::{Pass, Plan, Runner, Scope};
@@ -43,6 +46,37 @@ pub fn dispatch_plan(
   paths: Vec<PathBuf>,
   plan: &Plan,
 ) -> ExitStatus {
+  dispatch_into(
+    &mut std::io::stdout(),
+    root,
+    config,
+    staged,
+    changed,
+    lang,
+    paths,
+    plan,
+  )
+}
+
+/// Runs [`dispatch_plan`], rendering into `out`.
+///
+/// An empty `--staged`/`--changed` selection runs no surface: an empty path
+/// list means the whole workspace to every layer below this one.
+#[expect(
+  clippy::too_many_arguments,
+  reason = "dispatch_plan's arguments plus the report sink"
+)]
+fn dispatch_into(
+  out: &mut dyn Write,
+  root: &Path,
+  config: &FormalityConfig,
+  staged: bool,
+  changed: bool,
+  lang: &[String],
+  paths: Vec<PathBuf>,
+  plan: &Plan,
+) -> ExitStatus {
+  let scoped = !paths.is_empty();
   let target_paths = match resolve_git_paths(root, staged, changed, paths) {
     Ok(p) => p,
     Err(e) => {
@@ -51,14 +85,14 @@ pub fn dispatch_plan(
     }
   };
 
-  run_resolved(
-    &mut std::io::stdout(),
-    root,
-    config,
-    lang,
-    &target_paths,
-    plan,
-  )
+  if (staged || changed) && target_paths.is_empty() {
+    let flag = if staged { "staged" } else { "changed" };
+    let under = if scoped { " under the given paths" } else { "" };
+    let _ = writeln!(out, "{}", format!("No {flag} files{under}.").yellow());
+    return ExitStatus::Clean;
+  }
+
+  run_resolved(out, root, config, lang, &target_paths, plan)
 }
 
 /// Runs `plan` against already-resolved `paths`: resolves target surfaces,
@@ -68,7 +102,7 @@ pub fn dispatch_plan(
 /// `out` is stdout for the CLI and stderr for `fml lsp`, whose stdout carries
 /// the JSON-RPC transport; one stray byte there breaks a strict client.
 fn run_resolved(
-  out: &mut dyn std::io::Write,
+  out: &mut dyn Write,
   root: &Path,
   config: &FormalityConfig,
   lang: &[String],
@@ -263,7 +297,9 @@ pub fn resolve_target_surfaces(
   }
 
   match scope {
-    Scope::Paths(paths) => Ok(surfaces_with_files_under(root, paths, config)),
+    Scope::Paths { files, .. } => {
+      Ok(surfaces_with_files_under(root, files, config))
+    }
     Scope::Workspace(candidates) => {
       let present = std::cell::LazyCell::new(|| {
         glob::PresentExtensions::from_paths(candidates)
@@ -273,14 +309,13 @@ pub fn resolve_target_surfaces(
   }
 }
 
-/// Every surface with at least one of its files under the explicit `paths`,
-/// expanding directory arguments once for all surfaces.
+/// Every surface with at least one of its files among the explicit paths'
+/// expanded `files`.
 fn surfaces_with_files_under(
   root: &Path,
-  paths: &[PathBuf],
+  files: &[PathBuf],
   config: &FormalityConfig,
 ) -> Vec<Box<dyn LanguageSurface>> {
-  let files = glob::expand_targets(root, paths);
   let global = config.resolve_global();
   all_surfaces()
     .into_iter()
@@ -502,7 +537,7 @@ mod tests {
     let surfaces = resolve_target_surfaces(
       root,
       &[],
-      &Scope::Paths(std::sync::Arc::new(staged_files.clone())),
+      &Scope::resolve(root, &staged_files, &[]),
       &config,
     )
     .unwrap();
@@ -526,6 +561,42 @@ mod tests {
     assert!(!resolved_files.contains(&file_excluded));
     assert!(!resolved_files.contains(&file_fixture));
     assert!(!resolved_files.contains(&file_ignored));
+  }
+
+  #[test]
+  fn test_empty_staged_selection_runs_no_surface() {
+    let temp = TempDir::new().unwrap();
+    let root = temp.path();
+    let init_ok = std::process::Command::new("git")
+      .arg("init")
+      .current_dir(root)
+      .output()
+      .is_ok_and(|o| o.status.success());
+    if !init_ok {
+      return;
+    }
+    fs::write(root.join("bad.py"), "x  =  1\n").unwrap();
+
+    let mut out = Vec::new();
+    let config = FormalityConfig::with_defaults();
+    let plan = Plan::fmt(true, true);
+    let status =
+      dispatch_into(&mut out, root, &config, true, false, &[], vec![], &plan);
+
+    let out = String::from_utf8_lossy(&out);
+    assert!(out.contains("No staged files."), "{out}");
+    assert!(!out.contains("python"), "{out}");
+    assert!(status.is_clean());
+
+    let mut out = Vec::new();
+    let paths = vec![PathBuf::from("bad.py")];
+    let _ =
+      dispatch_into(&mut out, root, &config, true, false, &[], paths, &plan);
+    let out = String::from_utf8_lossy(&out);
+    assert!(
+      out.contains("No staged files under the given paths."),
+      "{out}"
+    );
   }
 
   #[test]
@@ -557,7 +628,7 @@ mod tests {
     fs::write(src.join("main.rs"), "fn main() {}\n").unwrap();
     fs::write(src.join("notes.md"), "# Notes\n").unwrap();
 
-    let scope = Scope::Paths(std::sync::Arc::new(vec![src.clone()]));
+    let scope = Scope::resolve(temp.path(), std::slice::from_ref(&src), &[]);
     let surfaces = resolve_target_surfaces(
       temp.path(),
       &[],
@@ -568,6 +639,30 @@ mod tests {
 
     let names: Vec<&str> = surfaces.iter().map(|s| s.name()).collect();
     assert_eq!(names, ["rust", "markdown"]);
+    assert_eq!(glob::walk_count::of(&src), 1);
+  }
+
+  #[test]
+  fn test_explicit_directory_run_walks_it_once() {
+    let temp = TempDir::new().unwrap();
+    let src = temp.path().join("src");
+    fs::create_dir(&src).unwrap();
+    fs::write(src.join("main.rs"), "fn main() {}\n").unwrap();
+    fs::write(src.join("notes.md"), "# Notes\n").unwrap();
+
+    let mut out = Vec::new();
+    let _ = run_resolved(
+      &mut out,
+      temp.path(),
+      &FormalityConfig::empty(),
+      &[],
+      std::slice::from_ref(&src),
+      &Plan::fmt(true, true),
+    );
+
+    // Selection and both surfaces' runs share one expansion of `src`.
+    let out = String::from_utf8_lossy(&out);
+    assert!(out.contains("rust") && out.contains("markdown"), "{out}");
     assert_eq!(glob::walk_count::of(&src), 1);
   }
 
