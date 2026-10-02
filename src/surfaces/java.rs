@@ -169,7 +169,10 @@ impl DeclaresFacets for JavaSurface {
   // IndentWidth and Standard both resolve to `Configurable`, but each carries
   // its own load-bearing rationale comment explaining *why* — merging the
   // arms via an or-pattern would bury one comment under the other's variant.
-  #[allow(clippy::match_same_arms)]
+  #[expect(
+    clippy::match_same_arms,
+    reason = "distinct facet variants carry distinct rationale comments"
+  )]
   fn facet_support(&self, facet: Facet) -> FacetSupport {
     match facet {
       // google-java-format never uses tabs.

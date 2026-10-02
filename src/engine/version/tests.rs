@@ -780,8 +780,8 @@ fn test_tool_version_store_serialization_roundtrip() {
     "rustfmt".to_string(),
     ToolVersionEntry {
       raw_version: "rustfmt 1.7.0".to_string(),
-      last_checked_unix: 1700000000,
-      binary_mtime_unix: 1699999000,
+      last_checked_unix: 1_700_000_000,
+      binary_mtime_unix: 1_699_999_000,
       binary_path: Some("/bin/rustfmt".to_string()),
     },
   );
@@ -789,8 +789,8 @@ fn test_tool_version_store_serialization_roundtrip() {
     "ruff".to_string(),
     ToolVersionEntry {
       raw_version: "ruff 0.9.6".to_string(),
-      last_checked_unix: 1700000100,
-      binary_mtime_unix: 1699999100,
+      last_checked_unix: 1_700_000_100,
+      binary_mtime_unix: 1_699_999_100,
       binary_path: None,
     },
   );

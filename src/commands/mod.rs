@@ -40,7 +40,7 @@ pub fn dispatch_plan(
   config: &FormalityConfig,
   staged: bool,
   changed: bool,
-  lang: Vec<String>,
+  lang: &[String],
   paths: Vec<PathBuf>,
   plan: &Plan,
 ) -> ExitStatus {
@@ -53,7 +53,7 @@ pub fn dispatch_plan(
   };
 
   let surfaces =
-    match resolve_target_surfaces(root, &lang, &target_paths, config) {
+    match resolve_target_surfaces(root, lang, &target_paths, config) {
       Ok(s) => s,
       Err(e) => {
         e.print_diagnostic();
@@ -69,7 +69,7 @@ pub fn dispatch_plan(
 
   doctor::preflight_warn_stale_tools(&surfaces, config, for_fmt, for_lint);
 
-  Runner::run(surfaces, root, &target_paths, plan, config)
+  Runner::run(&surfaces, root, &target_paths, plan, config)
 }
 
 fn normalize_path(path: &Path) -> PathBuf {
