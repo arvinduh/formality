@@ -6,8 +6,7 @@ use super::tooling::no_native_config;
 use super::{
   DeclaresFacets, ExecutionContext, Facet, FacetSupport, LanguageSurface,
   SurfaceResult, ToolInfo, create_tool_command, diff_check_via_tempcopy,
-  find_files_with_ext, lint_fix_unsupported, run_tool_command,
-  tool_missing_guard,
+  lint_fix_unsupported, run_tool_command, tool_missing_guard,
 };
 use std::path::Path;
 use std::time::Instant;
@@ -74,10 +73,6 @@ impl LanguageSurface for TypstSurface {
 
   fn clone_box(&self) -> Box<dyn LanguageSurface> {
     Box::new(*self)
-  }
-
-  fn detect(&self, root: &Path) -> bool {
-    !find_files_with_ext(root, TYPST_EXTENSIONS, &[], &[], &[]).is_empty()
   }
 
   fn tool_info(

@@ -6,7 +6,7 @@ use super::{
   DeclaresFacets, ExecutionContext, Facet, FacetSupport, LanguageSurface,
   NativeConfig, SurfaceResult, SurfaceStatus, ToolInfo,
   classify_all_nonzero_as_error, classify_exit_one_as_violation,
-  create_tool_command, diff_check_via_tempcopy_classified, find_files_with_ext,
+  create_tool_command, diff_check_via_tempcopy_classified,
   find_manifest_upwards, render_native_config, run_tool_command_classified,
   sync_native_config, tool_missing_guard,
 };
@@ -221,12 +221,8 @@ impl LanguageSurface for GoSurface {
     true
   }
 
-  fn detect(&self, root: &std::path::Path) -> bool {
-    root.join("go.mod").is_file()
-      || root.join("go.sum").is_file()
-      || root.join(".golangci.yml").is_file()
-      || root.join(".golangci.yaml").is_file()
-      || !find_files_with_ext(root, GO_EXTENSIONS, &[], &[], &[]).is_empty()
+  fn marker_files(&self) -> &[&'static str] {
+    &["go.mod", "go.sum", ".golangci.yml", ".golangci.yaml"]
   }
 
   fn tool_info(

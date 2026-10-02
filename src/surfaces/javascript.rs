@@ -5,7 +5,7 @@ use super::{
   DeclaresFacets, ExecutionContext, Facet, FacetSupport, LanguageSurface,
   NativeConfig, SurfaceResult, SurfaceStatus, ToolInfo,
   classify_all_nonzero_as_error, create_tool_command,
-  diff_check_via_tempcopy_classified, extra_args_set_flag, find_files_with_ext,
+  diff_check_via_tempcopy_classified, extra_args_set_flag,
   render_native_config, run_tool_command, run_tool_command_classified,
   sync_native_config, tool_missing_guard,
 };
@@ -362,12 +362,8 @@ impl LanguageSurface for JavaScriptSurface {
     true
   }
 
-  fn detect(&self, root: &Path) -> bool {
-    root.join("biome.json").is_file()
-      || root.join("biome.jsonc").is_file()
-      || root.join("tsconfig.json").is_file()
-      || root.join("package.json").is_file()
-      || !find_files_with_ext(root, JS_TS_EXTENSIONS, &[], &[], &[]).is_empty()
+  fn marker_files(&self) -> &[&'static str] {
+    &["biome.json", "biome.jsonc", "tsconfig.json", "package.json"]
   }
 
   fn tool_info(
