@@ -253,9 +253,9 @@ impl LanguageServer for FormalityLsp {
     // For surfaces with structured-output support wired up (rust via
     // clippy, python via ruff — see `lsp_diagnostics`), publish one
     // `Diagnostic` per real violation with correct range/message/severity —
-    // but only when that structured tool actually ran. `diagnostics_for_file`
-    // returns `None` both for surfaces with no structured parser at all and
-    // for ones whose parser couldn't run this time (binary missing, no
+    // but only when that structured tool actually ran.
+    // `diagnostics_for_file_with_config` returns `None` both for surfaces
+    // with no structured parser at all and for ones whose parser couldn't run this time (binary missing, no
     // project marker file, spawn failure, required config missing) — either
     // way this falls back to running in-process `fml lint` and, on non-zero
     // exit, a single generic warning pointing at the output channel — the
