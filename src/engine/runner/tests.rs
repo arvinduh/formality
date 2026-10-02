@@ -783,11 +783,14 @@ fn test_execution_context_staged_files_filtering() {
 
   let ctx = ExecutionContext {
     root: Arc::new(root.to_path_buf()),
-    paths: staged_paths,
+    paths: Arc::clone(&staged_paths),
     global_config: Arc::new(crate::config::ResolvedGlobalConfig::default()),
     lang_config,
     check_only: false,
-    candidate_files: None,
+    candidate_files: Some(Arc::new(crate::surfaces::glob::expand_targets(
+      root,
+      &staged_paths,
+    ))),
   };
 
   let matched = ctx.matched_files(&["rs"]);
