@@ -4106,6 +4106,26 @@ mod tests {
   }
 
   #[test]
+  fn test_only_the_clang_chains_reach_winget_llvm() {
+    // `for_method` matches `WingetName("LLVM.LLVM")` by literal; this pins
+    // that both clang chains still spell it that way, on every OS, and that
+    // no other tool probes `%ProgramFiles%\LLVM\bin` (#489).
+    for entry in ALL_CHAINS {
+      let reaches = entry
+        .chain
+        .iter()
+        .flat_map(KnownInstallDir::for_method)
+        .any(|&kind| kind == KnownInstallDir::WingetLlvm);
+      assert_eq!(
+        reaches,
+        matches!(entry.binary, "clang-format" | "clang-tidy"),
+        "{} and KnownInstallDir::WingetLlvm",
+        entry.binary
+      );
+    }
+  }
+
+  #[test]
   fn test_known_install_dir_path_scoop_prefers_scoop_over_profile() {
     let profile = fake_env(&[("USERPROFILE", r"C:\Users\u")]);
     assert_eq!(
