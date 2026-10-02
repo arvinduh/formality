@@ -25,8 +25,7 @@ use crate::config::FormalityConfig;
 use crate::engine::{Pass, Plan, Runner, Scope};
 use crate::errors::{ExitStatus, FormalityError, GitError, SurfaceError};
 use crate::surfaces::{
-  LanguageSurface, all_surfaces, default_registry, find_files_with_ext,
-  get_surface_by_name, glob,
+  LanguageSurface, all_surfaces, default_registry, get_surface_by_name, glob,
 };
 
 /// Dispatches a [`Plan`] across target surfaces for the `fmt`, `lint`, and
@@ -274,28 +273,28 @@ pub fn resolve_target_surfaces(
   }
 }
 
-/// Every surface with at least one of its files under the explicit `paths`.
+/// Every surface with at least one of its files under the explicit `paths`,
+/// expanding directory arguments once for all surfaces.
 fn surfaces_with_files_under(
   root: &Path,
   paths: &[PathBuf],
   config: &FormalityConfig,
 ) -> Vec<Box<dyn LanguageSurface>> {
-  let mut active = Vec::new();
+  let files = glob::expand_targets(root, paths);
   let global = config.resolve_global();
-  for surface in all_surfaces() {
-    let lang_cfg = config.resolve_for_lang_with_global(surface.name(), &global);
-    let matching = find_files_with_ext(
-      root,
-      surface.file_extensions(),
-      paths,
-      &lang_cfg.files,
-      &lang_cfg.exclude,
-    );
-    if !matching.is_empty() {
-      active.push(surface);
-    }
-  }
-  active
+  all_surfaces()
+    .into_iter()
+    .filter(|surface| {
+      let lang_cfg =
+        config.resolve_for_lang_with_global(surface.name(), &global);
+      let filter = glob::FileFilter::new(
+        root,
+        surface.file_extensions(),
+        &lang_cfg.exclude,
+      );
+      files.iter().any(|file| filter.matches(file))
+    })
+    .collect()
 }
 
 #[cfg(test)]
@@ -513,7 +512,7 @@ mod tests {
     // Discover staged files for the surface (Execution context matched_files)
     let global = config.resolve_global();
     let lang_cfg = config.resolve_for_lang_with_global("rust", &global);
-    let resolved_files = find_files_with_ext(
+    let resolved_files = glob::find_files_with_ext(
       root,
       surfaces[0].file_extensions(),
       &staged_files,
@@ -548,6 +547,28 @@ mod tests {
     // Detection found rust and the runner formatted it, both from one walk.
     assert!(String::from_utf8_lossy(&out).contains("rust"));
     assert_eq!(glob::walk_count::of(root), 1);
+  }
+
+  #[test]
+  fn test_explicit_directory_is_walked_once_for_all_surfaces() {
+    let temp = TempDir::new().unwrap();
+    let src = temp.path().join("src");
+    fs::create_dir(&src).unwrap();
+    fs::write(src.join("main.rs"), "fn main() {}\n").unwrap();
+    fs::write(src.join("notes.md"), "# Notes\n").unwrap();
+
+    let scope = Scope::Paths(std::sync::Arc::new(vec![src.clone()]));
+    let surfaces = resolve_target_surfaces(
+      temp.path(),
+      &[],
+      &scope,
+      &FormalityConfig::empty(),
+    )
+    .unwrap();
+
+    let names: Vec<&str> = surfaces.iter().map(|s| s.name()).collect();
+    assert_eq!(names, ["rust", "markdown"]);
+    assert_eq!(glob::walk_count::of(&src), 1);
   }
 
   #[test]
