@@ -47,7 +47,7 @@ unused_qualifications = "warn"
 [lints.clippy]
 pedantic = { level = "warn", priority = -1 }
 # Pedantic deviations
-too_many_lines = "allow" # linear orchestration and table tests read whole
+too_many_lines = "allow" # until #340 clears the remaining sites
 # Imports
 wildcard_imports = "deny"
 single_component_path_imports = "allow" # `use some_crate;` manifests
