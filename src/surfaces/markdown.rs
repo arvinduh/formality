@@ -8,10 +8,9 @@ use super::{
   FacetSupport, LanguageSurface, NativeConfig, PrettierConfig, SurfaceResult,
   SurfaceStatus, ToolInfo, build_prettier_inline_args, check_binary_exists,
   classify_all_nonzero_as_error, classify_exit_one_as_violation,
-  create_tool_command, diff_check_via_tempcopy_classified, find_files_with_ext,
-  install_hint_for, render_native_config, run_tool_command,
-  run_tool_command_classified, sync_native_config, tool_missing_guard,
-  tool_missing_result,
+  create_tool_command, diff_check_via_tempcopy_classified, install_hint_for,
+  render_native_config, run_tool_command, run_tool_command_classified,
+  sync_native_config, tool_missing_guard, tool_missing_result,
 };
 use crate::config::ResolvedLangConfig;
 use rayon::iter::{IntoParallelRefIterator, ParallelIterator};
@@ -857,10 +856,8 @@ impl LanguageSurface for MarkdownSurface {
     true
   }
 
-  fn detect(&self, root: &Path) -> bool {
-    root.join(".markdownlint.json").is_file()
-      || root.join(".markdownlint.yaml").is_file()
-      || !find_files_with_ext(root, MD_EXTENSIONS, &[], &[], &[]).is_empty()
+  fn marker_files(&self) -> &[&'static str] {
+    &[".markdownlint.json", ".markdownlint.yaml"]
   }
 
   fn tool_info(&self, _config: &ResolvedLangConfig) -> Vec<ToolInfo> {

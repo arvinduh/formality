@@ -5,7 +5,7 @@ use super::{
   DeclaresFacets, ExecutionContext, Facet, FacetSupport, LanguageSurface,
   NativeConfig, PrettierConfig, SurfaceResult, ToolInfo,
   build_prettier_inline_args, classify_all_nonzero_as_error,
-  create_tool_command, diff_check_via_tempcopy_classified, find_files_with_ext,
+  create_tool_command, diff_check_via_tempcopy_classified,
   lint_fix_unsupported, render_native_config, run_tool_command,
   run_tool_command_classified, sync_native_config, tool_missing_guard,
 };
@@ -171,11 +171,8 @@ impl LanguageSurface for YamlSurface {
     Box::new(*self)
   }
 
-  fn detect(&self, root: &Path) -> bool {
-    root.join(".yamllint").is_file()
-      || root.join(".yamllint.yaml").is_file()
-      || root.join(".yamllint.yml").is_file()
-      || !find_files_with_ext(root, YAML_EXTENSIONS, &[], &[], &[]).is_empty()
+  fn marker_files(&self) -> &[&'static str] {
+    &[".yamllint", ".yamllint.yaml", ".yamllint.yml"]
   }
 
   fn tool_info(

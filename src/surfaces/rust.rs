@@ -4,12 +4,12 @@
 use super::{
   DeclaresFacets, ExecutionContext, Facet, FacetSupport, LanguageSurface,
   NativeConfig, SurfaceResult, SurfaceStatus, ToolInfo, check_binary_exists,
-  create_tool_command, find_files_with_ext, find_manifest_upwards,
-  install_hint_for, render_native_config, run_tool_command, sync_native_config,
+  create_tool_command, find_manifest_upwards, install_hint_for,
+  render_native_config, run_tool_command, sync_native_config,
   tool_missing_guard, tool_missing_result,
 };
 use serde::{Deserialize, Serialize};
-use std::path::{Path, PathBuf};
+use std::path::PathBuf;
 use std::process::Command;
 use std::time::Instant;
 
@@ -192,9 +192,8 @@ impl LanguageSurface for RustSurface {
     true
   }
 
-  fn detect(&self, root: &Path) -> bool {
-    root.join("Cargo.toml").is_file()
-      || !find_files_with_ext(root, RUST_EXTENSIONS, &[], &[], &[]).is_empty()
+  fn marker_files(&self) -> &[&'static str] {
+    &["Cargo.toml"]
   }
 
   fn tool_info(

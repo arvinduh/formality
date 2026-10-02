@@ -6,11 +6,9 @@ use super::{
   DeclaresFacets, ExecutionContext, Facet, FacetSupport, LanguageSurface,
   NativeConfig, SurfaceResult, SurfaceStatus, ToolInfo,
   classify_all_nonzero_as_error, create_tool_command,
-  diff_check_via_tempcopy_classified, find_files_with_ext,
-  lint_fix_unsupported, run_tool_command_classified, sync_native_config,
-  tool_missing_guard,
+  diff_check_via_tempcopy_classified, lint_fix_unsupported,
+  run_tool_command_classified, sync_native_config, tool_missing_guard,
 };
-use std::path::Path;
 use std::time::Instant;
 
 /// Detects the failure google-java-format produces when the `java` on
@@ -276,12 +274,13 @@ impl LanguageSurface for JavaSurface {
     false
   }
 
-  fn detect(&self, root: &Path) -> bool {
-    root.join("pom.xml").is_file()
-      || root.join("build.gradle").is_file()
-      || root.join("build.gradle.kts").is_file()
-      || root.join("checkstyle.xml").is_file()
-      || !find_files_with_ext(root, JAVA_EXTENSIONS, &[], &[], &[]).is_empty()
+  fn marker_files(&self) -> &[&'static str] {
+    &[
+      "pom.xml",
+      "build.gradle",
+      "build.gradle.kts",
+      "checkstyle.xml",
+    ]
   }
 
   fn tool_info(
@@ -544,6 +543,7 @@ mod tests {
   use super::*;
   use crate::config::ResolvedLangConfig;
   use crate::surfaces::{check_binary_exists, test_ctx};
+  use std::path::Path;
   use std::sync::Arc;
   use tempfile::TempDir;
 
