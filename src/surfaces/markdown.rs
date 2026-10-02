@@ -289,7 +289,7 @@ const HASH_RULES_CONFIG: &str =
   "{\"default\": false, \"MD018\": true, \"MD020\": true}\n";
 
 /// Writes [`HASH_RULES_CONFIG`] to a temp file for
-/// [`escape_wrapped_hashes`]'s `--config`.
+/// [`escape_continuation_hashes`]'s `--config`.
 ///
 /// The `.markdownlint-` prefix keeps markdownlint-cli2 from discovering it,
 /// as in [`write_markdownlint_temp_config`]. The file is deleted on drop.
@@ -328,38 +328,67 @@ fn is_unspaced_hash_line(line: &str) -> bool {
 /// Whether any line outside a fenced code block passes
 /// [`is_unspaced_hash_line`].
 ///
-/// A cheap filter in front of [`escape_wrapped_hashes`]'s markdownlint spawn:
-/// a file with no such line cannot hold an escapable finding, so the common
-/// case costs a read and no process. Fences are tracked by marker character
-/// and run length so a shebang or `#include` inside a code block does not
-/// count.
+/// A cheap filter in front of [`escape_continuation_hashes`]'s markdownlint
+/// spawn: a file with no such line cannot hold an escapable finding, so the
+/// common case costs a read and no process. A shebang or `#include` inside a
+/// code block does not count.
 fn has_unspaced_hash_line(content: &str) -> bool {
-  let mut fence: Option<(char, usize)> = None;
-  for line in content.lines() {
-    let trimmed = line.trim_start_matches(' ');
-    let marker = trimmed.chars().next().filter(|c| matches!(c, '`' | '~'));
-    if line.len() - trimmed.len() <= 3
-      && let Some(c) = marker
-    {
-      let run = trimmed.chars().take_while(|&x| x == c).count();
-      if run >= 3 {
-        match fence {
-          None => fence = Some((c, run)),
-          Some((open, len))
-            if open == c && run >= len && trimmed[run..].trim().is_empty() =>
-          {
-            fence = None;
-          }
-          Some(_) => {}
-        }
-        continue;
-      }
-    }
-    if fence.is_none() && is_unspaced_hash_line(line) {
-      return true;
+  let mut fence = None;
+  content
+    .lines()
+    .any(|line| !in_fence(&mut fence, line) && is_unspaced_hash_line(line))
+}
+
+/// Splits `line` into its leading indent width in columns, advancing from
+/// start column `width` (a tab advances to the next multiple of 4,
+/// `CommonMark`'s tab stop), and the text after it.
+fn split_indent_at(mut width: usize, line: &str) -> (usize, &str) {
+  for (i, c) in line.char_indices() {
+    match c {
+      ' ' => width += 1,
+      '\t' => width += 4 - width % 4,
+      _ => return (width, &line[i..]),
     }
   }
-  false
+  (width, "")
+}
+
+/// Splits `line` into its leading indent width in columns (a tab advances to
+/// the next multiple of 4, `CommonMark`'s tab stop) and the text after it.
+fn split_indent(line: &str) -> (usize, &str) {
+  split_indent_at(0, line)
+}
+
+/// Advances the fenced-code state `fence` (marker character and run length
+/// of the open fence) past `line`, returning whether `line` is a fence
+/// marker or code inside a fence rather than Markdown content.
+///
+/// `CommonMark` rules: a fence is three or more backticks or tildes behind at
+/// most three columns of indent (four make it indented code, or paragraph
+/// text), a backtick opener's info string holds no backtick (else it is an
+/// inline code span), and the closer uses the opener's character, is at
+/// least as long, and carries nothing else.
+fn in_fence(fence: &mut Option<(char, usize)>, line: &str) -> bool {
+  let (indent, rest) = split_indent(line);
+  let marker = rest.chars().next().filter(|c| matches!(c, '`' | '~'));
+  let run = marker.map_or(0, |c| rest.chars().take_while(|&x| x == c).count());
+  let tail = &rest[run..];
+  match (*fence, marker) {
+    (None, Some(c))
+      if indent <= 3 && run >= 3 && (c == '~' || !tail.contains('`')) =>
+    {
+      *fence = Some((c, run));
+      true
+    }
+    (None, _) => false,
+    (Some((open, len)), Some(c))
+      if indent <= 3 && c == open && run >= len && tail.trim().is_empty() =>
+    {
+      *fence = None;
+      true
+    }
+    (Some(_), _) => true,
+  }
 }
 
 /// The 1-based line numbers of every MD018 or MD020 finding in markdownlint
@@ -383,18 +412,224 @@ fn hash_rule_lines(output: &str) -> Vec<usize> {
     .collect()
 }
 
-/// Prefixes the leading `#` of each listed 1-based line with a backslash,
-/// when that line passes [`is_unspaced_hash_line`].
+/// The number of leading lines markdownlint strips as front matter: its
+/// default `frontMatterRe` (markdownlint v0.41.1 `helpers/helpers.cjs`),
+/// which opens on line 1 with `---`, `+++` or `{` and closes with `---`,
+/// `+++` or `...`, or `}` respectively. Zero when there is none.
+fn front_matter_lines(content: &str) -> usize {
+  let mut lines = content.lines();
+  let closers: &[&str] =
+    match lines.next().map(|l| l.trim_end_matches([' ', '\t'])) {
+      Some("---") => &["---"],
+      Some("+++") => &["+++", "..."],
+      Some("{") => &["}"],
+      _ => return 0,
+    };
+  lines
+    .position(|l| closers.contains(&l.trim_end()))
+    .map_or(0, |close| close + 2)
+}
+
+/// The end marker of the `CommonMark` HTML block (types 1-5) that `rest`, a
+/// line with its indent stripped, opens: `<script>`/`<pre>`/`<style>`/
+/// `<textarea>`, a comment, a processing instruction, a declaration or
+/// CDATA.
 ///
-/// `\#` renders exactly as the bare `#` of such a line (neither is an ATX
-/// heading). Prettier 3.9.6 keeps the escape: `prettier --parser markdown
-/// --prose-wrap always` leaves `\#299) ok.` at a line start unchanged, and
-/// `short \#tag mid and \# alone.` keeps both escapes mid-line, so the
-/// result is stable across runs.
+/// Types 6 and 7 (`<div>`, any lone tag) end at a blank line instead; no
+/// MD018/MD020 finding can sit inside one, so they are not tracked.
+fn html_block_end(rest: &str) -> Option<&'static str> {
+  const RAW: [(&str, &str); 4] = [
+    ("script", "</script>"),
+    ("pre", "</pre>"),
+    ("style", "</style>"),
+    ("textarea", "</textarea>"),
+  ];
+  let tail = rest.strip_prefix('<')?;
+  for (open, end) in [("!--", "-->"), ("![CDATA[", "]]>"), ("?", "?>")] {
+    if tail.starts_with(open) {
+      return Some(end);
+    }
+  }
+  if tail
+    .strip_prefix('!')
+    .is_some_and(|t| t.starts_with(|c: char| c.is_ascii_alphabetic()))
+  {
+    return Some(">");
+  }
+  RAW.iter().find_map(|&(tag, end)| {
+    let head = tail.get(..tag.len())?;
+    let next = tail[tag.len()..].chars().next();
+    (head.eq_ignore_ascii_case(tag)
+      && next.is_none_or(|c| c.is_ascii_whitespace() || c == '>'))
+    .then_some(end)
+  })
+}
+
+/// Whether `hay` contains `needle`, ignoring ASCII case, as `CommonMark`'s
+/// HTML block end conditions do.
+fn contains_ignore_case(hay: &str, needle: &str) -> bool {
+  hay
+    .as_bytes()
+    .windows(needle.len())
+    .any(|w| w.eq_ignore_ascii_case(needle.as_bytes()))
+}
+
+/// `CommonMark` block state across lines, just enough to tell whether a line
+/// opens a block of its own or continues an open paragraph.
+#[derive(Default)]
+struct BlockScan {
+  /// The previous line left a paragraph open, so a following line that
+  /// starts no other block is a continuation of it.
+  in_para: bool,
+  /// The content column of each open list item, innermost last: a line
+  /// indented that far belongs to the item, four more make indented code.
+  items: Vec<usize>,
+  /// The open paragraph sits in a blockquote, so a line without `>` can
+  /// only continue it lazily.
+  quoted: bool,
+  /// The open code fence, as [`in_fence`] tracks it.
+  fence: Option<(char, usize)>,
+  /// The end marker of an open HTML block, from [`html_block_end`].
+  html_end: Option<&'static str>,
+}
+
+impl BlockScan {
+  /// Advances past `line`, returning whether an unspaced `#` line there
+  /// would open a block of its own: a heading the author forgot to space,
+  /// which markdownlint's MD018/MD020 fixers may space into `# Title`.
+  ///
+  /// It does so at the start of the content or after a blank line, an ATX
+  /// heading, a setext underline, a thematic break, a closing fence,
+  /// indented code, or the end of an HTML block. Everything else that is not
+  /// blank leaves a paragraph open, so a `#` line after it is prose: plain
+  /// paragraph text, or a lazy continuation of a list item, blockquote or
+  /// GFM table row (prettier 3.9.6 turns `| 1 |⏎#2` into `| 1 |⏎| #2 |`).
+  /// Inside a list item, indented code starts four columns past the item's
+  /// content column; less is a paragraph of the item (`- i⏎⏎    more`).
+  /// A line inside a fence or HTML block also returns `false`: markdownlint
+  /// never reports one there, so a finding means this scan lost track, and
+  /// escaping is the outcome that renders the same either way.
+  fn opens_block(&mut self, line: &str) -> bool {
+    let line = line.trim_end_matches(['\n', '\r']);
+    let opens = !self.in_para;
+    self.in_para = false;
+    // An open HTML block goes first: a fence marker inside one is HTML.
+    if let Some(end) = self.html_end {
+      if contains_ignore_case(line, end) {
+        self.html_end = None;
+      }
+      return false;
+    }
+    if in_fence(&mut self.fence, line) {
+      return false;
+    }
+    let (indent, rest) = split_indent(line);
+    if rest.is_empty() {
+      return false;
+    }
+    if opens {
+      // Not a lazy continuation, so it closes the items it is not inside.
+      self.items.retain(|&col| col <= indent);
+    }
+    if indent >= self.items.last().map_or(0, |&col| col) + 4 {
+      // Indented code unless it continues a paragraph; never a `#` line.
+      self.in_para = !opens;
+      return false;
+    }
+    if let Some(end) = html_block_end(rest) {
+      if !contains_ignore_case(&rest[1..], end) {
+        self.html_end = Some(end);
+      }
+      return false;
+    }
+    // A setext underline is never lazy: outside the paragraph's blockquote
+    // or list item, `===` is paragraph text (`> q⏎===` is one paragraph).
+    let lazy = (self.quoted && !rest.starts_with('>'))
+      || self.items.last().is_some_and(|&col| indent < col);
+    let setext = !opens
+      && !lazy
+      && (rest.trim_end().bytes().all(|b| b == b'=')
+        || rest.trim_end().bytes().all(|b| b == b'-'));
+    let breaks = setext || is_thematic_break(rest);
+    let marker = list_marker(indent, rest).filter(|_| !breaks);
+    if let Some(width) = marker {
+      self.items.retain(|&col| col <= indent);
+      self.items.push(indent + width);
+    }
+    let content = marker.map_or(rest, |_| {
+      rest.trim_start_matches(|c: char| {
+        c.is_ascii_digit() || "-*+.) \t".contains(c)
+      })
+    });
+    self.quoted = content.starts_with('>') || (!opens && self.quoted);
+    self.in_para = !(is_atx_heading(rest) || breaks);
+    opens
+  }
+}
+
+/// The width of the list item marker that starts `rest`, a line with its
+/// indent stripped, plus the one to four spaces after it: how far the item's
+/// content is indented. A bullet is `-`, `*` or `+`; an ordered marker is one
+/// to nine digits and `.` or `)`. Either needs a space, a tab or the end of
+/// the line after it.
+fn list_marker(indent: usize, rest: &str) -> Option<usize> {
+  let digits = rest.bytes().take_while(u8::is_ascii_digit).count();
+  let mark = match rest.as_bytes().get(digits) {
+    Some(b'-' | b'*' | b'+') if digits == 0 => 1,
+    Some(b'.' | b')') if (1..=9).contains(&digits) => digits + 1,
+    _ => return None,
+  };
+  let (end, text) = split_indent_at(indent + mark, &rest[mark..]);
+  let gap = end - indent - mark;
+  match gap {
+    0 if !text.is_empty() => None,
+    1..=4 if !text.is_empty() => Some(mark + gap),
+    _ => Some(mark + 1),
+  }
+}
+
+/// Whether `rest`, a line with its indent stripped, is an ATX heading: one
+/// to six `#` followed by a space, a tab or the end of the line.
+#[must_use]
+fn is_atx_heading(rest: &str) -> bool {
+  let hashes = rest.bytes().take_while(|&b| b == b'#').count();
+  (1..=6).contains(&hashes)
+    && matches!(rest.as_bytes().get(hashes), None | Some(b' ' | b'\t'))
+}
+
+/// Whether `rest`, a line with its indent stripped, is a thematic break:
+/// three or more of one of `*`, `-`, `_`, with only spaces or tabs between.
+#[must_use]
+fn is_thematic_break(rest: &str) -> bool {
+  let Some(mark) = rest.chars().next().filter(|c| matches!(c, '*' | '-' | '_'))
+  else {
+    return false;
+  };
+  let marks = rest.chars().filter(|&c| c == mark).count();
+  marks >= 3 && rest.chars().all(|c| c == mark || c == ' ' || c == '\t')
+}
+
+/// Prefixes the leading `#` of each listed 1-based line with a backslash,
+/// when that line passes [`is_unspaced_hash_line`] and continues a paragraph
+/// ([`BlockScan::opens_block`] is `false`).
+///
+/// `\#` renders exactly as the bare `#` of such a line, so escaping never
+/// changes the rendered document. A finding that opens a block of its own
+/// (`#Title` after a blank line) also renders as text, but is far more
+/// likely a heading the author forgot to space, so it is left for
+/// markdownlint's MD018/MD020 fixers to make `# Title` (#413). Prettier
+/// 3.9.6 keeps the escape: `prettier --parser markdown --prose-wrap always`
+/// leaves `\#299) ok.` at a line start unchanged, and `short \#tag mid and
+/// \# alone.` keeps both escapes mid-line, so the result is stable across
+/// runs.
 fn escape_line_hashes(content: &str, lines: &[usize]) -> String {
   let mut out = String::with_capacity(content.len() + lines.len());
+  let skip = front_matter_lines(content);
+  let mut scan = BlockScan::default();
   for (idx, line) in content.split_inclusive('\n').enumerate() {
-    if is_unspaced_hash_line(line) && lines.contains(&(idx + 1)) {
+    let opens_block = idx >= skip && scan.opens_block(line);
+    if !opens_block && is_unspaced_hash_line(line) && lines.contains(&(idx + 1))
+    {
       out.push('\\');
     }
     out.push_str(line);
@@ -402,15 +637,22 @@ fn escape_line_hashes(content: &str, lines: &[usize]) -> String {
   out
 }
 
-/// Escapes every `#` that `prettier --write` wrapped to the start of a line
-/// in `file`, before markdownlint's MD018/MD020 fixers can see it (#314).
+/// Escapes every `#` that starts a paragraph continuation line in `file`,
+/// before markdownlint's MD018/MD020 fixers can see it (#314, #413).
 ///
-/// Prettier's prose wrap can break a line right before a token such as
-/// `#299)`, or before `#299 for C#`. The result is no heading, but MD018 or
-/// MD020 reports it, so `fml fix` called it an unfixable violation and the
-/// *next* `markdownlint --fix` inserted a space, turning prose into a
-/// heading (#309). Running the fixer again after prettier would do that
-/// damage in one pass, so the format pass escapes the hash instead.
+/// A line inside a paragraph can start with a token such as `#299)`, or
+/// `#299 for C#`: prettier's prose wrap breaks right before one (#314), or
+/// the author wrapped the line by hand (#413). It renders as text, but
+/// MD018 or MD020 reports it, and `markdownlint --fix` inserts a space,
+/// turning prose into a heading (#309). `fml fmt` therefore runs this step
+/// both before its own `markdownlint --fix` pass and after `prettier
+/// --write`, and `fml fix` runs it before its lint fix pass. Reproduced with
+/// markdownlint-cli2 v0.23.2 (markdownlint v0.41.1) and prettier 3.9.6 at
+/// `line_length = 80`: without the first run, one `fml fmt` turns
+/// `see⏎#299) for details.` into the H1 `# 299) for details`.
+///
+/// Only continuation lines are escaped; see [`escape_line_hashes`] for why
+/// a `#Title` that opens its own block is left to the fixers.
 ///
 /// markdownlint, limited to [`HASH_RULES_CONFIG`], picks the lines: MD018
 /// and MD020 skip fenced and indented code, HTML blocks and front matter, so
@@ -427,7 +669,7 @@ fn escape_line_hashes(content: &str, lines: &[usize]) -> String {
 ///
 /// Rewrites `file` in place when it holds a finding, and spawns `bin` only
 /// for a file that passes [`has_unspaced_hash_line`].
-fn escape_wrapped_hashes(
+fn escape_continuation_hashes(
   bin: &str,
   config: &Path,
   file: &Path,
@@ -476,6 +718,38 @@ fn escape_wrapped_hashes(
     return Ok(());
   }
   std::fs::write(file, escape_line_hashes(&content, &lines))
+}
+
+/// Runs [`escape_continuation_hashes`] over `files` in parallel: each
+/// candidate file costs one markdownlint spawn.
+///
+/// # Errors
+///
+/// Returns the first error [`escape_continuation_hashes`] hits.
+fn escape_all(
+  bin: &str,
+  config: &Path,
+  files: &[PathBuf],
+  root: &Path,
+) -> std::io::Result<()> {
+  files
+    .par_iter()
+    .try_for_each(|f| escape_continuation_hashes(bin, config, f, root))
+}
+
+/// The `ExecutionError` result for a failed [`escape_all`].
+fn escape_failed(
+  surface_name: &'static str,
+  start: Instant,
+  e: &std::io::Error,
+) -> SurfaceResult {
+  SurfaceResult {
+    surface_name,
+    status: SurfaceStatus::ExecutionError {
+      message: format!("Failed to escape a paragraph-continuation `#`: {e}"),
+    },
+    duration: start.elapsed(),
+  }
 }
 
 /// markdownlint-cli2 line prefixes that carry only progress chatter, never a
@@ -644,7 +918,7 @@ impl LanguageSurface for MarkdownSurface {
     // binary was actually found; kept alive across both the check-only and
     // write branches below so the file exists for the duration of every
     // invocation that references its path. The second file holds the
-    // MD018/MD020-only config `escape_wrapped_hashes` checks with (#314).
+    // MD018/MD020-only config `escape_continuation_hashes` checks with (#314).
     let md_temp_cfgs = if md_binary.is_some() {
       match write_markdownlint_temp_config(&ctx.lang_config)
         .and_then(|f| Ok((f, write_hash_rules_temp_config()?)))
@@ -673,6 +947,15 @@ impl LanguageSurface for MarkdownSurface {
         &files,
         |scratch| {
           if let Some(bin) = md_binary {
+            // #413: the same pre-fixer step as the write branch below.
+            if let Some(cfg) = hash_cfg_path {
+              escape_continuation_hashes(
+                bin,
+                cfg,
+                scratch,
+                ctx.root.as_path(),
+              )?;
+            }
             let mut md_cmd = create_tool_command(bin);
             // Fixes #150: this argv used to be hand-assembled here, and the
             // hand-assembled copy omitted `extra_args`. See
@@ -718,7 +1001,7 @@ impl LanguageSurface for MarkdownSurface {
           if output.status.success()
             && let (Some(bin), Some(cfg)) = (md_binary, hash_cfg_path)
           {
-            escape_wrapped_hashes(bin, cfg, scratch, ctx.root.as_path())?;
+            escape_continuation_hashes(bin, cfg, scratch, ctx.root.as_path())?;
           }
           Ok(output)
         },
@@ -729,6 +1012,13 @@ impl LanguageSurface for MarkdownSurface {
     }
 
     if let Some(bin) = md_binary {
+      // #413: a hand-wrapped `#299)` must be escaped before the fixer below
+      // spaces it into a heading.
+      if let Some(cfg) = hash_cfg_path
+        && let Err(e) = escape_all(bin, cfg, &files, ctx.root.as_path())
+      {
+        return escape_failed(self.name(), start, &e);
+      }
       let mut md_cmd = create_tool_command(bin);
       // Fixes #150: same builder as the `check_only` branch above, differing
       // only in the paths handed to the tool. See
@@ -775,22 +1065,11 @@ impl LanguageSurface for MarkdownSurface {
     }
 
     // #314: prettier's wrap can leave a `#` at a line start, which the next
-    // `markdownlint --fix` would turn into a heading. See
-    // `escape_wrapped_hashes`.
-    // Parallel across files, like the `--check` branch's per-file closure:
-    // each candidate costs one markdownlint spawn.
+    // `markdownlint --fix` would turn into a heading.
     if let (Some(bin), Some(cfg)) = (md_binary, hash_cfg_path)
-      && let Err(e) = files.par_iter().try_for_each(|f| {
-        escape_wrapped_hashes(bin, cfg, f, ctx.root.as_path())
-      })
+      && let Err(e) = escape_all(bin, cfg, &files, ctx.root.as_path())
     {
-      return SurfaceResult {
-        surface_name: self.name(),
-        status: SurfaceStatus::ExecutionError {
-          message: format!("Failed to escape prettier-wrapped `#`: {e}"),
-        },
-        duration: start.elapsed(),
-      };
+      return escape_failed(self.name(), start, &e);
     }
     res
   }
@@ -835,6 +1114,16 @@ impl LanguageSurface for MarkdownSurface {
         };
       }
     };
+
+    // #413: `fml fix` runs this pass before `format()`, so it needs the same
+    // pre-fixer escape, or `--fix` spaces a hand-wrapped `#299)` first.
+    if fix
+      && let Err(e) = write_hash_rules_temp_config().and_then(|cfg| {
+        escape_all(binary, cfg.path(), &files, ctx.root.as_path())
+      })
+    {
+      return escape_failed(self.name(), start, &e);
+    }
 
     let mut cmd = create_tool_command(binary);
     cmd.args(build_markdownlint_args(
@@ -882,7 +1171,6 @@ impl LanguageSurface for MarkdownSurface {
 }
 
 #[cfg(test)]
-#[allow(missing_docs, clippy::missing_errors_doc, clippy::missing_panics_doc)]
 mod tests {
   use super::*;
   use crate::config::ResolvedLangConfig;
@@ -1340,6 +1628,10 @@ README.md:7 error MD025/single-title/single-h1 Multiple top-level headings";
     // A shorter or different marker does not close the outer fence.
     assert!(!has_unspaced_hash_line("````\n```\n#x\n~~~\n#y\n````\n"));
     assert!(has_unspaced_hash_line("```\ncode\n```\n#after\n"));
+    // Four columns of indent make it no fence marker, so line 3 closes.
+    assert!(has_unspaced_hash_line("```\n    ```\n```\n#after\n"));
+    // A backtick in a backtick opener's info string makes it a code span.
+    assert!(has_unspaced_hash_line("```a`\n#x\n"));
   }
 
   #[test]
@@ -1360,11 +1652,73 @@ README.md:7 error MD025/single-title/single-h1 Multiple top-level headings";
   fn test_escape_line_hashes_skips_real_headings_and_unlisted_lines() {
     // `# Title#` is an MD020 finding but already a heading: escaping it
     // would demote a heading the author wrote.
-    let src = "a\n#1 b\n#2 c\n# Title#\n##x\r\n";
+    let src = "a\n#1 b\n#2 c\n# Title#\nd\n##x\r\n";
     assert_eq!(
-      escape_line_hashes(src, &[2, 4, 5]),
-      "a\n\\#1 b\n#2 c\n# Title#\n\\##x\r\n"
+      escape_line_hashes(src, &[2, 4, 6]),
+      "a\n\\#1 b\n#2 c\n# Title#\nd\n\\##x\r\n"
     );
+  }
+
+  #[test]
+  fn test_escape_line_hashes_escapes_only_paragraph_continuations() {
+    // #413: a `#a` that opens a block of its own is left for markdownlint's
+    // fixer to space into `# a`; one that continues a paragraph (lazily,
+    // in a list item, blockquote or GFM table row) is escaped.
+    let opens_block = [
+      "#a\n",
+      "p\n\n#a\n",
+      "# T\n#a\n",
+      "p\n===\n#a\n",
+      "- i\n  ===\n#a\n",
+      "> q\n\np\n===\n#a\n",
+      "p\n---\n#a\n",
+      "p\n\n***\n#a\n",
+      "- - -\n\n    code\n#a\n",
+      "```\nc\n```\n#a\n",
+      "```\n    ```\n```\n#a\n",
+      "    ```\n#a\n",
+      "    ~~~\n#a\n",
+      "```a`\n\n#a\n",
+      "    code\n#a\n",
+      "-     c\n\n      code\n#a\n",
+      "- i\n\n      code\n#a\n",
+      "- i\n\np\n\n    code\n#a\n",
+      "- a\n  - b\n\n  p\n\n      code\n#a\n",
+      "<!--\nc\n-->\n#a\n",
+      "p\n<!-- c -->\n#a\n",
+      "<PRE>\nc\n</pre>\n#a\n",
+      "+++\nx = 1\n+++\n#a\n",
+      "---\nx: 1\n---\n#a\n",
+    ];
+    let continues = [
+      "p\n#a\n",
+      "p\n\n===\n#a\n",
+      "p\n\n--\n#a\n",
+      "p\n+++\n#a\n",
+      "p\n    more\n#a\n",
+      "| a |\n| - |\n| 1 |\n#a\n",
+      "> q\n#a\n",
+      "- i\n#a\n",
+      "1. i\n\n    more\n#a\n",
+      "- i\n\n    more\n#a\n",
+      "-\ti\n\n    more\n#a\n",
+      "1.\ti\n\n    more\n#a\n",
+      " -\ti\n\n    more\n#a\n",
+      "- a\n  - b\n\n      more\n#a\n",
+      "> q\n===\n#a\n",
+      "- i\n===\n#a\n",
+      "- > q\n  ===\n#a\n",
+      "<span>x</span>\n#a\n",
+    ];
+    for src in opens_block.into_iter().chain(continues) {
+      let last = src.lines().count();
+      let want = if continues.contains(&src) {
+        format!("{}\\#a\n", &src[..src.len() - 3])
+      } else {
+        src.to_string()
+      };
+      assert_eq!(escape_line_hashes(src, &[last]), want, "for {src:?}");
+    }
   }
 
   /// The first line of a paragraph that prettier's `prose_wrap = "always"`
@@ -1506,6 +1860,95 @@ README.md:7 error MD025/single-title/single-h1 Multiple top-level headings";
     assert!(
       diff.contains("+\\#299) ok."),
       "the drift must be the escape, got: {diff}"
+    );
+  }
+
+  /// #413: a paragraph the author wrapped by hand right before `#299)`.
+  const HAND_WRAPPED: &str =
+    "# T\n\nFixed in the parser, see\n#299) for details.\n";
+
+  /// [`HAND_WRAPPED`] after `fml fmt`: prettier joins the escaped line.
+  const HAND_WRAPPED_FORMATTED: &str =
+    "# T\n\nFixed in the parser, see \\#299) for details.\n";
+
+  #[test]
+  fn test_format_escapes_a_hand_wrapped_hash_before_the_fixer() {
+    // The first `markdownlint --fix` pass used to space `#299)` into the H1
+    // `# 299) for details` before any escape ran.
+    if !have_markdown_tools() {
+      return;
+    }
+
+    let temp = TempDir::new().unwrap();
+    let file = temp.path().join("doc.md");
+    std::fs::write(&file, HAND_WRAPPED).unwrap();
+    let mut ctx = test_ctx(temp.path(), ResolvedLangConfig::new("markdown"));
+
+    ctx.check_only = true;
+    let check = MarkdownSurface.format(&ctx);
+    let SurfaceStatus::ViolationsFound {
+      diff: Some(diff), ..
+    } = &check.status
+    else {
+      panic!("expected drift with a diff, got: {:?}", check.status);
+    };
+    assert!(
+      diff.contains("+Fixed in the parser, see \\#299) for details."),
+      "--check must report the escape, got: {diff}"
+    );
+
+    ctx.check_only = false;
+    for run in 1..=2 {
+      let res = MarkdownSurface.format(&ctx);
+      assert!(res.is_success(), "format failed: {:?}", res.status);
+      assert_eq!(
+        std::fs::read_to_string(&file).unwrap(),
+        HAND_WRAPPED_FORMATTED,
+        "run {run}"
+      );
+    }
+  }
+
+  #[test]
+  fn test_fix_escapes_a_hand_wrapped_hash_before_the_lint_fixer() {
+    // `fml fix` runs `markdownlint --fix` from `lint()` before `format()`.
+    if !have_markdown_tools() {
+      return;
+    }
+
+    let temp = TempDir::new().unwrap();
+    let file = temp.path().join("doc.md");
+    std::fs::write(&file, HAND_WRAPPED).unwrap();
+    let ctx = test_ctx(temp.path(), ResolvedLangConfig::new("markdown"));
+
+    for run in 1..=2 {
+      fix_once(&ctx);
+      assert_eq!(
+        std::fs::read_to_string(&file).unwrap(),
+        HAND_WRAPPED_FORMATTED,
+        "run {run}"
+      );
+    }
+  }
+
+  #[test]
+  fn test_format_spaces_an_unspaced_heading_that_opens_a_block() {
+    // The other half of #413's decision: `#Title` on its own block is a
+    // heading the author forgot to space, not prose to escape.
+    if !have_markdown_tools() {
+      return;
+    }
+
+    let temp = TempDir::new().unwrap();
+    let file = temp.path().join("doc.md");
+    std::fs::write(&file, "#Title\n\nText.\n").unwrap();
+    let ctx = test_ctx(temp.path(), ResolvedLangConfig::new("markdown"));
+
+    let res = MarkdownSurface.format(&ctx);
+    assert!(res.is_success(), "format failed: {:?}", res.status);
+    assert_eq!(
+      std::fs::read_to_string(&file).unwrap(),
+      "# Title\n\nText.\n"
     );
   }
 

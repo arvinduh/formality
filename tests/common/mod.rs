@@ -3,7 +3,7 @@
 //! Provides reusable synthetic repository builders and CLI invocation helpers
 //! to reduce boilerplate across test binaries.
 
-#![allow(dead_code, missing_docs)]
+#![allow(dead_code)]
 
 use fml::cli::{Cli, Commands};
 use fml::errors::ExitStatus;
