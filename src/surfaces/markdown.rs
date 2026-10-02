@@ -1772,6 +1772,7 @@ README.md:7 error MD025/single-title/single-h1 Multiple top-level headings";
       "- a\n  ## H\n  p\n#a\n",
       "- a\n\n  ```\n  ```\n  p\n#a\n",
       "10. a\n    ```\n    #x\n    ```\n    p\n#a\n",
+      "- a\n  1.    b\n      ## H\n\n          x\n#a\n",
     ];
     for src in opens_block.into_iter().chain(continues) {
       let last = src.lines().count();
