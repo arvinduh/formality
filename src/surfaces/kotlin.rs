@@ -6,10 +6,9 @@ use super::tooling::no_native_config;
 use super::{
   DeclaresFacets, ExecutionContext, Facet, FacetSupport, LanguageSurface,
   SurfaceResult, ToolInfo, classify_exit_one_as_violation, create_tool_command,
-  diff_check_via_tempcopy_classified, find_files_with_ext, run_tool_command,
+  diff_check_via_tempcopy_classified, run_tool_command,
   run_tool_command_classified, tool_missing_guard,
 };
-use std::path::Path;
 use std::time::Instant;
 
 /// Kotlin language surface implementation.
@@ -132,10 +131,8 @@ impl LanguageSurface for KotlinSurface {
     Box::new(*self)
   }
 
-  fn detect(&self, root: &Path) -> bool {
-    root.join("build.gradle.kts").is_file()
-      || root.join("settings.gradle.kts").is_file()
-      || !find_files_with_ext(root, KOTLIN_EXTENSIONS, &[], &[], &[]).is_empty()
+  fn marker_files(&self) -> &[&'static str] {
+    &["build.gradle.kts", "settings.gradle.kts"]
   }
 
   fn supports_lint_fix(&self) -> bool {
@@ -268,7 +265,7 @@ mod tests {
   use crate::surfaces::{
     SurfaceStatus, check_binary_exists, forget_binary, test_ctx,
   };
-  use std::path::PathBuf;
+  use std::path::{Path, PathBuf};
   use std::sync::{Mutex, MutexGuard, PoisonError};
   use tempfile::TempDir;
 

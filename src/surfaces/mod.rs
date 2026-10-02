@@ -454,8 +454,23 @@ pub trait LanguageSurface: DeclaresFacets + Send + Sync {
   fn file_extensions(&self) -> &[&'static str] {
     &[]
   }
+  /// Root-level filenames (manifests, tool configs) that mark this surface
+  /// as active even when no source file exists yet.
+  fn marker_files(&self) -> &[&'static str] {
+    &[]
+  }
   /// Detects whether this language surface is active in workspace `root`.
-  fn detect(&self, root: &Path) -> bool;
+  ///
+  /// The default is active when any `marker_files()` entry is a regular file
+  /// directly under `root` (a directory of that name does not count), or
+  /// when any non-ignored file under `root` has one of `file_extensions()`.
+  /// Markers are checked first: they are single `stat` calls, while the
+  /// extension check walks the whole tree.
+  fn detect(&self, root: &Path) -> bool {
+    self.marker_files().iter().any(|m| root.join(m).is_file())
+      || !find_files_with_ext(root, self.file_extensions(), &[], &[], &[])
+        .is_empty()
+  }
   /// Returns information about required tools for this surface.
   fn tool_info(&self, config: &ResolvedLangConfig) -> Vec<ToolInfo>;
   /// Formats source files using underlying tools.
@@ -516,6 +531,36 @@ mod tests {
     assert!(!typst::TypstSurface.supports_lint_fix());
     assert!(javascript::JavaScriptSurface.supports_lint_fix());
     assert!(kotlin::KotlinSurface.supports_lint_fix());
+  }
+
+  #[test]
+  fn test_default_detect_markers_are_root_regular_files_only() {
+    let surface = rust::RustSurface;
+    let dir_marker = tempfile::TempDir::new().unwrap();
+    std::fs::create_dir(dir_marker.path().join("Cargo.toml")).unwrap();
+    assert!(!surface.detect(dir_marker.path()));
+
+    let nested_marker = tempfile::TempDir::new().unwrap();
+    std::fs::create_dir(nested_marker.path().join("sub")).unwrap();
+    std::fs::write(nested_marker.path().join("sub/Cargo.toml"), "").unwrap();
+    assert!(!surface.detect(nested_marker.path()));
+
+    let root_marker = tempfile::TempDir::new().unwrap();
+    std::fs::write(root_marker.path().join("Cargo.toml"), "").unwrap();
+    assert!(surface.detect(root_marker.path()));
+  }
+
+  #[test]
+  fn test_default_detect_finds_nested_extension_outside_ignored_dirs() {
+    let surface = typst::TypstSurface;
+    let temp = tempfile::TempDir::new().unwrap();
+    std::fs::create_dir_all(temp.path().join("target/a")).unwrap();
+    std::fs::write(temp.path().join("target/a/doc.typ"), "").unwrap();
+    assert!(!surface.detect(temp.path()));
+
+    std::fs::create_dir_all(temp.path().join("docs/a")).unwrap();
+    std::fs::write(temp.path().join("docs/a/doc.typ"), "").unwrap();
+    assert!(surface.detect(temp.path()));
   }
 
   #[test]

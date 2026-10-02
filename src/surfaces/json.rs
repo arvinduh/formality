@@ -6,10 +6,10 @@ use super::{
   DeclaresFacets, ExecutionContext, Facet, FacetSupport, LanguageSurface,
   NativeConfig, PrettierConfig, SurfaceResult, ToolInfo,
   build_prettier_inline_args, classify_all_nonzero_as_error,
-  create_tool_command, diff_check_via_tempcopy_classified, find_files_with_ext,
+  create_tool_command, diff_check_via_tempcopy_classified,
   lint_fix_unsupported, run_tool_command_classified, tool_missing_guard,
 };
-use std::path::{Path, PathBuf};
+use std::path::PathBuf;
 use std::time::Instant;
 
 /// JSON language surface implementation.
@@ -48,10 +48,6 @@ impl LanguageSurface for JsonSurface {
 
   fn clone_box(&self) -> Box<dyn LanguageSurface> {
     Box::new(*self)
-  }
-
-  fn detect(&self, root: &Path) -> bool {
-    !find_files_with_ext(root, JSON_EXTENSIONS, &[], &[], &[]).is_empty()
   }
 
   fn tool_info(

@@ -4,12 +4,10 @@
 use super::{
   DeclaresFacets, ExecutionContext, Facet, FacetSupport, LanguageSurface,
   NativeConfig, SurfaceResult, ToolInfo, create_tool_command,
-  diff_check_via_tempcopy, find_files_with_ext, lint_fix_unsupported,
-  render_native_config, run_tool_command, sync_native_config,
-  tool_missing_guard,
+  diff_check_via_tempcopy, lint_fix_unsupported, render_native_config,
+  run_tool_command, sync_native_config, tool_missing_guard,
 };
 use serde::{Deserialize, Serialize};
-use std::path::Path;
 use std::time::Instant;
 
 // Directly mirrors Taplo's upstream native schema formatting flags.
@@ -163,10 +161,8 @@ impl LanguageSurface for TomlSurface {
     Box::new(*self)
   }
 
-  fn detect(&self, root: &Path) -> bool {
-    root.join("taplo.toml").is_file()
-      || root.join(".taplo.toml").is_file()
-      || !find_files_with_ext(root, TOML_EXTENSIONS, &[], &[], &[]).is_empty()
+  fn marker_files(&self) -> &[&'static str] {
+    &["taplo.toml", ".taplo.toml"]
   }
 
   fn tool_info(

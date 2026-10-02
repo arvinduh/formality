@@ -5,12 +5,12 @@ use super::{
   DeclaresFacets, ExecutionContext, ExitClass, Facet, FacetSupport,
   LanguageSurface, NativeConfig, SurfaceResult, SurfaceStatus, ToolInfo,
   classify_all_nonzero_as_error, create_tool_command,
-  diff_check_via_tempcopy_classified, find_files_with_ext, merge_tool_streams,
-  render_native_config, run_tool_command, run_tool_command_classified,
-  sync_native_config, tool_missing_guard,
+  diff_check_via_tempcopy_classified, merge_tool_streams, render_native_config,
+  run_tool_command, run_tool_command_classified, sync_native_config,
+  tool_missing_guard,
 };
 use serde::{Deserialize, Serialize};
-use std::path::{Path, PathBuf};
+use std::path::PathBuf;
 use std::time::Instant;
 
 /// Format configuration subsection for `ruff.toml`.
@@ -339,14 +339,15 @@ impl LanguageSurface for PythonSurface {
     true
   }
 
-  fn detect(&self, root: &Path) -> bool {
-    root.join("pyproject.toml").is_file()
-      || root.join("requirements.txt").is_file()
-      || root.join("setup.py").is_file()
-      || root.join("Pipfile").is_file()
-      || root.join("ruff.toml").is_file()
-      || root.join(".ruff.toml").is_file()
-      || !find_files_with_ext(root, PYTHON_EXTENSIONS, &[], &[], &[]).is_empty()
+  fn marker_files(&self) -> &[&'static str] {
+    &[
+      "pyproject.toml",
+      "requirements.txt",
+      "setup.py",
+      "Pipfile",
+      "ruff.toml",
+      ".ruff.toml",
+    ]
   }
 
   fn tool_info(
@@ -561,6 +562,7 @@ mod tests {
     PythonOptions, ResolvedGlobalConfig, ResolvedLangConfig,
   };
   use crate::surfaces::{check_binary_exists, test_ctx};
+  use std::path::Path;
   use std::sync::Arc;
   use tempfile::TempDir;
 

@@ -6,9 +6,8 @@ use super::{
   DeclaresFacets, ExecutionContext, Facet, FacetSupport, LanguageSurface,
   NativeConfig, SurfaceResult, SurfaceStatus, ToolInfo,
   classify_all_nonzero_as_error, create_tool_command,
-  diff_check_via_tempcopy_classified, find_files_with_ext, merge_sync_results,
-  render_native_config, run_tool_command_classified, sync_native_config,
-  tool_missing_guard,
+  diff_check_via_tempcopy_classified, merge_sync_results, render_native_config,
+  run_tool_command_classified, sync_native_config, tool_missing_guard,
 };
 use serde::{Deserialize, Serialize};
 use std::collections::HashSet;
@@ -381,13 +380,14 @@ impl LanguageSurface for CppSurface {
     true
   }
 
-  fn detect(&self, root: &Path) -> bool {
-    root.join("CMakeLists.txt").is_file()
-      || root.join("Makefile").is_file()
-      || root.join("meson.build").is_file()
-      || root.join(".clang-format").is_file()
-      || root.join(".clang-tidy").is_file()
-      || !find_files_with_ext(root, CPP_EXTENSIONS, &[], &[], &[]).is_empty()
+  fn marker_files(&self) -> &[&'static str] {
+    &[
+      "CMakeLists.txt",
+      "Makefile",
+      "meson.build",
+      ".clang-format",
+      ".clang-tidy",
+    ]
   }
 
   fn tool_info(
