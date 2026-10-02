@@ -982,10 +982,14 @@ fn extract_html_block_ranges(src: &str) -> Vec<(usize, usize)> {
     match event {
       Event::Start(tag) => {
         if depth == 0 {
-          let mut skip = std::mem::take(&mut ignore_next) || ignore_range;
+          let block = &src[range.clone()];
+          // Comment-only blocks have nothing to tidy; skipping them saves a
+          // Node spawn per `markdownlint-disable` comment.
+          let mut skip = std::mem::take(&mut ignore_next)
+            || ignore_range
+            || (tag == Tag::HtmlBlock && is_comment_only(block));
           if tag == Tag::HtmlBlock
-            && let Some((directive, rest)) =
-              leading_comment(&src[range.clone()])
+            && let Some((directive, rest)) = leading_comment(block)
             && directive.starts_with("prettier-ignore")
           {
             match directive {
@@ -1027,6 +1031,14 @@ fn leading_comment(block: &str) -> Option<(&str, &str)> {
   let rest = block.trim_start().strip_prefix("<!--")?;
   let end = rest.find("-->")?;
   Some((rest[..end].trim(), &rest[end + 3..]))
+}
+
+/// Reports whether `block` holds nothing but HTML comments and whitespace.
+fn is_comment_only(mut block: &str) -> bool {
+  while let Some((_, rest)) = leading_comment(block) {
+    block = rest;
+  }
+  block.trim().is_empty()
 }
 
 /// Groups `spans` (as returned by [`extract_html_block_ranges`]) into
@@ -2924,6 +2936,16 @@ README.md:7 error MD025/single-title/single-h1 Multiple top-level headings";
       ),
       vec!["<p>c</p>\n"]
     );
+  }
+
+  #[test]
+  fn test_extract_html_block_ranges_skips_comment_only_blocks() {
+    // Nothing for prettier to tidy, and each would cost a Node spawn.
+    let src = "<!-- markdownlint-disable MD013 -->\n\n<p>c</p>\n\n\
+               <!-- a -->\n<!--\nb\n-->\n";
+    let spans = extract_html_block_ranges(src);
+    let blocks: Vec<&str> = spans.iter().map(|&(s, e)| &src[s..e]).collect();
+    assert_eq!(blocks, vec!["<p>c</p>\n"]);
   }
 
   #[test]
