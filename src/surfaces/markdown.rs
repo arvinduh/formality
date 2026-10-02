@@ -350,7 +350,7 @@ fn has_unspaced_hash_line(content: &str) -> bool {
   let mut fence = None;
   content
     .lines()
-    .any(|line| !in_fence(&mut fence, line) && is_unspaced_hash_line(line))
+    .any(|line| !in_fence(&mut fence, 0, line) && is_unspaced_hash_line(line))
 }
 
 /// Splits `line` into its leading indent width in columns, advancing from
@@ -373,30 +373,43 @@ fn split_indent(line: &str) -> (usize, &str) {
   split_indent_at(0, line)
 }
 
-/// Advances the fenced-code state `fence` (marker character and run length
-/// of the open fence) past `line`, returning whether `line` is a fence
-/// marker or code inside a fence rather than Markdown content.
+/// Advances the fenced-code state `fence` (marker character, run length and
+/// container column of the open fence) past `line`, returning whether
+/// `line` is a fence marker or code inside a fence rather than Markdown
+/// content.
 ///
-/// `CommonMark` rules: a fence is three or more backticks or tildes behind at
-/// most three columns of indent (four make it indented code, or paragraph
-/// text), a backtick opener's info string holds no backtick (else it is an
-/// inline code span), and the closer uses the opener's character, is at
-/// least as long, and carries nothing else.
-fn in_fence(fence: &mut Option<(char, usize)>, line: &str) -> bool {
+/// `base` is the content column of the list item a new fence would open in
+/// (0 outside any item); an open fence measures its closer from the column
+/// it was opened with. `CommonMark` rules: a fence is three or more
+/// backticks or tildes behind at most three columns of indent past that
+/// column (four make it indented code, or paragraph text), a backtick
+/// opener's info string holds no backtick (else it is an inline code span),
+/// and the closer uses the opener's character, is at least as long, and
+/// carries nothing else.
+fn in_fence(
+  fence: &mut Option<(char, usize, usize)>,
+  base: usize,
+  line: &str,
+) -> bool {
   let (indent, rest) = split_indent(line);
   let marker = rest.chars().next().filter(|c| matches!(c, '`' | '~'));
   let run = marker.map_or(0, |c| rest.chars().take_while(|&x| x == c).count());
   let tail = &rest[run..];
   match (*fence, marker) {
     (None, Some(c))
-      if indent <= 3 && run >= 3 && (c == '~' || !tail.contains('`')) =>
+      if (base..=base + 3).contains(&indent)
+        && run >= 3
+        && (c == '~' || !tail.contains('`')) =>
     {
-      *fence = Some((c, run));
+      *fence = Some((c, run, base));
       true
     }
     (None, _) => false,
-    (Some((open, len)), Some(c))
-      if indent <= 3 && c == open && run >= len && tail.trim().is_empty() =>
+    (Some((open, len, col)), Some(c))
+      if indent.saturating_sub(col) <= 3
+        && c == open
+        && run >= len
+        && tail.trim().is_empty() =>
     {
       *fence = None;
       true
@@ -502,7 +515,7 @@ struct BlockScan {
   /// only continue it lazily.
   quoted: bool,
   /// The open code fence, as [`in_fence`] tracks it.
-  fence: Option<(char, usize)>,
+  fence: Option<(char, usize, usize)>,
   /// The end marker of an open HTML block, from [`html_block_end`].
   html_end: Option<&'static str>,
 }
@@ -534,10 +547,20 @@ impl BlockScan {
       }
       return false;
     }
-    if in_fence(&mut self.fence, line) {
+    let (indent, rest) = split_indent(line);
+    if self
+      .fence
+      .is_some_and(|(_, _, col)| indent < col && !rest.is_empty())
+    {
+      // Left of the item holding the fence: it closes both (#481).
+      self.fence = None;
+    }
+    // The innermost item this line is indented into.
+    let base = self.items.iter().rev().find(|&&col| col <= indent);
+    let base = base.map_or(0, |&col| col);
+    if in_fence(&mut self.fence, base, line) {
       return false;
     }
-    let (indent, rest) = split_indent(line);
     if rest.is_empty() {
       return false;
     }
@@ -1703,6 +1726,11 @@ README.md:7 error MD025/single-title/single-h1 Multiple top-level headings";
       "<PRE>\nc\n</pre>\n#a\n",
       "+++\nx = 1\n+++\n#a\n",
       "---\nx: 1\n---\n#a\n",
+      // #481: a fence opens at its list item's content column.
+      "- a\n\n  ```\nx\n\n    code\n#a\n",
+      "- a\n\n      ```\n#a\n",
+      "10. a\n\n    ```\n    ```\n#a\n",
+      "10. a\n    ```\n    ```\n#a\n",
     ];
     let continues = [
       "p\n#a\n",
@@ -1723,6 +1751,8 @@ README.md:7 error MD025/single-title/single-h1 Multiple top-level headings";
       "- i\n===\n#a\n",
       "- > q\n  ===\n#a\n",
       "<span>x</span>\n#a\n",
+      "- a\n\n  ```\n  ```\n  p\n#a\n",
+      "10. a\n    ```\n    #x\n    ```\n    p\n#a\n",
     ];
     for src in opens_block.into_iter().chain(continues) {
       let last = src.lines().count();
