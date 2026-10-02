@@ -210,13 +210,12 @@ pub fn render_probe_args(
     match arg {
       ProbeArg::Literal(s) => rendered.push(OsString::from(s)),
       ProbeArg::ToolPath => {
-        let path = match &resolved_path {
-          Some(p) => p.clone(),
-          None => {
-            let p = which::which(binary).ok()?;
-            resolved_path = Some(p.clone());
-            p
-          }
+        let path = if let Some(p) = &resolved_path {
+          p.clone()
+        } else {
+          let p = which::which(binary).ok()?;
+          resolved_path = Some(p.clone());
+          p
         };
         rendered.push(path.into_os_string());
       }
@@ -488,7 +487,7 @@ enum TokenParse<'a> {
 /// (`18.1.8-0ubuntu1~22.04.1`, `1.35.1.post1`, `0.9.6.dev0` — which the
 /// pre-`semver` parser also ignored). A non-numeric 3rd component
 /// (`0.9.6rc1`, `1.2.x`) is rejected, never zeroed.
-fn classify_token<'a>(token: &'a str) -> TokenParse<'a> {
+fn classify_token(token: &str) -> TokenParse<'_> {
   let cleaned = token.trim_matches(|c: char| "()[]{}<>\"',:;".contains(c));
 
   // Strip a leading `v`/`V`/`go`/`Go` marker, kept only if a digit follows.
