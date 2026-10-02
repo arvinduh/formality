@@ -768,13 +768,6 @@ pub fn install_chain_for(binary: &str) -> Option<&'static [InstallMethod]> {
     .map(|entry| entry.chain)
 }
 
-/// Names every [`ALL_CHAINS`] row, so `tests/registry_agreement.rs` can
-/// require each one to pair back to a binary some surface declares.
-#[doc(hidden)]
-pub fn chain_binaries_for_test() -> impl Iterator<Item = &'static str> {
-  ALL_CHAINS.iter().map(|entry| entry.binary)
-}
-
 /// The version `<binary> --version` is expected to report when it's
 /// installed to the pin `fml doctor --install` currently uses, per [`ALL_CHAINS`]'s
 /// `expected_binary_version` field. Returns `None` — a "no known pin to
@@ -4342,6 +4335,34 @@ mod tests {
         assert!(!tool.effective_install_hint().is_empty());
       }
     }
+  }
+
+  #[test]
+  fn test_every_all_chains_row_names_a_surface_binary() {
+    // Issue #295: `tinymist` sat in ALL_CHAINS with no surface. Paired by
+    // name, after alias canonicalisation, so a row that reuses another
+    // tool's chain constant is still an orphan.
+    let declared: Vec<&str> = crate::surfaces::all_surfaces()
+      .iter()
+      .flat_map(|surface| {
+        let resolved = crate::config::ResolvedLangConfig::new(surface.name());
+        surface
+          .tool_info(&resolved)
+          .into_iter()
+          .map(|tool| tool.binary)
+      })
+      .map(canonical_chain_binary)
+      .collect();
+    let orphans: Vec<&str> = ALL_CHAINS
+      .iter()
+      .map(|row| row.binary)
+      .filter(|binary| !declared.contains(binary))
+      .collect();
+    assert!(
+      orphans.is_empty(),
+      "ALL_CHAINS rows no surface's tool_info declares: {orphans:?} \
+       (wire the tool into a surface, or delete the row)"
+    );
   }
 
   #[test]

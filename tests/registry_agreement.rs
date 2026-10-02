@@ -5,16 +5,18 @@
 //! #276: `ktfmt` sat in `TOOL_MSTV_REGISTRY` with no surface and no
 //! `ALL_CHAINS` row, unreachable, until a manual audit (#268) caught it.
 //!
-//! This test pairs the tables in three directions:
+//! This test pairs the tables in two directions:
 //!   1. every binary a surface declares via `tool_info` has an `ALL_CHAINS`
 //!      row *and* a `TOOL_MSTV_REGISTRY` entry, after each table's own
 //!      canonicalisation, or is exempt from one or both sides per
 //!      `EXEMPTIONS`, with a reason;
 //!   2. every `TOOL_MSTV_REGISTRY` entry corresponds to some surface-declared
-//!      binary (the direction that would have caught `ktfmt`), or is exempt;
-//!   3. every `ALL_CHAINS` row corresponds to some surface-declared binary,
-//!      or carries a `ChainOnly`/`Both` exemption (issue #295: `tinymist`
-//!      sat there with no surface until it was deleted).
+//!      binary (the direction that would have caught `ktfmt`), or is exempt.
+//!
+//! The third direction, every `ALL_CHAINS` row naming a surface-declared
+//! binary (issue #295: `tinymist`), is
+//! `test_every_all_chains_row_names_a_surface_binary` in
+//! `src/surfaces/tooling.rs`, which can read the private table directly.
 //!
 //! ## Scope: `tool_info` declarations, plus a small named extension
 //!
@@ -216,35 +218,5 @@ fn test_mstv_entries_correspond_to_a_checked_binary() {
      issue #276 was filed over -- see the ktfmt removal in #273/#268; \
      either wire the tool into a surface's tool_info, or add a \
      MstvOnly/Both exemption in tests/registry_agreement.rs::EXEMPTIONS)"
-  );
-}
-
-#[test]
-fn test_chain_rows_correspond_to_a_checked_binary() {
-  // Paired by the chain each checked binary resolves to, not by name, so an
-  // alias (`clippy` -> `clippy-driver`) pairs exactly as production lookups
-  // do.
-  let reachable: Vec<*const tooling::InstallMethod> = checked_binaries()
-    .into_iter()
-    .filter_map(tooling::install_chain_for)
-    .map(<[_]>::as_ptr)
-    .collect();
-
-  // A ChainOnly/Both exemption waives the chain side for that binary in
-  // both directions; a MstvOnly one says nothing about chain rows.
-  let orphans: Vec<&str> = tooling::chain_binaries_for_test()
-    .filter(|row| !exemption(row).is_some_and(ExemptSide::exempts_chain))
-    .filter(|row| {
-      tooling::install_chain_for(row)
-        .is_some_and(|chain| !reachable.contains(&chain.as_ptr()))
-    })
-    .collect();
-
-  assert!(
-    orphans.is_empty(),
-    "ALL_CHAINS rows with no checked binary resolving to them, and no \
-     ChainOnly/Both exemption: {orphans:?} (issue #295's tinymist shape; \
-     wire the tool into a surface's tool_info, delete the row, or exempt it \
-     in tests/registry_agreement.rs::EXEMPTIONS)"
   );
 }
