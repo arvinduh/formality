@@ -351,6 +351,7 @@ dependencies = [
  "colored",
  "comfy-table",
  "crossterm",
+ "futures",
  "ignore",
  "rayon",
  "schemars",

@@ -11,8 +11,12 @@
 //!    `fml lint` (or a structured per-surface parser, see
 //!    `lsp_diagnostics.rs`) in-process against the changed file.
 //! 4. **Watches** `formality.toml` / `.formality.toml` via
-//!    `did_change_watched_files` and invalidates the cached configuration
+//!    `did_change_watched_files` and reloads the cached configuration
 //!    when the canonical config changes.
+//!
+//! An invalid config is never silently dropped: each failed load sends one
+//! `window/showMessage` error. At initialize the server then uses the
+//! built-in defaults; on a failed reload it keeps the previous config.
 //!
 //! This server is a formatting and diagnostics provider, meant to run
 //! *alongside* the user's existing language servers (rust-analyzer, pyright,
@@ -61,8 +65,9 @@ pub struct FormalityLsp {
   client: Client,
   /// Workspace root detected at `initialize` time.
   root: tokio::sync::Mutex<Option<PathBuf>>,
-  /// Cached formality configuration, loaded at initialize/initialized time
-  /// and invalidated when `formality.toml` / `.formality.toml` changes.
+  /// Cached formality configuration, loaded at initialize time and replaced
+  /// only by a successful reload after `formality.toml` /
+  /// `.formality.toml` changes.
   config: Arc<tokio::sync::RwLock<Option<FormalityConfig>>>,
 }
 
@@ -78,6 +83,14 @@ impl FormalityLsp {
   }
 
   /// Returns the cached configuration, or loads and caches it if not yet present.
+  ///
+  /// An invalid config is reported once (see [`Self::load_config`]) and the
+  /// built-in defaults are cached in its place, so later requests reuse them
+  /// instead of re-reporting the same error.
+  ///
+  /// The load branch only runs before `initialize`, which always fills the
+  /// cache. tower-lsp rejects requests and notifications that arrive before
+  /// `initialize`, so in practice only tests reach it.
   pub async fn get_or_load_config(
     &self,
     root: Option<&Path>,
@@ -89,15 +102,35 @@ impl FormalityLsp {
     if let Some(config) = lock.as_ref() {
       return config.clone();
     }
-    let loaded = FormalityConfig::load_layered(root)
-      .map_or_else(|_| FormalityConfig::with_defaults(), |(c, _)| c);
+    let loaded = self
+      .load_config(root, "using the built-in defaults")
+      .await
+      .unwrap_or_else(FormalityConfig::with_defaults);
     *lock = Some(loaded.clone());
     loaded
   }
 
-  /// Invalidates the cached configuration.
-  pub async fn invalidate_config(&self) {
-    *self.config.write().await = None;
+  /// Loads the layered config for `root`, reporting a failure to the client.
+  ///
+  /// `fallback` names what the server uses instead; it is part of the message.
+  ///
+  /// # Side Effects
+  ///
+  /// On failure, sends one `window/showMessage` (ERROR) carrying the
+  /// [`crate::config::ConfigError`] text and returns `None`.
+  async fn load_config(
+    &self,
+    root: Option<&Path>,
+    fallback: &str,
+  ) -> Option<FormalityConfig> {
+    match FormalityConfig::load_layered(root) {
+      Ok((config, _)) => Some(config),
+      Err(err) => {
+        let message = format!("[formality] invalid config, {fallback}: {err}");
+        self.client.show_message(MessageType::ERROR, message).await;
+        None
+      }
+    }
   }
 }
 
@@ -119,9 +152,12 @@ impl LanguageServer for FormalityLsp {
 
     *self.root.lock().await = root.clone();
 
-    // Cache resolved config at initialize time.
-    let config = FormalityConfig::load_layered(root.as_deref())
-      .map_or_else(|_| FormalityConfig::with_defaults(), |(c, _)| c);
+    // Cache resolved config at initialize time. An invalid config has no
+    // earlier valid one to fall back to, so the defaults stand in.
+    let config = self
+      .load_config(root.as_deref(), "using the built-in defaults")
+      .await
+      .unwrap_or_else(FormalityConfig::with_defaults);
     *self.config.write().await = Some(config);
 
     Ok(InitializeResult {
@@ -325,15 +361,19 @@ impl LanguageServer for FormalityLsp {
     });
 
     if has_config_change {
-      self.invalidate_config().await;
       let root = self.root.lock().await.clone();
-      let _ = self.get_or_load_config(root.as_deref()).await;
+      // A failed reload keeps the previous config; editing the file mid-way
+      // must not throw away a working setup.
+      let Some(config) = self
+        .load_config(root.as_deref(), "keeping the previous config")
+        .await
+      else {
+        return;
+      };
+      *self.config.write().await = Some(config);
       self
         .client
-        .log_message(
-          MessageType::INFO,
-          "[formality] configuration invalidated and reloaded",
-        )
+        .log_message(MessageType::INFO, "[formality] configuration reloaded")
         .await;
     }
   }
@@ -945,5 +985,94 @@ mod tests {
       !prod_code.contains("Command::new"),
       "src/commands/lsp.rs production code must not spawn child processes"
     );
+  }
+
+  /// Drains the `window/showMessage` notifications the server has sent so far.
+  fn drain_show_messages(
+    socket: &mut tower_lsp::ClientSocket,
+  ) -> Vec<tower_lsp::lsp_types::ShowMessageParams> {
+    let mut shown = Vec::new();
+    while let Some(Some(request)) =
+      futures::FutureExt::now_or_never(futures::StreamExt::next(socket))
+    {
+      if request.method() == "window/showMessage" {
+        let params = request.params().unwrap().clone();
+        shown.push(serde_json::from_value(params).unwrap());
+      }
+    }
+    shown
+  }
+
+  #[tokio::test]
+  async fn test_lsp_invalid_config_at_initialize_reports_and_uses_defaults() {
+    let (service, mut socket) = LspService::new(FormalityLsp::new);
+    let server = service.inner();
+    let temp = tempfile::tempdir().unwrap();
+    let config_path = temp.path().join("formality.toml");
+    std::fs::write(&config_path, "[global]\nindent_size = 4\nbogus = 1\n")
+      .unwrap();
+    let expected = FormalityConfig::load_layered(Some(temp.path()))
+      .unwrap_err()
+      .to_string();
+
+    server
+      .initialize(InitializeParams {
+        root_uri: tower_lsp::lsp_types::Url::from_file_path(temp.path()).ok(),
+        ..Default::default()
+      })
+      .await
+      .unwrap();
+    // Requests reuse the cached defaults and must not re-report.
+    let cfg = server.get_or_load_config(Some(temp.path())).await;
+    server.get_or_load_config(Some(temp.path())).await;
+
+    let defaults = FormalityConfig::with_defaults();
+    let indent = |c: &FormalityConfig| c.global.as_ref()?.indent_size;
+    assert_ne!(indent(&cfg), Some(4));
+    assert_eq!(indent(&cfg), indent(&defaults));
+    let shown = drain_show_messages(&mut socket);
+    assert_eq!(shown.len(), 1, "{shown:?}");
+    assert_eq!(shown[0].typ, MessageType::ERROR);
+    assert!(shown[0].message.contains(&expected), "{}", shown[0].message);
+  }
+
+  #[tokio::test]
+  async fn test_lsp_invalid_config_on_reload_reports_and_keeps_previous() {
+    let (service, mut socket) = LspService::new(FormalityLsp::new);
+    let server = service.inner();
+    let temp = tempfile::tempdir().unwrap();
+    let config_path = temp.path().join("formality.toml");
+    std::fs::write(&config_path, "[global]\nindent_size = 4\n").unwrap();
+
+    server
+      .initialize(InitializeParams {
+        root_uri: tower_lsp::lsp_types::Url::from_file_path(temp.path()).ok(),
+        ..Default::default()
+      })
+      .await
+      .unwrap();
+    assert!(drain_show_messages(&mut socket).is_empty());
+
+    std::fs::write(&config_path, "[global]\nindent_size = 8\nbogus = 1\n")
+      .unwrap();
+    let expected = FormalityConfig::load_layered(Some(temp.path()))
+      .unwrap_err()
+      .to_string();
+    let uri = tower_lsp::lsp_types::Url::from_file_path(&config_path).unwrap();
+    server
+      .did_change_watched_files(DidChangeWatchedFilesParams {
+        changes: vec![tower_lsp::lsp_types::FileEvent {
+          uri,
+          typ: tower_lsp::lsp_types::FileChangeType::CHANGED,
+        }],
+      })
+      .await;
+    let cfg = server.get_or_load_config(Some(temp.path())).await;
+
+    assert_eq!(cfg.global.as_ref().and_then(|g| g.indent_size), Some(4));
+    let shown = drain_show_messages(&mut socket);
+    assert_eq!(shown.len(), 1, "{shown:?}");
+    assert_eq!(shown[0].typ, MessageType::ERROR);
+    assert!(shown[0].message.contains(&expected), "{}", shown[0].message);
   }
 }
