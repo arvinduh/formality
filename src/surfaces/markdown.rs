@@ -475,6 +475,9 @@ struct BlockScan {
   /// The previous line left a paragraph open, so a following line that
   /// starts no other block is a continuation of it.
   in_para: bool,
+  /// The content column of each open list item, innermost last: a line
+  /// indented that far belongs to the item, four more make indented code.
+  items: Vec<usize>,
   /// The open code fence, as [`in_fence`] tracks it.
   fence: Option<(char, usize)>,
   /// The end marker of an open HTML block, from [`html_block_end`].
@@ -492,6 +495,8 @@ impl BlockScan {
   /// blank leaves a paragraph open, so a `#` line after it is prose: plain
   /// paragraph text, or a lazy continuation of a list item, blockquote or
   /// GFM table row (prettier 3.9.6 turns `| 1 |⏎#2` into `| 1 |⏎| #2 |`).
+  /// Inside a list item, indented code starts four columns past the item's
+  /// content column; less is a paragraph of the item (`- i⏎⏎    more`).
   /// A line inside a fence or HTML block also returns `false`: markdownlint
   /// never reports one there, so a finding means this scan lost track, and
   /// escaping is the outcome that renders the same either way.
@@ -513,7 +518,11 @@ impl BlockScan {
     if rest.is_empty() {
       return false;
     }
-    if indent >= 4 {
+    if opens {
+      // Not a lazy continuation, so it closes the items it is not inside.
+      self.items.retain(|&col| col <= indent);
+    }
+    if indent >= self.items.last().map_or(0, |&col| col) + 4 {
       // Indented code unless it continues a paragraph; never a `#` line.
       self.in_para = !opens;
       return false;
@@ -527,8 +536,33 @@ impl BlockScan {
     let setext = !opens
       && (rest.trim_end().bytes().all(|b| b == b'=')
         || rest.trim_end().bytes().all(|b| b == b'-'));
-    self.in_para = !(is_atx_heading(rest) || setext || is_thematic_break(rest));
+    let breaks = setext || is_thematic_break(rest);
+    if let Some(width) = list_marker(rest).filter(|_| !breaks) {
+      self.items.retain(|&col| col <= indent);
+      self.items.push(indent + width);
+    }
+    self.in_para = !(is_atx_heading(rest) || breaks);
     opens
+  }
+}
+
+/// The width of the list item marker that starts `rest`, a line with its
+/// indent stripped, plus the one to four spaces after it: how far the item's
+/// content is indented. A bullet is `-`, `*` or `+`; an ordered marker is one
+/// to nine digits and `.` or `)`. Either needs a space, a tab or the end of
+/// the line after it.
+fn list_marker(rest: &str) -> Option<usize> {
+  let digits = rest.bytes().take_while(u8::is_ascii_digit).count();
+  let mark = match rest.as_bytes().get(digits) {
+    Some(b'-' | b'*' | b'+') if digits == 0 => 1,
+    Some(b'.' | b')') if (1..=9).contains(&digits) => digits + 1,
+    _ => return None,
+  };
+  let (gap, text) = split_indent(&rest[mark..]);
+  match gap {
+    0 if !text.is_empty() => None,
+    1..=4 if !text.is_empty() => Some(mark + gap),
+    _ => Some(mark + 1),
   }
 }
 
@@ -1622,6 +1656,9 @@ README.md:7 error MD025/single-title/single-h1 Multiple top-level headings";
       "    ~~~\n#a\n",
       "```a`\n\n#a\n",
       "    code\n#a\n",
+      "- i\n\n      code\n#a\n",
+      "- i\n\np\n\n    code\n#a\n",
+      "- a\n  - b\n\n  p\n\n      code\n#a\n",
       "<!--\nc\n-->\n#a\n",
       "p\n<!-- c -->\n#a\n",
       "<PRE>\nc\n</pre>\n#a\n",
@@ -1637,6 +1674,9 @@ README.md:7 error MD025/single-title/single-h1 Multiple top-level headings";
       "| a |\n| - |\n| 1 |\n#a\n",
       "> q\n#a\n",
       "- i\n#a\n",
+      "1. i\n\n    more\n#a\n",
+      "- i\n\n    more\n#a\n",
+      "- a\n  - b\n\n      more\n#a\n",
       "<span>x</span>\n#a\n",
     ];
     for src in opens_block.into_iter().chain(continues) {
