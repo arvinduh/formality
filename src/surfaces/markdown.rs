@@ -1110,9 +1110,11 @@ fn html_blocks_balanced(src: &str, spans: &[(usize, usize)]) -> bool {
 /// convention `build_markdownlint_fix_argv` documents for the other two
 /// passes in this surface's pipeline, so a project's own `extra_args` don't
 /// silently apply to two of this surface's three tool invocations and not
-/// the third.
+/// the third. It runs from `root` like those passes, so prettier resolves
+/// plugins and `.prettierignore` the same way for all three.
 fn run_prettier_html(
   html: &str,
+  root: &Path,
   inline_config: &[String],
   extra_args: &[String],
 ) -> Option<String> {
@@ -1123,6 +1125,7 @@ fn run_prettier_html(
     .arg("--html-whitespace-sensitivity=css")
     .args(inline_config)
     .args(extra_args)
+    .current_dir(root)
     .stdin(Stdio::piped())
     .stdout(Stdio::piped())
     .stderr(Stdio::piped());
@@ -1197,6 +1200,7 @@ fn split_on_gap_placeholders(
 /// leaving it exactly as written is always a safe, silent no-op instead.
 fn format_block_html(
   src: &str,
+  root: &Path,
   inline_config: &[String],
   extra_args: &[String],
 ) -> String {
@@ -1215,7 +1219,8 @@ fn format_block_html(
       batch.push('\n');
     }
   }
-  let Some(formatted) = run_prettier_html(&batch, inline_config, extra_args)
+  let Some(formatted) =
+    run_prettier_html(&batch, root, inline_config, extra_args)
   else {
     return src.to_string();
   };
@@ -1264,11 +1269,12 @@ fn block_structure(src: &str) -> Vec<(bool, TagEnd)> {
 /// which differ only in *which* path they hand this.
 fn apply_block_html_pass(
   path: &Path,
+  root: &Path,
   inline_config: &[String],
   extra_args: &[String],
 ) -> std::io::Result<()> {
   let content = std::fs::read_to_string(path)?;
-  let updated = format_block_html(&content, inline_config, extra_args);
+  let updated = format_block_html(&content, root, inline_config, extra_args);
   if updated != content {
     std::fs::write(path, updated)?;
   }
@@ -1471,6 +1477,7 @@ impl LanguageSurface for MarkdownSurface {
           // prettier spawn failure would.
           apply_block_html_pass(
             scratch,
+            ctx.root.as_path(),
             &inline_config,
             &ctx.lang_config.extra_args,
           )?;
@@ -1545,9 +1552,12 @@ impl LanguageSurface for MarkdownSurface {
     // applied in place to the real files once prettier's own markdown pass
     // has succeeded. See `apply_block_html_pass` and `format_block_html`.
     for file in &files {
-      if let Err(e) =
-        apply_block_html_pass(file, &inline_config, &ctx.lang_config.extra_args)
-      {
+      if let Err(e) = apply_block_html_pass(
+        file,
+        ctx.root.as_path(),
+        &inline_config,
+        &ctx.lang_config.extra_args,
+      ) {
         return SurfaceResult {
           surface_name: self.name(),
           status: SurfaceStatus::ExecutionError {
@@ -2853,7 +2863,7 @@ README.md:7 error MD025/single-title/single-h1 Multiple top-level headings";
     // line the wrapper would turn into an indented code block.
     let src = "<div>\n\n<div>\n\n<div>\n\n<details>\n<summary>X</summary>\n\n\
     Body.\n\n</details>\n\n</div>\n\n</div>\n\n</div>\n";
-    assert_eq!(format_block_html(src, &[], &[]), src);
+    assert_eq!(format_block_html(src, Path::new("."), &[], &[]), src);
   }
 
   #[test]
@@ -2961,7 +2971,7 @@ README.md:7 error MD025/single-title/single-h1 Multiple top-level headings";
       return;
     }
     let src = "# Project\n\n<p align=\"center\">\n  <img src=\"a.png\"     alt=\"badge\">\n</p>\n";
-    let out = format_block_html(src, &[], &[]);
+    let out = format_block_html(src, Path::new("."), &[], &[]);
     assert!(
       !out.contains("     alt"),
       "the quadruple space in the <img> attributes must be collapsed, got: {out}"
@@ -2976,7 +2986,7 @@ README.md:7 error MD025/single-title/single-h1 Multiple top-level headings";
     }
     let src = "<details>\n<summary   class=\"foo\"     >More info</summary>\n\n\
     Extra detail text.\n\n</details>\n";
-    let out = format_block_html(src, &[], &[]);
+    let out = format_block_html(src, Path::new("."), &[], &[]);
     assert!(
       out.contains("<summary class=\"foo\">More info</summary>"),
       "the messy <summary> attribute spacing must be normalized, got: {out}"
@@ -2995,7 +3005,7 @@ README.md:7 error MD025/single-title/single-h1 Multiple top-level headings";
     }
     let src = "<p align=\"center\">\n  <img src=\"a.png\"     alt=\"badge\">\n</p>\n\n\
     Some prose with an <strong>inline</strong>    span here.\n";
-    let out = format_block_html(src, &[], &[]);
+    let out = format_block_html(src, Path::new("."), &[], &[]);
     assert!(
       out.contains("Some prose with an <strong>inline</strong>    span here."),
       "an inline HTML span mid-paragraph, and its surrounding whitespace, \
@@ -3012,8 +3022,8 @@ README.md:7 error MD025/single-title/single-h1 Multiple top-level headings";
     Some prose with an <strong>inline</strong>    span here.\n\n\
     <details>\n<summary   class=\"foo\"     >More info</summary>\n\n\
     Extra detail text.\n\n</details>\n";
-    let once = format_block_html(src, &[], &[]);
-    let twice = format_block_html(&once, &[], &[]);
+    let once = format_block_html(src, Path::new("."), &[], &[]);
+    let twice = format_block_html(&once, Path::new("."), &[], &[]);
     assert_eq!(once, twice, "a second pass must be a no-op");
   }
 
@@ -3022,7 +3032,7 @@ README.md:7 error MD025/single-title/single-h1 Multiple top-level headings";
     // No prettier binary needed: html_blocks_balanced bails before any
     // subprocess would be spawned.
     let src = "</div>\n\n<p align=\"center\">\n  <img src=\"a.png\">\n</p>\n";
-    let out = format_block_html(src, &[], &[]);
+    let out = format_block_html(src, Path::new("."), &[], &[]);
     assert_eq!(out, src);
   }
 
