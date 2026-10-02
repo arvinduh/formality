@@ -970,13 +970,28 @@ fn parse_markdown(src: &str) -> Parser<'_> {
 fn extract_html_block_ranges(src: &str) -> Vec<(usize, usize)> {
   let mut spans = Vec::new();
   let mut depth = 0usize;
+  // Where the current top-level block's next `Html` chunk must start;
+  // `None` once a chunk is not a verbatim slice of `src`. Defence in depth
+  // for the container rule: prettier must see exactly the block's HTML.
+  let mut next: Option<usize> = None;
   for (event, range) in parse_markdown(src).into_offset_iter() {
     match event {
       Event::Start(tag) => {
         if depth == 0 && tag == Tag::HtmlBlock {
-          spans.push((range.start, range.end));
+          next = Some(range.start);
         }
         depth += 1;
+      }
+      Event::Html(text) if depth == 1 => {
+        next = next
+          .filter(|&at| src[at..].starts_with(&*text))
+          .map(|at| at + text.len());
+      }
+      Event::End(TagEnd::HtmlBlock) if depth == 1 => {
+        depth -= 1;
+        if next.take() == Some(range.end) {
+          spans.push((range.start, range.end));
+        }
       }
       Event::End(_) => depth -= 1,
       _ => {}
