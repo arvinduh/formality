@@ -1034,6 +1034,7 @@ fn leading_comment(block: &str) -> Option<(&str, &str)> {
 }
 
 /// Reports whether `block` holds nothing but HTML comments and whitespace.
+#[must_use]
 fn is_comment_only(mut block: &str) -> bool {
   while let Some((_, rest)) = leading_comment(block) {
     block = rest;
