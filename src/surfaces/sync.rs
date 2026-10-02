@@ -340,7 +340,9 @@ pub fn diff_check_via_tempcopy_classified(
         }
       };
 
-      if formatted != original_content {
+      if formatted == original_content {
+        PerFileCheckResult::Clean
+      } else {
         let diff = render_diff(
           &original_content,
           &formatted,
@@ -348,8 +350,6 @@ pub fn diff_check_via_tempcopy_classified(
           &format!("{} (formatted)", original.display()),
         );
         PerFileCheckResult::Diff(diff)
-      } else {
-        PerFileCheckResult::Clean
       }
     })
     .collect();

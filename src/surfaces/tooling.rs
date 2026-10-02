@@ -938,11 +938,11 @@ pub fn tool_missing_guard(
   start: Instant,
   hint: Option<&'static str>,
 ) -> Option<SurfaceResult> {
-  if !check_binary_exists(binary) {
+  if check_binary_exists(binary) {
+    None
+  } else {
     let hint = hint.map_or_else(|| install_hint_for(binary), str::to_string);
     Some(tool_missing_result(name, start, binary, &hint))
-  } else {
-    None
   }
 }
 
