@@ -1266,3 +1266,28 @@ fn test_extra_args_unknown_tool_names_valid_keys() {
      `ruff-check`, `ruff-format`."
   );
 }
+
+#[test]
+fn test_extra_args_unknown_tool_suggests_canonical_binary() {
+  // Users type the familiar tool name; the key is the binary fml spawns.
+  let toml = "[lang.rust.extra_args]\nclippy = [\"-Wclippy::pedantic\"]\n";
+  let err =
+    FormalityConfig::parse_str(toml, Path::new("formality.toml")).unwrap_err();
+  assert_eq!(
+    err.to_string(),
+    "unknown key `lang.rust.extra_args.clippy` in formality.toml:2: `rust` \
+     runs no tool named `clippy`; its extra_args keys are `rustfmt`, \
+     `clippy-driver`. Did you mean `clippy-driver`?"
+  );
+
+  let toml = "[lang.markdown.extra_args]\nmarkdownlint = [\"--fix\"]\n";
+  let err =
+    FormalityConfig::parse_str(toml, Path::new("formality.toml")).unwrap_err();
+  assert_eq!(
+    err.to_string(),
+    "unknown key `lang.markdown.extra_args.markdownlint` in \
+     formality.toml:2: `markdown` runs no tool named `markdownlint`; its \
+     extra_args keys are `markdownlint-cli2`, `prettier`. Did you mean \
+     `markdownlint-cli2`?"
+  );
+}

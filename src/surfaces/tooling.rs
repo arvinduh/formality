@@ -752,8 +752,10 @@ const ALL_CHAINS: &[ToolChain] = &[
 /// Resolves `markdownlint`/`clippy` legacy binary-name aliases to their
 /// canonical [`ALL_CHAINS`] row name (`markdownlint-cli2`/`clippy-driver`).
 /// Shared by [`install_chain_for`] and [`pinned_version_for`] so alias
-/// resolution lives in exactly one place.
-fn canonical_chain_binary(binary: &str) -> &str {
+/// resolution lives in exactly one place; config validation also uses it to
+/// suggest the right `extra_args` key.
+#[must_use]
+pub fn canonical_chain_binary(binary: &str) -> &str {
   match binary {
     "markdownlint" => "markdownlint-cli2",
     "clippy" => "clippy-driver",

@@ -536,6 +536,9 @@ pub enum ConfigError {
     line: usize,
     /// The tool keys the surface accepts.
     tools: &'static [&'static str],
+    /// The accepted key `tool` is a legacy alias of, e.g. `clippy-driver`
+    /// for `clippy`.
+    suggestion: Option<&'static str>,
   },
 }
 
@@ -613,13 +616,21 @@ impl std::fmt::Display for ConfigError {
         tool,
         line,
         tools,
-      } => write!(
-        f,
-        "unknown key `lang.{lang}.extra_args.{tool}` in {}:{line}: `{lang}` \
-         runs no tool named `{tool}`; its extra_args keys are `{}`.",
-        path.display(),
-        tools.join("`, `")
-      ),
+        suggestion,
+      } => {
+        write!(
+          f,
+          "unknown key `lang.{lang}.extra_args.{tool}` in {}:{line}: \
+           `{lang}` runs no tool named `{tool}`; its extra_args keys are \
+           `{}`.",
+          path.display(),
+          tools.join("`, `")
+        )?;
+        match suggestion {
+          Some(key) => write!(f, " Did you mean `{key}`?"),
+          None => Ok(()),
+        }
+      }
     }
   }
 }
