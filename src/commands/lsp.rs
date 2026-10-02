@@ -248,10 +248,13 @@ impl LanguageServer for FormalityLsp {
 
     let config = self.get_or_load_config(Some(&root)).await;
 
-    let status = run_plan(
+    // stdout is the JSON-RPC transport, so the report goes to stderr.
+    let status = super::run_resolved(
+      &mut std::io::stderr(),
       &root,
       &config,
-      path.clone(),
+      &[],
+      std::slice::from_ref(&path),
       &crate::engine::Plan::fmt(false, false),
     );
 
@@ -302,10 +305,14 @@ impl LanguageServer for FormalityLsp {
       ) {
       diags
     } else {
-      let status = run_plan(
+      // stderr is the server log the fallback diagnostic points at; stdout
+      // is the JSON-RPC transport.
+      let status = super::run_resolved(
+        &mut std::io::stderr(),
         &root,
         &config,
-        path.clone(),
+        &[],
+        std::slice::from_ref(&path),
         &crate::engine::Plan::lint(false),
       );
 
@@ -413,43 +420,6 @@ pub fn compute_formatting_edits(before: &str, after: &str) -> Vec<TextEdit> {
     range: full_document_range(before),
     new_text: after.to_string(),
   }]
-}
-
-/// Runs `plan` in-process against `path`, the way `fml fmt`/`fml lint` would,
-/// but renders the runner's report to stderr.
-///
-/// stdout carries the JSON-RPC transport, so a single stray byte there breaks
-/// a strict client. stderr is where editors surface a server's log, which is
-/// the output channel the lint fallback's diagnostic points at.
-fn run_plan(
-  root: &Path,
-  config: &FormalityConfig,
-  path: PathBuf,
-  plan: &crate::engine::Plan,
-) -> crate::errors::ExitStatus {
-  let paths = vec![path];
-  let surfaces =
-    match crate::commands::resolve_target_surfaces(root, &[], &paths, config) {
-      Ok(s) => s,
-      Err(e) => {
-        e.print_diagnostic();
-        return crate::errors::ExitStatus::Error;
-      }
-    };
-  crate::commands::doctor::preflight_warn_stale_tools(
-    &surfaces,
-    config,
-    plan.includes(crate::engine::Pass::Format),
-    plan.includes(crate::engine::Pass::Lint),
-  );
-  crate::engine::Runner::run_into(
-    &mut std::io::stderr(),
-    &surfaces,
-    root,
-    &paths,
-    plan,
-    config,
-  )
 }
 
 // ---------------------------------------------------------------------------

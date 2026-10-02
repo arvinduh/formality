@@ -52,14 +52,37 @@ pub fn dispatch_plan(
     }
   };
 
-  let surfaces =
-    match resolve_target_surfaces(root, lang, &target_paths, config) {
-      Ok(s) => s,
-      Err(e) => {
-        e.print_diagnostic();
-        return ExitStatus::Error;
-      }
-    };
+  run_resolved(
+    &mut std::io::stdout(),
+    root,
+    config,
+    lang,
+    &target_paths,
+    plan,
+  )
+}
+
+/// Runs `plan` against already-resolved `paths`: resolves target surfaces,
+/// warns about stale tools, then runs the passes and renders the report into
+/// `out`.
+///
+/// `out` is stdout for the CLI and stderr for `fml lsp`, whose stdout carries
+/// the JSON-RPC transport; one stray byte there breaks a strict client.
+fn run_resolved(
+  out: &mut dyn std::io::Write,
+  root: &Path,
+  config: &FormalityConfig,
+  lang: &[String],
+  paths: &[PathBuf],
+  plan: &Plan,
+) -> ExitStatus {
+  let surfaces = match resolve_target_surfaces(root, lang, paths, config) {
+    Ok(s) => s,
+    Err(e) => {
+      e.print_diagnostic();
+      return ExitStatus::Error;
+    }
+  };
 
   // Which tools to preflight follows directly from the plan's passes: a
   // plan that formats needs the formatters, a plan that lints needs the
@@ -69,7 +92,7 @@ pub fn dispatch_plan(
 
   doctor::preflight_warn_stale_tools(&surfaces, config, for_fmt, for_lint);
 
-  Runner::run(&surfaces, root, &target_paths, plan, config)
+  Runner::run_into(out, &surfaces, root, paths, plan, config)
 }
 
 fn normalize_path(path: &Path) -> PathBuf {
