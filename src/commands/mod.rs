@@ -22,7 +22,7 @@ pub mod sync;
 use std::path::{Path, PathBuf};
 
 use crate::config::FormalityConfig;
-use crate::engine::{Pass, Plan, Runner};
+use crate::engine::{Pass, Plan, Runner, Scope};
 use crate::errors::{ExitStatus, FormalityError, GitError, SurfaceError};
 use crate::surfaces::{
   LanguageSurface, all_surfaces, detect_surfaces_smart, find_files_with_ext,
@@ -76,7 +76,8 @@ fn run_resolved(
   paths: &[PathBuf],
   plan: &Plan,
 ) -> ExitStatus {
-  let surfaces = match resolve_target_surfaces(root, lang, paths, config) {
+  let scope = Scope::resolve(root, paths, &config.resolve_global().exclude);
+  let surfaces = match resolve_target_surfaces(root, lang, &scope, config) {
     Ok(s) => s,
     Err(e) => {
       e.print_diagnostic();
@@ -92,7 +93,7 @@ fn run_resolved(
 
   doctor::preflight_warn_stale_tools(&surfaces, config, for_fmt, for_lint);
 
-  Runner::run_into(out, &surfaces, root, paths, plan, config)
+  Runner::run_into(out, &surfaces, root, &scope, plan, config)
 }
 
 fn normalize_path(path: &Path) -> PathBuf {
@@ -234,8 +235,9 @@ pub fn get_git_changed_files(
 
 /// Resolves which language surfaces a command should act on: an explicit
 /// `lang_filter` wins outright, otherwise surfaces are narrowed to those with
-/// matching files under `paths`, falling back to full smart detection when
-/// neither is given.
+/// matching files under explicit paths, falling back to full smart detection
+/// over the workspace scope's candidate files, so detection walks nothing
+/// the runner does not already walk.
 ///
 /// # Errors
 ///
@@ -244,7 +246,7 @@ pub fn get_git_changed_files(
 pub fn resolve_target_surfaces(
   root: &Path,
   lang_filter: &[String],
-  paths: &[PathBuf],
+  scope: &Scope,
   config: &FormalityConfig,
 ) -> Result<Vec<Box<dyn LanguageSurface>>, FormalityError> {
   if !lang_filter.is_empty() {
@@ -261,27 +263,34 @@ pub fn resolve_target_surfaces(
     return Ok(selected);
   }
 
-  if !paths.is_empty() {
-    let mut active = Vec::new();
-    let global = config.resolve_global();
-    for surface in all_surfaces() {
-      let lang_cfg =
-        config.resolve_for_lang_with_global(surface.name(), &global);
-      let matching = find_files_with_ext(
-        root,
-        surface.file_extensions(),
-        paths,
-        &lang_cfg.files,
-        &lang_cfg.exclude,
-      );
-      if !matching.is_empty() {
-        active.push(surface);
-      }
-    }
-    return Ok(active);
+  match scope {
+    Scope::Paths(paths) => Ok(surfaces_with_files_under(root, paths, config)),
+    Scope::Workspace(_) => Ok(detect_surfaces_smart(root, config)),
   }
+}
 
-  Ok(detect_surfaces_smart(root, config))
+/// Every surface with at least one of its files under the explicit `paths`.
+fn surfaces_with_files_under(
+  root: &Path,
+  paths: &[PathBuf],
+  config: &FormalityConfig,
+) -> Vec<Box<dyn LanguageSurface>> {
+  let mut active = Vec::new();
+  let global = config.resolve_global();
+  for surface in all_surfaces() {
+    let lang_cfg = config.resolve_for_lang_with_global(surface.name(), &global);
+    let matching = find_files_with_ext(
+      root,
+      surface.file_extensions(),
+      paths,
+      &lang_cfg.files,
+      &lang_cfg.exclude,
+    );
+    if !matching.is_empty() {
+      active.push(surface);
+    }
+  }
+  active
 }
 
 #[cfg(test)]
@@ -486,8 +495,13 @@ mod tests {
     config.lang.insert("rust".to_string(), rust_lang);
 
     // Target surface discovery with staged paths
-    let surfaces =
-      resolve_target_surfaces(root, &[], &staged_files, &config).unwrap();
+    let surfaces = resolve_target_surfaces(
+      root,
+      &[],
+      &Scope::Paths(std::sync::Arc::new(staged_files.clone())),
+      &config,
+    )
+    .unwrap();
     assert_eq!(surfaces.len(), 1);
     assert_eq!(surfaces[0].name(), "rust");
 
