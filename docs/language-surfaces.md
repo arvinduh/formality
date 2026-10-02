@@ -8,6 +8,11 @@ currently in the fleet: what tools each one wraps, what "Smart Format"
 config file(s) `fml sync` manages, and what per-language `[lang.<name>]` options
 are available beyond the shared [facet rosetta](facet-rosetta.md).
 
+`<name>` is the surface's canonical name, as in each `[lang.<name>] options`
+entry below. An alias (`[lang.py]`) or another casing (`[lang.RUST]`) fails
+config loading with the section to rename it to; a name matching no surface
+loads with an `Unrecognized language section` warning.
+
 Every surface also supports the shared `[global]` keys where its facet support
 allows (`indent_size`, `line_length`, `use_tabs`, `prose_wrap`) — this guide
 only documents facets/options _specific_ to that surface. See

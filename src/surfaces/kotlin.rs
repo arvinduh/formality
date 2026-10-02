@@ -646,12 +646,12 @@ mod tests {
     // PATHEXT-style `.cmd`/`.bat` resolution that `cmd.exe` does, so the
     // process fails to start at all ("The system cannot find the path
     // specified."). `create_tool_command` (`surfaces::tooling`) resolves
-    // the binary's real extension and routes any `.cmd`/`.bat` result
-    // through `cmd /C`, which *can* launch it. Every ktlint invocation site
-    // must go through that helper -- a bare `Command::new("ktlint")`
-    // creeping back in anywhere would silently reintroduce the Windows
-    // failure this issue reports, so pin it here rather than relying on
-    // catching it by eye in review.
+    // the binary's real extension and spawns any `.cmd`/`.bat` result by
+    // its resolved path, which `std` runs through `cmd.exe`. Every ktlint
+    // invocation site must go through that helper -- a bare
+    // `Command::new("ktlint")` creeping back in anywhere would silently
+    // reintroduce the Windows failure this issue reports, so pin it here
+    // rather than relying on catching it by eye in review.
     //
     // Scans every `.rs` file under `src/`, not a hardcoded list of the two
     // files known to call ktlint today -- a call site added in a new file

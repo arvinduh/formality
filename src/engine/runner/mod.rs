@@ -163,10 +163,10 @@ pub struct Runner;
 impl Runner {
   /// Executes `plan`'s passes across the target surfaces, aggregates the
   /// per-surface results, and renders the status table and diagnostics.
-  #[allow(clippy::too_many_lines, clippy::needless_pass_by_value)]
+  #[allow(clippy::too_many_lines)]
   #[must_use]
   pub fn run(
-    surfaces: Vec<Box<dyn LanguageSurface>>,
+    surfaces: &[Box<dyn LanguageSurface>],
     root: &Path,
     paths: &[PathBuf],
     plan: &Plan,
@@ -208,7 +208,7 @@ impl Runner {
     // never left lint-fixed-but-unformatted (Smart Format, `AGENTS.md`).
     let mut pass_results: Vec<(Pass, Vec<SurfaceResult>)> = Vec::new();
     for &pass in &plan.passes {
-      let results = run_pass(pass, plan.mode, &surfaces, &shared);
+      let results = run_pass(pass, plan.mode, surfaces, &shared);
       pass_results.push((pass, results));
     }
 
@@ -302,7 +302,7 @@ impl Runner {
       if let Some(prettier_res) = crate::surfaces::sync_shared_prettier_config(
         root,
         config,
-        &surfaces,
+        surfaces,
         plan.mode.is_report(),
       ) {
         results.push(prettier_res);
@@ -310,7 +310,7 @@ impl Runner {
       let editorconfig_res = crate::surfaces::editorconfig::sync_editorconfig(
         root,
         config,
-        &surfaces,
+        surfaces,
         plan.mode.is_report(),
       );
       results.push(editorconfig_res);
@@ -369,7 +369,7 @@ impl Runner {
         Severity::Violation => violation_count += 1,
         Severity::Error => error_count += 1,
       }
-      exit_code = exit_code.max(exit_floor(severity, plan.allow_missing));
+      exit_code = exit_code.max(exit_floor(&severity, plan.allow_missing));
 
       runner_table.add_row(crate::ui::table::Row::new(vec![
         crate::ui::table::Cell::styled(spec.tag, spec.tag_style),
@@ -475,7 +475,7 @@ impl Runner {
 ///
 /// The results-row loop in [`Runner::run`] folds it in with
 /// `exit_code.max(..)`, so the worst row decides the exit code.
-fn exit_floor(severity: Severity, allow_missing: bool) -> i32 {
+fn exit_floor(severity: &Severity, allow_missing: bool) -> i32 {
   match severity {
     Severity::Skipped | Severity::Passed => 0,
     // An unmet precondition, not an operational fault (#252) — the

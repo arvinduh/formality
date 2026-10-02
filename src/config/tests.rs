@@ -809,7 +809,7 @@ fn test_generate_init_template_no_detected_langs_matches_sample() {
 fn test_unrecognized_lang_sections_flags_typo_but_not_valid_undetected() {
   let registry = crate::surfaces::SurfaceRegistry::default();
 
-  // A genuine typo: "pythonn" is not a known surface name or alias.
+  // A genuine typo: "pythonn" names no surface, so it loads and is flagged.
   let toml = r"
     [lang.pythonn]
     indent_size = 4
@@ -903,35 +903,38 @@ fn test_java_aosp_style_defaults_indent_width_to_four() {
 }
 
 #[test]
-fn test_unrecognized_lang_sections_handles_case_and_aliases() {
+fn test_parse_str_rejects_non_canonical_lang_sections() {
+  let toml = "[global]\nline_length = 100\n\n[lang.py]\nindent_size = 4\n";
+  let err =
+    FormalityConfig::parse_str(toml, Path::new("formality.toml")).unwrap_err();
+  assert_eq!(
+    err.to_string(),
+    "section `[lang.py]` in formality.toml:4 is not a canonical surface \
+     name; rename it to `[lang.python]`."
+  );
+
+  let toml = "[lang.RUST]\nindent_size = 4\n";
+  let err =
+    FormalityConfig::parse_str(toml, Path::new("formality.toml")).unwrap_err();
+  assert!(
+    matches!(
+      &err,
+      ConfigError::NonCanonicalLang { name, canonical: "rust", line: 1, .. }
+        if name == "RUST"
+    ),
+    "{err:?}"
+  );
+
+  // The canonical spelling still loads, and its keys are applied.
+  let toml = "[lang.python]\nindent_size = 3\n";
+  let cfg =
+    FormalityConfig::parse_str(toml, Path::new("formality.toml")).unwrap();
+  assert_eq!(cfg.resolve_for_lang("python").indent_size, 3);
+}
+
+#[test]
+fn test_unrecognized_lang_sections_reports_every_unknown_name() {
   let registry = crate::surfaces::SurfaceRegistry::default();
-
-  // Canonical names are matched case-insensitively.
-  let toml = r"
-    [lang.RUST]
-    indent_size = 4
-  ";
-  let cfg =
-    FormalityConfig::parse_str(toml, Path::new("formality.toml")).unwrap();
-  assert!(
-    cfg.unrecognized_lang_sections(&registry).is_empty(),
-    "canonical names should resolve case-insensitively"
-  );
-
-  // Aliases (e.g. "py" for "python", "js" for "javascript") also resolve
-  // and must not be flagged.
-  let toml = r"
-    [lang.py]
-    indent_size = 4
-  ";
-  let cfg =
-    FormalityConfig::parse_str(toml, Path::new("formality.toml")).unwrap();
-  assert!(
-    cfg.unrecognized_lang_sections(&registry).is_empty(),
-    "known aliases should resolve to their canonical surface"
-  );
-
-  // Multiple unrecognized sections are all reported.
   let toml = r"
     [lang.pythonn]
     indent_size = 4

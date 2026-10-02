@@ -641,7 +641,7 @@ impl LanguageSurface for CppSurface {
     // Both filenames are reported, not just whichever happened to be
     // written (#130): `.clang-format` used to be dropped whenever
     // `.clang-tidy` was also synced.
-    merge_sync_results(vec![format_res, tidy_res])
+    merge_sync_results(&[format_res, tidy_res])
   }
 }
 

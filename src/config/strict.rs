@@ -13,14 +13,16 @@ use toml::de::{DeTable, DeValue};
 use super::lang_table::lang_options_table;
 use super::options::MarkdownOptions;
 use super::{ConfigError, FormalityConfig};
+use crate::surfaces::SurfaceRegistry;
 
 /// Parses `content`, read from `path`, into a [`FormalityConfig`].
 ///
 /// # Errors
 ///
 /// Returns [`ConfigError::UnknownKey`] for a key this `fml` does not accept,
-/// [`ConfigError::InvalidValue`] for a value of the wrong type, or
-/// [`ConfigError::Parse`] for invalid TOML.
+/// [`ConfigError::InvalidValue`] for a value of the wrong type,
+/// [`ConfigError::NonCanonicalLang`] for a `[lang.<name>]` section spelled
+/// as an alias or case variant, or [`ConfigError::Parse`] for invalid TOML.
 pub fn parse(
   content: &str,
   path: &Path,
@@ -29,11 +31,44 @@ pub fn parse(
     path: path.to_path_buf(),
     source,
   })?;
+  check_lang_names(content, path, doc.get_ref())?;
   FormalityConfig::deserialize(toml::de::Deserializer::from(doc.clone()))
     .and_then(|config| {
       check_lang_options(&config, doc.get_ref()).map(|()| config)
     })
     .map_err(|source| locate(path, content, doc.get_ref(), source))
+}
+
+/// Rejects a `[lang.<name>]` section whose name resolves to a surface only
+/// as an alias or case variant: every reader looks sections up by exact
+/// canonical name, so its keys would be silently ignored. A name that
+/// resolves to no surface is left to the unrecognized-section warning.
+fn check_lang_names(
+  content: &str,
+  path: &Path,
+  doc: &DeTable<'_>,
+) -> Result<(), ConfigError> {
+  let Some(DeValue::Table(sections)) =
+    doc.get("lang").map(toml::Spanned::get_ref)
+  else {
+    return Ok(());
+  };
+  let registry = SurfaceRegistry::default();
+  for key in sections.keys() {
+    let name: &str = key.get_ref();
+    match registry.resolve_canonical_name(name) {
+      Some(canonical) if canonical != name => {
+        return Err(ConfigError::NonCanonicalLang {
+          path: path.to_path_buf(),
+          name: name.to_owned(),
+          canonical,
+          line: line_at(content, key.span().start),
+        });
+      }
+      _ => {}
+    }
+  }
+  Ok(())
 }
 
 /// Deserializes each `[lang.<name>]` section's surface-specific keys, the
@@ -85,7 +120,7 @@ macro_rules! check_by_name {
 
 /// Deserializes `value` into surface `name`'s typed options, so a value
 /// that is not a table fails as a wrong type at its own span. A name with
-/// none, an alias or an unknown section, is not checked.
+/// none, or an unknown section, is not checked.
 fn check_options(
   name: &str,
   value: toml::Spanned<DeValue<'_>>,
@@ -105,12 +140,7 @@ fn locate(
   let mut key = Vec::new();
   match source.span() {
     Some(span) if key_path_at(doc, span.start, &mut key) => {
-      let line = content
-        .bytes()
-        .take(span.start)
-        .filter(|&b| b == b'\n')
-        .count()
-        + 1;
+      let line = line_at(content, span.start);
       // serde's `de::Error::unknown_field` wording; the typed structs
       // reject extra keys with `deny_unknown_fields`.
       if source.message().starts_with("unknown field ") {
@@ -135,6 +165,11 @@ fn locate(
       }
     }
   }
+}
+
+/// Returns the one-based line of byte `offset` in `content`.
+fn line_at(content: &str, offset: usize) -> usize {
+  content.bytes().take(offset).filter(|&b| b == b'\n').count() + 1
 }
 
 /// Pushes onto `path` the keys leading to the innermost entry whose key or

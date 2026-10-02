@@ -153,7 +153,7 @@ pub fn sync_file_helper(
 /// Panics on an empty slice in debug builds; a surface that syncs no file at
 /// all reports [`SurfaceStatus::Skipped`] directly and never calls this.
 #[must_use]
-pub fn merge_sync_results(results: Vec<SurfaceResult>) -> SurfaceResult {
+pub fn merge_sync_results(results: &[SurfaceResult]) -> SurfaceResult {
   debug_assert!(
     !results.is_empty(),
     "merge_sync_results called with no results"
@@ -1191,7 +1191,7 @@ mod tests {
     // Fixes #130: a surface that syncs two files used to return only the
     // second result, so the first file was created on disk and named
     // nowhere in the output.
-    let merged = merge_sync_results(vec![
+    let merged = merge_sync_results(&[
       synced(".markdownlint.json", true, 3),
       synced(".prettierrc.json", false, 4),
     ]);
@@ -1213,7 +1213,7 @@ mod tests {
       status: SurfaceStatus::Passed,
       duration: std::time::Duration::from_millis(ms),
     };
-    let merged = merge_sync_results(vec![already(1), already(2)]);
+    let merged = merge_sync_results(&[already(1), already(2)]);
     assert!(matches!(merged.status, SurfaceStatus::Passed));
     assert!(merged.status.synced_file_names().is_empty());
     assert_eq!(merged.duration, std::time::Duration::from_millis(3));
@@ -1235,7 +1235,7 @@ mod tests {
       duration: std::time::Duration::from_millis(5),
     };
     let merged =
-      merge_sync_results(vec![synced(".clang-format", true, 2), drifted]);
+      merge_sync_results(&[synced(".clang-format", true, 2), drifted]);
     assert!(matches!(
       merged.status,
       SurfaceStatus::ConfigDrifted { ref file, .. } if file == ".clang-tidy"

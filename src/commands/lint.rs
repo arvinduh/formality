@@ -19,7 +19,7 @@ pub fn run_lint(
   config: &FormalityConfig,
   staged: bool,
   changed: bool,
-  lang: Vec<String>,
+  lang: &[String],
   paths: Vec<PathBuf>,
   allow_missing: bool,
 ) -> ExitStatus {
