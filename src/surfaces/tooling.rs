@@ -3590,15 +3590,17 @@ mod tests {
 
   #[test]
   fn test_resolve_via_known_install_dir_skips_non_go_binaries() {
-    // A tool with no GoInstall entry anywhere in its chain (prettier: npm
-    // only) must never even ask for the Go bin directory -- proven here by
-    // handing it a closure that panics if called at all, not just by
-    // asserting the return value.
-    let found = resolve_via_known_install_dir_with("prettier", |_| {
-      panic!(
-        "must not query the Go bin directory for a binary with no \
-         GoInstall entry in its chain"
-      )
+    // A tool with no GoInstall entry anywhere in its chain (prettier) must
+    // never even ask for the Go bin directory -- proven here by handing it
+    // a closure that panics on that query, not just by asserting the
+    // return value. Off Windows prettier's chain maps to no known
+    // directory at all; on Windows its Scoop and WingetName entries do.
+    let found = resolve_via_known_install_dir_with("prettier", |kind| {
+      assert!(
+        cfg!(windows) && kind != KnownInstallDir::Go,
+        "must not query {kind:?} for prettier on this OS"
+      );
+      None
     });
     assert_eq!(found, None);
   }
@@ -3781,13 +3783,28 @@ mod tests {
       None,
       "no chain directory holds the binary, so the answer is a clean miss"
     );
+    // On Windows the chain's Scoop and WingetName entries run too, so their
+    // directories follow the Python ones.
+    let windows_kinds: &[KnownInstallDir] = if cfg!(windows) {
+      &[
+        KnownInstallDir::ScoopShims,
+        KnownInstallDir::WingetUserLinks,
+        KnownInstallDir::WingetMachineLinks,
+      ]
+    } else {
+      &[]
+    };
     assert_eq!(
       *asked.lock().unwrap_or_else(PoisonError::into_inner),
-      vec![
-        KnownInstallDir::UvTool,
-        KnownInstallDir::Pipx,
-        KnownInstallDir::PythonUser,
-      ],
+      [
+        &[
+          KnownInstallDir::UvTool,
+          KnownInstallDir::Pipx,
+          KnownInstallDir::PythonUser,
+        ],
+        windows_kinds,
+      ]
+      .concat(),
       "each distinct kind is asked exactly once, in chain order; a kind \
        whose directory is unknown (None) must not end the search either"
     );
@@ -4324,14 +4341,16 @@ mod tests {
     }
     #[cfg(not(windows))]
     {
+      use std::fmt::Write;
+
       let mut script = String::new();
       if !stdout.is_empty() {
-        script.push_str(&format!("printf '%s\\n' '{stdout}'; "));
+        let _ = write!(script, "printf '%s\\n' '{stdout}'; ");
       }
       if !stderr.is_empty() {
-        script.push_str(&format!("printf '%s\\n' '{stderr}' 1>&2; "));
+        let _ = write!(script, "printf '%s\\n' '{stderr}' 1>&2; ");
       }
-      script.push_str(&format!("exit {exit_code}"));
+      let _ = write!(script, "exit {exit_code}");
       let mut cmd = std::process::Command::new("sh");
       cmd.arg("-c").arg(script);
       cmd
