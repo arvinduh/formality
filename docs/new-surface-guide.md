@@ -101,7 +101,7 @@ impl LanguageSurface for FooSurface {
   fn name(&self) -> &'static str { "foo" }
   fn aliases(&self) -> &[&'static str] { &["foolang"] } // alternate names
   fn file_extensions(&self) -> &[&'static str] { FOO_EXTENSIONS }
-  fn detect(&self, root: &Path) -> bool { /* any file_extensions() present under root? */ }
+  fn marker_files(&self) -> &[&'static str] { &["foo.lock", ".foofmt.toml"] } // root manifests/configs
   fn tool_info(&self, config: &ResolvedLangConfig) -> Vec<ToolInfo> { /* binaries + install hints */ }
   fn format(&self, ctx: &ExecutionContext) -> SurfaceResult { /* Smart Format pass */ }
   fn lint(&self, ctx: &ExecutionContext, fix: bool) -> SurfaceResult { /* linter invocation */ }
@@ -113,6 +113,12 @@ impl LanguageSurface for FooSurface {
 
 Key implementation notes drawn from the existing fleet of surfaces:
 
+- **Detection is data, not code**: do not write `detect()`. The default
+  activates the surface when any `marker_files()` entry is a regular file at the
+  workspace root, or any non-ignored file under the root has one of
+  `file_extensions()`. A surface with no manifest or config file (JSON, Typst)
+  omits `marker_files()`. Override `detect()` only when detection genuinely
+  differs from that rule, and say why in a comment on the override.
 - **Smart Format ordering (Rule #7)**: `format()` must leave files in a state
   that will not immediately fail a trivial structural lint check. If the tool
   ecosystem separates "mechanical fix" (import sorting, blank-line
