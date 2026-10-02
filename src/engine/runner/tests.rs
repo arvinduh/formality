@@ -898,7 +898,7 @@ fn test_runner_missing_tool_exit_code_is_violations() {
   // fix is unconditional on mode.
   let root = PathBuf::from(".");
   let config = FormalityConfig::default();
-  let staged_paths = Scope::Paths(Arc::new(vec![PathBuf::from("test.mock")]));
+  let staged_paths = Scope::resolve(&root, &[PathBuf::from("test.mock")], &[]);
 
   // Lint unstaged & staged
   let unstaged_lint = Runner::run(

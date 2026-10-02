@@ -295,7 +295,9 @@ pub fn resolve_target_surfaces(
   }
 
   match scope {
-    Scope::Paths(paths) => Ok(surfaces_with_files_under(root, paths, config)),
+    Scope::Paths { files, .. } => {
+      Ok(surfaces_with_files_under(root, files, config))
+    }
     Scope::Workspace(candidates) => {
       let present = std::cell::LazyCell::new(|| {
         glob::PresentExtensions::from_paths(candidates)
@@ -305,14 +307,13 @@ pub fn resolve_target_surfaces(
   }
 }
 
-/// Every surface with at least one of its files under the explicit `paths`,
-/// expanding directory arguments once for all surfaces.
+/// Every surface with at least one of its files among the explicit paths'
+/// expanded `files`.
 fn surfaces_with_files_under(
   root: &Path,
-  paths: &[PathBuf],
+  files: &[PathBuf],
   config: &FormalityConfig,
 ) -> Vec<Box<dyn LanguageSurface>> {
-  let files = glob::expand_targets(root, paths);
   let global = config.resolve_global();
   all_surfaces()
     .into_iter()
@@ -534,7 +535,7 @@ mod tests {
     let surfaces = resolve_target_surfaces(
       root,
       &[],
-      &Scope::Paths(std::sync::Arc::new(staged_files.clone())),
+      &Scope::resolve(root, &staged_files, &[]),
       &config,
     )
     .unwrap();
@@ -615,7 +616,7 @@ mod tests {
     fs::write(src.join("main.rs"), "fn main() {}\n").unwrap();
     fs::write(src.join("notes.md"), "# Notes\n").unwrap();
 
-    let scope = Scope::Paths(std::sync::Arc::new(vec![src.clone()]));
+    let scope = Scope::resolve(temp.path(), std::slice::from_ref(&src), &[]);
     let surfaces = resolve_target_surfaces(
       temp.path(),
       &[],
