@@ -271,12 +271,6 @@ fn test_pinned_version_for_golangci_lint() {
 
 #[test]
 fn test_scan_tools_and_build_table_surfaces_unprobeable_status_not_ready() {
-  // Use a system binary that exists on PATH but does not produce semver on `--version`
-  let binary_name: &'static str = if cfg!(windows) { "where" } else { "test" };
-  if which::which(binary_name).is_err() {
-    return;
-  }
-
   #[derive(Clone)]
   struct UnprobeableSurface {
     bin: &'static str,
@@ -295,7 +289,11 @@ fn test_scan_tools_and_build_table_surfaces_unprobeable_status_not_ready() {
     fn name(&self) -> &'static str {
       "mock_unprobeable"
     }
-    fn detect(&self, _root: &Path) -> bool {
+    fn detect(
+      &self,
+      _: &Path,
+      _: &crate::surfaces::glob::PresentExtensions,
+    ) -> bool {
       true
     }
     fn tool_info(
@@ -333,6 +331,12 @@ fn test_scan_tools_and_build_table_surfaces_unprobeable_status_not_ready() {
     fn clone_box(&self) -> Box<dyn LanguageSurface> {
       Box::new(self.clone())
     }
+  }
+
+  // Use a system binary that exists on PATH but does not produce semver on `--version`
+  let binary_name: &'static str = if cfg!(windows) { "where" } else { "test" };
+  if which::which(binary_name).is_err() {
+    return;
   }
 
   let surfaces: Vec<Box<dyn LanguageSurface>> =
@@ -381,7 +385,7 @@ fn test_install_missing_tools_framed_fails_for_tool_without_installer() {
     is_required_for_lint: true,
   };
 
-  let report = install_missing_tools_framed(&[missing_tool], &Frame::capped());
+  let report = install_missing_tools_framed(&[missing_tool], Frame::capped());
   assert!(
     !report.all_ok,
     "Should report failure when tool cannot be auto-installed"

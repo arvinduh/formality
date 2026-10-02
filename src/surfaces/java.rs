@@ -9,6 +9,7 @@ use super::{
   diff_check_via_tempcopy_classified, lint_fix_unsupported,
   run_tool_command_classified, sync_native_config, tool_missing_guard,
 };
+use std::io::Write;
 use std::time::Instant;
 
 /// Detects the failure google-java-format produces when the `java` on
@@ -432,7 +433,6 @@ impl LanguageSurface for JavaSurface {
               };
             }
           };
-          use std::io::Write;
           if let Err(e) = temp_file.write_all(rendered.as_bytes()) {
             return SurfaceResult {
               surface_name: self.name(),
@@ -602,10 +602,10 @@ mod tests {
   fn test_java_detect_by_build_files() {
     let temp = TempDir::new().unwrap();
     let surface = JavaSurface;
-    assert!(!surface.detect(temp.path()));
+    assert!(!crate::surfaces::detect_in(&surface, temp.path()));
 
     std::fs::write(temp.path().join("pom.xml"), "<project></project>").unwrap();
-    assert!(surface.detect(temp.path()));
+    assert!(crate::surfaces::detect_in(&surface, temp.path()));
   }
 
   #[test]
@@ -613,7 +613,7 @@ mod tests {
     let temp = TempDir::new().unwrap();
     let surface = JavaSurface;
     std::fs::write(temp.path().join("Main.java"), "class Main {}\n").unwrap();
-    assert!(surface.detect(temp.path()));
+    assert!(crate::surfaces::detect_in(&surface, temp.path()));
   }
 
   #[test]

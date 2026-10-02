@@ -531,12 +531,16 @@ const GOIMPORTS_CHAIN: &[InstallMethod] = &[InstallMethod::GoInstall(
   "golang.org/x/tools/cmd/goimports@v0.49.0",
 )];
 
+// The pinned `go install` leads so the pin holds wherever Go is present:
+// Homebrew's bottle cannot be pinned and reports Stale the moment it passes
+// the pin (Issue #488). Brew and Scoop stay as fallbacks for machines
+// without Go, at the cost of a source build where Go is present.
 const GOLANGCI_LINT_CHAIN: &[InstallMethod] = &[
-  InstallMethod::Brew("golangci-lint"),
-  InstallMethod::Scoop("golangci-lint"),
   InstallMethod::GoInstall(
     "github.com/golangci/golangci-lint/v2/cmd/golangci-lint@v2.13.2",
   ),
+  InstallMethod::Brew("golangci-lint"),
+  InstallMethod::Scoop("golangci-lint"),
 ];
 
 // ktlint ships as a prebuilt executable jar; there is no cargo fallback, so
@@ -1951,7 +1955,7 @@ pub fn merge_tool_streams(
 
 /// Plain-text description of a non-zero [`std::process::ExitStatus`] with no
 /// `Display`-stutter (`ExitStatus`'s own `Display` is already `exit code: N`).
-fn exit_status_summary(status: &std::process::ExitStatus) -> String {
+fn exit_status_summary(status: std::process::ExitStatus) -> String {
   status.code().map_or_else(
     || "Command failed (terminated by signal)".to_string(),
     |code| format!("Command failed with exit code {code}"),
@@ -2025,7 +2029,7 @@ pub fn run_tool_command_classified(
       let message = merge_tool_streams(
         &stdout,
         &stderr,
-        &exit_status_summary(&output.status),
+        &exit_status_summary(output.status),
       );
       let status = match classify(output.status.code()) {
         ExitClass::ViolationsFound => SurfaceStatus::ViolationsFound {
@@ -2223,7 +2227,7 @@ mod tests {
     let golangci = install_chain_for("golangci-lint").unwrap();
     assert_eq!(golangci.len(), 3);
     assert_eq!(
-      golangci[2].command(),
+      golangci[0].command(),
       (
         "go".to_string(),
         vec![
@@ -3106,6 +3110,26 @@ mod tests {
   }
 
   #[test]
+  fn test_golangci_lint_chain_prefers_pinned_go_install_over_brew() {
+    // Issue #488: wherever `go` is on PATH the pinned `go install` must win
+    // over the unpinnable Homebrew bottle, so the first chain entry carries
+    // the confirmed pin and Brew follows as a fallback.
+    let chain = install_chain_for("golangci-lint")
+      .expect("golangci-lint must have a chain");
+    let expected = pinned_version_for("golangci-lint")
+      .expect("golangci-lint has a confirmed pin");
+
+    assert!(matches!(chain[0], InstallMethod::GoInstall(_)));
+    assert_eq!(chain[0].pinned_version(), Some(expected));
+    assert!(
+      chain[1..]
+        .iter()
+        .any(|m| matches!(m, InstallMethod::Brew(_))),
+      "golangci-lint chain keeps Brew as a fallback"
+    );
+  }
+
+  #[test]
   fn test_binstall_bootstrap_fixes_brew_pin_lag_for_typstyle() {
     // The macOS #102 case: cargo-binstall isn't on PATH, so the first
     // *available* installer is Brew, whose core-tap bottle trails the
@@ -3436,6 +3460,8 @@ mod tests {
   #[test]
   #[cfg(unix)]
   fn test_resolve_installed_binary_in_rejects_a_non_executable_file() {
+    use std::os::unix::fs::PermissionsExt;
+
     // `which::which` requires the executable bit for a PATH hit, so the
     // fallback must too -- otherwise a mode-0644 leftover in GOBIN would
     // pass the missing-tool guard and then fail to exec, which is the
@@ -3453,7 +3479,6 @@ mod tests {
     // ...and the same file does resolve once it is actually executable, so
     // this asserts the permission bit specifically, not merely that some
     // unrelated condition rejected the path.
-    use std::os::unix::fs::PermissionsExt;
     std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o755))
       .expect("chmod fixture");
     assert_eq!(
@@ -3548,8 +3573,8 @@ mod tests {
 
   #[test]
   fn test_resolve_via_known_install_dir_finds_golangci_lint_too() {
-    // golangci-lint's chain lists GoInstall as a fallback behind
-    // Brew/Scoop, not as its only entry -- the "does this chain contain a
+    // golangci-lint's chain lists GoInstall ahead of Brew/Scoop fallbacks,
+    // not as its only entry -- the "does this chain contain a
     // GoInstall entry anywhere" gate must still catch it, not just a
     // single-entry chain like goimports's.
     let tmp = tempfile::tempdir().expect("tempdir");
@@ -4299,14 +4324,16 @@ mod tests {
     }
     #[cfg(not(windows))]
     {
+      use std::fmt::Write;
+
       let mut script = String::new();
       if !stdout.is_empty() {
-        script.push_str(&format!("printf '%s\\n' '{stdout}'; "));
+        let _ = write!(script, "printf '%s\\n' '{stdout}'; ");
       }
       if !stderr.is_empty() {
-        script.push_str(&format!("printf '%s\\n' '{stderr}' 1>&2; "));
+        let _ = write!(script, "printf '%s\\n' '{stderr}' 1>&2; ");
       }
-      script.push_str(&format!("exit {exit_code}"));
+      let _ = write!(script, "exit {exit_code}");
       let mut cmd = std::process::Command::new("sh");
       cmd.arg("-c").arg(script);
       cmd

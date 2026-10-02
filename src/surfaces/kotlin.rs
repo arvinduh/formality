@@ -281,6 +281,26 @@ mod tests {
   where
     F: FnOnce(&Path),
   {
+    struct Cleanup {
+      orig_path: Option<std::ffi::OsString>,
+    }
+    impl Drop for Cleanup {
+      fn drop(&mut self) {
+        if let Some(ref p) = self.orig_path {
+          // SAFETY: serialized by `KTLINT_TEST_GUARD`.
+          unsafe {
+            std::env::set_var("PATH", p);
+          }
+        } else {
+          // SAFETY: serialized by `KTLINT_TEST_GUARD`.
+          unsafe {
+            std::env::remove_var("PATH");
+          }
+        }
+        forget_binary("ktlint");
+      }
+    }
+
     let _guard = ktlint_test_lock();
 
     let temp = TempDir::new().unwrap();
@@ -326,26 +346,6 @@ mod tests {
     // concurrently in this test harness.
     unsafe {
       std::env::set_var("PATH", &new_path);
-    }
-
-    struct Cleanup {
-      orig_path: Option<std::ffi::OsString>,
-    }
-    impl Drop for Cleanup {
-      fn drop(&mut self) {
-        if let Some(ref p) = self.orig_path {
-          // SAFETY: serialized by `KTLINT_TEST_GUARD`.
-          unsafe {
-            std::env::set_var("PATH", p);
-          }
-        } else {
-          // SAFETY: serialized by `KTLINT_TEST_GUARD`.
-          unsafe {
-            std::env::remove_var("PATH");
-          }
-        }
-        forget_binary("ktlint");
-      }
     }
 
     let _cleanup = Cleanup { orig_path };
@@ -410,11 +410,11 @@ mod tests {
   fn test_kotlin_surface_detect() {
     let surface = KotlinSurface;
     let temp = TempDir::new().unwrap();
-    assert!(!surface.detect(temp.path()));
+    assert!(!crate::surfaces::detect_in(&surface, temp.path()));
 
     let kt_file = temp.path().join("Main.kt");
     std::fs::write(&kt_file, "fun main() {}\n").unwrap();
-    assert!(surface.detect(temp.path()));
+    assert!(crate::surfaces::detect_in(&surface, temp.path()));
   }
 
   #[test]
@@ -422,7 +422,7 @@ mod tests {
     let surface = KotlinSurface;
     let temp = TempDir::new().unwrap();
     std::fs::write(temp.path().join("build.gradle.kts"), "").unwrap();
-    assert!(surface.detect(temp.path()));
+    assert!(crate::surfaces::detect_in(&surface, temp.path()));
   }
 
   #[test]
