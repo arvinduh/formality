@@ -535,7 +535,7 @@ const GOLANGCI_LINT_CHAIN: &[InstallMethod] = &[
   InstallMethod::Brew("golangci-lint"),
   InstallMethod::Scoop("golangci-lint"),
   InstallMethod::GoInstall(
-    "github.com/golangci/golangci-lint/v2/cmd/golangci-lint@v2.13.1",
+    "github.com/golangci/golangci-lint/v2/cmd/golangci-lint@v2.13.2",
   ),
 ];
 
@@ -736,7 +736,7 @@ const ALL_CHAINS: &[ToolChain] = &[
   ToolChain {
     binary: "golangci-lint",
     chain: GOLANGCI_LINT_CHAIN,
-    expected_binary_version: Some(Version::new(2, 13, 1)),
+    expected_binary_version: Some(Version::new(2, 13, 2)),
   },
   ToolChain {
     binary: "ktlint",
@@ -2198,7 +2198,7 @@ mod tests {
         "go".to_string(),
         vec![
           "install".to_string(),
-          "github.com/golangci/golangci-lint/v2/cmd/golangci-lint@v2.13.1"
+          "github.com/golangci/golangci-lint/v2/cmd/golangci-lint@v2.13.2"
             .to_string(),
         ]
       )
@@ -2255,7 +2255,7 @@ mod tests {
   fn test_pinned_version_for_golangci_lint() {
     assert_eq!(
       pinned_version_for("golangci-lint"),
-      Some(Version::new(2, 13, 1))
+      Some(Version::new(2, 13, 2))
     );
   }
 
