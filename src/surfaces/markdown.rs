@@ -551,7 +551,7 @@ impl BlockScan {
       && (rest.trim_end().bytes().all(|b| b == b'=')
         || rest.trim_end().bytes().all(|b| b == b'-'));
     let breaks = setext || is_thematic_break(rest);
-    let marker = list_marker(rest).filter(|_| !breaks);
+    let marker = list_marker(indent, rest).filter(|_| !breaks);
     if let Some(width) = marker {
       self.items.retain(|&col| col <= indent);
       self.items.push(indent + width);
@@ -572,14 +572,15 @@ impl BlockScan {
 /// content is indented. A bullet is `-`, `*` or `+`; an ordered marker is one
 /// to nine digits and `.` or `)`. Either needs a space, a tab or the end of
 /// the line after it.
-fn list_marker(rest: &str) -> Option<usize> {
+fn list_marker(indent: usize, rest: &str) -> Option<usize> {
   let digits = rest.bytes().take_while(u8::is_ascii_digit).count();
   let mark = match rest.as_bytes().get(digits) {
     Some(b'-' | b'*' | b'+') if digits == 0 => 1,
     Some(b'.' | b')') if (1..=9).contains(&digits) => digits + 1,
     _ => return None,
   };
-  let (gap, text) = split_indent(&rest[mark..]);
+  let (end, text) = split_indent_at(indent + mark, &rest[mark..]);
+  let gap = end - indent - mark;
   match gap {
     0 if !text.is_empty() => None,
     1..=4 if !text.is_empty() => Some(mark + gap),
@@ -1701,6 +1702,9 @@ README.md:7 error MD025/single-title/single-h1 Multiple top-level headings";
       "- i\n#a\n",
       "1. i\n\n    more\n#a\n",
       "- i\n\n    more\n#a\n",
+      "-\ti\n\n    more\n#a\n",
+      "1.\ti\n\n    more\n#a\n",
+      " -\ti\n\n    more\n#a\n",
       "- a\n  - b\n\n      more\n#a\n",
       "> q\n===\n#a\n",
       "- i\n===\n#a\n",
