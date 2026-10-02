@@ -1949,6 +1949,43 @@ README.md:7 error MD025/single-title/single-h1 Multiple top-level headings";
     );
   }
 
+  /// #479: lists whose rendering markdownlint's MD010 and MD029 fixers
+  /// changed, each with what `fml fmt` must leave. micromark renders every
+  /// pair the same: a tab-indented paragraph stays in its item, and each
+  /// ordered list keeps its start number.
+  const LIST_RENDER_CASES: [(&str, &str); 4] = [
+    ("# T\n\n- item\n\n\tmore\n", "# T\n\n- item\n\n  more\n"),
+    (
+      "# T\n\n123456789. item\n\n           more\n",
+      "# T\n\n123456789. item\n\n           more\n",
+    ),
+    ("# T\n\n10. a\n11. b\n", "# T\n\n10. a\n11. b\n"),
+    (
+      "# T\n\n1. a\n\n```text\nx\n```\n\n2. b\n",
+      "# T\n\n1. a\n\n```text\nx\n```\n\n2. b\n",
+    ),
+  ];
+
+  #[test]
+  fn test_format_keeps_list_rendering_and_lints_clean() {
+    if !have_markdown_tools() {
+      return;
+    }
+
+    for (src, want) in LIST_RENDER_CASES {
+      let temp = TempDir::new().unwrap();
+      let file = temp.path().join("doc.md");
+      std::fs::write(&file, src).unwrap();
+      let ctx = test_ctx(temp.path(), ResolvedLangConfig::new("markdown"));
+
+      let res = MarkdownSurface.format(&ctx);
+      assert!(res.is_success(), "format failed: {:?}", res.status);
+      assert_eq!(std::fs::read_to_string(&file).unwrap(), want, "for {src:?}");
+      let lint = MarkdownSurface.lint(&ctx, false);
+      assert!(lint.is_success(), "lint after fmt: {:?}", lint.status);
+    }
+  }
+
   #[test]
   fn test_build_prettier_fmt_args() {
     let files = vec![PathBuf::from("readme.md")];
