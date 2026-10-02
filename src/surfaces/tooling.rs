@@ -1752,27 +1752,14 @@ pub fn refresh_path_after_install(program: &str) {
 /// the OS's own "No such file or directory" for the plain name stays the
 /// error the user sees.
 ///
-/// On Windows `npm`/`pnpm`/`yarn`/`npx` run through `cmd /C`. A resolved
-/// `.cmd`/`.bat` shim is spawned by its path: `std` runs it through
+/// A resolved `.cmd`/`.bat` shim, the package managers' own `npm.cmd` and
+/// friends included, is spawned by its path: `std` runs it through
 /// `cmd.exe` and quotes its arguments for batch files, so `%VAR%` in an
 /// argument is not expanded (it is under a hand-built `cmd /C <shim>`).
 /// npm's `ktlint.cmd` is the exception: its jar is run with `java -jar`
 /// because the shim itself cannot launch (#402).
 #[must_use]
 pub fn create_tool_command(binary: &str) -> std::process::Command {
-  #[cfg(windows)]
-  {
-    if binary == "npm"
-      || binary == "pnpm"
-      || binary == "yarn"
-      || binary == "npx"
-    {
-      let mut cmd = std::process::Command::new("cmd");
-      cmd.arg("/C").arg(binary);
-      return cmd;
-    }
-  }
-
   let Some(path) = resolve_binary_path(binary) else {
     return std::process::Command::new(binary);
   };
@@ -1991,26 +1978,11 @@ fn is_batch_file(path: &std::path::Path) -> bool {
   })
 }
 
-/// Returns whether `cmd` is a `cmd /C <target>` wrapper built by
-/// [`create_tool_command`].
-#[must_use]
-fn is_cmd_wrapper(cmd: &std::process::Command) -> bool {
-  std::path::Path::new(cmd.get_program())
-    .file_stem()
-    .is_some_and(|stem| stem.eq_ignore_ascii_case("cmd"))
-    && cmd.get_args().next().is_some_and(|arg| arg == "/C")
-}
-
 /// Names the tool `cmd` runs, as the bare binary name (`goimports`, not
 /// `/home/u/go/bin/goimports` or `ktlint.exe`), so a spawn failure is
 /// attributable to the tool `fml doctor --install` reports by that name.
-/// For a `cmd /C <target>` wrapper that is the target, not `cmd`.
 fn spawned_binary_name(cmd: &std::process::Command) -> String {
-  let program = if is_cmd_wrapper(cmd) {
-    cmd.get_args().nth(1).unwrap_or(cmd.get_program())
-  } else {
-    cmd.get_program()
-  };
+  let program = cmd.get_program();
   std::path::Path::new(program)
     .file_stem()
     .unwrap_or(program)
@@ -2572,6 +2544,17 @@ mod tests {
     );
 
     forget_binary("fml-unresolvable-probe-tool");
+  }
+
+  #[test]
+  fn test_create_tool_command_spawns_package_managers_like_any_shim() {
+    // #469: npm/pnpm/yarn/npx get no `cmd /C` wrapper; on Windows their
+    // `.cmd` shim resolves and gets `std`'s batch-file quoting.
+    for name in ["npm", "pnpm", "yarn", "npx"] {
+      let want = resolve_binary_path(name)
+        .map_or_else(|| name.into(), PathBuf::into_os_string);
+      assert_eq!(create_tool_command(name).get_program(), want, "{name}");
+    }
   }
 
   #[test]
