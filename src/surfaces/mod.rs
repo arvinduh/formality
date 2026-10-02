@@ -534,6 +534,36 @@ mod tests {
   }
 
   #[test]
+  fn test_default_detect_markers_are_root_regular_files_only() {
+    let surface = rust::RustSurface;
+    let dir_marker = tempfile::TempDir::new().unwrap();
+    std::fs::create_dir(dir_marker.path().join("Cargo.toml")).unwrap();
+    assert!(!surface.detect(dir_marker.path()));
+
+    let nested_marker = tempfile::TempDir::new().unwrap();
+    std::fs::create_dir(nested_marker.path().join("sub")).unwrap();
+    std::fs::write(nested_marker.path().join("sub/Cargo.toml"), "").unwrap();
+    assert!(!surface.detect(nested_marker.path()));
+
+    let root_marker = tempfile::TempDir::new().unwrap();
+    std::fs::write(root_marker.path().join("Cargo.toml"), "").unwrap();
+    assert!(surface.detect(root_marker.path()));
+  }
+
+  #[test]
+  fn test_default_detect_finds_nested_extension_outside_ignored_dirs() {
+    let surface = typst::TypstSurface;
+    let temp = tempfile::TempDir::new().unwrap();
+    std::fs::create_dir_all(temp.path().join("target/a")).unwrap();
+    std::fs::write(temp.path().join("target/a/doc.typ"), "").unwrap();
+    assert!(!surface.detect(temp.path()));
+
+    std::fs::create_dir_all(temp.path().join("docs/a")).unwrap();
+    std::fs::write(temp.path().join("docs/a/doc.typ"), "").unwrap();
+    assert!(surface.detect(temp.path()));
+  }
+
+  #[test]
   fn test_is_success_holds_for_skips_and_clean_passes_only() {
     fn result_for(status: SurfaceStatus) -> SurfaceResult {
       SurfaceResult {
