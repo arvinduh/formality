@@ -969,7 +969,7 @@ fn test_doctor_table_shows_detected_vs_undetected_status_for_surfaces() {
   let config = FormalityConfig::default();
   let surfaces = all_surfaces();
   let present = std::cell::LazyCell::new(|| {
-    crate::surfaces::glob::PresentExtensions::scan(temp.path())
+    crate::surfaces::glob::PresentExtensions::scan(temp.path(), &[])
   });
   let detected: HashSet<&'static str> = default_registry()
     .detect_surfaces_in(temp.path(), &config, &present)

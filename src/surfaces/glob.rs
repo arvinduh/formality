@@ -80,22 +80,23 @@ pub fn walk_candidate_files(
   root: &Path,
   global_excludes: &[PathBuf],
 ) -> Vec<PathBuf> {
-  let results: Vec<PathBuf> = candidate_file_paths(root)
+  included_candidates(root, global_excludes)
     .map(ignore::DirEntry::into_path)
-    .collect();
+    .collect()
+}
 
-  if global_excludes.is_empty() {
-    results
-  } else {
-    let normalized_exclude: Vec<NormalizedExclude<'_>> = global_excludes
-      .iter()
-      .map(|ex| NormalizedExclude::new(ex, root))
-      .collect();
-    results
-      .into_iter()
-      .filter(|file| !is_excluded_normalized(file, root, &normalized_exclude))
-      .collect()
-  }
+/// Streams [`candidate_file_paths`] minus every file `global_excludes`
+/// matches, so each caller applies the one exclude check while walking.
+fn included_candidates<'a>(
+  root: &'a Path,
+  global_excludes: &'a [PathBuf],
+) -> impl Iterator<Item = ignore::DirEntry> + 'a {
+  let exclude: Vec<NormalizedExclude<'a>> = global_excludes
+    .iter()
+    .map(|ex| NormalizedExclude::new(ex, root))
+    .collect();
+  candidate_file_paths(root)
+    .filter(move |e| !is_excluded_normalized(e.path(), root, &exclude))
 }
 
 /// Yields every regular candidate file under `root`. This is the one place
@@ -133,11 +134,11 @@ pub struct PresentExtensions(std::collections::HashSet<String>);
 
 impl PresentExtensions {
   /// Walks `root` once with [`walk_candidate_files`]' ignore rules and
-  /// records every UTF-8 file extension seen.
+  /// `global_excludes`, recording every UTF-8 file extension seen.
   #[must_use]
-  pub fn scan(root: &Path) -> Self {
+  pub fn scan(root: &Path, global_excludes: &[PathBuf]) -> Self {
     let mut present = Self(std::collections::HashSet::new());
-    for entry in candidate_file_paths(root) {
+    for entry in included_candidates(root, global_excludes) {
       present.record(entry.path());
     }
     present
@@ -596,11 +597,25 @@ mod tests {
     std::fs::write(root.join("node_modules/x/a.js"), "").unwrap();
     std::fs::create_dir(root.join("dir.py")).unwrap();
 
-    let present = PresentExtensions::scan(root);
+    let present = PresentExtensions::scan(root, &[]);
     assert!(present.contains("rs"));
     assert!(present.contains("Rs"));
     assert!(!present.contains("js"));
     assert!(!present.contains("py"));
+  }
+
+  #[test]
+  fn test_present_extensions_scan_skips_globally_excluded_files() {
+    let temp = tempfile::TempDir::new().unwrap();
+    let root = temp.path();
+    std::fs::create_dir(root.join("ci")).unwrap();
+    std::fs::write(root.join("ci/build.yaml"), "").unwrap();
+    std::fs::write(root.join("main.rs"), "").unwrap();
+
+    let present = PresentExtensions::scan(root, &[PathBuf::from("ci")]);
+    assert!(present.contains("rs"));
+    assert!(!present.contains("yaml"));
+    assert!(PresentExtensions::scan(root, &[]).contains("yaml"));
   }
 
   #[test]
