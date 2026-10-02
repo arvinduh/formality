@@ -492,6 +492,39 @@ fn test_fmt_python_import_sorting_lifecycle() {
 }
 
 #[test]
+fn test_fmt_markdown_prettier_extra_args_converge() {
+  // A `prettier` extra arg that overrides an inline-config flag must win on
+  // both the write and the `--check` path; prettier honours the last copy of
+  // a flag, so differing argv orders left `--check` failing forever.
+  if which::which("prettier").is_err() {
+    eprintln!("Skipping: prettier not installed in PATH");
+    return;
+  }
+
+  let temp = temp_repo(&[
+    (
+      "formality.toml",
+      "[lang.markdown]\nline_length = 80\nprose_wrap = \"always\"\n\n\
+       [lang.markdown.extra_args]\nprettier = [\"--print-width\", \"40\"]\n",
+    ),
+    (
+      "a.md",
+      "# Title\n\nThis is a fairly long sentence of prose that should be \
+       wrapped by prettier at some width or other.\n",
+    ),
+  ]);
+  let root = temp.path();
+
+  assert_eq!(run_cli(root, fmt_cmd(false, &["markdown"])), 0);
+  let formatted = fs::read_to_string(root.join("a.md")).unwrap();
+  assert!(
+    formatted.lines().all(|l| l.len() <= 40),
+    "the user's --print-width must win on the write path:\n{formatted}"
+  );
+  assert_eq!(run_cli(root, fmt_cmd(true, &["markdown"])), 0);
+}
+
+#[test]
 fn test_fmt_rust_import_reordering_lifecycle() {
   let temp = temp_repo(&[
     (

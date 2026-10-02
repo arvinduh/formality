@@ -364,6 +364,10 @@ impl LanguageSurface for CppSurface {
     "cpp"
   }
 
+  fn extra_args_tools(&self) -> &'static [&'static str] {
+    &["clang-format", "clang-tidy"]
+  }
+
   fn aliases(&self) -> &[&'static str] {
     &["c", "c++", "cxx"]
   }
@@ -439,7 +443,7 @@ impl LanguageSurface for CppSurface {
           let mut cmd = create_tool_command("clang-format");
           cmd.arg(format!("-style={inline_style}"));
           cmd.arg("-i").arg(scratch);
-          cmd.args(&ctx.lang_config.extra_args);
+          cmd.args(ctx.lang_config.tool_args("clang-format"));
           cmd.current_dir(ctx.root.as_path());
           cmd.output()
         },
@@ -465,7 +469,7 @@ impl LanguageSurface for CppSurface {
       cmd.arg(f);
     }
 
-    cmd.args(&ctx.lang_config.extra_args);
+    cmd.args(ctx.lang_config.tool_args("clang-format"));
     cmd.current_dir(ctx.root.as_path());
 
     run_tool_command_classified(
@@ -546,7 +550,7 @@ impl LanguageSurface for CppSurface {
         &flist,
         fix,
         &std_flag,
-        &ctx.lang_config.extra_args,
+        ctx.lang_config.tool_args("clang-tidy"),
       );
       cmd.args(&args);
       cmd.current_dir(ctx.root.as_path());
@@ -1082,7 +1086,11 @@ mod tests {
 
     let cfg = FormalityConfig::default();
     let mut lang = cfg.resolve_for_lang("cpp");
-    lang.extra_args = vec!["--this-flag-does-not-exist-fml151".to_string()];
+    lang.extra_args = [(
+      "clang-format".to_string(),
+      vec!["--this-flag-does-not-exist-fml151".to_string()],
+    )]
+    .into();
     let mut ctx = test_ctx(temp.path(), lang);
     ctx.global_config = Arc::new(cfg.resolve_global());
     ctx.check_only = true;
@@ -1112,7 +1120,11 @@ mod tests {
 
     let cfg = FormalityConfig::default();
     let mut lang = cfg.resolve_for_lang("cpp");
-    lang.extra_args = vec!["--this-flag-does-not-exist-fml151".to_string()];
+    lang.extra_args = [(
+      "clang-format".to_string(),
+      vec!["--this-flag-does-not-exist-fml151".to_string()],
+    )]
+    .into();
     let mut ctx = test_ctx(temp.path(), lang);
     ctx.global_config = Arc::new(cfg.resolve_global());
 

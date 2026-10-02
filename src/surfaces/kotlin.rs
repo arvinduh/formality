@@ -119,6 +119,10 @@ impl LanguageSurface for KotlinSurface {
     "kotlin"
   }
 
+  fn extra_args_tools(&self) -> &'static [&'static str] {
+    &["ktlint"]
+  }
+
   fn aliases(&self) -> &[&'static str] {
     &["kt"]
   }
@@ -170,7 +174,7 @@ impl LanguageSurface for KotlinSurface {
         |scratch| {
           let mut cmd = create_tool_command("ktlint");
           cmd.arg("-F").arg(scratch);
-          cmd.args(&ctx.lang_config.extra_args);
+          cmd.args(ctx.lang_config.tool_args("ktlint"));
           cmd.current_dir(ctx.root.as_path());
           cmd.output()
         },
@@ -205,7 +209,7 @@ impl LanguageSurface for KotlinSurface {
     let mut cmd = create_tool_command("ktlint");
     cmd.args(build_ktlint_format_args(
       &files_to_pass,
-      &ctx.lang_config.extra_args,
+      ctx.lang_config.tool_args("ktlint"),
     ));
     cmd.current_dir(ctx.root.as_path());
 
@@ -234,7 +238,7 @@ impl LanguageSurface for KotlinSurface {
     cmd.args(build_ktlint_lint_args(
       &files_to_pass,
       fix,
-      &ctx.lang_config.extra_args,
+      ctx.lang_config.tool_args("ktlint"),
     ));
     cmd.current_dir(ctx.root.as_path());
 
