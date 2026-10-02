@@ -25,8 +25,9 @@
 //! lost it instead of surfacing at the next release.
 //!
 //! **If a future cargo-dist version makes one of these edits unnecessary,
-//! deleting the edit is one commit: drop its `LocalEdit` entry below and its
-//! `# LOCAL EDIT` comment from the workflow.** Nothing else references them.
+//! deleting the edit is one commit: drop its `LocalEdit` entry below, its
+//! `# LOCAL EDIT` comment from the workflow, and its entry in the list of
+//! local edits in `docs/release.md`.**
 //!
 //! Additionally, this test suite guards the tag filter glob alignment between
 //! `.github/workflows/release.yml` and `.github/workflows/release-extras.yml`

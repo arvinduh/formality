@@ -213,11 +213,19 @@ asserts that:
 - The number of `# LOCAL EDIT (issue #N)` marker comments matches the expected
   edit count, ensuring each edit remains documented with re-application
   instructions.
+- Every cargo-dist installer that `release.yml` downloads is exactly the
+  `cargo-dist-version` pinned in `Cargo.toml`. Because `allow-dirty` makes
+  regeneration a no-op, a pin bump fails this check until the workflow is
+  regenerated (issue #421).
+- The `push.tags` filters of `release.yml` and `release-extras.yml` are
+  identical (issue #165).
 
 The guard runs in the `Library Tests` CI job (`cargo test --verbose`), one of
 the repository's required status checks, ensuring that any regeneration dropping
 a local edit fails PR checks rather than surfacing at release time.
 
-If a future cargo-dist version makes an edit unnecessary, delete the edit from
-`release.yml` and drop its corresponding entry from `EDITS` in
-`tests/release_workflow_local_edits.rs` in the same commit.
+If a future cargo-dist version makes an edit unnecessary, delete the edit and
+its `# LOCAL EDIT` comment from `release.yml`, drop its corresponding entry from
+`EDITS` in `tests/release_workflow_local_edits.rs`, and remove it from the list
+of local edits at the top of this section, lowering each "four" that counts
+them, all in one commit.
