@@ -56,20 +56,25 @@ pub struct MarkdownlintConfig {
   /// tools (#394).
   #[serde(rename = "MD007")]
   pub md007: MarkdownlintMd007,
-  /// MD010 (no-hard-tabs) rule enablement, always `false` (#479). Its fixer
-  /// swaps each tab for a fixed run of spaces, not the tab stop, so a
-  /// tab-indented paragraph leaves its list item; prettier already turns
-  /// such tabs into spaces that render the same, and a tab left in fenced
-  /// code is content.
+  /// MD010 (no-hard-tabs) rule enablement, `false` in the config fml
+  /// generates (#479). Its fixer swaps each tab for a fixed run of spaces,
+  /// not the tab stop, so a tab-indented paragraph leaves its list item;
+  /// prettier already turns such tabs into spaces that render the same, and
+  /// a tab left in fenced code is content. A project's own `.markdownlint.*`
+  /// replaces this config entirely, so it brings the rule and its fixer back
+  /// unless it also sets `MD010` to `false`.
   #[serde(rename = "MD010")]
   pub md010: bool,
   /// MD013 line length rule settings.
   #[serde(rename = "MD013")]
   pub md013: MarkdownlintMd013,
-  /// MD029 (ol-prefix) rule enablement, always `false` (#479). It demands
-  /// that a list start at 1, which `<ol start>` makes a change in what the
-  /// list renders as, and its fixer can right-align a long marker into
-  /// indented code; prettier already renumbers the items after the first.
+  /// MD029 (ol-prefix) rule enablement, `false` in the config fml generates
+  /// (#479). It demands that a list start at 1, which `<ol start>` makes a
+  /// change in what the list renders as, and its fixer can right-align a
+  /// long marker into indented code; prettier already renumbers the items
+  /// after the first. A project's own `.markdownlint.*` replaces this config
+  /// entirely, so it brings the rule and its fixer back unless it also sets
+  /// `MD029` to `false`.
   #[serde(rename = "MD029")]
   pub md029: bool,
   /// MD033 (no-inline-html) rule enablement. Shipped default is `false` —
