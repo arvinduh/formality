@@ -191,6 +191,7 @@ impl ExecutionContext {
 }
 
 /// Builds a minimal `ExecutionContext` for testing language surfaces.
+#[cfg(test)]
 #[must_use]
 pub fn test_ctx(
   root: impl AsRef<Path>,
