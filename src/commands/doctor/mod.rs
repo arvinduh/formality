@@ -48,7 +48,7 @@ use std::path::Path;
 #[must_use]
 fn install_missing_tools_framed(
   missing: &[ToolInfo],
-  frame: &Frame,
+  frame: Frame,
 ) -> InstallRunReport {
   if missing.is_empty() {
     return InstallRunReport {
@@ -411,7 +411,7 @@ fn classify_install_outcome(
 /// the caller's `frame` so its rule matches the rest of the command's output:
 /// one row per tool this `install_missing_tools_framed` call attempted, its
 /// installer, and the outcome. A no-op if `rows` is empty.
-fn print_install_summary_table(rows: &[InstallSummaryRow], frame: &Frame) {
+fn print_install_summary_table(rows: &[InstallSummaryRow], frame: Frame) {
   if rows.is_empty() {
     return;
   }
@@ -596,13 +596,13 @@ pub fn run_doctor(
   println!("{}", frame.section(&title, &rendered_table, &palette));
 
   // Check for unconfigured surfaces if explicit `languages` is set
-  print_unconfigured_languages(root, config, &frame, &palette);
+  print_unconfigured_languages(root, config, frame, &palette);
 
   // Virtual Environment status
-  print_virtualenv_status(root, &surfaces, show_all, &frame, &palette);
+  print_virtualenv_status(root, &surfaces, show_all, frame, &palette);
 
   // .gitignore Cache Hygiene Check
-  print_gitignore_hygiene(root, &surfaces, &frame, &palette);
+  print_gitignore_hygiene(root, &surfaces, frame, &palette);
 
   // Auto-install mode. Genuinely `[MISS]`ing tools and `[STALE]` tools whose
   // selected installer carries a matching pin are reinstalled. If a stale tool's
@@ -628,11 +628,11 @@ pub fn run_doctor(
   }
 
   // Stale tools with unpinnable installers notice
-  print_stale_unpinnable_warnings(&unpinnable_stale_tools, &frame, &palette);
+  print_stale_unpinnable_warnings(&unpinnable_stale_tools, frame, &palette);
 
   // `fml sync` optionality notice — always prints, so its closing rule is the
   // divider above the summary line below.
-  print_sync_notice(&frame, &palette);
+  print_sync_notice(frame, &palette);
 
   // The closing tally is a value derived from the scan *and then* updated by
   // the install run below — never read back off `scan` again. Keeping it in
@@ -645,7 +645,7 @@ pub fn run_doctor(
 
   let mut install_failed = false;
   if install && !to_install.is_empty() {
-    let report = install_missing_tools_framed(&to_install, &frame);
+    let report = install_missing_tools_framed(&to_install, frame);
     install_failed = !report.all_ok;
     tally.apply_install_run(&report);
   }
@@ -1077,7 +1077,7 @@ fn scan_tools_and_build_table(
 fn print_unconfigured_languages(
   root: &Path,
   config: &FormalityConfig,
-  frame: &Frame,
+  frame: Frame,
   palette: &Palette,
 ) {
   let Some(ref explicit_langs) = config.resolve_global().languages else {
@@ -1129,7 +1129,7 @@ fn print_virtualenv_status(
   root: &Path,
   surfaces: &[Box<dyn LanguageSurface>],
   show_all: bool,
-  frame: &Frame,
+  frame: Frame,
   palette: &Palette,
 ) {
   let has_python = surfaces
@@ -1207,7 +1207,7 @@ fn print_virtualenv_status(
 fn print_gitignore_hygiene(
   root: &Path,
   surfaces: &[Box<dyn LanguageSurface>],
-  frame: &Frame,
+  frame: Frame,
   palette: &Palette,
 ) {
   let hygiene_report = check_gitignore_hygiene(root, surfaces);
@@ -1279,7 +1279,7 @@ pub fn stale_unpinnable_explanation(
 
 fn print_stale_unpinnable_warnings(
   unpinnable_stale: &[(ToolInfo, Version, Version)],
-  frame: &Frame,
+  frame: Frame,
   palette: &Palette,
 ) {
   if unpinnable_stale.is_empty() {
@@ -1317,7 +1317,7 @@ real file on disk rather than talking to `fml lsp`).";
 /// passed inline and the VS Code extension talks to `fml lsp` directly. This
 /// does not change `fml sync`'s behavior in any way — it still works exactly
 /// as before for editor integrations that read native config files directly.
-fn print_sync_notice(frame: &Frame, palette: &Palette) {
+fn print_sync_notice(frame: Frame, palette: &Palette) {
   let body = format!(
     "  {} {}\n    {SYNC_NOTICE_DETAIL}",
     "[INFO] ".cyan().bold(),
