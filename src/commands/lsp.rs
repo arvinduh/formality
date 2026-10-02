@@ -248,15 +248,11 @@ impl LanguageServer for FormalityLsp {
 
     let config = self.get_or_load_config(Some(&root)).await;
 
-    let status = crate::commands::fmt::run_fmt(
+    let status = run_plan(
       &root,
       &config,
-      false,
-      false,
-      false,
-      &[],
-      vec![path.clone()],
-      false,
+      path.clone(),
+      &crate::engine::Plan::fmt(false, false),
     );
 
     if status.is_clean() {
@@ -306,14 +302,11 @@ impl LanguageServer for FormalityLsp {
       ) {
       diags
     } else {
-      let status = crate::commands::lint::run_lint(
+      let status = run_plan(
         &root,
         &config,
-        false,
-        false,
-        &[],
-        vec![path.clone()],
-        false,
+        path.clone(),
+        &crate::engine::Plan::lint(false),
       );
 
       if status.is_clean() {
@@ -420,6 +413,43 @@ pub fn compute_formatting_edits(before: &str, after: &str) -> Vec<TextEdit> {
     range: full_document_range(before),
     new_text: after.to_string(),
   }]
+}
+
+/// Runs `plan` in-process against `path`, the way `fml fmt`/`fml lint` would,
+/// but renders the runner's report to stderr.
+///
+/// stdout carries the JSON-RPC transport, so a single stray byte there breaks
+/// a strict client. stderr is where editors surface a server's log, which is
+/// the output channel the lint fallback's diagnostic points at.
+fn run_plan(
+  root: &Path,
+  config: &FormalityConfig,
+  path: PathBuf,
+  plan: &crate::engine::Plan,
+) -> crate::errors::ExitStatus {
+  let paths = vec![path];
+  let surfaces =
+    match crate::commands::resolve_target_surfaces(root, &[], &paths, config) {
+      Ok(s) => s,
+      Err(e) => {
+        e.print_diagnostic();
+        return crate::errors::ExitStatus::Error;
+      }
+    };
+  crate::commands::doctor::preflight_warn_stale_tools(
+    &surfaces,
+    config,
+    plan.includes(crate::engine::Pass::Format),
+    plan.includes(crate::engine::Pass::Lint),
+  );
+  crate::engine::Runner::run_into(
+    &mut std::io::stderr(),
+    &surfaces,
+    root,
+    &paths,
+    plan,
+    config,
+  )
 }
 
 // ---------------------------------------------------------------------------
