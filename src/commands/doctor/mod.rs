@@ -559,6 +559,14 @@ pub struct ToolLookupResult {
 }
 use crate::errors::ExitStatus;
 
+#[cfg(test)]
+thread_local! {
+  /// The surfaces the last [`run_doctor`] on this thread detected, so a test
+  /// can check detection at its real call site.
+  static LAST_DETECTED: std::cell::RefCell<Vec<&'static str>> =
+    const { std::cell::RefCell::new(Vec::new()) };
+}
+
 /// Executes the `fml doctor` diagnostic command to scan tools, environment, and hygiene.
 #[must_use]
 pub fn run_doctor(
@@ -568,11 +576,17 @@ pub fn run_doctor(
   config: &FormalityConfig,
 ) -> ExitStatus {
   // One walk at most, shared by detection, the table's detected column
-  // and the unconfigured-languages note.
+  // and the unconfigured-languages note. `global.exclude` applies, so the
+  // detected column agrees with what `fml fmt` runs.
   let present = std::cell::LazyCell::new(|| {
-    crate::surfaces::glob::PresentExtensions::scan(root)
+    crate::surfaces::glob::PresentExtensions::scan(
+      root,
+      &config.resolve_global().exclude,
+    )
   });
   let detected = default_registry().detect_surfaces_in(root, config, &present);
+  #[cfg(test)]
+  LAST_DETECTED.set(detected.iter().map(|s| s.name()).collect());
   let detected_names: HashSet<&'static str> =
     detected.iter().map(|s| s.name()).collect();
   let surfaces: Vec<Box<dyn LanguageSurface>> =

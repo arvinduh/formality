@@ -114,7 +114,7 @@ impl SurfaceRegistry {
     config: &FormalityConfig,
   ) -> Vec<Box<dyn LanguageSurface>> {
     let present =
-      std::cell::LazyCell::new(|| glob::PresentExtensions::scan(root));
+      std::cell::LazyCell::new(|| glob::PresentExtensions::scan(root, &[]));
     self.detect_surfaces_in(root, config, &present)
   }
 
