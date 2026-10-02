@@ -1618,6 +1618,8 @@ README.md:7 error MD025/single-title/single-h1 Multiple top-level headings";
       "p\n\n***\n#a\n",
       "```\nc\n```\n#a\n",
       "```\n    ```\n```\n#a\n",
+      "    ```\n#a\n",
+      "    ~~~\n#a\n",
       "```a`\n\n#a\n",
       "    code\n#a\n",
       "<!--\nc\n-->\n#a\n",
