@@ -13,7 +13,7 @@ use super::{
   sync_native_config, tool_missing_guard, tool_missing_result,
 };
 use crate::config::ResolvedLangConfig;
-use pulldown_cmark::{Event, Options, Parser, Tag};
+use pulldown_cmark::{Event, Options, Parser, Tag, TagEnd};
 use rayon::iter::{IntoParallelRefIterator, ParallelIterator};
 use serde::{Deserialize, Serialize};
 use std::io::Write as _;
@@ -943,6 +943,20 @@ fn scan_html_tags(s: &str) -> Option<Vec<HtmlTagToken>> {
   Some(tokens)
 }
 
+/// Parses `src` with the GFM extensions prettier's markdown parser honours.
+///
+/// These extensions don't change how HTML blocks are delimited (that's pure
+/// `CommonMark`), but they do change how *other* content parses, which
+/// matters for not mis-detecting a block boundary inside, say, a GFM table
+/// living next to embedded HTML.
+fn parse_markdown(src: &str) -> Parser<'_> {
+  let opts = Options::ENABLE_TABLES
+    | Options::ENABLE_STRIKETHROUGH
+    | Options::ENABLE_FOOTNOTES
+    | Options::ENABLE_TASKLISTS;
+  Parser::new_ext(src, opts)
+}
+
 /// Byte ranges of every block-level HTML node in `src`, in document order —
 /// exactly the [`Event::Start(Tag::HtmlBlock)`] spans `pulldown-cmark`
 /// emits, which already cover the *whole* node (start of the opening `<` to
@@ -955,16 +969,8 @@ fn scan_html_tags(s: &str) -> Option<Vec<HtmlTagToken>> {
 /// re-indent the lines out of the container, so such blocks stay as written.
 fn extract_html_block_ranges(src: &str) -> Vec<(usize, usize)> {
   let mut spans = Vec::new();
-  // These extensions don't change how HTML blocks are delimited (that's
-  // pure CommonMark), but they do change how *other* content parses, and
-  // getting that right matters for not mis-detecting a block boundary
-  // inside, say, a GFM table living next to embedded HTML.
-  let opts = Options::ENABLE_TABLES
-    | Options::ENABLE_STRIKETHROUGH
-    | Options::ENABLE_FOOTNOTES
-    | Options::ENABLE_TASKLISTS;
   let mut depth = 0usize;
-  for (event, range) in Parser::new_ext(src, opts).into_offset_iter() {
+  for (event, range) in parse_markdown(src).into_offset_iter() {
     match event {
       Event::Start(tag) => {
         if depth == 0 && tag == Tag::HtmlBlock {
@@ -1224,7 +1230,27 @@ fn format_block_html(
     cursor = group_end;
   }
   out.push_str(&src[cursor..]);
-  out
+  // Prettier indents nested wrappers; after a blank line, four spaces turn
+  // a wrapper into an indented code block. Any splice that changes how the
+  // document parses is rejected wholesale.
+  if block_structure(&out) == block_structure(src) {
+    out
+  } else {
+    src.to_string()
+  }
+}
+
+/// The `Start`/`End` tag sequence `pulldown-cmark` sees in `src`: equal for
+/// two documents exactly when they nest the same blocks and inline spans
+/// the same way, whatever the text inside an HTML block says.
+fn block_structure(src: &str) -> Vec<(bool, TagEnd)> {
+  parse_markdown(src)
+    .filter_map(|event| match event {
+      Event::Start(tag) => Some((true, tag.to_end())),
+      Event::End(tag) => Some((false, tag)),
+      _ => None,
+    })
+    .collect()
 }
 
 /// Runs [`format_block_html`] against the file at `path` and writes the
@@ -2797,6 +2823,34 @@ README.md:7 error MD025/single-title/single-h1 Multiple top-level headings";
     ] {
       assert_eq!(extract_html_block_ranges(src), vec![], "in: {src}");
     }
+  }
+
+  #[test]
+  fn test_block_structure_flags_list_exit_and_new_code_block() {
+    let list = "- item\n\n  <div>\n  <img src=\"a.png\">\n  </div>\n";
+    let dedented = "- item\n\n  <div>\n  <img src=\"a.png\" />\n</div>\n";
+    assert_ne!(block_structure(list), block_structure(dedented));
+    let nested =
+      "<div>\n\n<div>\n\n<div>\n\nText.\n\n</div>\n\n</div>\n\n</div>\n";
+    let indented = "<div>\n\n  <div>\n\n    <div>\n\nText.\n\n    </div>\n\n  </div>\n\n</div>\n";
+    assert_ne!(block_structure(nested), block_structure(indented));
+    let badge =
+      "<p align=\"center\">\n<img src=\"a.png\"     alt=\"b\">\n</p>\n";
+    let tidy =
+      "<p align=\"center\">\n  <img src=\"a.png\" alt=\"b\" />\n</p>\n";
+    assert_eq!(block_structure(badge), block_structure(tidy));
+  }
+
+  #[test]
+  fn test_format_block_html_leaves_nested_blank_line_wrappers_untouched() {
+    if !check_binary_exists("prettier") {
+      return;
+    }
+    // Prettier indents each nesting level; past three spaces after a blank
+    // line the wrapper would turn into an indented code block.
+    let src = "<div>\n\n<div>\n\n<div>\n\n<details>\n<summary>X</summary>\n\n\
+    Body.\n\n</details>\n\n</div>\n\n</div>\n\n</div>\n";
+    assert_eq!(format_block_html(src, &[], &[]), src);
   }
 
   #[test]
