@@ -856,7 +856,7 @@ const VOID_ELEMENTS: &[&str] = &[
 ];
 
 /// One HTML tag found by [`scan_html_tags`], reduced to just what
-/// [`group_html_blocks`] needs to track: its (lowercased) name, whether it is
+/// [`html_blocks_balanced`] needs to track: its (lowercased) name, whether it is
 /// a closing tag, and whether it self-closes (`<br/>`, or any void element).
 struct HtmlTagToken {
   name: String,
@@ -875,7 +875,7 @@ struct HtmlTagToken {
 /// anything past what ordinary README idioms need. Given how narrow the
 /// scope is (badge wrappers, `<details>`/`<summary>`, `<div>` wrappers), that
 /// trade-off buys a lot of simplicity for very little real coverage lost —
-/// and [`group_html_blocks`] bails out (leaves the whole document's block
+/// and [`html_blocks_balanced`] bails out (leaves the whole document's block
 /// HTML untouched) rather than guess when this returns `None`.
 fn scan_html_tags(s: &str) -> Option<Vec<HtmlTagToken>> {
   let bytes = s.as_bytes();
@@ -1042,71 +1042,49 @@ fn is_comment_only(mut block: &str) -> bool {
   block.trim().is_empty()
 }
 
-/// Groups `spans` (as returned by [`extract_html_block_ranges`]) into
-/// maximal runs of *tag-balanced* HTML.
+/// Reports whether `spans` (as returned by [`extract_html_block_ranges`])
+/// hold *tag-balanced* HTML when read in document order.
 ///
 /// `CommonMark`'s HTML-block rule ends a block at the first blank line, so a
 /// `<details>`/`<summary>…</summary>` opener and its matching `</details>`
 /// closer — with ordinary markdown content in between (already normalized by
 /// the earlier `markdownlint --fix` + `prettier --parser markdown` passes) —
-/// arrive as two, non-adjacent spans. Formatting either span in isolation
-/// through prettier's **html** parser is unsafe: prettier repairs invalid
-/// fragments rather than rejecting them (verified: handed just the opener,
-/// it silently *inserts* a closing `</details>` that doesn't belong there),
-/// and handed just the closer alone it errors out entirely.
+/// arrive as two, non-adjacent spans. Prettier's **html** parser repairs
+/// invalid fragments rather than rejecting them (verified: handed just the
+/// opener, it silently *inserts* a closing `</details>` that doesn't belong
+/// there), so it must only ever see the spans together, as one balanced
+/// document.
 ///
-/// So spans are grouped by simulating a single tag stack across all of them,
-/// in document order: an opening tag not in [`VOID_ELEMENTS`] pushes, a
-/// closing tag pops (and must match the stack's top), and each time the
-/// stack returns to empty marks the end of one group. Returns `None` —
-/// meaning "leave every block HTML node in this document untouched" — the
-/// moment anything looks inconclusive: a closing tag with no matching open,
-/// an unterminated tag ([`scan_html_tags`] returning `None`), or unbalanced
-/// tags left open at end of document. Round-trip safety matters more here
-/// than coverage: this never guesses.
-fn group_html_blocks(
-  src: &str,
-  spans: &[(usize, usize)],
-) -> Option<Vec<Vec<usize>>> {
+/// A single tag stack runs across every span: an opening tag not in
+/// [`VOID_ELEMENTS`] pushes, a closing tag pops and must match. Returns
+/// `false` — meaning "leave every block HTML node in this document
+/// untouched" — the moment anything looks inconclusive: a closing tag with
+/// no matching open, an unterminated tag ([`scan_html_tags`] returning
+/// `None`), or tags left open at end of document. Round-trip safety matters
+/// more here than coverage: this never guesses.
+fn html_blocks_balanced(src: &str, spans: &[(usize, usize)]) -> bool {
   let mut stack: Vec<String> = Vec::new();
-  let mut groups: Vec<Vec<usize>> = Vec::new();
-  let mut current_group: Vec<usize> = Vec::new();
-
-  for (idx, &(start, end)) in spans.iter().enumerate() {
-    let tokens = scan_html_tags(&src[start..end])?;
-    current_group.push(idx);
+  for &(start, end) in spans {
+    let Some(tokens) = scan_html_tags(&src[start..end]) else {
+      return false;
+    };
     for tok in tokens {
       if tok.self_closing
         || (!tok.closing && VOID_ELEMENTS.contains(&tok.name.as_str()))
       {
         continue;
       }
-      if tok.closing {
-        match stack.last() {
-          Some(top) if *top == tok.name => {
-            stack.pop();
-          }
-          // A closing tag with nothing matching on the stack: either
-          // genuinely malformed HTML, or a shape this scanner doesn't
-          // understand (a raw-text element, mismatched case, etc). Bail
-          // for the whole document rather than mis-splice it.
-          _ => return None,
-        }
-      } else {
+      if !tok.closing {
         stack.push(tok.name);
+      } else if stack.pop().as_ref() != Some(&tok.name) {
+        // Genuinely malformed HTML, or a shape this scanner doesn't
+        // understand (a raw-text element, etc): bail for the whole
+        // document rather than mis-splice it.
+        return false;
       }
     }
-    if stack.is_empty() {
-      groups.push(std::mem::take(&mut current_group));
-    }
   }
-
-  // Tags left open (or a group with no closing spans at all) at EOF: same
-  // "don't guess" bailout.
-  if !stack.is_empty() || !current_group.is_empty() {
-    return None;
-  }
-  Some(groups)
+  stack.is_empty()
 }
 
 /// Runs prettier's **html** parser over a single, self-contained HTML
@@ -1158,15 +1136,13 @@ fn run_prettier_html(
   String::from_utf8(output.stdout).ok()
 }
 
-/// Splits `formatted` (prettier html output for a multi-span group's
-/// bridged virtual document — see [`format_block_html`]) back into one
-/// string per original span, using the `<!--fml-html-gap-N-->` placeholder
-/// lines [`format_block_html`] inserted between them as the cut points.
+/// Splits `formatted` (prettier html output for the batch
+/// [`format_block_html`] builds) back into one string per original span,
+/// cutting at the `<!--fml-html-gap-N-->` marker lines it inserted.
 ///
-/// Returns `None` if a placeholder didn't survive formatting intact (would
-/// only happen if prettier's html parser mangled an HTML comment, which it
-/// doesn't in practice) — the caller falls back to leaving that group
-/// untouched rather than splicing a corrupted result.
+/// Returns `None` if a marker is missing or no longer alone on its line
+/// (prettier reflowed it into neighbouring inline content); the caller then
+/// leaves the file untouched rather than splicing a corrupted result.
 fn split_on_gap_placeholders(
   formatted: &str,
   gap_count: usize,
@@ -1181,6 +1157,11 @@ fn split_on_gap_placeholders(
     let line_end = remaining[after_marker..]
       .find('\n')
       .map_or(remaining.len(), |p| after_marker + p + 1);
+    if !remaining[line_start..marker_pos].trim().is_empty()
+      || !remaining[after_marker..line_end].trim().is_empty()
+    {
+      return None;
+    }
     parts.push(&remaining[..line_start]);
     remaining = &remaining[line_end..];
   }
@@ -1200,25 +1181,19 @@ fn split_on_gap_placeholders(
 /// them to the same result, since prettier's own html formatting is
 /// idempotent and this pass never touches anything else.
 ///
-/// A group of one span (the common case — a self-contained
-/// `<p align="center">…</p>` or `<div>…</div>` with no blank line inside)
-/// is hand ed to [`run_prettier_html`] directly. A multi-span group (an
-/// opener/closer pair split by `CommonMark`'s blank-line rule, e.g.
-/// `<details>` … blank-line-separated markdown … `</details>`) is bridged
-/// into one virtual document with a numbered
-/// `<!--fml-html-gap-N-->` placeholder standing in for each gap, formatted
-/// once, then split back apart on those placeholders — the original gap
-/// text (already-formatted markdown) is re-spliced in verbatim, never
-/// touched by the html parser. See [`group_html_blocks`]'s doc comment for
-/// why a single combined html-parser pass over the *whole* group (interior
-/// markdown included) isn't safe: it collapses a list's line breaks into
-/// plain HTML text content.
+/// Every span in the file is joined into one batch, a numbered
+/// `<!--fml-html-gap-N-->` marker line between neighbours, formatted with a
+/// single prettier spawn, then split back apart on those markers. The text
+/// between spans (already-formatted markdown, e.g. a `<details>` body) never
+/// reaches the html parser: fed to it, a list's line breaks would collapse
+/// into plain HTML text content. It is re-spliced verbatim instead, while an
+/// opener and its closer still sit in one balanced html document.
 ///
-/// Falls back to leaving a group's original text untouched whenever
-/// anything is inconclusive: [`group_html_blocks`] declining to group the
-/// document at all, prettier failing to format a fragment, or a
-/// placeholder not surviving the round trip. A hard failure here would make
-/// `fml fmt` fail on real-world HTML this pass doesn't understand yet;
+/// Falls back to leaving the whole file untouched whenever anything is
+/// inconclusive: unbalanced tags ([`html_blocks_balanced`]), prettier
+/// failing on the batch, a marker not surviving the round trip, or a result
+/// that parses as a different block structure. A hard failure here would
+/// make `fml fmt` fail on real-world HTML this pass doesn't understand yet;
 /// leaving it exactly as written is always a safe, silent no-op instead.
 fn format_block_html(
   src: &str,
@@ -1226,65 +1201,36 @@ fn format_block_html(
   extra_args: &[String],
 ) -> String {
   let spans = extract_html_block_ranges(src);
-  if spans.is_empty() {
+  if spans.is_empty() || !html_blocks_balanced(src, &spans) {
     return src.to_string();
   }
-  let Some(groups) = group_html_blocks(src, &spans) else {
+
+  let mut batch = String::new();
+  for (i, &(start, end)) in spans.iter().enumerate() {
+    if i > 0 {
+      let _ = writeln!(batch, "<!--fml-html-gap-{}-->", i - 1);
+    }
+    batch.push_str(&src[start..end]);
+    if !batch.ends_with('\n') {
+      batch.push('\n');
+    }
+  }
+  let Some(formatted) = run_prettier_html(&batch, inline_config, extra_args)
+  else {
+    return src.to_string();
+  };
+  let Some(parts) = split_on_gap_placeholders(&formatted, spans.len() - 1)
+  else {
     return src.to_string();
   };
 
   let mut out = String::with_capacity(src.len());
   let mut cursor = 0usize;
-
-  for group in groups {
-    let group_start = spans[group[0]].0;
-    let group_end = spans[*group.last().expect("group is never empty")].1;
-    out.push_str(&src[cursor..group_start]);
-
-    let spliced = if group.len() == 1 {
-      let block_text = &src[spans[group[0]].0..spans[group[0]].1];
-      run_prettier_html(block_text, inline_config, extra_args)
-    } else {
-      let mut virtual_doc = String::new();
-      for (gi, &block_idx) in group.iter().enumerate() {
-        let (bs, be) = spans[block_idx];
-        virtual_doc.push_str(&src[bs..be]);
-        if gi + 1 < group.len() {
-          if !virtual_doc.ends_with('\n') {
-            virtual_doc.push('\n');
-          }
-          let _ = writeln!(virtual_doc, "<!--fml-html-gap-{gi}-->");
-        }
-      }
-      run_prettier_html(&virtual_doc, inline_config, extra_args).and_then(
-        |formatted| {
-          let parts = split_on_gap_placeholders(&formatted, group.len() - 1)?;
-          let mut spliced = String::new();
-          for (gi, &block_idx) in group.iter().enumerate() {
-            spliced.push_str(parts[gi].trim_end_matches('\n'));
-            spliced.push('\n');
-            if gi + 1 < group.len() {
-              let (_, be) = spans[block_idx];
-              let (next_start, _) = spans[group[gi + 1]];
-              spliced.push_str(&src[be..next_start]);
-            }
-          }
-          Some(spliced)
-        },
-      )
-    };
-
-    match spliced {
-      Some(text) => {
-        out.push_str(text.trim_end_matches('\n'));
-        out.push('\n');
-      }
-      // Formatting failed for this group specifically (a shape prettier's
-      // html parser rejects, or a spawn failure) -- leave it exactly as
-      // written rather than failing the whole `fml fmt` run over it.
-      None => out.push_str(&src[group_start..group_end]),
-    }
-    cursor = group_end;
+  for (&(start, end), part) in spans.iter().zip(parts) {
+    out.push_str(&src[cursor..start]);
+    out.push_str(part.trim_end_matches('\n'));
+    out.push('\n');
+    cursor = end;
   }
   out.push_str(&src[cursor..]);
   // Prettier indents nested wrappers; after a blank line, four spaces turn
@@ -2977,16 +2923,7 @@ README.md:7 error MD025/single-title/single-h1 Multiple top-level headings";
   }
 
   #[test]
-  fn test_group_html_blocks_single_self_contained_block() {
-    let src = "<p align=\"center\">\n  <img src=\"a.png\">\n</p>\n";
-    let spans = extract_html_block_ranges(src);
-    assert_eq!(spans.len(), 1, "no blank line inside -> one HtmlBlock span");
-    let groups = group_html_blocks(src, &spans).unwrap();
-    assert_eq!(groups, vec![vec![0]]);
-  }
-
-  #[test]
-  fn test_group_html_blocks_regroups_details_split_by_blank_line() {
+  fn test_html_blocks_balanced_pairs_details_split_by_blank_line() {
     // CommonMark's HTML-block rule ends a block at the first blank line, so
     // the `<details>`/`<summary>` opener and the `</details>` closer arrive
     // as two separate spans with the interior markdown outside both.
@@ -2994,21 +2931,28 @@ README.md:7 error MD025/single-title/single-h1 Multiple top-level headings";
       "<details>\n<summary>More</summary>\n\nExtra text.\n\n</details>\n";
     let spans = extract_html_block_ranges(src);
     assert_eq!(spans.len(), 2, "opener and closer are separate HtmlBlocks");
-    let groups = group_html_blocks(src, &spans).unwrap();
-    assert_eq!(
-      groups,
-      vec![vec![0, 1]],
-      "the opener and closer must regroup into one balanced unit"
-    );
+    assert!(html_blocks_balanced(src, &spans));
+    assert!(!html_blocks_balanced(src, &spans[..1]), "opener alone");
   }
 
   #[test]
-  fn test_group_html_blocks_bails_on_mismatched_closing_tag() {
-    // A closing tag with nothing on the stack to match -> None, meaning
-    // "leave the whole document's block HTML untouched" rather than guess.
+  fn test_html_blocks_balanced_rejects_mismatched_closing_tag() {
+    // A closing tag with nothing on the stack to match means "leave the
+    // whole document's block HTML untouched" rather than guess.
     let src = "</div>\n\n<p align=\"center\">\n  <img src=\"a.png\">\n</p>\n";
     let spans = extract_html_block_ranges(src);
-    assert!(group_html_blocks(src, &spans).is_none());
+    assert!(!html_blocks_balanced(src, &spans));
+  }
+
+  #[test]
+  fn test_split_on_gap_placeholders_requires_marker_on_its_own_line() {
+    let ok = "<p>a</p>\n  <!--fml-html-gap-0-->\n<p>b</p>\n";
+    assert_eq!(
+      split_on_gap_placeholders(ok, 1),
+      Some(vec!["<p>a</p>\n", "<p>b</p>\n"])
+    );
+    let reflowed = "<b>a</b> <!--fml-html-gap-0-->\n<b>b</b>\n";
+    assert_eq!(split_on_gap_placeholders(reflowed, 1), None);
   }
 
   #[test]
@@ -3075,7 +3019,7 @@ README.md:7 error MD025/single-title/single-h1 Multiple top-level headings";
 
   #[test]
   fn test_format_block_html_leaves_mismatched_document_untouched() {
-    // No prettier binary needed: group_html_blocks bails before any
+    // No prettier binary needed: html_blocks_balanced bails before any
     // subprocess would be spawned.
     let src = "</div>\n\n<p align=\"center\">\n  <img src=\"a.png\">\n</p>\n";
     let out = format_block_html(src, &[], &[]);
