@@ -618,7 +618,10 @@ fn test_span_truncation_wide_characters_and_emojis() {
 
   let rendered = render(&table, &Palette::none());
   for line in rendered.lines() {
-    assert!(UnicodeWidthStr::width(strip_ansi_escapes(line).as_str()) <= 50);
+    assert!(
+      unicode_width::UnicodeWidthStr::width(strip_ansi_escapes(line).as_str())
+        <= 50
+    );
   }
 }
 
@@ -643,7 +646,8 @@ fn test_render_indent_width_clamping_to_terminal() {
 
   let rendered = render(&table, &Palette::none());
   for line in rendered.lines() {
-    let width = UnicodeWidthStr::width(strip_ansi_escapes(line).as_str());
+    let width =
+      unicode_width::UnicodeWidthStr::width(strip_ansi_escapes(line).as_str());
     assert!(
       width <= 60,
       "Line width {width} exceeded max_width 60: '{line}'"
