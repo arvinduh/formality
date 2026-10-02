@@ -1547,6 +1547,10 @@ fn is_executable_file(path: &std::path::Path) -> bool {
 ///   (Issue #478: winget-installed `typstyle` was `[OK]` in `fml doctor`
 ///   and `[MISS]` in the next `fml fmt`, Fresh-Install Regression
 ///   windows-latest job 110755434272).
+/// * [`InstallMethod::WingetName`]`("LLVM.LLVM")` -- `%ProgramFiles%\LLVM\bin`
+///   instead of the `Links` dirs: `LLVM.LLVM` is an installer package, not a
+///   portable one, so winget links nothing, and a silent install leaves that
+///   dir off the registry `PATH` too (Issue #489, windows-latest probe).
 ///
 /// **Safe without one, and why:**
 ///
@@ -1586,6 +1590,8 @@ enum KnownInstallDir {
   WingetUserLinks,
   /// winget's machine-scope alias directory, `%ProgramFiles%\WinGet\Links`.
   WingetMachineLinks,
+  /// The `bin` of winget's `LLVM.LLVM` installer, `%ProgramFiles%\LLVM\bin`.
+  WingetLlvm,
   /// The `bin` of Homebrew's keg-only `llvm`, `<prefix>/opt/llvm/bin`.
   BrewLlvm,
 }
@@ -1602,6 +1608,7 @@ impl KnownInstallDir {
       InstallMethod::Uv(_) => &[Self::UvTool],
       InstallMethod::Pip(_) | InstallMethod::Pip3(_) => &[Self::PythonUser],
       InstallMethod::Scoop(_) => &[Self::ScoopShims],
+      InstallMethod::WingetName("LLVM.LLVM") => &[Self::WingetLlvm],
       InstallMethod::WingetName(_) | InstallMethod::WingetId(_) => {
         &[Self::WingetUserLinks, Self::WingetMachineLinks]
       }
@@ -1684,6 +1691,11 @@ impl KnownInstallDir {
         non_empty_dir(&env, "ProgramFiles")?
           .join("WinGet")
           .join("Links"),
+      ),
+      Self::WingetLlvm => Some(
+        non_empty_dir(&env, "ProgramFiles")?
+          .join("LLVM")
+          .join("bin"),
       ),
     }
   }
@@ -1857,8 +1869,9 @@ pub fn refresh_path_after_install(program: &str) {
 /// `resolve_binary_path`, which consults every [`KnownInstallDir`] the
 /// binary's own install chain could have written to -- `go install`'s output
 /// directory (`GOBIN`, else `$GOPATH/bin`), pipx/uv/pip's `~/.local/bin`
-/// (#297), Scoop's `shims`, winget's `Links` and Homebrew's llvm keg `bin`
-/// -- in addition to `PATH`. A bare
+/// (#297), Scoop's `shims`, winget's `Links`, winget's LLVM installer
+/// `%ProgramFiles%\LLVM\bin` (#489) and Homebrew's llvm keg `bin` -- in
+/// addition to `PATH`. A bare
 /// `Command::new(binary)` re-does a *`PATH`-only* search inside the OS's
 /// `execvp`, so a binary found only through that fallback would pass the
 /// missing-tool guard and then fail to exec -- "found it, can't run it",
@@ -3889,6 +3902,10 @@ mod tests {
           KnownInstallDir::WingetMachineLinks,
         ],
       ),
+      (
+        InstallMethod::WingetName("LLVM.LLVM"),
+        &[KnownInstallDir::WingetLlvm],
+      ),
       (InstallMethod::Brew("llvm"), &[KnownInstallDir::BrewLlvm]),
       // Audited as safe -- see `KnownInstallDir`'s doc comment for each.
       (InstallMethod::Apt("x"), &[]),
@@ -4045,6 +4062,7 @@ mod tests {
       KnownInstallDir::ScoopShims,
       KnownInstallDir::WingetUserLinks,
       KnownInstallDir::WingetMachineLinks,
+      KnownInstallDir::WingetLlvm,
     ] {
       assert_eq!(
         kind.path_with(no_go_bin_dir, &env),
@@ -4077,6 +4095,35 @@ mod tests {
           .join("Links")
       )
     );
+  }
+
+  #[test]
+  fn test_known_install_dir_path_winget_llvm_is_program_files_llvm_bin() {
+    let env = fake_env(&[("ProgramFiles", r"C:\Program Files")]);
+    assert_eq!(
+      KnownInstallDir::WingetLlvm.path_with(no_go_bin_dir, &env),
+      Some(PathBuf::from(r"C:\Program Files").join("LLVM").join("bin"))
+    );
+  }
+
+  #[test]
+  fn test_only_the_clang_chains_reach_winget_llvm() {
+    // `for_method` matches `WingetName("LLVM.LLVM")` by literal; this pins
+    // that both clang chains still spell it that way, on every OS, and that
+    // no other tool probes `%ProgramFiles%\LLVM\bin` (#489).
+    for entry in ALL_CHAINS {
+      let reaches = entry
+        .chain
+        .iter()
+        .flat_map(KnownInstallDir::for_method)
+        .any(|&kind| kind == KnownInstallDir::WingetLlvm);
+      assert_eq!(
+        reaches,
+        matches!(entry.binary, "clang-format" | "clang-tidy"),
+        "{} and KnownInstallDir::WingetLlvm",
+        entry.binary
+      );
+    }
   }
 
   #[test]
@@ -4115,21 +4162,38 @@ mod tests {
   #[test]
   #[cfg(not(windows))]
   fn test_resolve_via_known_install_dir_skips_windows_only_dirs() {
-    // yamllint's chain lists the Python installers, Scoop and WingetName;
-    // off Windows only the Python dirs may be asked for.
-    let found = resolve_via_known_install_dir_with("yamllint", |kind| {
-      assert!(
-        !matches!(
-          kind,
-          KnownInstallDir::ScoopShims
-            | KnownInstallDir::WingetUserLinks
-            | KnownInstallDir::WingetMachineLinks
-        ),
-        "{kind:?} is Windows only"
-      );
-      None
+    // yamllint's chain lists the Python installers, Scoop and WingetName,
+    // clang-tidy's Brew("llvm"), WingetName("LLVM.LLVM") and Scoop; off
+    // Windows only the Python and Brew dirs may be asked for.
+    for binary in ["yamllint", "clang-tidy"] {
+      let found = resolve_via_known_install_dir_with(binary, |kind| {
+        assert!(
+          !matches!(
+            kind,
+            KnownInstallDir::ScoopShims
+              | KnownInstallDir::WingetUserLinks
+              | KnownInstallDir::WingetMachineLinks
+              | KnownInstallDir::WingetLlvm
+          ),
+          "{kind:?} is Windows only"
+        );
+        None
+      });
+      assert_eq!(found, None);
+    }
+  }
+
+  #[test]
+  #[cfg(windows)]
+  fn test_resolve_via_known_install_dir_finds_winget_llvm_clang_tidy() {
+    let tmp = tempfile::tempdir().expect("tempdir");
+    let fixture = write_bin_fixture(tmp.path(), "clang-tidy");
+    let dir = tmp.path().to_path_buf();
+
+    let found = resolve_via_known_install_dir_with("clang-tidy", move |kind| {
+      (kind == KnownInstallDir::WingetLlvm).then(|| dir.clone())
     });
-    assert_eq!(found, None);
+    assert_eq!(found, Some(fixture));
   }
 
   #[test]
