@@ -18,6 +18,29 @@ jobs:
           Get-Command winget -ErrorAction SilentlyContinue | Format-List Source
           winget --version
 
+      - name: Remove preinstalled LLVM and its PATH entries
+        if: always()
+        continue-on-error: true
+        run: |
+          winget list --id LLVM.LLVM -e --accept-source-agreements
+          winget uninstall --id LLVM.LLVM -e --silent --accept-source-agreements
+          Write-Host "WINGET_UNINSTALL_EXIT=$LASTEXITCODE"
+          if (Test-Path "$env:ProgramFiles\LLVM\Uninstall.exe") {
+            Start-Process "$env:ProgramFiles\LLVM\Uninstall.exe" -ArgumentList '/S' -Wait
+            Write-Host "NSIS_UNINSTALL_RAN=True"
+          }
+          Start-Sleep -Seconds 10
+          Remove-Item "$env:ProgramFiles\LLVM" -Recurse -Force -ErrorAction SilentlyContinue
+          foreach ($scope in 'Machine', 'User') {
+            $old = [Environment]::GetEnvironmentVariable('Path', $scope)
+            if ($old) {
+              $new = ($old -split ';' | Where-Object { $_ -notmatch 'LLVM' }) -join ';'
+              [Environment]::SetEnvironmentVariable('Path', $new, $scope)
+            }
+          }
+          Write-Host "LLVM_DIR_EXISTS_AFTER_UNINSTALL=$(Test-Path "$env:ProgramFiles\LLVM\bin\clang-tidy.exe")"
+          winget list --id LLVM.LLVM -e
+
       - name: Registry PATH before install
         if: always()
         continue-on-error: true
@@ -53,7 +76,7 @@ jobs:
           Write-Host "== $env:ProgramFiles\LLVM\bin clang-* =="
           Get-ChildItem "$env:ProgramFiles\LLVM\bin" -Filter 'clang-*' -ErrorAction Continue | Select-Object -ExpandProperty FullName
           Write-Host "== search for clang-tidy.exe under Program Files / LOCALAPPDATA =="
-          Get-ChildItem $env:ProgramFiles, ${env:ProgramFiles(x86)}, $env:LOCALAPPDATA -Recurse -Filter 'clang-tidy.exe' -ErrorAction SilentlyContinue | Select-Object -ExpandProperty FullName
+          Get-ChildItem "$env:ProgramFiles\LLVM", "$env:LOCALAPPDATA\Microsoft\WinGet\Packages", "$env:ProgramFiles\WinGet\Packages" -Recurse -Filter 'clang-tidy.exe' -ErrorAction SilentlyContinue | Select-Object -ExpandProperty FullName
 
       - name: winget Links dirs
         if: always()
@@ -81,8 +104,8 @@ jobs:
         if: always()
         continue-on-error: true
         run: |
-          Write-Host "== same process =="
+          Write-Host "== same process (runner-inherited PATH) =="
           Get-Command clang-tidy -ErrorAction SilentlyContinue | Format-List Source
           Get-Command clang-format -ErrorAction SilentlyContinue | Format-List Source
-          Write-Host "== fresh pwsh child =="
-          pwsh -NoProfile -Command "Get-Command clang-tidy -ErrorAction SilentlyContinue | Format-List Source; Get-Command clang-format -ErrorAction SilentlyContinue | Format-List Source; 'child-done'"
+          Write-Host "== fresh pwsh child, PATH rebuilt from registry =="
+          pwsh -NoProfile -Command "`$env:Path = [Environment]::GetEnvironmentVariable('Path','Machine') + ';' + [Environment]::GetEnvironmentVariable('Path','User'); Get-Command clang-tidy -ErrorAction SilentlyContinue | Format-List Source; Get-Command clang-format -ErrorAction SilentlyContinue | Format-List Source; 'child-done'"
