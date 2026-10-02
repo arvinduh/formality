@@ -454,8 +454,23 @@ pub trait LanguageSurface: DeclaresFacets + Send + Sync {
   fn file_extensions(&self) -> &[&'static str] {
     &[]
   }
+  /// Root-level filenames (manifests, tool configs) that mark this surface
+  /// as active even when no source file exists yet.
+  fn marker_files(&self) -> &[&'static str] {
+    &[]
+  }
   /// Detects whether this language surface is active in workspace `root`.
-  fn detect(&self, root: &Path) -> bool;
+  ///
+  /// The default is active when any `marker_files()` entry is a regular file
+  /// directly under `root` (a directory of that name does not count), or
+  /// when any non-ignored file under `root` has one of `file_extensions()`.
+  /// Markers are checked first: they are single `stat` calls, while the
+  /// extension check walks the whole tree.
+  fn detect(&self, root: &Path) -> bool {
+    self.marker_files().iter().any(|m| root.join(m).is_file())
+      || !find_files_with_ext(root, self.file_extensions(), &[], &[], &[])
+        .is_empty()
+  }
   /// Returns information about required tools for this surface.
   fn tool_info(&self, config: &ResolvedLangConfig) -> Vec<ToolInfo>;
   /// Formats source files using underlying tools.
