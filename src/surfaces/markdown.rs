@@ -16,6 +16,7 @@ use crate::config::ResolvedLangConfig;
 use pulldown_cmark::{Event, Options, Parser, Tag, TagEnd};
 use rayon::iter::{IntoParallelRefIterator, ParallelIterator};
 use serde::{Deserialize, Serialize};
+use std::fmt::Write as _;
 use std::io::Write as _;
 use std::path::{Path, PathBuf};
 use std::process::Stdio;
@@ -1239,7 +1240,7 @@ fn format_block_html(
           if !virtual_doc.ends_with('\n') {
             virtual_doc.push('\n');
           }
-          virtual_doc.push_str(&format!("<!--fml-html-gap-{gi}-->\n"));
+          let _ = writeln!(virtual_doc, "<!--fml-html-gap-{gi}-->");
         }
       }
       run_prettier_html(&virtual_doc, inline_config, extra_args).and_then(
