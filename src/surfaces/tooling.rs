@@ -1955,7 +1955,7 @@ pub fn merge_tool_streams(
 
 /// Plain-text description of a non-zero [`std::process::ExitStatus`] with no
 /// `Display`-stutter (`ExitStatus`'s own `Display` is already `exit code: N`).
-fn exit_status_summary(status: &std::process::ExitStatus) -> String {
+fn exit_status_summary(status: std::process::ExitStatus) -> String {
   status.code().map_or_else(
     || "Command failed (terminated by signal)".to_string(),
     |code| format!("Command failed with exit code {code}"),
@@ -2029,7 +2029,7 @@ pub fn run_tool_command_classified(
       let message = merge_tool_streams(
         &stdout,
         &stderr,
-        &exit_status_summary(&output.status),
+        &exit_status_summary(output.status),
       );
       let status = match classify(output.status.code()) {
         ExitClass::ViolationsFound => SurfaceStatus::ViolationsFound {
@@ -3460,6 +3460,8 @@ mod tests {
   #[test]
   #[cfg(unix)]
   fn test_resolve_installed_binary_in_rejects_a_non_executable_file() {
+    use std::os::unix::fs::PermissionsExt;
+
     // `which::which` requires the executable bit for a PATH hit, so the
     // fallback must too -- otherwise a mode-0644 leftover in GOBIN would
     // pass the missing-tool guard and then fail to exec, which is the
@@ -3477,7 +3479,6 @@ mod tests {
     // ...and the same file does resolve once it is actually executable, so
     // this asserts the permission bit specifically, not merely that some
     // unrelated condition rejected the path.
-    use std::os::unix::fs::PermissionsExt;
     std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o755))
       .expect("chmod fixture");
     assert_eq!(

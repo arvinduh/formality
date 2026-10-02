@@ -289,9 +289,6 @@ mod tests {
   // the rule's own named exemplar. See docs/style-guide.md §2.
   #[test]
   fn test_is_predicate_methods_carry_must_use() {
-    let manifest_dir = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
-    let src_dir = manifest_dir.join("src");
-
     // Strips a leading `pub`/`pub(...)` visibility modifier and any
     // `const`/`async`/`unsafe` qualifiers, then reports whether what's left
     // starts a `fn is_*` predicate signature.
@@ -327,6 +324,9 @@ mod tests {
 
       rest.starts_with("fn is_")
     }
+
+    let manifest_dir = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+    let src_dir = manifest_dir.join("src");
 
     let mut violations = Vec::new();
     for entry in ignore::WalkBuilder::new(&src_dir)
@@ -585,13 +585,13 @@ mod tests {
   // unrelated issues.
   #[test]
   fn test_source_files_do_not_contain_bare_pre_recreation_issue_citations() {
-    let manifest_dir = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
-    let src_dir = manifest_dir.join("src");
-
     const PRE_RECREATION_NUMBERS: &[u32] = &[
       68, 76, 82, 100, 113, 119, 120, 121, 126, 133, 151, 157, 158, 159, 165,
       177, 191, 192, 194, 195, 201,
     ];
+
+    let manifest_dir = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+    let src_dir = manifest_dir.join("src");
 
     let mut violations = Vec::new();
     for entry in ignore::WalkBuilder::new(&src_dir)
