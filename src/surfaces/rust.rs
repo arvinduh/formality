@@ -168,6 +168,9 @@ pub(crate) fn build_rustfmt_fallback_cmd(
   c
 }
 
+/// Source file extensions owned by the Rust surface.
+const RUST_EXTENSIONS: &[&str] = &["rs"];
+
 impl LanguageSurface for RustSurface {
   fn name(&self) -> &'static str {
     "rust"
@@ -178,7 +181,7 @@ impl LanguageSurface for RustSurface {
   }
 
   fn file_extensions(&self) -> &[&'static str] {
-    &["rs"]
+    RUST_EXTENSIONS
   }
 
   fn clone_box(&self) -> Box<dyn LanguageSurface> {
@@ -191,7 +194,7 @@ impl LanguageSurface for RustSurface {
 
   fn detect(&self, root: &Path) -> bool {
     root.join("Cargo.toml").is_file()
-      || !find_files_with_ext(root, &["rs"], &[], &[], &[]).is_empty()
+      || !find_files_with_ext(root, RUST_EXTENSIONS, &[], &[], &[]).is_empty()
   }
 
   fn tool_info(
@@ -239,7 +242,7 @@ impl LanguageSurface for RustSurface {
       );
     }
 
-    let files = ctx.matched_files(&["rs"]);
+    let files = ctx.matched_files(RUST_EXTENSIONS);
     if let Some(res) = ctx.early_out_if_empty(&files, self.name(), start) {
       return res;
     }
