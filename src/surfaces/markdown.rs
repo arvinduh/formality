@@ -77,6 +77,23 @@ pub struct MarkdownlintConfig {
   /// `MD029` to `false`.
   #[serde(rename = "MD029")]
   pub md029: bool,
+  /// MD031 (blanks-around-fences) rule enablement, `false` in the config fml
+  /// generates (#513). Its fixer puts blank lines around a fence inside a
+  /// list item, which makes a tight list loose, and writes a bare `>` at
+  /// column 0 into a quote nested in an item, which ends the list; prettier
+  /// already puts blank lines around a top-level fence. A project's own
+  /// `.markdownlint.*` replaces this config entirely, so it brings the rule
+  /// and its fixer back unless it also sets `MD031` to `false`.
+  #[serde(rename = "MD031")]
+  pub md031: bool,
+  /// MD032 (blanks-around-lists) rule enablement, `false` in the config fml
+  /// generates (#513) for the same reason as [`Self::md031`]: after a list
+  /// whose item holds a quoted fence, its fixer writes a bare `>` at column
+  /// 0, which renders as an extra empty quote. prettier already puts blank
+  /// lines around a list. A project's own `.markdownlint.*` brings it back
+  /// unless it also sets `MD032` to `false`.
+  #[serde(rename = "MD032")]
+  pub md032: bool,
   /// MD033 (no-inline-html) rule enablement. Shipped default is `false` —
   /// see [`crate::config::MarkdownOptions::no_inline_html`] for why, and
   /// how to opt back in from `formality.toml`.
@@ -132,6 +149,8 @@ fn markdownlint_config_for_lang(
       tables: false,
     },
     md029: false,
+    md031: false,
+    md032: false,
     md033: no_inline_html,
   }
 }
@@ -1265,6 +1284,8 @@ mod tests {
         tables: false,
       },
       md029: false,
+      md031: false,
+      md032: false,
       md033: false,
     };
     let rendered = cfg.render().unwrap();
@@ -2023,11 +2044,12 @@ README.md:7 error MD025/single-title/single-h1 Multiple top-level headings";
     );
   }
 
-  /// #479: lists whose rendering markdownlint's MD010 and MD029 fixers
-  /// changed, each with what `fml fmt` must leave. micromark renders every
-  /// pair the same: a tab-indented paragraph stays in its item, and each
-  /// ordered list keeps its start number.
-  const LIST_RENDER_CASES: [(&str, &str); 4] = [
+  /// Lists whose rendering markdownlint's MD010 and MD029 fixers (#479) and
+  /// MD031 and MD032 fixers (#513) changed, each with what `fml fmt` must
+  /// leave. micromark renders every pair the same: a tab-indented paragraph
+  /// stays in its item, each ordered list keeps its start number, a fence
+  /// keeps its list tight, and a quoted fence stays in its item.
+  const LIST_RENDER_CASES: [(&str, &str); 8] = [
     ("# T\n\n- item\n\n\tmore\n", "# T\n\n- item\n\n  more\n"),
     (
       "# T\n\n123456789. item\n\n           more\n",
@@ -2037,6 +2059,22 @@ README.md:7 error MD025/single-title/single-h1 Multiple top-level headings";
     (
       "# T\n\n1. a\n\n```text\nx\n```\n\n2. b\n",
       "# T\n\n1. a\n\n```text\nx\n```\n\n2. b\n",
+    ),
+    (
+      "# T\n\n-\ta\n\t```text\n\t#x\n\t```\n\tp\n",
+      "# T\n\n- a\n  ```text\n  #x\n  ```\n  p\n",
+    ),
+    (
+      "# T\n\n- a\n  ```text\n  ~~~\n  #x\n  ```\n",
+      "# T\n\n- a\n  ```text\n  ~~~\n  #x\n  ```\n",
+    ),
+    (
+      "# T\n\n- a\n  > ```text\n  > x\n  > ```\n  > p\n",
+      "# T\n\n- a\n  > ```text\n  > x\n  > ```\n  >\n  > p\n",
+    ),
+    (
+      "# T\n\n- > ```text\n  > #x\n  > ```\n#Next\n",
+      "# T\n\n- > ```text\n  > #x\n  > ```\n\n\\#Next\n",
     ),
   ];
 

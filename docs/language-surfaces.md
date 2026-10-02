@@ -134,9 +134,14 @@ machine-generated shape.
   a list renders as. MD010 swaps a tab for one space, which moves a tab-indented
   paragraph out of its list item, and MD029 renumbers `10.` to `1.`, dropping
   the list's start number. prettier already turns those tabs into spaces and
-  renumbers the items after the first, both without changing the rendering. A
+  renumbers the items after the first, both without changing the rendering.
+  `MD031`/`blanks-around-fences` and `MD032`/`blanks-around-lists` are off for
+  the same reason (#513): MD031 puts blank lines around a fence inside a list
+  item, which makes a tight list loose, and both write a bare `>` at column 0
+  into a quote nested in an item, which ends the list or adds an empty quote.
+  prettier already puts blank lines around a top-level fence or list. A
   project's own `.markdownlint.*` replaces that config entirely, so it brings
-  both rules and their fixers back unless it also sets them to `false`.
+  these rules and their fixers back unless it also sets them to `false`.
 - **`[lang.markdown]` options**: `prose_wrap` (`"always"` / `"never"` /
   `"preserve"`); `no_inline_html` (bool, default `false`) — controls
   markdownlint's `MD033`/`no-inline-html` rule. Ships **disabled** by default:
