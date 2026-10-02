@@ -174,7 +174,8 @@ pub enum Commands {
   /// A document formatter and diagnostics publisher: `textDocument/formatting`
   /// runs `fml fmt` on the requested file; `did_save` / `did_open` run
   /// `fml lint` (or a structured per-surface parser) to publish diagnostics;
-  /// `did_change_watched_files` invalidates the cached `formality.toml`.
+  /// `did_change_watched_files` reloads `formality.toml`, keeping the previous
+  /// config when the new one is invalid.
   ///
   /// This is not a replacement for your language server — it does not spawn,
   /// proxy, or route requests to rust-analyzer, pyright, clangd, or any other
