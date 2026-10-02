@@ -102,6 +102,8 @@ pub fn walk_candidate_files(
 /// the candidate ignore rules live: gitignore, standard ignored dirs, temp
 /// files.
 fn candidate_file_paths(root: &Path) -> impl Iterator<Item = ignore::DirEntry> {
+  #[cfg(test)]
+  walk_count::record(root);
   ignore::WalkBuilder::new(root)
     .hidden(false)
     .git_ignore(true)
@@ -168,6 +170,35 @@ impl PresentExtensions {
   #[must_use]
   pub fn contains(&self, ext: &str) -> bool {
     self.0.contains(ascii_lowercase(ext).as_ref())
+  }
+}
+
+/// Counts candidate walks per root, so a test can pin how many walks one
+/// command takes. Keyed by root because tests run in parallel, each in its
+/// own temp dir, and a surface may walk on a worker thread.
+#[cfg(test)]
+pub mod walk_count {
+  use std::path::{Path, PathBuf};
+
+  static WALKS: std::sync::Mutex<Vec<PathBuf>> =
+    std::sync::Mutex::new(Vec::new());
+
+  /// Records one walk rooted at `root`.
+  pub fn record(root: &Path) {
+    WALKS
+      .lock()
+      .unwrap_or_else(std::sync::PoisonError::into_inner)
+      .push(root.to_path_buf());
+  }
+
+  /// How many walks so far were rooted at `root`.
+  pub fn of(root: &Path) -> usize {
+    WALKS
+      .lock()
+      .unwrap_or_else(std::sync::PoisonError::into_inner)
+      .iter()
+      .filter(|r| *r == root)
+      .count()
   }
 }
 

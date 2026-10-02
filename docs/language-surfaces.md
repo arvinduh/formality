@@ -362,9 +362,16 @@ explicitly in `formality.toml`: is one of its `marker_files()` a regular file at
 `root`, or does at least one candidate file with one of its `file_extensions()`
 exist under `root` (excluding common ignore directories). `present` is the set
 of extensions from one walk of `root`, shared by every surface, so
-auto-detection walks the tree once. `fml doctor` shows detection and tool status
-for active surfaces, and `fml doctor --all` shows both for every surface in the
-fleet.
+auto-detection walks the tree once.
+
+For `fml fmt`, `fml lint`, `fml fix` and `fml sync` with no path arguments,
+`present` comes from the runner's own candidate list, so the whole run walks the
+tree once. That list has `global.exclude` applied: a file matched only by
+`global.exclude` does not activate its surface, since fml ignores excluded files
+everywhere. A surface's own `exclude` does not affect detection.
+
+`fml doctor` shows detection and tool status for active surfaces, and
+`fml doctor --all` shows both for every surface in the fleet.
 
 ## Adding a 13th surface
 

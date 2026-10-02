@@ -25,8 +25,8 @@ use crate::config::FormalityConfig;
 use crate::engine::{Pass, Plan, Runner, Scope};
 use crate::errors::{ExitStatus, FormalityError, GitError, SurfaceError};
 use crate::surfaces::{
-  LanguageSurface, all_surfaces, detect_surfaces_smart, find_files_with_ext,
-  get_surface_by_name,
+  LanguageSurface, all_surfaces, default_registry, find_files_with_ext,
+  get_surface_by_name, glob,
 };
 
 /// Dispatches a [`Plan`] across target surfaces for the `fmt`, `lint`, and
@@ -265,7 +265,12 @@ pub fn resolve_target_surfaces(
 
   match scope {
     Scope::Paths(paths) => Ok(surfaces_with_files_under(root, paths, config)),
-    Scope::Workspace(_) => Ok(detect_surfaces_smart(root, config)),
+    Scope::Workspace(candidates) => {
+      let present = std::cell::LazyCell::new(|| {
+        glob::PresentExtensions::from_paths(candidates)
+      });
+      Ok(default_registry().detect_surfaces_in(root, config, &present))
+    }
   }
 }
 
@@ -522,5 +527,26 @@ mod tests {
     assert!(!resolved_files.contains(&file_excluded));
     assert!(!resolved_files.contains(&file_fixture));
     assert!(!resolved_files.contains(&file_ignored));
+  }
+
+  #[test]
+  fn test_default_run_walks_the_workspace_once() {
+    let temp = TempDir::new().unwrap();
+    let root = temp.path();
+    fs::write(root.join("main.rs"), "fn main() {}\n").unwrap();
+
+    let mut out = Vec::new();
+    let _ = run_resolved(
+      &mut out,
+      root,
+      &FormalityConfig::with_defaults(),
+      &[],
+      &[],
+      &Plan::fmt(true, true),
+    );
+
+    // Detection found rust and the runner formatted it, both from one walk.
+    assert!(String::from_utf8_lossy(&out).contains("rust"));
+    assert_eq!(glob::walk_count::of(root), 1);
   }
 }
