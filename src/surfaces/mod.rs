@@ -191,6 +191,7 @@ impl ExecutionContext {
 }
 
 /// Builds a minimal `ExecutionContext` for testing language surfaces.
+#[cfg(test)]
 #[must_use]
 pub fn test_ctx(
   root: impl AsRef<Path>,
@@ -399,7 +400,7 @@ impl SurfaceStatus {
   }
 
   /// The names of the config files this status reports as *newly created*.
-  /// Convenience for tests and callers that only care about creations.
+  #[cfg(test)]
   #[must_use]
   pub fn created_file_names(&self) -> Vec<&str> {
     self
@@ -411,6 +412,7 @@ impl SurfaceStatus {
   }
 
   /// The names of every config file this status reports, created or updated.
+  #[cfg(test)]
   #[must_use]
   pub fn synced_file_names(&self) -> Vec<&str> {
     self

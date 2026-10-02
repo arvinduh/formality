@@ -401,6 +401,7 @@ impl Version {
   /// `semver` rejects still constructs but makes [`Version::to_semver`] lossy,
   /// so ordering stops matching structural equality — a `debug_assert`
   /// catches it.
+  #[cfg(test)]
   pub fn with_prerelease(
     major: u64,
     minor: u64,
@@ -620,7 +621,7 @@ impl Version {
   /// `"0"` fallback is unreachable in practice; if a caller hand-builds an
   /// invalid one anyway it sorts below the matching release (rule 9) but two
   /// such strings then compare `Equal` while `PartialEq` sees them distinct —
-  /// [`Version::with_prerelease`]'s `debug_assert` guards that.
+  /// the test-only `Version::with_prerelease`'s `debug_assert` guards that.
   fn to_semver(&self) -> semver::Version {
     let pre = match self.prerelease.as_deref() {
       None | Some("") => semver::Prerelease::EMPTY,
