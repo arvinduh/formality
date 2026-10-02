@@ -478,6 +478,9 @@ struct BlockScan {
   /// The content column of each open list item, innermost last: a line
   /// indented that far belongs to the item, four more make indented code.
   items: Vec<usize>,
+  /// The open paragraph sits in a blockquote, so a line without `>` can
+  /// only continue it lazily.
+  quoted: bool,
   /// The open code fence, as [`in_fence`] tracks it.
   fence: Option<(char, usize)>,
   /// The end marker of an open HTML block, from [`html_block_end`].
@@ -533,14 +536,26 @@ impl BlockScan {
       }
       return false;
     }
+    // A setext underline is never lazy: outside the paragraph's blockquote
+    // or list item, `===` is paragraph text (`> q⏎===` is one paragraph).
+    let lazy = (self.quoted && !rest.starts_with('>'))
+      || self.items.last().is_some_and(|&col| indent < col);
     let setext = !opens
+      && !lazy
       && (rest.trim_end().bytes().all(|b| b == b'=')
         || rest.trim_end().bytes().all(|b| b == b'-'));
     let breaks = setext || is_thematic_break(rest);
-    if let Some(width) = list_marker(rest).filter(|_| !breaks) {
+    let marker = list_marker(rest).filter(|_| !breaks);
+    if let Some(width) = marker {
       self.items.retain(|&col| col <= indent);
       self.items.push(indent + width);
     }
+    let content = marker.map_or(rest, |_| {
+      rest.trim_start_matches(|c: char| {
+        c.is_ascii_digit() || "-*+.) \t".contains(c)
+      })
+    });
+    self.quoted = content.starts_with('>') || (!opens && self.quoted);
     self.in_para = !(is_atx_heading(rest) || breaks);
     opens
   }
@@ -1648,6 +1663,8 @@ README.md:7 error MD025/single-title/single-h1 Multiple top-level headings";
       "p\n\n#a\n",
       "# T\n#a\n",
       "p\n===\n#a\n",
+      "- i\n  ===\n#a\n",
+      "> q\n\np\n===\n#a\n",
       "p\n---\n#a\n",
       "p\n\n***\n#a\n",
       "```\nc\n```\n#a\n",
@@ -1677,6 +1694,9 @@ README.md:7 error MD025/single-title/single-h1 Multiple top-level headings";
       "1. i\n\n    more\n#a\n",
       "- i\n\n    more\n#a\n",
       "- a\n  - b\n\n      more\n#a\n",
+      "> q\n===\n#a\n",
+      "- i\n===\n#a\n",
+      "- > q\n  ===\n#a\n",
       "<span>x</span>\n#a\n",
     ];
     for src in opens_block.into_iter().chain(continues) {
