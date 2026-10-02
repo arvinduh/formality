@@ -9,6 +9,7 @@ use super::{
   diff_check_via_tempcopy_classified, lint_fix_unsupported,
   run_tool_command_classified, sync_native_config, tool_missing_guard,
 };
+use std::io::Write;
 use std::time::Instant;
 
 /// Detects the failure google-java-format produces when the `java` on
@@ -436,7 +437,6 @@ impl LanguageSurface for JavaSurface {
               };
             }
           };
-          use std::io::Write;
           if let Err(e) = temp_file.write_all(rendered.as_bytes()) {
             return SurfaceResult {
               surface_name: self.name(),

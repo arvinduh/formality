@@ -971,6 +971,13 @@ mod tests {
   /// contains the absolute run-root path — must survive byte-for-byte.
   #[test]
   fn relativize_text_over_real_render_diff_never_touches_hunk_bodies() {
+    struct ColorOverrideGuard;
+    impl Drop for ColorOverrideGuard {
+      fn drop(&mut self) {
+        colored::control::unset_override();
+      }
+    }
+
     let root = Path::new("/home/u/proj");
     let old = "use \"/home/u/proj/lib\";\n\
                let p = \"/home/u/proj/x\";\n\
@@ -1033,12 +1040,6 @@ mod tests {
     // ever needs this same override, promote this to a shared
     // `Mutex`-guarded helper so the two can't interleave either — one test
     // doing the mutation doesn't justify that machinery yet.
-    struct ColorOverrideGuard;
-    impl Drop for ColorOverrideGuard {
-      fn drop(&mut self) {
-        colored::control::unset_override();
-      }
-    }
     let _guard = ColorOverrideGuard;
 
     colored::control::set_override(true);

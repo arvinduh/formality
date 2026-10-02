@@ -285,6 +285,26 @@ mod tests {
   where
     F: FnOnce(&Path),
   {
+    struct Cleanup {
+      orig_path: Option<std::ffi::OsString>,
+    }
+    impl Drop for Cleanup {
+      fn drop(&mut self) {
+        if let Some(ref p) = self.orig_path {
+          // SAFETY: serialized by `KTLINT_TEST_GUARD`.
+          unsafe {
+            std::env::set_var("PATH", p);
+          }
+        } else {
+          // SAFETY: serialized by `KTLINT_TEST_GUARD`.
+          unsafe {
+            std::env::remove_var("PATH");
+          }
+        }
+        forget_binary("ktlint");
+      }
+    }
+
     let _guard = ktlint_test_lock();
 
     let temp = TempDir::new().unwrap();
@@ -330,26 +350,6 @@ mod tests {
     // concurrently in this test harness.
     unsafe {
       std::env::set_var("PATH", &new_path);
-    }
-
-    struct Cleanup {
-      orig_path: Option<std::ffi::OsString>,
-    }
-    impl Drop for Cleanup {
-      fn drop(&mut self) {
-        if let Some(ref p) = self.orig_path {
-          // SAFETY: serialized by `KTLINT_TEST_GUARD`.
-          unsafe {
-            std::env::set_var("PATH", p);
-          }
-        } else {
-          // SAFETY: serialized by `KTLINT_TEST_GUARD`.
-          unsafe {
-            std::env::remove_var("PATH");
-          }
-        }
-        forget_binary("ktlint");
-      }
     }
 
     let _cleanup = Cleanup { orig_path };
