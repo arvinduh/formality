@@ -357,8 +357,7 @@ impl LanguageServer for FormalityLsp {
       change
         .uri
         .to_file_path()
-        .ok()
-        .is_some_and(|p| is_formality_config_file(&p))
+        .is_ok_and(|p| is_formality_config_file(&p))
     });
 
     if has_config_change {

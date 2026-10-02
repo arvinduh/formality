@@ -174,10 +174,10 @@ fn test_extract_pins_handles_various_formats() {
 
 #[test]
 fn test_mismatch_detected_when_channels_differ() {
-  let yaml = r#"
+  let yaml = r"
     - name: Step 1
       uses: dtolnay/rust-toolchain@1.97.1
-  "#;
+  ";
   let pins = extract_pins(yaml, ".github/workflows/ci.yml");
   let expected_channel = "1.98.1";
   let mismatches: Vec<String> = pins

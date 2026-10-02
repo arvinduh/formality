@@ -116,10 +116,35 @@ pub fn build_taplo_lsp_lint_args(
     "never".to_string(),
   ];
   for f in files {
-    args.push(f.to_string_lossy().to_string());
+    args.push(taplo_path_arg(&f.to_string_lossy(), cfg!(windows)));
   }
   args.extend(extra_args.iter().cloned());
   args
+}
+
+/// Spells `path` as a taplo file argument that matches exactly that file.
+///
+/// taplo globs every file argument, so a path is a pattern: `[ ] { } ( ) * ?`
+/// are each wrapped in a one-character class, which both glob engines taplo
+/// ships with (Rust `glob` natively, `fast-glob` in the npm build) read as the
+/// literal. The npm build's `fast-glob` also reads `\` as an escape, so a
+/// Windows path matches nothing and taplo exits 0 having done nothing (Issue
+/// #501); `backslash_is_separator` (`cfg!(windows)` in production) turns `\`
+/// into `/`, which both engines accept as a Windows separator.
+fn taplo_path_arg(path: &str, backslash_is_separator: bool) -> String {
+  let mut arg = String::with_capacity(path.len());
+  for c in path.chars() {
+    match c {
+      '\\' if backslash_is_separator => arg.push('/'),
+      '[' | ']' | '{' | '}' | '(' | ')' | '*' | '?' => {
+        arg.push('[');
+        arg.push(c);
+        arg.push(']');
+      }
+      _ => arg.push(c),
+    }
+  }
+  arg
 }
 
 /// TOML language surface implementation.
@@ -201,7 +226,10 @@ impl LanguageSurface for TomlSurface {
         &files,
         |scratch| {
           let mut cmd = create_tool_command("taplo");
-          cmd.arg("format").args(&inline_config).arg(scratch);
+          cmd
+            .arg("format")
+            .args(&inline_config)
+            .arg(taplo_path_arg(&scratch.to_string_lossy(), cfg!(windows)));
           cmd.args(&ctx.lang_config.extra_args);
           cmd.current_dir(ctx.root.as_path());
           cmd.output()
@@ -216,7 +244,7 @@ impl LanguageSurface for TomlSurface {
     cmd.args(&inline_config);
 
     for f in &files {
-      cmd.arg(f);
+      cmd.arg(taplo_path_arg(&f.to_string_lossy(), cfg!(windows)));
     }
 
     cmd.args(&ctx.lang_config.extra_args);
@@ -245,7 +273,7 @@ impl LanguageSurface for TomlSurface {
     cmd.arg("lint");
 
     for f in &files {
-      cmd.arg(f);
+      cmd.arg(taplo_path_arg(&f.to_string_lossy(), cfg!(windows)));
     }
 
     cmd.args(&ctx.lang_config.extra_args);
@@ -377,6 +405,83 @@ mod tests {
   }
 
   #[test]
+  fn test_taplo_path_arg_windows_path_uses_forward_slashes() {
+    assert_eq!(
+      taplo_path_arg(r"C:\Users\RUNNER~1\Temp\fml-check-x\0\a.toml", true),
+      "C:/Users/RUNNER~1/Temp/fml-check-x/0/a.toml"
+    );
+  }
+
+  #[test]
+  fn test_taplo_path_arg_keeps_backslash_where_it_is_a_name_char() {
+    assert_eq!(taplo_path_arg(r"/srv/a\b.toml", false), r"/srv/a\b.toml");
+  }
+
+  #[test]
+  fn test_taplo_path_arg_escapes_glob_metacharacters() {
+    assert_eq!(
+      taplo_path_arg(r"C:\w\a[b]\{c}(d)*?!.toml", true),
+      "C:/w/a[[]b[]]/[{]c[}][(]d[)][*][?]!.toml"
+    );
+    assert_eq!(
+      taplo_path_arg("/w/a[b]/c{d}.toml", false),
+      "/w/a[[]b[]]/c[{]d[}].toml"
+    );
+  }
+
+  #[test]
+  fn test_toml_format_writes_file_under_glob_metacharacter_dir() {
+    if !check_binary_exists("taplo") {
+      return;
+    }
+    let temp = TempDir::new().unwrap();
+    // Unescaped, `[b]` matches only `b` (Rust `glob`) and `(c){d,e}` is a
+    // group and an alternation (`fast-glob`): no engine finds this file.
+    let dir = temp.path().join("a[b](c){d,e}");
+    std::fs::create_dir(&dir).unwrap();
+    let file = dir.join("f.toml");
+    std::fs::write(&file, "[package]\n name =   \"x\"\n").unwrap();
+
+    let mut ctx =
+      test_ctx(temp.path(), crate::config::ResolvedLangConfig::new("toml"));
+    ctx.paths = Arc::new(vec![file.clone()]);
+    let res = TomlSurface.format(&ctx);
+
+    assert!(
+      matches!(res.status, SurfaceStatus::Passed),
+      "{:?}",
+      res.status
+    );
+    assert_eq!(
+      std::fs::read_to_string(&file).unwrap(),
+      "[package]\nname = \"x\"\n"
+    );
+  }
+
+  #[test]
+  fn test_toml_lint_reads_file_under_glob_metacharacter_dir() {
+    if !check_binary_exists("taplo") {
+      return;
+    }
+    let temp = TempDir::new().unwrap();
+    let dir = temp.path().join("a[b](c){d,e}");
+    std::fs::create_dir(&dir).unwrap();
+    let file = dir.join("f.toml");
+    std::fs::write(&file, "a = [\n").unwrap();
+
+    let mut ctx =
+      test_ctx(temp.path(), crate::config::ResolvedLangConfig::new("toml"));
+    ctx.paths = Arc::new(vec![file]);
+    let res = TomlSurface.lint(&ctx, false);
+
+    assert!(
+      matches!(res.status, SurfaceStatus::ViolationsFound { .. }),
+      "{:?}",
+      res.status
+    );
+  }
+
+  #[test]
   fn test_build_taplo_lsp_lint_args() {
     let files = vec![std::path::PathBuf::from("a.toml")];
     let args = build_taplo_lsp_lint_args(&files, &[]);
@@ -389,6 +494,18 @@ mod tests {
         "a.toml".to_string(),
       ]
     );
+  }
+
+  #[test]
+  fn test_build_taplo_lsp_lint_args_spells_path_as_taplo_pattern() {
+    let files = vec![std::path::PathBuf::from(r"C:\w\a[b]\c.toml")];
+    let args = build_taplo_lsp_lint_args(&files, &[]);
+    let expected = if cfg!(windows) {
+      "C:/w/a[[]b[]]/c.toml"
+    } else {
+      r"C:\w\a[[]b[]]\c.toml"
+    };
+    assert_eq!(args[3], expected);
   }
 
   #[test]

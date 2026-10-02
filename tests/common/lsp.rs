@@ -36,8 +36,10 @@ pub fn no_color(command: &mut Command) -> &mut Command {
 pub fn send(stdin: &mut impl Write, messages: &[serde_json::Value]) {
   let mut framed = String::new();
   for message in messages {
+    use std::fmt::Write;
+
     let text = message.to_string();
-    framed.push_str(&format!("Content-Length: {}\r\n\r\n{text}", text.len()));
+    let _ = write!(framed, "Content-Length: {}\r\n\r\n{text}", text.len());
   }
   // A child that already exited closes the pipe; the asserts report it.
   let _ = stdin.write_all(framed.as_bytes());
