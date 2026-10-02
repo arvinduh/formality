@@ -18,12 +18,12 @@ integration tests (`generate_schema`) — see [style-guide.md](style-guide.md) �
 for why it survived the `#133 [pre-recreation]` alias-minimization sweep while
 the rest of the old `DEPRECATED / STALE ALIAS` block did not: new code always
 uses the canonical structural path, never a crate-root shortcut. `src/cli.rs`
-defines the `clap`-based argument parser only (`Cli`, `Commands`,
-`MigrateCommands`) — it parses, it does not dispatch. `src/errors.rs` is the
-crate-wide error hierarchy — `FormalityError` and its per-subsystem inner enums
-(`ConfigError`, `GitError`, `ToolMissingError`, `SurfaceError`, `IoError`) —
-with no `anyhow`/`thiserror` dependency; see [style-guide.md](style-guide.md) §5
-for the full convention.
+defines the `clap`-based argument parser only (`Cli`, `Commands`) — it parses,
+it does not dispatch. `src/errors.rs` is the crate-wide error hierarchy —
+`FormalityError` and its per-subsystem inner types (`GitError`, `SurfaceError`,
+the `IoError` struct, and `ConfigError`, which `src/config` defines and this
+file re-exports) — with no `anyhow`/`thiserror` dependency; see
+[style-guide.md](style-guide.md) §5 for the full convention.
 
 ## `src/config`
 
@@ -36,7 +36,7 @@ what a facet is and why it exists. `lang_table.rs` is an X-macro table
 generating the repetitive per-language options wiring shared by `LangConfig`,
 `resolve_for_lang` and strict parsing, so adding a new typed per-language option
 doesn't require hand-wiring it in each place. `options.rs` holds the
-per-language strongly-typed formatting option structs (e.g. `RustfmtConfig`);
+per-language strongly-typed formatting option structs (e.g. `RustOptions`);
 `strict.rs` parses one config document, rejecting a key the typed structs do not
 declare or a value of the wrong type with its key path and line; `resolve.rs`
 implements the actual cascade-merge and path-resolution logic that turns raw

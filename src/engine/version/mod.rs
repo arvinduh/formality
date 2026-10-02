@@ -707,10 +707,10 @@ pub fn reported_raw_version_if_differing<'a>(
   raw_banner: Option<&'a str>,
 ) -> Option<&'a str> {
   let raw = raw_banner.and_then(Version::extract_raw)?;
-  if raw != current.to_string() {
-    Some(raw)
-  } else {
+  if raw == current.to_string() {
     None
+  } else {
+    Some(raw)
   }
 }
 
