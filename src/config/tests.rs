@@ -141,7 +141,7 @@ fn test_find_project_config_candidates() {
   // Test .formality.toml
   let hidden = root.join(".formality.toml");
   fs::write(&hidden, "[global]\nindent_size = 4\n").unwrap();
-  assert_eq!(find_project_config(root), Some(hidden.clone()));
+  assert_eq!(find_project_config(root), Some(hidden));
 
   // Test formality.toml (higher precedence than .formality.toml)
   let standard = root.join("formality.toml");
@@ -730,10 +730,9 @@ fn test_yaml_options_document_start_and_truthy_rules() {
 fn test_generate_sample_omits_languages() {
   let sample = FormalityConfig::generate_sample();
   assert!(sample.contains("# formality configuration file"));
-  assert!(sample.contains(&format!(
-    "#:schema https://github.com/arvinduh/formality/releases/download/s{}/formality.schema.json",
-    SCHEMA_VERSION
-  )));
+  assert!(sample.contains(
+    "#:schema https://github.com/arvinduh/formality/releases/latest/download/formality.schema.json",
+  ));
   assert!(sample.contains("[global]"));
   assert!(!sample.contains("languages ="));
   assert!(sample.contains("indent_size = 2"));
@@ -968,8 +967,15 @@ fn test_corrupted_config_syntax_errors_and_recovery() {
   let path2 = temp.path().join("type_mismatch.toml");
   fs::write(&path2, "[global]\nindent_size = \"two\"\n").unwrap();
   let err2 = FormalityConfig::load_file(&path2).unwrap_err();
-  assert!(matches!(err2, ConfigError::Parse { .. }));
-  assert!(err2.to_string().contains("invalid type"));
+  assert_eq!(
+    err2.to_string(),
+    format!(
+      "invalid value for `global.indent_size` in {}:2: invalid type: \
+       string \"two\", expected usize. Check `fml schema` for the type this \
+       fml expects.",
+      path2.display()
+    )
+  );
 
   // Test 3: Invalid TOML token / syntax error
   let path3 = temp.path().join("bad_syntax.toml");
@@ -1019,8 +1025,138 @@ fn test_layered_config_with_corrupted_project_file() {
   let res = FormalityConfig::load_layered(Some(root));
   assert!(res.is_err());
   let err = res.unwrap_err();
-  assert!(err.to_string().contains("formality.toml"));
-  assert!(err.to_string().contains("Failed to parse"));
+  assert!(
+    err
+      .to_string()
+      .starts_with("invalid value for `global.line_length` in "),
+    "{err}"
+  );
+  assert!(err.to_string().contains("formality.toml:2: "), "{err}");
+}
+
+#[test]
+fn test_parse_str_unknown_key_names_key_path_line_and_fix() {
+  let toml = "[global]\nline_length = 80\nmax_width = 100\n";
+  let err =
+    FormalityConfig::parse_str(toml, Path::new("formality.toml")).unwrap_err();
+  assert_eq!(
+    err.to_string(),
+    "unknown key `global.max_width` in formality.toml:3. It may need a \
+     newer fml (`fml --version`), or it is misspelled or was removed; `fml \
+     schema` lists the keys this fml accepts."
+  );
+
+  let nested = "[lang.python.python]\nquote_style = \"double\"\n\
+                ignore_rulez = [\"E501\"]\n";
+  let err = FormalityConfig::parse_str(nested, Path::new("formality.toml"))
+    .unwrap_err();
+  assert!(
+    matches!(
+      &err,
+      ConfigError::UnknownKey { key, line: 3, .. }
+        if key == "lang.python.python.ignore_rulez"
+    ),
+    "{err:?}"
+  );
+}
+
+#[test]
+fn test_parse_str_unknown_root_key_is_unknown() {
+  // A `[global]` key written at the root; `deny_unknown_fields` on
+  // `FormalityConfig` is what reports it.
+  let toml = "languages = [\"rust\"]\n";
+  let err =
+    FormalityConfig::parse_str(toml, Path::new("formality.toml")).unwrap_err();
+  assert_eq!(
+    err.to_string(),
+    "unknown key `languages` in formality.toml:1. It may need a newer fml \
+     (`fml --version`), or it is misspelled or was removed; `fml schema` \
+     lists the keys this fml accepts."
+  );
+}
+
+#[test]
+fn test_parse_str_removed_flat_lang_key_is_unknown() {
+  // `format_tool` left `LangConfig` in #280; the flattened `extra` map used
+  // to swallow it without a word.
+  let toml = "[lang.python]\nquote_style = \"double\"\nformat_tool = \
+              \"black\"\n";
+  let err =
+    FormalityConfig::parse_str(toml, Path::new("formality.toml")).unwrap_err();
+  assert_eq!(
+    err.to_string(),
+    "unknown key `lang.python.format_tool` in formality.toml:3. It may need \
+     a newer fml (`fml --version`), or it is misspelled or was removed; \
+     `fml schema` lists the keys this fml accepts."
+  );
+}
+
+#[test]
+fn test_parse_str_flat_lang_keys_follow_their_own_surface() {
+  // A key valid for one surface is unknown under another.
+  let toml = "[lang.rust]\nedition = \"2024\"\nquote_style = \"double\"\n";
+  let err =
+    FormalityConfig::parse_str(toml, Path::new("formality.toml")).unwrap_err();
+  assert!(
+    matches!(
+      &err,
+      ConfigError::UnknownKey { key, line: 3, .. }
+        if key == "lang.rust.quote_style"
+    ),
+    "{err:?}"
+  );
+
+  let toml = "[lang.python]\ntarget_version = 310\n";
+  let err =
+    FormalityConfig::parse_str(toml, Path::new("formality.toml")).unwrap_err();
+  assert!(
+    matches!(
+      &err,
+      ConfigError::InvalidValue { key, line: 2, .. }
+        if key == "lang.python.target_version"
+    ),
+    "{err:?}"
+  );
+
+  let toml = "[lang.go.options]\nlocal_prefixes = \"example.com\"\n\
+              shadow = true\n";
+  let err =
+    FormalityConfig::parse_str(toml, Path::new("formality.toml")).unwrap_err();
+  assert!(
+    matches!(
+      &err,
+      ConfigError::UnknownKey { key, line: 3, .. }
+        if key == "lang.go.options.shadow"
+    ),
+    "{err:?}"
+  );
+}
+
+#[test]
+fn test_parse_str_non_table_lang_options_is_invalid_value() {
+  let toml = "[lang.python]\nquote_style = \"double\"\noptions = \"oops\"\n";
+  let err =
+    FormalityConfig::parse_str(toml, Path::new("formality.toml")).unwrap_err();
+  assert_eq!(
+    err.to_string(),
+    "invalid value for `lang.python.options` in formality.toml:3: \
+     invalid type: string \"oops\", expected struct PythonOptions. Check \
+     `fml schema` for the type this fml expects."
+  );
+}
+
+#[test]
+fn test_parse_str_wrong_type_names_nested_key_path_and_line() {
+  let toml = "[global]\nline_length = 80\n\n[lang.rust.layout]\n\
+                indent_size = \"four\"\n";
+  let err =
+    FormalityConfig::parse_str(toml, Path::new("formality.toml")).unwrap_err();
+  assert_eq!(
+    err.to_string(),
+    "invalid value for `lang.rust.layout.indent_size` in formality.toml:5: \
+         invalid type: string \"four\", expected usize. Check `fml schema` for \
+         the type this fml expects."
+  );
 }
 
 #[test]

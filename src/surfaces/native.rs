@@ -88,8 +88,10 @@ pub fn serialize_json_pretty<T: Serialize>(
 /// # Errors
 ///
 /// Returns a [`FormalityError`] if JSON, YAML, or TOML serialization fails.
-// Native tool configuration filenames (e.g. .golangci.yml, .clang-format) are fixed static ASCII strings.
-#[allow(clippy::case_sensitive_file_extension_comparisons)]
+#[expect(
+  clippy::case_sensitive_file_extension_comparisons,
+  reason = "native config filenames are fixed static ASCII strings"
+)]
 pub fn render_native_config<T: Serialize + NativeConfig>(
   cfg: &T,
 ) -> Result<String, FormalityError> {

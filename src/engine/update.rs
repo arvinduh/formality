@@ -104,7 +104,7 @@ fn write_failed_check_at(path: &Path) {
   }
 }
 
-/// Processes a GitHub releases API response body: parses the latest release
+/// Processes a `GitHub` releases API response body: parses the latest release
 /// tag and caches the check timestamp regardless of whether that parse
 /// succeeds, so a persistently malformed/unexpected API response only
 /// triggers a network call once per [`UPDATE_CHECK_INTERVAL_SECS`] instead of
@@ -121,7 +121,7 @@ fn process_release_response_at(
   tag.filter(|t| is_newer_version(t, current_version))
 }
 
-/// Safely parse the `tag_name` field from GitHub release JSON response.
+/// Safely parse the `tag_name` field from `GitHub` release JSON response.
 #[must_use]
 pub fn parse_latest_tag_from_json(body: &str) -> Option<String> {
   let value: serde_json::Value = serde_json::from_str(body).ok()?;
@@ -132,7 +132,7 @@ pub fn parse_latest_tag_from_json(body: &str) -> Option<String> {
 /// Compares a release tag (e.g. "v0.2.0" or "0.2.0") with the current version.
 ///
 /// Both sides are scraped by [`Version::parse`] (the custom extraction layer —
-/// it tolerates the `v` prefix GitHub tags carry); the `>` that decides the
+/// it tolerates the `v` prefix `GitHub` tags carry); the `>` that decides the
 /// banner is `semver`-backed via [`Version`]'s `Ord`. An unparseable tag can
 /// never trip the banner: it yields `false`, not a spurious "update available".
 #[must_use]
@@ -249,7 +249,7 @@ pub fn print_update_notice(notifier: Option<UpdateNotifier>) {
 /// resolves OS/arch, fetches the matching prebuilt archive from the latest
 /// release, and drops the binary on `PATH` with no Rust toolchain involved.
 /// The shell installer (Linux & macOS) also verifies the download's checksum;
-/// the PowerShell installer (Windows) does not. Re-running it is a working
+/// the `PowerShell` installer (Windows) does not. Re-running it is a working
 /// in-place upgrade.
 ///
 /// Selected at **compile time** by the caller via `cfg!(windows)`: the binary

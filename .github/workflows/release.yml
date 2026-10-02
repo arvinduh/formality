@@ -42,9 +42,9 @@ on:
   pull_request:
   push:
     tags:
-      # LOCAL EDIT (issue #134): constrained to a leading `v` so schema tags
-      # (`s1.0`, `s2.0.0`, ...) owned by schema-release.yml can never trigger
-      # cargo-dist. dist's default is the prefix-less `**[0-9]+.[0-9]+.[0-9]+*`.
+      # LOCAL EDIT (issue #134): constrained to a leading `v` so only
+      # binary-release tags trigger cargo-dist.
+      # dist's default is the prefix-less `**[0-9]+.[0-9]+.[0-9]+*`.
       # Must match .github/workflows/release-extras.yml (issue #165); guarded by
       # tests/release_workflow_local_edits.rs.
       - 'v[0-9]+.[0-9]+.[0-9]+*'
@@ -319,9 +319,9 @@ jobs:
         #   1. `--generate-notes` (GitHub's own PR-based notes) instead of
         #      dist's changelog body: this repo has no committed CHANGELOG.md
         #      and dropped the git-cliff job.
-        #   2. `--notes-start-tag <prev v* tag>` so the notes range can't be
-        #      widened by an `s*` schema release published between two `v*`
-        #      tags. Needs the `fetch-depth: 0` checkout above.
+        #   2. `--notes-start-tag <prev v* tag>` to explicitly bound the notes
+        #      range to the previous binary release. Needs the `fetch-depth: 0`
+        #      checkout above.
         # After a dist bump: follow "Regeneration procedure" in
         # docs/release.md (with allow-dirty set, `dist generate` leaves this
         # file untouched) and re-apply this step plus the tag-glob and

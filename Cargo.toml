@@ -1,6 +1,6 @@
 [package]
 name = "fml"
-version = "0.2.1"
+version = "0.3.0"
 edition = "2024"
 authors = ["Arvin Duh"]
 description = "One CLI to format, lint, and sync configs across all languages"
@@ -44,6 +44,7 @@ unused_qualifications = "warn"
 
 [lints.clippy]
 # Docs
+doc_markdown = "warn"
 missing_errors_doc = "warn"
 missing_panics_doc = "warn"
 # Imports
@@ -53,6 +54,17 @@ single_component_path_imports = "allow" # `use some_crate;` manifests
 dbg_macro = "deny"
 todo = "warn"
 undocumented_unsafe_blocks = "deny"
+# Idioms
+case_sensitive_file_extension_comparisons = "warn"
+fn_params_excessive_bools = "warn"
+if_not_else = "warn"
+map_unwrap_or = "warn"
+match_wildcard_for_single_variants = "warn"
+must_use_candidate = "warn"
+redundant_closure_for_method_calls = "warn"
+# Performance
+format_collect = "warn"
+redundant_clone = "warn"
 
 # Config for 'dist' (cargo-dist): GitHub Releases are the only channel - no
 # crates.io publish. See docs/release.md and issue #134.
@@ -78,6 +90,8 @@ install-path = ["$HOME/.local/bin", "$HOME/.cargo/bin"]
 install-updater = false
 # Skip checking whether the specified configuration files are up to date
 allow-dirty = ["ci"]
+# GitHub already attaches source archives to every release
+source-tarball = false
 
 [profile.dist]
 inherits = "release"

@@ -95,9 +95,8 @@ committed `CHANGELOG.md`.
    - Builds the `shell` / `powershell` installers and a combined `sha256.sum`.
    - Creates the GitHub Release for the tag with
      `gh release create --generate-notes` (GitHub groups the merged PRs into the
-     body, starting from the previous `v*` tag so an `s*` schema release
-     published in between can't widen the range) and marks it the latest
-     release, so `/releases/latest/download/...` resolves here.
+     body, starting from the previous `v*` tag) and marks it the latest release,
+     so `/releases/latest/download/...` resolves here.
 
    `.github/workflows/release-extras.yml`, which:
    - Builds the VS Code extension `.vsix` package.
@@ -115,88 +114,29 @@ committed `CHANGELOG.md`.
 
 6. **Announce / update references.**
 
-   If anything (docs, `#:schema` directives in example `formality.toml` files,
-   install instructions) references a specific release URL or version number,
-   update those references to point at the new tag. Users can run `fml init` to
-   rewrite their own project's `#:schema` directive to the new tag without
-   hand-editing it.
+   If anything (docs, install instructions) references a specific release URL or
+   version number, update those references to point at the new tag.
 
-## Schema Releases (`s*` tags)
+## The JSON schema
 
-In addition to binary releases (`v*`), `fml` supports independent schema
-releases tagged with the `s{major}.{minor}` pattern (e.g. `s1.0`, `s1.1`,
-`s2.0`). A major bump means a breaking schema change; a minor bump means an
-additive/compatible one. This is deliberately independent of the binary's
-`v{semver}` tag — the two change at different rates, and forcing them to track
-each other (e.g. `s0.1.0` mirroring `v0.1.0`) would either churn the schema tag
-on every binary release or let it silently drift out of a parity it never really
-had. See [`SchemaVersion`](../src/config/schema.rs) and
-[ADR 0003](adr/0003-two-tag-release-versioning.md) for the original design
-rationale.
-
-Schema releases publish `schema/formality.schema.json` as an independent GitHub
-Release asset under the corresponding `s{major}.{minor}` tag so users can pin
-their `formality.toml` or `.formality.toml` configuration files to stable schema
-versions via `#:schema` directives:
+There is one schema, the one matching the latest release. It ships only as the
+`formality.schema.json` asset of each `v*` release, and `fml init` writes a
+`#:schema` directive that follows the latest release:
 
 ```toml
-#:schema https://github.com/arvinduh/formality/releases/download/s1.0/formality.schema.json
+#:schema https://github.com/arvinduh/formality/releases/latest/download/formality.schema.json
 ```
 
-### Latest Release Invariant
+A plain `vX.Y.Z` tag becomes GitHub's latest release, so this URL, the prebuilt
+downloads and the dist installers all move to it together. A `vX.Y.Z-rc.N` tag
+is published as a prerelease and moves none of them.
 
-Because binary releases (`v*`) and schema releases (`s*`) share the same GitHub
-Releases space, workflow configuration enforces a strict invariant:
-
-- **Binary releases (`v*`)**: cargo-dist creates the release without
-  `--prerelease` for a plain `vX.Y.Z` tag, so GitHub marks it the latest
-  release. This keeps GitHub's `/releases/latest` endpoint, the prebuilt
-  download URLs (`/releases/latest/download/...`), and the dist installer assets
-  (`fml-installer.sh` / `fml-installer.ps1`) resolving to the most recent binary
-  release. A `vX.Y.Z-rc.N` tag is published as a prerelease and does not move
-  the latest pointer.
-- **Schema releases (`s*`)**: Explicitly set `make_latest: false` in
-  `.github/workflows/schema-release.yml`. This ensures publishing an independent
-  schema tag (e.g. `s1.0`, `s1.1`) never overtakes the latest binary release or
-  breaks binary downloads. `s*` tags do not match `release.yml`'s tag filter, so
-  cargo-dist never runs for them.
-
-### Schema Release Procedure
-
-1. **Verify schema freshness on `main`.**
-
-   ```sh
-   git checkout main
-   git pull
-   cargo test --test schema_drift
-   ```
-
-2. **Tag the schema release.**
-
-   ```sh
-   git tag -a s1.0 -m "s1.0 schema release"
-   git push origin s1.0
-   ```
-
-3. **CI Automation.**
-
-   Pushing an `s*` tag triggers `.github/workflows/schema-release.yml`, which:
-   - Builds `fml` from the tagged commit.
-   - Generates `schema/formality.schema.json`.
-   - Creates a GitHub Release for tag `s{major}.{minor}` and uploads
-     `formality.schema.json` as a release asset.
-
-4. **Verify the schema release.**
-
-   Check the GitHub Releases page for tag `s{major}.{minor}` and confirm that
-   `formality.schema.json` is attached to the release.
-
-5. **Update documentation & matrix.**
-
-   Update [compatibility.md](compatibility.md) and example `#:schema` directives
-   in documentation if a new schema version (e.g. `s1.1` or `s2.0`) was cut.
-   Individual users don't need to hand-edit their own `formality.toml` —
-   `fml init` rewrites their `#:schema` line to the current tag.
+Before 1.0.0 the schema makes no compatibility promise
+([ADR 0007](adr/0007-one-current-schema.md)): a config a newer `fml` no longer
+accepts fails with the key path, line and a fix-it hint instead.
+`tests/schema_drift.rs` keeps `schema/formality.schema.json` equal to
+`fml schema` output; regenerate it with
+`UPDATE_SCHEMA=1 cargo test --test schema_drift`.
 
 ## Release notes
 
@@ -222,8 +162,8 @@ carries four hand-applied local edits, each marked with a
 `# LOCAL EDIT (issue #N)` comment that explains it:
 
 1. **Tag glob constrained to a leading `v`** (`- 'v[0-9]+.[0-9]+.[0-9]+*'`,
-   issue #134) so independent schema releases (`s*` tags handled by
-   `schema-release.yml`) cannot trigger binary release builds.
+   issue #134) so only binary release tags trigger a build, matching
+   `release-extras.yml`'s filter.
 2. **`fetch-depth: 0` on the `host` job checkout** (issue #134) so the full tag
    history is available for `--notes-start-tag`.
 3. **`gh release create --generate-notes --notes-start-tag`** (issue #134)
@@ -273,11 +213,19 @@ asserts that:
 - The number of `# LOCAL EDIT (issue #N)` marker comments matches the expected
   edit count, ensuring each edit remains documented with re-application
   instructions.
+- Every cargo-dist installer that `release.yml` downloads is exactly the
+  `cargo-dist-version` pinned in `Cargo.toml`. Because `allow-dirty` makes
+  regeneration a no-op, a pin bump fails this check until the workflow is
+  regenerated (issue #421).
+- The `push.tags` filters of `release.yml` and `release-extras.yml` are
+  identical (issue #165).
 
 The guard runs in the `Library Tests` CI job (`cargo test --verbose`), one of
 the repository's required status checks, ensuring that any regeneration dropping
 a local edit fails PR checks rather than surfacing at release time.
 
-If a future cargo-dist version makes an edit unnecessary, delete the edit from
-`release.yml` and drop its corresponding entry from `EDITS` in
-`tests/release_workflow_local_edits.rs` in the same commit.
+If a future cargo-dist version makes an edit unnecessary, delete the edit and
+its `# LOCAL EDIT` comment from `release.yml`, drop its corresponding entry from
+`EDITS` in `tests/release_workflow_local_edits.rs`, and remove it from the list
+of local edits at the top of this section, lowering each "four" that counts
+them, all in one commit.

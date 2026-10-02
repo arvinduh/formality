@@ -6,7 +6,7 @@ use super::{SurfaceResult, SurfaceStatus};
 use crate::engine::version::Version;
 use std::collections::HashMap;
 use std::path::PathBuf;
-use std::sync::{Mutex, OnceLock};
+use std::sync::{Mutex, OnceLock, PoisonError};
 use std::time::Instant;
 
 /// A package-manager-level way to install a CLI tool: knows how to detect
@@ -645,7 +645,7 @@ struct ToolChain {
 ///   `checkstyle`, `rustfmt`, `clippy-driver` — every entry in these chains
 ///   is an unpinned system-package-manager/rustup install.
 /// - `None`, unverified even though internally consistent: `clang-format`
-///   — its `Pipx`/`Pip`/`Pip3` entries agree on `22.1.8`, and the PyPI
+///   — its `Pipx`/`Pip`/`Pip3` entries agree on `22.1.8`, and the `PyPI`
 ///   `clang-format` wheel plausibly bundles a matching prebuilt binary, but
 ///   that hasn't been independently confirmed the way taplo/ktlint's
 ///   mismatches were, and the apt/brew/winget/scoop fallbacks in the same
@@ -851,7 +851,7 @@ static BINARY_CACHE: OnceLock<Mutex<HashMap<String, Option<PathBuf>>>> =
 pub fn resolve_binary_path(binary: &str) -> Option<PathBuf> {
   let cache = BINARY_CACHE.get_or_init(|| Mutex::new(HashMap::new()));
   {
-    let guard = cache.lock().unwrap_or_else(|e| e.into_inner());
+    let guard = cache.lock().unwrap_or_else(PoisonError::into_inner);
     if let Some(resolved) = guard.get(binary) {
       return resolved.clone();
     }
@@ -860,7 +860,7 @@ pub fn resolve_binary_path(binary: &str) -> Option<PathBuf> {
   let resolved = which::which(binary)
     .ok()
     .or_else(|| resolve_via_known_install_dir(binary));
-  let mut guard = cache.lock().unwrap_or_else(|e| e.into_inner());
+  let mut guard = cache.lock().unwrap_or_else(PoisonError::into_inner);
   guard.insert(binary.to_string(), resolved.clone());
   resolved
 }
@@ -881,7 +881,7 @@ pub fn resolve_binary_path(binary: &str) -> Option<PathBuf> {
 /// `PATH` and a fresh lookup would find it immediately.
 pub fn forget_binary(binary: &str) {
   let cache = BINARY_CACHE.get_or_init(|| Mutex::new(HashMap::new()));
-  let mut guard = cache.lock().unwrap_or_else(|e| e.into_inner());
+  let mut guard = cache.lock().unwrap_or_else(PoisonError::into_inner);
   guard.remove(binary);
 }
 
@@ -889,7 +889,7 @@ pub fn forget_binary(binary: &str) {
 #[doc(hidden)]
 pub fn set_binary_path_for_test(binary: &str, path: Option<PathBuf>) {
   let cache = BINARY_CACHE.get_or_init(|| Mutex::new(HashMap::new()));
-  let mut guard = cache.lock().unwrap_or_else(|e| e.into_inner());
+  let mut guard = cache.lock().unwrap_or_else(PoisonError::into_inner);
   guard.insert(binary.to_string(), path);
 }
 
@@ -938,11 +938,11 @@ pub fn tool_missing_guard(
   start: Instant,
   hint: Option<&'static str>,
 ) -> Option<SurfaceResult> {
-  if !check_binary_exists(binary) {
+  if check_binary_exists(binary) {
+    None
+  } else {
     let hint = hint.map_or_else(|| install_hint_for(binary), str::to_string);
     Some(tool_missing_result(name, start, binary, &hint))
-  } else {
-    None
   }
 }
 
@@ -964,8 +964,8 @@ pub fn tool_missing_guard(
 ///
 /// The value is deliberately *not* compared against the one `fml` passes.
 /// Today's only caller is biome's `--linter-enabled`, and biome rejects that
-/// flag given twice outright (`argument \`--linter-enabled\` cannot be used
-/// multiple times in this context`) — before parsing either value. So a
+/// flag given twice outright ("argument `--linter-enabled` cannot be used
+/// multiple times in this context") — before parsing either value. So a
 /// restatement is exactly as broken as a contradiction, and matching on the
 /// value would let half the broken spellings through.
 ///
@@ -1069,7 +1069,7 @@ pub fn chain_wants_cargo_binstall(chain: &[InstallMethod]) -> bool {
 /// bootstrapping it never itself falls back to compiling `cargo-binstall`
 /// from source. Uses the same `curl ... | sh` pattern rustup's own installer
 /// documents (`--proto '=https' --tlsv1.2 -sSf`) on Linux/macOS, and the
-/// equivalent PowerShell script on Windows. Returns `false` (rather than
+/// equivalent `PowerShell` script on Windows. Returns `false` (rather than
 /// propagating an error) on any failure to run the script -- a missing
 /// `curl`/`powershell`, no network, or a non-zero exit -- so the caller can
 /// fall through to the next installer in the chain instead of aborting.
@@ -1131,7 +1131,7 @@ pub fn ensure_cargo_binstall() -> bool {
   }
 
   let cell = BINSTALL_BOOTSTRAP.get_or_init(|| Mutex::new(None));
-  let mut guard = cell.lock().unwrap_or_else(|e| e.into_inner());
+  let mut guard = cell.lock().unwrap_or_else(PoisonError::into_inner);
   if let Some(available) = *guard {
     return available;
   }
@@ -1391,7 +1391,7 @@ fn go_bin_dir_from_env(gobin: &str, gopath: &str) -> Option<PathBuf> {
 /// for the full per-[`InstallMethod`] audit of which installers write
 /// somewhere `PATH` may not cover. `$GOPATH/bin` is the case #293 was filed
 /// over: Go creates it on demand, and it is on `PATH` only if the user put
-/// it there. On a stock GitHub Actions Linux runner it is not, so
+/// it there. On a stock `GitHub` Actions Linux runner it is not, so
 /// `go install golang.org/x/tools/cmd/goimports@v0.49.0`
 /// succeeds and a lookup for `goimports` from `PATH` alone still finds
 /// nothing -- in this process *or a later one*, since nothing durable ever
@@ -1621,7 +1621,7 @@ const USER_SCHEME_SCRIPT_DIR: &str =
 ///
 /// * **Windows** -- the default base is `%APPDATA%\Python\PythonXY`, whose
 ///   `XY` is the interpreter's version.
-/// * **macOS** -- framework builds of CPython (both python.org's installer
+/// * **macOS** -- framework builds of `CPython` (both python.org's installer
 ///   and Homebrew's) put `site.USER_BASE` at `~/Library/Python/X.Y`, so
 ///   scripts land in e.g. `~/Library/Python/3.13/bin`, *not* `~/.local/bin`.
 ///
@@ -1849,6 +1849,7 @@ pub fn classify_all_nonzero_as_error(_code: Option<i32>) -> ExitClass {
 /// that print a banner to stdout and their actual diagnostics to stderr. When
 /// only one stream is non-empty it is returned trimmed; when neither is,
 /// `fallback` is used verbatim.
+#[must_use]
 pub fn merge_tool_streams(
   stdout: &str,
   stderr: &str,
@@ -2818,7 +2819,7 @@ mod tests {
     let result = has_cargo_binstall();
 
     let cache = BINARY_CACHE.get().expect("cache should be initialized");
-    let guard = cache.lock().unwrap_or_else(|e| e.into_inner());
+    let guard = cache.lock().unwrap_or_else(PoisonError::into_inner);
 
     let cargo_on_path = guard.get("cargo").expect(
       "has_cargo_binstall must resolve `cargo` through check_binary_exists",
@@ -2855,7 +2856,7 @@ mod tests {
 
     // Inspect BINARY_CACHE directly to verify process-lifetime memoization
     let cache = BINARY_CACHE.get().expect("cache should be initialized");
-    let guard = cache.lock().unwrap_or_else(|e| e.into_inner());
+    let guard = cache.lock().unwrap_or_else(PoisonError::into_inner);
     assert_eq!(guard.get(non_existent), Some(&None));
     assert_eq!(
       guard.get(existing).map(Option::is_some),
@@ -2878,7 +2879,7 @@ mod tests {
     // still missing: a memoized `None`.
     {
       let cache = BINARY_CACHE.get_or_init(|| Mutex::new(HashMap::new()));
-      let mut guard = cache.lock().unwrap_or_else(|e| e.into_inner());
+      let mut guard = cache.lock().unwrap_or_else(PoisonError::into_inner);
       guard.insert(binary.to_string(), None);
     }
     assert!(
@@ -2892,7 +2893,7 @@ mod tests {
     // `None` behind would be exactly the bug this function exists to fix.
     {
       let cache = BINARY_CACHE.get().expect("cache should be initialized");
-      let guard = cache.lock().unwrap_or_else(|e| e.into_inner());
+      let guard = cache.lock().unwrap_or_else(PoisonError::into_inner);
       assert!(
         !guard.contains_key(binary),
         "forget_binary must remove the cache entry entirely"
@@ -2903,7 +2904,7 @@ mod tests {
     // not just leave it absent forever.
     let _ = check_binary_exists(binary);
     let cache = BINARY_CACHE.get().expect("cache should be initialized");
-    let guard = cache.lock().unwrap_or_else(|e| e.into_inner());
+    let guard = cache.lock().unwrap_or_else(PoisonError::into_inner);
     assert!(
       guard.contains_key(binary),
       "the lookup right after forget_binary must repopulate the cache"
@@ -3541,7 +3542,10 @@ mod tests {
     let asked = std::sync::Arc::new(Mutex::new(Vec::new()));
     let log = std::sync::Arc::clone(&asked);
     let dir_for = move |kind: KnownInstallDir| {
-      log.lock().unwrap_or_else(|e| e.into_inner()).push(kind);
+      log
+        .lock()
+        .unwrap_or_else(PoisonError::into_inner)
+        .push(kind);
       answers
         .iter()
         .find(|(k, _)| *k == kind)
@@ -3575,7 +3579,7 @@ mod tests {
        binary is in the second one"
     );
     assert_eq!(
-      *asked.lock().unwrap_or_else(|e| e.into_inner()),
+      *asked.lock().unwrap_or_else(PoisonError::into_inner),
       vec![KnownInstallDir::UvTool, KnownInstallDir::Pipx],
       "directories are tried in chain order, and the search stops at the hit"
     );
@@ -3600,7 +3604,7 @@ mod tests {
       "no chain directory holds the binary, so the answer is a clean miss"
     );
     assert_eq!(
-      *asked.lock().unwrap_or_else(|e| e.into_inner()),
+      *asked.lock().unwrap_or_else(PoisonError::into_inner),
       vec![
         KnownInstallDir::UvTool,
         KnownInstallDir::Pipx,
@@ -3960,7 +3964,7 @@ mod tests {
     }
 
     let cache = BINARY_CACHE.get().expect("cache should be initialized");
-    let guard = cache.lock().unwrap_or_else(|e| e.into_inner());
+    let guard = cache.lock().unwrap_or_else(PoisonError::into_inner);
     assert!(guard.contains_key("cargo"));
     for i in 0..10 {
       let binary_name = format!("thread_test_binary_{i}");

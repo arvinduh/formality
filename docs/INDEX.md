@@ -25,14 +25,9 @@ re-derive is already written down.
   global `rust-guide`, and what does this codebase itself require (test layout,
   naming, schema doc comments, `ExecutionContext` Arc-sharing, error handling)?
   Read this before writing new code, and cite it by section number in review.
-- **[release.md](release.md)** — How is a release actually cut — binary (`v*`)
-  tags via cargo-dist, schema (`s*`) tags, GitHub `--generate-notes` release
-  notes? Read this before cutting a release, or when you need to know what a
-  given tag prefix means.
-- **[compatibility.md](compatibility.md)** — Which binary versions support which
-  schema (`s*`) versions? Read this before cutting a release, or when a user
-  reports a version mismatch between their installed `fml` and a project's
-  `#:schema` directive.
+- **[release.md](release.md)** — How is a release actually cut — `v*` tags via
+  cargo-dist, the JSON schema asset, GitHub `--generate-notes` release notes?
+  Read this before cutting a release.
 - **[adr/](adr/README.md)** — Why was a specific non-obvious architectural or
   process decision made, and who/what PR made it? Read one when you're about to
   second-guess or rework something that was already a deliberate choice, before

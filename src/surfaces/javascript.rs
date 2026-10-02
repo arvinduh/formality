@@ -205,7 +205,8 @@ impl DeclaresFacets for JavaScriptSurface {
   }
 }
 
-/// Standard file extensions recognized for JavaScript and TypeScript source files.
+/// Standard file extensions recognized for JavaScript and `TypeScript` source
+/// files.
 pub const JS_TS_EXTENSIONS: &[&str] =
   &["js", "jsx", "ts", "tsx", "mjs", "cjs", "mts", "cts"];
 

@@ -14,6 +14,7 @@ use crate::errors::{ExitStatus, FormalityError, IoError};
 
 /// Runs the `fml schema` command: generates the JSON Schema for
 /// `formality.toml` and either writes it to `output` or prints it to stdout.
+#[must_use]
 pub fn run_schema(output: Option<PathBuf>) -> ExitStatus {
   let schema_json = generate_schema();
   if let Some(target_file) = output {

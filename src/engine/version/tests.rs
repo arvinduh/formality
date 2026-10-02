@@ -595,13 +595,7 @@ fn test_evaluate_tool_status_pin_match_is_compatible() {
     Some(&pinned),
   );
   assert!(matches!(status, ToolStatus::Compatible { .. }));
-  assert_eq!(
-    status,
-    ToolStatus::Compatible {
-      current,
-      minimum: minimum.clone(),
-    }
-  );
+  assert_eq!(status, ToolStatus::Compatible { current, minimum });
 }
 
 #[test]
@@ -640,7 +634,7 @@ fn test_evaluate_tool_status_below_mstv_outdated_beats_pin_mismatch() {
   let minimum = Version::new(2, 0, 0);
   let pinned = Version::new(3, 9, 6);
   let status = evaluate_tool_status(
-    Some(current.clone()),
+    Some(current),
     Some("tool 1.0.0".to_string()),
     Some(&minimum),
     Some(&pinned),
@@ -667,7 +661,7 @@ fn test_evaluate_tool_status_no_pinned_version_configured_never_stale() {
   let current = Version::new(5, 0, 0);
   let minimum = Version::new(1, 4, 0);
   let status = evaluate_tool_status(
-    Some(current.clone()),
+    Some(current),
     Some("tool 5.0.0".to_string()),
     Some(&minimum),
     None,
@@ -1507,7 +1501,7 @@ fn test_parse_go_version_m_degrades_cleanly_without_mod_line() {
   );
 }
 
-/// Tests `render_probe_args` handles Literal and ToolPath cleanly without
+/// Tests `render_probe_args` handles `Literal` and `ToolPath` cleanly without
 /// requiring goimports on PATH.
 #[test]
 fn test_render_probe_args_resolution() {

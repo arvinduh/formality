@@ -174,8 +174,9 @@ impl ExecutionContext {
   }
 
   /// Returns the files to pass to a directory-walking CLI tool.
-  /// If paths, lang_config files, or lang_config excludes are specified, returns the filtered files;
-  /// otherwise returns an empty Vec so the tool can scan the whole directory.
+  /// If paths, `lang_config` files, or `lang_config` excludes are specified,
+  /// returns the filtered files; otherwise returns an empty Vec so the tool
+  /// can scan the whole directory.
   #[must_use]
   pub fn files_to_pass(&self, files: Vec<PathBuf>) -> Vec<PathBuf> {
     if !self.paths.is_empty()
@@ -254,8 +255,7 @@ impl ToolInfo {
   pub fn effective_install_hint(&self) -> String {
     self
       .install_hint
-      .map(str::to_string)
-      .unwrap_or_else(|| install_hint_for(self.binary))
+      .map_or_else(|| install_hint_for(self.binary), str::to_string)
   }
 
   /// Returns the (program, args) for the first available installer in this

@@ -144,7 +144,7 @@ pub enum Commands {
     install: bool,
   },
 
-  /// Scaffold a new formality.toml or update the schema pin in an existing one
+  /// Scaffold a new formality.toml
   Init {
     /// Overwrite existing configuration file if it already exists
     #[arg(short = 'f', long)]
@@ -311,7 +311,7 @@ mod tests {
     let visible_subcommands: Vec<&str> = cmd
       .get_subcommands()
       .filter(|c| !c.is_hide_set())
-      .map(|c| c.get_name())
+      .map(clap::Command::get_name)
       .collect();
     assert!(
       visible_subcommands.contains(&"schema"),
