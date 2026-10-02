@@ -1521,7 +1521,12 @@ fn is_executable_file(path: &std::path::Path) -> bool {
 ///   left it out; it is genuinely safe, not merely unlisted.
 /// * [`InstallMethod::Npm`] / `Pnpm` / `Yarn` / `Bun` -- the node manager's
 ///   own global prefix `bin`, next to the manager the user just invoked.
-/// * [`InstallMethod::Brew`] -- the brew prefix's `bin`, likewise.
+/// * [`InstallMethod::Brew`] -- the brew prefix's `bin`, likewise, except
+///   for a keg-only formula, which brew installs without linking into that
+///   `bin`. Of this crate's brew formulae only `llvm` is keg-only (on
+///   macOS), so `Brew("llvm")` maps to its keg's `bin`: there `brew install
+///   llvm` exited 0 and `clang-tidy` stayed `[MISS]` (Issue #442,
+///   Fresh-Install Regression macos-latest job 110832111569).
 /// * [`InstallMethod::Cargo`] / `CargoBinstall` / `Rustup` -- `$CARGO_HOME/bin`
 ///   (default `~/.cargo/bin`), which is where `cargo`/`rustup` themselves
 ///   live, so resolving either of those implies the directory is on `PATH`.
@@ -1546,6 +1551,8 @@ enum KnownInstallDir {
   WingetUserLinks,
   /// winget's machine-scope alias directory, `%ProgramFiles%\WinGet\Links`.
   WingetMachineLinks,
+  /// The `bin` of Homebrew's keg-only `llvm`, `<prefix>/opt/llvm/bin`.
+  BrewLlvm,
 }
 
 impl KnownInstallDir {
@@ -1563,6 +1570,7 @@ impl KnownInstallDir {
       InstallMethod::WingetName(_) | InstallMethod::WingetId(_) => {
         &[Self::WingetUserLinks, Self::WingetMachineLinks]
       }
+      InstallMethod::Brew("llvm") => &[Self::BrewLlvm],
       InstallMethod::CargoBinstall(_)
       | InstallMethod::Npm(_)
       | InstallMethod::Pnpm(_)
@@ -1630,6 +1638,13 @@ impl KnownInstallDir {
           .join("WinGet")
           .join("Links"),
       ),
+      Self::BrewLlvm => Some(
+        non_empty_dir(&env, "HOMEBREW_PREFIX")
+          .unwrap_or_else(|| PathBuf::from(HOMEBREW_DEFAULT_PREFIX))
+          .join("opt")
+          .join("llvm")
+          .join("bin"),
+      ),
       Self::WingetMachineLinks => Some(
         non_empty_dir(&env, "ProgramFiles")?
           .join("WinGet")
@@ -1638,6 +1653,22 @@ impl KnownInstallDir {
     }
   }
 }
+
+/// Homebrew's install prefix when `HOMEBREW_PREFIX` is unset: the default
+/// its installer uses on this platform.
+///
+/// A constant rather than a `brew --prefix` spawn because a lookup miss for
+/// `clang-tidy` would pay for a Ruby start-up on every fml run; Homebrew
+/// supports only these default prefixes, and `brew shellenv` exports
+/// `HOMEBREW_PREFIX` for the rest.
+const HOMEBREW_DEFAULT_PREFIX: &str =
+  if cfg!(all(target_os = "macos", target_arch = "aarch64")) {
+    "/opt/homebrew"
+  } else if cfg!(target_os = "macos") {
+    "/usr/local"
+  } else {
+    "/home/linuxbrew/.linuxbrew"
+  };
 
 /// The leaf name of the Python user scheme's script directory: `bin` on
 /// Unix, `Scripts` on Windows.
@@ -3713,6 +3744,7 @@ mod tests {
           KnownInstallDir::WingetMachineLinks,
         ],
       ),
+      (InstallMethod::Brew("llvm"), &[KnownInstallDir::BrewLlvm]),
       // Audited as safe -- see `KnownInstallDir`'s doc comment for each.
       (InstallMethod::Apt("x"), &[]),
       (InstallMethod::Brew("x"), &[]),
