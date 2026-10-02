@@ -186,8 +186,8 @@ machine-generated shape.
 ## Typst
 
 - **Format**: `typstyle`.
-- **Lint**: none dedicated — Typst diagnostics flow through the LSP (`tinymist`)
-  rather than a standalone `fml lint` linter today.
+- **Lint**: none dedicated — Typst diagnostics flow through `fml lsp`, which
+  runs `typst compile`, rather than a standalone `fml lint` linter today.
 - **Managed config**: none — `typstyle` is driven entirely by CLI flags (e.g.
   `--column`) rather than a persisted config file.
 - **`[lang.typst]` options**: none currently (reserved for future knobs).

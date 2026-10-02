@@ -120,6 +120,34 @@ impl InstallMethod {
     }
   }
 
+  /// Returns whether this method can ever install anything on `os`, a
+  /// [`std::env::consts::OS`] value, regardless of what is on `PATH` now.
+  ///
+  /// System package managers are tied to their platforms; language package
+  /// managers run everywhere their toolchain does.
+  #[must_use]
+  pub fn runs_on(&self, os: &str) -> bool {
+    match self {
+      InstallMethod::Apt(_) => os == "linux",
+      InstallMethod::Brew(_) => matches!(os, "macos" | "linux"),
+      InstallMethod::Scoop(_)
+      | InstallMethod::WingetName(_)
+      | InstallMethod::WingetId(_) => os == "windows",
+      InstallMethod::CargoBinstall(_)
+      | InstallMethod::Npm(_)
+      | InstallMethod::Pnpm(_)
+      | InstallMethod::Yarn(_)
+      | InstallMethod::Bun(_)
+      | InstallMethod::Uv(_)
+      | InstallMethod::Pipx(_)
+      | InstallMethod::Pip(_)
+      | InstallMethod::Pip3(_)
+      | InstallMethod::Cargo { .. }
+      | InstallMethod::Rustup(_)
+      | InstallMethod::GoInstall(_) => true,
+    }
+  }
+
   /// Builds the executable command tuple `(program, args)` to execute this
   /// installation method.
   #[must_use]
@@ -389,24 +417,6 @@ const TYPSTYLE_CHAIN: &[InstallMethod] = &[
   },
 ];
 
-// `Npm("@myriaddreamin/tinymist")` used to live here but never corresponded
-// to a real published package (404 on npm; the whole `@myriaddreamin` scope
-// only publishes Typst.ts WASM bindings, not this CLI, and the unscoped
-// `tinymist` package is likewise a WASM analyzer module) -- confirmed by
-// direct registry lookup while fixing #195 [pre-recreation]. Dropped rather than pinned: no
-// npm distribution of this CLI exists to pin a version of. cargo-binstall
-// (first below) and the plain `cargo install` fallback already cover it.
-const TINYMIST_CHAIN: &[InstallMethod] = &[
-  InstallMethod::CargoBinstall("tinymist@0.15.2"),
-  InstallMethod::Brew("tinymist"),
-  InstallMethod::Scoop("tinymist"),
-  InstallMethod::WingetName("Myriad-Dreamin.tinymist"),
-  InstallMethod::Cargo {
-    package: "tinymist@0.15.2",
-    locked: true,
-  },
-];
-
 const RUFF_CHAIN: &[InstallMethod] = &[
   InstallMethod::Uv("ruff==0.16.4"),
   InstallMethod::Pipx("ruff==0.16.4"),
@@ -621,7 +631,7 @@ struct ToolChain {
 /// drifted apart from each other).
 ///
 /// `expected_binary_version` status per row, and why:
-/// - `Some(...)`: `typstyle`, `tinymist`, `ruff`, `prettier`, `biome`,
+/// - `Some(...)`: `typstyle`, `ruff`, `prettier`, `biome`,
 ///   `markdownlint-cli2`, `yamllint`, `golangci-lint` — each ships its own CLI directly
 ///   (not a repackaging of some other project's binary) and every
 ///   registry-resolved pin in its chain agrees on the same version, so the
@@ -662,11 +672,6 @@ const ALL_CHAINS: &[ToolChain] = &[
     binary: "typstyle",
     chain: TYPSTYLE_CHAIN,
     expected_binary_version: Some(Version::new(0, 15, 1)),
-  },
-  ToolChain {
-    binary: "tinymist",
-    chain: TINYMIST_CHAIN,
-    expected_binary_version: Some(Version::new(0, 15, 2)),
   },
   ToolChain {
     binary: "ruff",
@@ -1111,8 +1116,8 @@ fn run_cargo_binstall_bootstrap() -> bool {
 /// source compile) if `cargo` is present but `cargo-binstall` itself isn't
 /// yet on `PATH`.
 ///
-/// This exists so tools with no genuine native package anywhere (`typstyle`,
-/// `tinymist`; `taplo`/`ruff` as a fallback) get a real prebuilt-binary
+/// This exists so tools with no genuine native package anywhere (`typstyle`;
+/// `taplo`/`ruff` as a fallback) get a real prebuilt-binary
 /// install path on every OS instead of silently dropping straight to
 /// `cargo install --locked` source compilation just because `cargo-binstall`
 /// itself hadn't been bootstrapped yet. Side-effecting (spawns a network
@@ -1153,7 +1158,7 @@ pub fn ensure_cargo_binstall() -> bool {
 /// currently resolves to, when that installer can't itself pin to the tool's
 /// confirmed `expected_binary_version`.
 ///
-/// This is the `typstyle`/`tinymist` case: their chains list
+/// This is the `typstyle` case: its chain lists
 /// `CargoBinstall("<tool>@<pin>")` first, but on a machine where
 /// `cargo-binstall` isn't on `PATH` yet the first *available* method is
 /// `Brew`, whose core-tap bottle routinely trails the crates.io pin
@@ -1768,27 +1773,14 @@ pub fn refresh_path_after_install(program: &str) {
 /// the OS's own "No such file or directory" for the plain name stays the
 /// error the user sees.
 ///
-/// On Windows `npm`/`pnpm`/`yarn`/`npx` run through `cmd /C`. A resolved
-/// `.cmd`/`.bat` shim is spawned by its path: `std` runs it through
+/// A resolved `.cmd`/`.bat` shim, the package managers' own `npm.cmd` and
+/// friends included, is spawned by its path: `std` runs it through
 /// `cmd.exe` and quotes its arguments for batch files, so `%VAR%` in an
 /// argument is not expanded (it is under a hand-built `cmd /C <shim>`).
 /// npm's `ktlint.cmd` is the exception: its jar is run with `java -jar`
 /// because the shim itself cannot launch (#402).
 #[must_use]
 pub fn create_tool_command(binary: &str) -> std::process::Command {
-  #[cfg(windows)]
-  {
-    if binary == "npm"
-      || binary == "pnpm"
-      || binary == "yarn"
-      || binary == "npx"
-    {
-      let mut cmd = std::process::Command::new("cmd");
-      cmd.arg("/C").arg(binary);
-      return cmd;
-    }
-  }
-
   let Some(path) = resolve_binary_path(binary) else {
     return std::process::Command::new(binary);
   };
@@ -2007,26 +1999,11 @@ fn is_batch_file(path: &std::path::Path) -> bool {
   })
 }
 
-/// Returns whether `cmd` is a `cmd /C <target>` wrapper built by
-/// [`create_tool_command`].
-#[must_use]
-fn is_cmd_wrapper(cmd: &std::process::Command) -> bool {
-  std::path::Path::new(cmd.get_program())
-    .file_stem()
-    .is_some_and(|stem| stem.eq_ignore_ascii_case("cmd"))
-    && cmd.get_args().next().is_some_and(|arg| arg == "/C")
-}
-
 /// Names the tool `cmd` runs, as the bare binary name (`goimports`, not
 /// `/home/u/go/bin/goimports` or `ktlint.exe`), so a spawn failure is
 /// attributable to the tool `fml doctor --install` reports by that name.
-/// For a `cmd /C <target>` wrapper that is the target, not `cmd`.
 fn spawned_binary_name(cmd: &std::process::Command) -> String {
-  let program = if is_cmd_wrapper(cmd) {
-    cmd.get_args().nth(1).unwrap_or(cmd.get_program())
-  } else {
-    cmd.get_program()
-  };
+  let program = cmd.get_program();
   std::path::Path::new(program)
     .file_stem()
     .unwrap_or(program)
@@ -2059,7 +2036,34 @@ mod tests {
     assert!(has_version_pin("ruff==0.16.4"));
     assert!(has_version_pin("golang.org/x/tools/cmd/goimports@v0.49.0"));
     assert!(!has_version_pin("prettier"));
-    assert!(!has_version_pin("@myriaddreamin/tinymist"));
+    assert!(!has_version_pin("@taplo/cli"));
+  }
+
+  #[test]
+  fn test_install_method_runs_on_its_platforms_only() {
+    let cases = [
+      (InstallMethod::Apt("x"), [true, false, false]),
+      (InstallMethod::Brew("x"), [true, true, false]),
+      (InstallMethod::Scoop("x"), [false, false, true]),
+      (InstallMethod::WingetName("x"), [false, false, true]),
+      (InstallMethod::WingetId("x"), [false, false, true]),
+      (InstallMethod::Npm("x"), [true, true, true]),
+      (InstallMethod::Pip("x"), [true, true, true]),
+      (
+        InstallMethod::Cargo {
+          package: "x",
+          locked: true,
+        },
+        [true, true, true],
+      ),
+      (InstallMethod::GoInstall("x"), [true, true, true]),
+    ];
+    for (method, expected) in cases {
+      for (os, want) in ["linux", "macos", "windows"].into_iter().zip(expected)
+      {
+        assert_eq!(method.runs_on(os), want, "{method:?} on {os}");
+      }
+    }
   }
 
   #[test]
@@ -2245,7 +2249,6 @@ mod tests {
     assert_eq!(pinned_installer_for("prettier"), Some("npm"));
     assert_eq!(pinned_installer_for("ruff"), Some("uv"));
     assert_eq!(pinned_installer_for("typstyle"), Some("cargo-binstall"));
-    assert_eq!(pinned_installer_for("tinymist"), Some("cargo-binstall"));
     assert_eq!(pinned_installer_for("biome"), Some("npm"));
     assert_eq!(pinned_installer_for("markdownlint-cli2"), Some("npm"));
     assert_eq!(pinned_installer_for("yamllint"), Some("uv"));
@@ -2282,10 +2285,7 @@ mod tests {
     // A package spec with no `@`/`==` at all (e.g. the unpinned npm entries
     // #195 [pre-recreation] documents as deliberately left bare) must not be misparsed --
     // None, not a crash or a bogus version.
-    assert_eq!(
-      InstallMethod::Npm("@myriaddreamin/tinymist").pinned_version(),
-      None
-    );
+    assert_eq!(InstallMethod::Npm("@taplo/cli").pinned_version(), None);
   }
 
   #[test]
@@ -2591,6 +2591,17 @@ mod tests {
     );
 
     forget_binary("fml-unresolvable-probe-tool");
+  }
+
+  #[test]
+  fn test_create_tool_command_spawns_package_managers_like_any_shim() {
+    // #469: npm/pnpm/yarn/npx get no `cmd /C` wrapper; on Windows their
+    // `.cmd` shim resolves and gets `std`'s batch-file quoting.
+    for name in ["npm", "pnpm", "yarn", "npx"] {
+      let want = resolve_binary_path(name)
+        .map_or_else(|| name.into(), PathBuf::into_os_string);
+      assert_eq!(create_tool_command(name).get_program(), want, "{name}");
+    }
   }
 
   #[test]
@@ -2920,7 +2931,7 @@ mod tests {
   }
 
   // Coverage for the "at least one real prebuilt-binary installer per OS"
-  // gap this PR also fixes: typstyle/tinymist/taplo have no genuine native
+  // gap this PR also fixes: typstyle/taplo have no genuine native
   // package anywhere, so cargo-binstall (a real prebuilt binary, not a
   // source compile) is their only non-source-compile path on every OS,
   // Linux included.
@@ -2941,9 +2952,9 @@ mod tests {
   fn test_every_source_compile_only_cargo_tool_offers_cargo_binstall_first() {
     // If any of these ever loses its CargoBinstall step, the *only*
     // remaining install path on an OS without a matching Brew/Scoop/Winget
-    // entry (Linux, for all three) becomes compiling from source -- exactly
+    // entry (Linux, for both) becomes compiling from source -- exactly
     // the multi-minute typstyle build the bug report was filed over.
-    for binary in ["typstyle", "tinymist", "taplo"] {
+    for binary in ["typstyle", "taplo"] {
       let chain = install_chain_for(binary)
         .unwrap_or_else(|| panic!("{binary} must have a registered chain"));
       assert!(
@@ -3080,26 +3091,6 @@ mod tests {
       chain,
       None,
       cargo_fallback.as_ref(),
-    ));
-  }
-
-  #[test]
-  fn test_binstall_bootstrap_fixes_brew_pin_lag_for_tinymist() {
-    // tinymist has the identical chain shape to typstyle (pin-carrying
-    // `CargoBinstall` first, `Brew` as fallback) and a confirmed
-    // `expected_binary_version`, so the same #102 mechanism must cover it.
-    let chain =
-      install_chain_for("tinymist").expect("tinymist must have a chain");
-    let expected = pinned_version_for("tinymist");
-    let brew = chain
-      .iter()
-      .find(|m| matches!(m, InstallMethod::Brew(_)))
-      .copied();
-
-    assert!(binstall_bootstrap_would_fix_pin_lag(
-      chain,
-      expected.as_ref(),
-      brew.as_ref(),
     ));
   }
 
@@ -4344,6 +4335,34 @@ mod tests {
         assert!(!tool.effective_install_hint().is_empty());
       }
     }
+  }
+
+  #[test]
+  fn test_every_all_chains_row_names_a_surface_binary() {
+    // Issue #295: `tinymist` sat in ALL_CHAINS with no surface. Paired by
+    // name, after alias canonicalisation, so a row that reuses another
+    // tool's chain constant is still an orphan.
+    let declared: Vec<&str> = crate::surfaces::all_surfaces()
+      .iter()
+      .flat_map(|surface| {
+        let resolved = crate::config::ResolvedLangConfig::new(surface.name());
+        surface
+          .tool_info(&resolved)
+          .into_iter()
+          .map(|tool| tool.binary)
+      })
+      .map(canonical_chain_binary)
+      .collect();
+    let orphans: Vec<&str> = ALL_CHAINS
+      .iter()
+      .map(|row| row.binary)
+      .filter(|binary| !declared.contains(binary))
+      .collect();
+    assert!(
+      orphans.is_empty(),
+      "ALL_CHAINS rows no surface's tool_info declares: {orphans:?} \
+       (wire the tool into a surface, or delete the row)"
+    );
   }
 
   #[test]

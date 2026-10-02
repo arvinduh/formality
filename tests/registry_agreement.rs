@@ -5,7 +5,7 @@
 //! #276: `ktfmt` sat in `TOOL_MSTV_REGISTRY` with no surface and no
 //! `ALL_CHAINS` row, unreachable, until a manual audit (#268) caught it.
 //!
-//! This test pairs the tables in both directions:
+//! This test pairs the tables in two directions:
 //!   1. every binary a surface declares via `tool_info` has an `ALL_CHAINS`
 //!      row *and* a `TOOL_MSTV_REGISTRY` entry, after each table's own
 //!      canonicalisation, or is exempt from one or both sides per
@@ -13,10 +13,10 @@
 //!   2. every `TOOL_MSTV_REGISTRY` entry corresponds to some surface-declared
 //!      binary (the direction that would have caught `ktfmt`), or is exempt.
 //!
-//! Deliberately not checked: `ALL_CHAINS` entries with no surface (e.g.
-//! `tinymist`) pairing back to a declared binary — issue #276 scopes the
-//! keyset test to the two directions above, not a third. (Filed separately,
-//! not part of this PR.)
+//! The third direction, every `ALL_CHAINS` row naming a surface-declared
+//! binary (issue #295: `tinymist`), is
+//! `test_every_all_chains_row_names_a_surface_binary` in
+//! `src/surfaces/tooling.rs`, which can read the private table directly.
 //!
 //! ## Scope: `tool_info` declarations, plus a small named extension
 //!

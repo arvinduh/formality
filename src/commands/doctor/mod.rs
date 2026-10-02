@@ -26,7 +26,7 @@ use crate::engine::version::{
 use crate::surfaces::{
   LanguageSurface, ToolInfo, all_surfaces, check_binary_exists,
   create_tool_command, default_registry, detect_surfaces_smart,
-  matches_name_or_alias, pinned_version_for,
+  install_chain_for, matches_name_or_alias, pinned_version_for,
 };
 use crate::ui::paths::display_path;
 use crate::ui::table::{
@@ -65,7 +65,7 @@ fn install_missing_tools_framed(
   println!("{}", frame.dim_rule(&palette));
 
   // Bootstrap cargo-binstall once, up front, if any tool here would prefer
-  // it and it isn't on PATH yet. Tools like typstyle/tinymist have no real
+  // it and it isn't on PATH yet. Tools like typstyle have no real
   // native package on any OS -- cargo-binstall (a prebuilt binary, fetched
   // from the crate's GitHub releases) is their only non-source-compile
   // install path everywhere, including Linux. Without this, a chain would
@@ -290,9 +290,9 @@ fn install_missing_tools_framed(
     } else {
       let install_hint = tool.effective_install_hint();
       println!(
-        "\n  {} No automatic package manager found for {}.\n    Manual install: {}",
+        "\n  {} {}\n    Manual install: {}",
         "[MISS]".yellow().bold(),
-        tool.binary.bold(),
+        miss_headline(tool.binary, std::env::consts::OS),
         install_hint
       );
       all_ok = false;
@@ -363,6 +363,21 @@ enum InstallOutcome {
   Fail,
   /// No installer chain entry was available at all -- manual install only.
   NoInstaller,
+}
+
+/// Says why `binary` got no install command on `os` (a
+/// [`std::env::consts::OS`] value): no step of its install chain can run
+/// there (`gofmt` has no chain, it ships with Go; `checkstyle` has only
+/// `brew` and `apt` steps, so none on Windows), or some step can and its
+/// package manager is not on `PATH`.
+fn miss_headline(binary: &str, os: &str) -> String {
+  let has_path = install_chain_for(binary)
+    .is_some_and(|chain| chain.iter().any(|method| method.runs_on(os)));
+  if has_path {
+    format!("No automatic package manager found for {}.", binary.bold())
+  } else {
+    format!("fml has no install path for {} on this OS.", binary.bold())
+  }
 }
 
 /// Decide what a successful install *command* actually accomplished, from

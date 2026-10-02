@@ -711,6 +711,25 @@ fn test_classify_install_outcome_unpinned_absent_binary_is_not_ok() {
   );
 }
 
+/// A tool with no install step that can run on the OS (`gofmt` anywhere, it
+/// has no chain; `checkstyle` on Windows, its chain is `brew` + `apt`) must
+/// not read like a chain whose package managers are all missing.
+#[test]
+fn test_miss_headline_distinguishes_no_install_path_from_no_installer() {
+  let headline = |binary, os| strip_ansi_escapes(&miss_headline(binary, os));
+  let no_installer =
+    |binary| format!("No automatic package manager found for {binary}.");
+  let no_path =
+    |binary| format!("fml has no install path for {binary} on this OS.");
+  for os in ["linux", "macos", "windows"] {
+    assert_eq!(headline("gofmt", os), no_path("gofmt"), "{os}");
+    assert_eq!(headline("prettier", os), no_installer("prettier"), "{os}");
+  }
+  assert_eq!(headline("checkstyle", "linux"), no_installer("checkstyle"));
+  assert_eq!(headline("checkstyle", "macos"), no_installer("checkstyle"));
+  assert_eq!(headline("checkstyle", "windows"), no_path("checkstyle"));
+}
+
 /// `PATH` resolution is checked first and unconditionally: a tool that cannot
 /// be invoked is not "present at the wrong version", it is absent. Even a
 /// probed version matching the pin exactly cannot promote it — that
