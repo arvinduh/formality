@@ -76,6 +76,7 @@ uninlined_format_args = "warn"
 unreadable_literal = "warn"
 # Performance
 format_collect = "warn"
+format_push_string = "warn"
 implicit_hasher = "warn"
 redundant_clone = "warn"
 trivially_copy_pass_by_ref = "warn"
