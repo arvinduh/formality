@@ -983,4 +983,53 @@ mod tests {
       "src/commands/lsp.rs production code must not spawn child processes"
     );
   }
+
+  /// Drains the `window/showMessage` notifications the server has sent so far.
+  fn drain_show_messages(
+    socket: &mut tower_lsp::ClientSocket,
+  ) -> Vec<tower_lsp::lsp_types::ShowMessageParams> {
+    let mut shown = Vec::new();
+    while let Some(Some(request)) =
+      futures::FutureExt::now_or_never(futures::StreamExt::next(socket))
+    {
+      if request.method() == "window/showMessage" {
+        let params = request.params().unwrap().clone();
+        shown.push(serde_json::from_value(params).unwrap());
+      }
+    }
+    shown
+  }
+
+  #[tokio::test]
+  async fn test_lsp_invalid_config_at_initialize_reports_and_uses_defaults() {
+    let (service, mut socket) = LspService::new(FormalityLsp::new);
+    let server = service.inner();
+    let temp = tempfile::tempdir().unwrap();
+    let config_path = temp.path().join("formality.toml");
+    std::fs::write(&config_path, "[global]\nindent_size = 4\nbogus = 1\n")
+      .unwrap();
+    let expected = FormalityConfig::load_layered(Some(temp.path()))
+      .unwrap_err()
+      .to_string();
+
+    server
+      .initialize(InitializeParams {
+        root_uri: tower_lsp::lsp_types::Url::from_file_path(temp.path()).ok(),
+        ..Default::default()
+      })
+      .await
+      .unwrap();
+    // Requests reuse the cached defaults and must not re-report.
+    let cfg = server.get_or_load_config(Some(temp.path())).await;
+    server.get_or_load_config(Some(temp.path())).await;
+
+    let defaults = FormalityConfig::with_defaults();
+    let indent = |c: &FormalityConfig| c.global.as_ref()?.indent_size;
+    assert_ne!(indent(&cfg), Some(4));
+    assert_eq!(indent(&cfg), indent(&defaults));
+    let shown = drain_show_messages(&mut socket);
+    assert_eq!(shown.len(), 1, "{shown:?}");
+    assert_eq!(shown[0].typ, MessageType::ERROR);
+    assert!(shown[0].message.contains(&expected), "{}", shown[0].message);
+  }
 }
