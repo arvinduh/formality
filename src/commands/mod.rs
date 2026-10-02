@@ -76,6 +76,7 @@ fn dispatch_into(
   paths: Vec<PathBuf>,
   plan: &Plan,
 ) -> ExitStatus {
+  let scoped = !paths.is_empty();
   let target_paths = match resolve_git_paths(root, staged, changed, paths) {
     Ok(p) => p,
     Err(e) => {
@@ -86,7 +87,8 @@ fn dispatch_into(
 
   if (staged || changed) && target_paths.is_empty() {
     let flag = if staged { "staged" } else { "changed" };
-    let _ = writeln!(out, "{}", format!("No {flag} files.").yellow());
+    let under = if scoped { " under the given paths" } else { "" };
+    let _ = writeln!(out, "{}", format!("No {flag} files{under}.").yellow());
     return ExitStatus::Clean;
   }
 
@@ -585,6 +587,16 @@ mod tests {
     assert!(out.contains("No staged files."), "{out}");
     assert!(!out.contains("python"), "{out}");
     assert!(status.is_clean());
+
+    let mut out = Vec::new();
+    let paths = vec![PathBuf::from("bad.py")];
+    let _ =
+      dispatch_into(&mut out, root, &config, true, false, &[], paths, &plan);
+    let out = String::from_utf8_lossy(&out);
+    assert!(
+      out.contains("No staged files under the given paths."),
+      "{out}"
+    );
   }
 
   #[test]
