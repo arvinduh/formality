@@ -340,7 +340,7 @@ fn has_unspaced_hash_line(content: &str) -> bool {
 }
 
 /// Splits `line` into its leading indent width in columns (a tab advances to
-/// the next multiple of 4, CommonMark's tab stop) and the text after it.
+/// the next multiple of 4, `CommonMark`'s tab stop) and the text after it.
 fn split_indent(line: &str) -> (usize, &str) {
   let mut width = 0;
   for (i, c) in line.char_indices() {
@@ -357,7 +357,7 @@ fn split_indent(line: &str) -> (usize, &str) {
 /// of the open fence) past `line`, returning whether `line` is a fence
 /// marker or code inside a fence rather than Markdown content.
 ///
-/// CommonMark rules: a fence is three or more backticks or tildes behind at
+/// `CommonMark` rules: a fence is three or more backticks or tildes behind at
 /// most three columns of indent (four make it indented code, or paragraph
 /// text), a backtick opener's info string holds no backtick (else it is an
 /// inline code span), and the closer uses the opener's character, is at
@@ -424,7 +424,7 @@ fn front_matter_lines(content: &str) -> usize {
     .map_or(0, |close| close + 2)
 }
 
-/// The end marker of the CommonMark HTML block (types 1-5) that `rest`, a
+/// The end marker of the `CommonMark` HTML block (types 1-5) that `rest`, a
 /// line with its indent stripped, opens: `<script>`/`<pre>`/`<style>`/
 /// `<textarea>`, a comment, a processing instruction, a declaration or
 /// CDATA.
@@ -459,7 +459,7 @@ fn html_block_end(rest: &str) -> Option<&'static str> {
   })
 }
 
-/// Whether `hay` contains `needle`, ignoring ASCII case, as CommonMark's
+/// Whether `hay` contains `needle`, ignoring ASCII case, as `CommonMark`'s
 /// HTML block end conditions do.
 fn contains_ignore_case(hay: &str, needle: &str) -> bool {
   hay
@@ -468,7 +468,7 @@ fn contains_ignore_case(hay: &str, needle: &str) -> bool {
     .any(|w| w.eq_ignore_ascii_case(needle.as_bytes()))
 }
 
-/// CommonMark block state across lines, just enough to tell whether a line
+/// `CommonMark` block state across lines, just enough to tell whether a line
 /// opens a block of its own or continues an open paragraph.
 #[derive(Default)]
 struct BlockScan {
