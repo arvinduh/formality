@@ -96,8 +96,9 @@ fn check_extra_args(
       continue;
     };
     let lang: &str = name.get_ref();
-    // An unknown section only gets the unrecognized-section warning,
-    // whatever it holds.
+    // An unknown section has no tool keys to check against; deserialization
+    // types its `extra_args` like any other key, so a flat list there is a
+    // plain `InvalidValue` type error.
     let Some(surface) = registry.get_surface_by_name(lang) else {
       continue;
     };
