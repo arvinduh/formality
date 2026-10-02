@@ -69,8 +69,9 @@ pub use registry::{
   get_surface_by_name,
 };
 pub use sync::{
-  diff_check_via_tempcopy, diff_check_via_tempcopy_classified,
-  is_auto_generated, merge_sync_results, sync_file_helper,
+  diff_check_via_local_tempcopy_classified, diff_check_via_tempcopy,
+  diff_check_via_tempcopy_classified, is_auto_generated, merge_sync_results,
+  sync_file_helper,
 };
 pub use tooling::{
   ExitClass, InstallMethod, chain_wants_cargo_binstall, check_binary_exists,
