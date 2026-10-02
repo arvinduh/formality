@@ -12,6 +12,7 @@ use super::{
 };
 use serde::{Deserialize, Serialize};
 use std::collections::HashSet;
+use std::hash::BuildHasher;
 use std::path::{Path, PathBuf};
 use std::time::Instant;
 
@@ -275,9 +276,9 @@ pub fn scan_cpp_dirs(all_files: &[PathBuf]) -> HashSet<PathBuf> {
 /// Determines the appropriate `-std=` compiler flag (`-std=c++17` or `-std=c17`) for a target file,
 /// using a precomputed set of directories known to contain C++ files.
 #[must_use]
-pub fn std_flag_for_file_with_dirs(
+pub fn std_flag_for_file_with_dirs<S: BuildHasher>(
   file: &Path,
-  cpp_dirs: &HashSet<PathBuf>,
+  cpp_dirs: &HashSet<PathBuf, S>,
 ) -> &'static str {
   let ext = file.extension().and_then(|e| e.to_str()).unwrap_or("");
   if is_cpp_extension(ext) {
