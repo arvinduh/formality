@@ -180,25 +180,26 @@ impl PresentExtensions {
 pub mod walk_count {
   use std::path::{Path, PathBuf};
 
-  static WALKS: std::sync::Mutex<Vec<PathBuf>> =
-    std::sync::Mutex::new(Vec::new());
+  type Counts = std::collections::HashMap<PathBuf, usize>;
+
+  static WALKS: std::sync::LazyLock<std::sync::Mutex<Counts>> =
+    std::sync::LazyLock::new(std::sync::Mutex::default);
+
+  fn walks() -> std::sync::MutexGuard<'static, Counts> {
+    WALKS
+      .lock()
+      .unwrap_or_else(std::sync::PoisonError::into_inner)
+  }
 
   /// Records one walk rooted at `root`.
   pub fn record(root: &Path) {
-    WALKS
-      .lock()
-      .unwrap_or_else(std::sync::PoisonError::into_inner)
-      .push(root.to_path_buf());
+    *walks().entry(root.to_path_buf()).or_default() += 1;
   }
 
   /// How many walks so far were rooted at `root`.
+  #[must_use]
   pub fn of(root: &Path) -> usize {
-    WALKS
-      .lock()
-      .unwrap_or_else(std::sync::PoisonError::into_inner)
-      .iter()
-      .filter(|r| *r == root)
-      .count()
+    walks().get(root).copied().unwrap_or(0)
   }
 }
 
