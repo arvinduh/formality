@@ -559,6 +559,21 @@ pub struct ToolLookupResult {
 }
 use crate::errors::ExitStatus;
 
+/// Walks `root` once and records the extensions of the files `fml fmt`
+/// would run on, `global.exclude` applied, so doctor's detected column
+/// agrees with what actually runs.
+fn workspace_extensions(
+  root: &Path,
+  config: &FormalityConfig,
+) -> crate::surfaces::glob::PresentExtensions {
+  crate::surfaces::glob::PresentExtensions::from_paths(
+    &crate::surfaces::walk_candidate_files(
+      root,
+      &config.resolve_global().exclude,
+    ),
+  )
+}
+
 /// Executes the `fml doctor` diagnostic command to scan tools, environment, and hygiene.
 #[must_use]
 pub fn run_doctor(
@@ -569,9 +584,7 @@ pub fn run_doctor(
 ) -> ExitStatus {
   // One walk at most, shared by detection, the table's detected column
   // and the unconfigured-languages note.
-  let present = std::cell::LazyCell::new(|| {
-    crate::surfaces::glob::PresentExtensions::scan(root)
-  });
+  let present = std::cell::LazyCell::new(|| workspace_extensions(root, config));
   let detected = default_registry().detect_surfaces_in(root, config, &present);
   let detected_names: HashSet<&'static str> =
     detected.iter().map(|s| s.name()).collect();
