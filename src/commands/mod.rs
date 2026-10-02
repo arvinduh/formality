@@ -19,7 +19,10 @@ pub mod schema;
 /// Native configuration synchronization CLI command handler.
 pub mod sync;
 
+use std::io::Write;
 use std::path::{Path, PathBuf};
+
+use colored::Colorize;
 
 use crate::config::FormalityConfig;
 use crate::engine::{Pass, Plan, Runner, Scope};
@@ -43,6 +46,36 @@ pub fn dispatch_plan(
   paths: Vec<PathBuf>,
   plan: &Plan,
 ) -> ExitStatus {
+  dispatch_into(
+    &mut std::io::stdout(),
+    root,
+    config,
+    staged,
+    changed,
+    lang,
+    paths,
+    plan,
+  )
+}
+
+/// Runs [`dispatch_plan`], rendering into `out`.
+///
+/// An empty `--staged`/`--changed` selection runs no surface: an empty path
+/// list means the whole workspace to every layer below this one.
+#[expect(
+  clippy::too_many_arguments,
+  reason = "dispatch_plan's arguments plus the report sink"
+)]
+fn dispatch_into(
+  out: &mut dyn Write,
+  root: &Path,
+  config: &FormalityConfig,
+  staged: bool,
+  changed: bool,
+  lang: &[String],
+  paths: Vec<PathBuf>,
+  plan: &Plan,
+) -> ExitStatus {
   let target_paths = match resolve_git_paths(root, staged, changed, paths) {
     Ok(p) => p,
     Err(e) => {
@@ -51,14 +84,13 @@ pub fn dispatch_plan(
     }
   };
 
-  run_resolved(
-    &mut std::io::stdout(),
-    root,
-    config,
-    lang,
-    &target_paths,
-    plan,
-  )
+  if (staged || changed) && target_paths.is_empty() {
+    let flag = if staged { "staged" } else { "changed" };
+    let _ = writeln!(out, "{}", format!("No {flag} files.").yellow());
+    return ExitStatus::Clean;
+  }
+
+  run_resolved(out, root, config, lang, &target_paths, plan)
 }
 
 /// Runs `plan` against already-resolved `paths`: resolves target surfaces,
@@ -68,7 +100,7 @@ pub fn dispatch_plan(
 /// `out` is stdout for the CLI and stderr for `fml lsp`, whose stdout carries
 /// the JSON-RPC transport; one stray byte there breaks a strict client.
 fn run_resolved(
-  out: &mut dyn std::io::Write,
+  out: &mut dyn Write,
   root: &Path,
   config: &FormalityConfig,
   lang: &[String],
@@ -526,6 +558,32 @@ mod tests {
     assert!(!resolved_files.contains(&file_excluded));
     assert!(!resolved_files.contains(&file_fixture));
     assert!(!resolved_files.contains(&file_ignored));
+  }
+
+  #[test]
+  fn test_empty_staged_selection_runs_no_surface() {
+    let temp = TempDir::new().unwrap();
+    let root = temp.path();
+    let init_ok = std::process::Command::new("git")
+      .arg("init")
+      .current_dir(root)
+      .output()
+      .is_ok_and(|o| o.status.success());
+    if !init_ok {
+      return;
+    }
+    fs::write(root.join("bad.py"), "x  =  1\n").unwrap();
+
+    let mut out = Vec::new();
+    let config = FormalityConfig::with_defaults();
+    let plan = Plan::fmt(true, true);
+    let status =
+      dispatch_into(&mut out, root, &config, true, false, &[], vec![], &plan);
+
+    let out = String::from_utf8_lossy(&out);
+    assert!(out.contains("No staged files."), "{out}");
+    assert!(!out.contains("python"), "{out}");
+    assert!(status.is_clean());
   }
 
   #[test]
