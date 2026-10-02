@@ -26,7 +26,7 @@ use crate::engine::version::{
 use crate::surfaces::{
   LanguageSurface, ToolInfo, all_surfaces, check_binary_exists,
   create_tool_command, default_registry, detect_surfaces_smart,
-  matches_name_or_alias, pinned_version_for,
+  install_chain_for, matches_name_or_alias, pinned_version_for,
 };
 use crate::ui::paths::display_path;
 use crate::ui::table::{
@@ -290,9 +290,9 @@ fn install_missing_tools_framed(
     } else {
       let install_hint = tool.effective_install_hint();
       println!(
-        "\n  {} No automatic package manager found for {}.\n    Manual install: {}",
+        "\n  {} {}\n    Manual install: {}",
         "[MISS]".yellow().bold(),
-        tool.binary.bold(),
+        miss_headline(tool.binary),
         install_hint
       );
       all_ok = false;
@@ -363,6 +363,17 @@ enum InstallOutcome {
   Fail,
   /// No installer chain entry was available at all -- manual install only.
   NoInstaller,
+}
+
+/// Says why `binary` got no install command: fml has no install chain for it
+/// at all (it ships inside a toolchain the user brings, e.g. `gofmt` with
+/// Go), or it has one and none of that chain's package managers is on `PATH`.
+fn miss_headline(binary: &str) -> String {
+  if install_chain_for(binary).is_some() {
+    format!("No automatic package manager found for {}.", binary.bold())
+  } else {
+    format!("fml has no install path for {} on this OS.", binary.bold())
+  }
 }
 
 /// Decide what a successful install *command* actually accomplished, from

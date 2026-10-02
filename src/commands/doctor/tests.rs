@@ -711,6 +711,19 @@ fn test_classify_install_outcome_unpinned_absent_binary_is_not_ok() {
   );
 }
 
+/// A tool with no install chain (`gofmt`, which ships with Go) must not read
+/// like a chain whose package managers are all missing (`prettier`).
+#[test]
+fn test_miss_headline_distinguishes_no_install_path_from_no_installer() {
+  let no_path = strip_ansi_escapes(&miss_headline("gofmt"));
+  assert_eq!(no_path, "fml has no install path for gofmt on this OS.");
+  let no_installer = strip_ansi_escapes(&miss_headline("prettier"));
+  assert_eq!(
+    no_installer,
+    "No automatic package manager found for prettier."
+  );
+}
+
 /// `PATH` resolution is checked first and unconditionally: a tool that cannot
 /// be invoked is not "present at the wrong version", it is absent. Even a
 /// probed version matching the pin exactly cannot promote it — that
