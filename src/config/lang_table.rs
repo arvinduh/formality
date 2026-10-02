@@ -146,7 +146,7 @@ macro_rules! build_resolved_lang_config {
     $layout:expr, $enabled:expr, $extra_args:expr, $files:expr, $exclude:expr,
     $markdown:expr, $extra:expr
   ] $( $lang:ident { $ty:ty, $accessor:ident, $is_empty:expr } )*) => {
-    ResolvedLangConfig {
+    crate::config::ResolvedLangConfig {
       name: $name,
       indent_size: $indent_size,
       line_length: $line_length,
