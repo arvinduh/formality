@@ -595,4 +595,22 @@ mod tests {
     .unwrap();
     assert_eq!(detected(&excluding), ["rust"]);
   }
+
+  #[test]
+  fn test_root_marker_activates_its_surface_despite_global_exclude() {
+    let temp = TempDir::new().unwrap();
+    let root = temp.path();
+    fs::write(root.join("pyproject.toml"), "[project]\n").unwrap();
+    let config = FormalityConfig::parse_str(
+      "[global]\nexclude = [\"pyproject.toml\"]\n",
+      Path::new("formality.toml"),
+    )
+    .unwrap();
+
+    // Marker files are checked at the root, outside the candidate list.
+    let scope = Scope::resolve(root, &[], &config.resolve_global().exclude);
+    let surfaces = resolve_target_surfaces(root, &[], &scope, &config).unwrap();
+    let names: Vec<&str> = surfaces.iter().map(|s| s.name()).collect();
+    assert_eq!(names, ["python"]);
+  }
 }
