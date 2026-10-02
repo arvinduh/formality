@@ -5,8 +5,8 @@
 mod common;
 
 use common::{
-  fmt_cmd, init_cmd, init_git_repo, run_cli, run_cli_no_root, sync_cmd,
-  temp_repo,
+  BinaryOverride, fmt_cmd, init_cmd, init_git_repo, run_cli, run_cli_no_root,
+  sync_cmd, temp_repo,
 };
 use fml::cli::Commands;
 use fml::config::FormalityConfig;
@@ -735,15 +735,6 @@ fn test_relative_root_preserves_ancestor_manifest_walks_and_display() {
 
 #[test]
 fn test_missing_tool_exit_code_parity_staged_vs_unstaged() {
-  struct BinaryCacheResetGuard(&'static [&'static str]);
-  impl Drop for BinaryCacheResetGuard {
-    fn drop(&mut self) {
-      for binary in self.0 {
-        fml::surfaces::forget_binary(binary);
-      }
-    }
-  }
-
   let temp = temp_repo(&[("README.md", "# Test Project\n")]);
   let root = temp.path();
 
@@ -756,12 +747,10 @@ fn test_missing_tool_exit_code_parity_staged_vs_unstaged() {
     .current_dir(root)
     .output();
 
-  let _guard =
-    BinaryCacheResetGuard(&["markdownlint-cli2", "markdownlint", "prettier"]);
-
   // Simulate missing markdownlint tools
-  fml::surfaces::set_binary_path_for_test("markdownlint-cli2", None);
-  fml::surfaces::set_binary_path_for_test("markdownlint", None);
+  let mut cache = BinaryOverride::lock();
+  cache.hide("markdownlint-cli2");
+  cache.hide("markdownlint");
 
   // 1. Lint staged vs unstaged parity with missing tool
   let lint_staged = Commands::Lint {
@@ -781,8 +770,8 @@ fn test_missing_tool_exit_code_parity_staged_vs_unstaged() {
     paths: vec![],
   };
 
-  let lint_staged_status = run_cli(root, lint_staged);
-  let lint_unstaged_status = run_cli(root, lint_unstaged);
+  let lint_staged_status = cache.run_cli(root, lint_staged);
+  let lint_unstaged_status = cache.run_cli(root, lint_unstaged);
 
   assert_eq!(
     lint_staged_status,
@@ -800,7 +789,7 @@ fn test_missing_tool_exit_code_parity_staged_vs_unstaged() {
   );
 
   // 2. Fmt staged vs unstaged parity with missing tool (prettier)
-  fml::surfaces::set_binary_path_for_test("prettier", None);
+  cache.hide("prettier");
 
   let fmt_staged = Commands::Fmt {
     check: false,
@@ -819,8 +808,8 @@ fn test_missing_tool_exit_code_parity_staged_vs_unstaged() {
     paths: vec![],
   };
 
-  let fmt_staged_status = run_cli(root, fmt_staged);
-  let fmt_unstaged_status = run_cli(root, fmt_unstaged);
+  let fmt_staged_status = cache.run_cli(root, fmt_staged);
+  let fmt_unstaged_status = cache.run_cli(root, fmt_unstaged);
 
   assert_eq!(
     fmt_staged_status,

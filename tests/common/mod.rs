@@ -9,7 +9,7 @@ use fml::cli::{Cli, Commands};
 use fml::errors::ExitStatus;
 use std::fs;
 use std::path::Path;
-use std::sync::{PoisonError, RwLock};
+use std::sync::{PoisonError, RwLock, RwLockWriteGuard};
 use tempfile::TempDir;
 
 /// Orders in-process fml runs against overrides of fml's process-wide binary
@@ -22,6 +22,52 @@ use tempfile::TempDir;
 /// never poison, and every acquisition recovers a poisoned write guard, so a
 /// failing test cannot fail others through this lock.
 static BINARY_CACHE_LOCK: RwLock<()> = RwLock::new(());
+
+/// Write access to fml's binary cache, for simulating missing tools.
+///
+/// `Drop` evicts every hidden binary before the write guard releases, even
+/// while unwinding, so the next run resolves them afresh.
+pub struct BinaryOverride {
+  hidden: Vec<&'static str>,
+  _exclusive: RwLockWriteGuard<'static, ()>,
+}
+
+impl BinaryOverride {
+  /// Waits for every in-process run in this test binary to finish, then
+  /// blocks new ones until the returned value drops.
+  pub fn lock() -> Self {
+    let exclusive = BINARY_CACHE_LOCK
+      .write()
+      .unwrap_or_else(PoisonError::into_inner);
+    Self {
+      hidden: Vec::new(),
+      _exclusive: exclusive,
+    }
+  }
+
+  /// Makes `binary` resolve as not installed until this override drops.
+  pub fn hide(&mut self, binary: &'static str) {
+    fml::surfaces::set_binary_path_for_test(binary, None);
+    self.hidden.push(binary);
+  }
+
+  /// Runs `command` under this override; [`run_cli`] would deadlock here.
+  pub fn run_cli(&self, root: &Path, command: Commands) -> ExitStatus {
+    fml::run_with_args(Cli {
+      config: None,
+      root: Some(root.to_path_buf()),
+      command,
+    })
+  }
+}
+
+impl Drop for BinaryOverride {
+  fn drop(&mut self) {
+    for binary in &self.hidden {
+      fml::surfaces::forget_binary(binary);
+    }
+  }
+}
 
 /// Creates a temporary directory populated with the given `(relative_path, content)` files.
 /// Parent directories are created automatically for any nested file paths.
