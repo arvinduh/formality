@@ -14,7 +14,6 @@ use super::lang_table::lang_options_table;
 use super::options::MarkdownOptions;
 use super::{ConfigError, FormalityConfig};
 use crate::surfaces::SurfaceRegistry;
-use crate::surfaces::tooling;
 
 /// Parses `content`, read from `path`, into a [`FormalityConfig`].
 ///
@@ -117,14 +116,12 @@ fn check_extra_args(
           .keys()
           .find(|tool| !tools.contains(&tool.get_ref().as_ref()))
         {
-          let canonical = tooling::canonical_chain_binary(tool.get_ref());
           return Err(ConfigError::UnknownTool {
             path: path.to_path_buf(),
             lang: lang.to_owned(),
             tool: tool.get_ref().to_string(),
             line: line_at(content, tool.span().start),
             tools,
-            suggestion: tools.iter().copied().find(|t| *t == canonical),
           });
         }
       }

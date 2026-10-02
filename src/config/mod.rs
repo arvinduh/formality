@@ -33,6 +33,8 @@ use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
 use std::path::PathBuf;
 
+use crate::surfaces::tooling;
+
 /// Default configuration filename (`formality.toml`).
 pub const DEFAULT_CONFIG_FILE_NAME: &str = "formality.toml";
 /// Supported configuration file candidates in lookup order.
@@ -535,11 +537,11 @@ pub enum ConfigError {
     tool: String,
     /// One-based line of the key.
     line: usize,
-    /// The tool keys the surface accepts.
+    /// The tool keys the surface accepts. `Display` suggests the one `tool`
+    /// is a legacy alias of, e.g. `clippy-driver` for `clippy`, rather than
+    /// storing it: a stored field pushes the error past clippy's
+    /// `result_large_err` limit on Windows, where `PathBuf` is larger.
     tools: &'static [&'static str],
-    /// The accepted key `tool` is a legacy alias of, e.g. `clippy-driver`
-    /// for `clippy`.
-    suggestion: Option<&'static str>,
   },
 }
 
@@ -612,7 +614,6 @@ impl std::fmt::Display for ConfigError {
         tool,
         line,
         tools,
-        suggestion,
       } => {
         write!(
           f,
@@ -622,7 +623,8 @@ impl std::fmt::Display for ConfigError {
           path.display(),
           tools.join("`, `")
         )?;
-        match suggestion {
+        let canonical = tooling::canonical_chain_binary(tool);
+        match tools.iter().find(|key| **key == canonical) {
           Some(key) => write!(f, " Did you mean `{key}`?"),
           None => Ok(()),
         }
