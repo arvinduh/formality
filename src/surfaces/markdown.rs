@@ -8,10 +8,10 @@ use super::{
   FacetSupport, LanguageSurface, NativeConfig, PrettierConfig, SurfaceResult,
   SurfaceStatus, ToolInfo, build_prettier_inline_args, check_binary_exists,
   classify_all_nonzero_as_error, classify_exit_one_as_violation,
-  create_tool_command, diff_check_via_tempcopy_classified, find_files_with_ext,
-  install_hint_for, render_native_config, run_tool_command,
-  run_tool_command_classified, sync_native_config, tool_missing_guard,
-  tool_missing_result,
+  create_tool_command, diff_check_via_local_tempcopy_classified,
+  find_files_with_ext, install_hint_for, render_native_config,
+  run_tool_command, run_tool_command_classified, sync_native_config,
+  tool_missing_guard, tool_missing_result,
 };
 use crate::config::ResolvedLangConfig;
 use rayon::iter::{IntoParallelRefIterator, ParallelIterator};
@@ -943,7 +943,7 @@ impl LanguageSurface for MarkdownSurface {
     let hash_cfg_path = md_temp_cfgs.as_ref().map(|(_, h)| h.path());
 
     if ctx.check_only {
-      return diff_check_via_tempcopy_classified(
+      return diff_check_via_local_tempcopy_classified(
         &files,
         |scratch| {
           if let Some(bin) = md_binary {
@@ -1949,6 +1949,44 @@ README.md:7 error MD025/single-title/single-h1 Multiple top-level headings";
     assert_eq!(
       std::fs::read_to_string(&file).unwrap(),
       "# Title\n\nText.\n"
+    );
+  }
+
+  #[test]
+  fn test_format_check_honors_on_disk_markdownlint_config() {
+    // #414: `fml fmt --check` must discover `.markdownlint.json` in the
+    // file's directory hierarchy just like `fml fmt` does, rather than
+    // ignoring it from an isolated OS tempdir.
+    if !have_markdown_tools() {
+      return;
+    }
+
+    let temp = TempDir::new().unwrap();
+    let docs_dir = temp.path().join("docs");
+    std::fs::create_dir_all(&docs_dir).unwrap();
+    std::fs::write(docs_dir.join(".markdownlint.json"), "{\"MD018\": false}\n")
+      .unwrap();
+    let file = docs_dir.join("doc.md");
+    let content = "# T\n\npara\n\n#299) ok.\n";
+    std::fs::write(&file, content).unwrap();
+
+    let mut ctx = test_ctx(temp.path(), ResolvedLangConfig::new("markdown"));
+
+    ctx.check_only = false;
+    let res = MarkdownSurface.format(&ctx);
+    assert!(res.is_success(), "format failed: {:?}", res.status);
+    assert_eq!(
+      std::fs::read_to_string(&file).unwrap(),
+      content,
+      "fml fmt must preserve unspaced heading when MD018 is off on disk"
+    );
+
+    ctx.check_only = true;
+    let check = MarkdownSurface.format(&ctx);
+    assert!(
+      check.is_success(),
+      "fml fmt --check must match fml fmt and pass, got: {:?}",
+      check.status
     );
   }
 
