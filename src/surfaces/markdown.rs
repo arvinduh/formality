@@ -974,14 +974,34 @@ fn extract_html_block_ranges(src: &str) -> Vec<(usize, usize)> {
   // `None` once a chunk is not a verbatim slice of `src`. Defence in depth
   // for the container rule: prettier must see exactly the block's HTML.
   let mut next: Option<usize> = None;
+  // `<!-- prettier-ignore -->` shields the next top-level block, whatever
+  // its kind; `-start`/`-end` shield every block between them.
+  let (mut ignore_next, mut ignore_range) = (false, false);
   for (event, range) in parse_markdown(src).into_offset_iter() {
     match event {
       Event::Start(tag) => {
-        if depth == 0 && tag == Tag::HtmlBlock {
-          next = Some(range.start);
+        if depth == 0 {
+          let mut skip = std::mem::take(&mut ignore_next) || ignore_range;
+          if tag == Tag::HtmlBlock
+            && let Some((directive, rest)) =
+              leading_comment(&src[range.clone()])
+            && directive.starts_with("prettier-ignore")
+          {
+            match directive {
+              "prettier-ignore" => ignore_next = rest.trim().is_empty(),
+              "prettier-ignore-start" => ignore_range = true,
+              "prettier-ignore-end" => ignore_range = false,
+              _ => {}
+            }
+            skip = true;
+          }
+          if tag == Tag::HtmlBlock && !skip {
+            next = Some(range.start);
+          }
         }
         depth += 1;
       }
+      Event::Rule if depth == 0 => ignore_next = false,
       Event::Html(text) if depth == 1 => {
         next = next
           .filter(|&at| src[at..].starts_with(&*text))
@@ -998,6 +1018,14 @@ fn extract_html_block_ranges(src: &str) -> Vec<(usize, usize)> {
     }
   }
   spans
+}
+
+/// Splits `block` into its leading HTML comment's trimmed text and the
+/// text after that comment, or `None` when `block` does not open with one.
+fn leading_comment(block: &str) -> Option<(&str, &str)> {
+  let rest = block.trim_start().strip_prefix("<!--")?;
+  let end = rest.find("-->")?;
+  Some((rest[..end].trim(), &rest[end + 3..]))
 }
 
 /// Groups `spans` (as returned by [`extract_html_block_ranges`]) into
@@ -2866,6 +2894,35 @@ README.md:7 error MD025/single-title/single-h1 Multiple top-level headings";
     let src = "<div>\n\n<div>\n\n<div>\n\n<details>\n<summary>X</summary>\n\n\
     Body.\n\n</details>\n\n</div>\n\n</div>\n\n</div>\n";
     assert_eq!(format_block_html(src, &[], &[]), src);
+  }
+
+  #[test]
+  fn test_extract_html_block_ranges_honours_prettier_ignore() {
+    let blocks = |src: &'static str| -> Vec<&'static str> {
+      let spans = extract_html_block_ranges(src);
+      spans.into_iter().map(|(s, e)| &src[s..e]).collect()
+    };
+    // The comment shields only the next block, even when that block is a
+    // paragraph, and a comment sharing a block with html shields that block.
+    assert_eq!(
+      blocks("<!-- prettier-ignore -->\n\n<p>\n<b>a</b>\n</p>\n\n<p>c</p>\n"),
+      vec!["<p>c</p>\n"]
+    );
+    assert_eq!(
+      blocks("<!-- prettier-ignore -->\n<p>\n<b>a</b>\n</p>\n"),
+      [""; 0]
+    );
+    assert_eq!(
+      blocks("<!-- prettier-ignore -->\n\nText.\n\n<p>c</p>\n"),
+      vec!["<p>c</p>\n"]
+    );
+    assert_eq!(
+      blocks(
+        "<!-- prettier-ignore-start -->\n\n<p>a</p>\n\n<div>b</div>\n\n\
+         <!-- prettier-ignore-end -->\n\n<p>c</p>\n"
+      ),
+      vec!["<p>c</p>\n"]
+    );
   }
 
   #[test]
