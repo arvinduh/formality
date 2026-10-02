@@ -740,6 +740,13 @@ pub fn install_chain_for(binary: &str) -> Option<&'static [InstallMethod]> {
     .map(|entry| entry.chain)
 }
 
+/// Names every [`ALL_CHAINS`] row, so `tests/registry_agreement.rs` can
+/// require each one to pair back to a binary some surface declares.
+#[doc(hidden)]
+pub fn chain_binaries_for_test() -> impl Iterator<Item = &'static str> {
+  ALL_CHAINS.iter().map(|entry| entry.binary)
+}
+
 /// The version `<binary> --version` is expected to report when it's
 /// installed to the pin `fml doctor --install` currently uses, per [`ALL_CHAINS`]'s
 /// `expected_binary_version` field. Returns `None` — a "no known pin to
