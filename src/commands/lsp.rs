@@ -1032,4 +1032,44 @@ mod tests {
     assert_eq!(shown[0].typ, MessageType::ERROR);
     assert!(shown[0].message.contains(&expected), "{}", shown[0].message);
   }
+
+  #[tokio::test]
+  async fn test_lsp_invalid_config_on_reload_reports_and_keeps_previous() {
+    let (service, mut socket) = LspService::new(FormalityLsp::new);
+    let server = service.inner();
+    let temp = tempfile::tempdir().unwrap();
+    let config_path = temp.path().join("formality.toml");
+    std::fs::write(&config_path, "[global]\nindent_size = 4\n").unwrap();
+
+    server
+      .initialize(InitializeParams {
+        root_uri: tower_lsp::lsp_types::Url::from_file_path(temp.path()).ok(),
+        ..Default::default()
+      })
+      .await
+      .unwrap();
+    assert!(drain_show_messages(&mut socket).is_empty());
+
+    std::fs::write(&config_path, "[global]\nindent_size = 8\nbogus = 1\n")
+      .unwrap();
+    let expected = FormalityConfig::load_layered(Some(temp.path()))
+      .unwrap_err()
+      .to_string();
+    let uri = tower_lsp::lsp_types::Url::from_file_path(&config_path).unwrap();
+    server
+      .did_change_watched_files(DidChangeWatchedFilesParams {
+        changes: vec![tower_lsp::lsp_types::FileEvent {
+          uri,
+          typ: tower_lsp::lsp_types::FileChangeType::CHANGED,
+        }],
+      })
+      .await;
+    let cfg = server.get_or_load_config(Some(temp.path())).await;
+
+    assert_eq!(cfg.global.as_ref().and_then(|g| g.indent_size), Some(4));
+    let shown = drain_show_messages(&mut socket);
+    assert_eq!(shown.len(), 1, "{shown:?}");
+    assert_eq!(shown[0].typ, MessageType::ERROR);
+    assert!(shown[0].message.contains(&expected), "{}", shown[0].message);
+  }
 }
