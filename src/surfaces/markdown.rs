@@ -2991,16 +2991,13 @@ README.md:7 error MD025/single-title/single-h1 Multiple top-level headings";
     }
     let src = "<details>\n<summary   class=\"foo\"     >More info</summary>\n\n\
     Extra detail text.\n\n</details>\n";
-    let out = format_block_html(src, Path::new("."), &[], &[]);
-    assert!(
-      out.contains("<summary class=\"foo\">More info</summary>"),
-      "the messy <summary> attribute spacing must be normalized, got: {out}"
+    // Formatted alone, the opener would gain a spurious `</details>`; only
+    // the balanced batch yields exactly one closer, at the end.
+    assert_eq!(
+      format_block_html(src, Path::new("."), &[], &[]),
+      "<details>\n  <summary class=\"foo\">More info</summary>\n\n\
+       Extra detail text.\n\n</details>\n"
     );
-    assert!(
-      out.contains("Extra detail text."),
-      "interior markdown content must survive untouched, got: {out}"
-    );
-    assert!(out.trim_end().ends_with("</details>"));
   }
 
   #[test]
@@ -3028,6 +3025,13 @@ README.md:7 error MD025/single-title/single-h1 Multiple top-level headings";
     <details>\n<summary   class=\"foo\"     >More info</summary>\n\n\
     Extra detail text.\n\n</details>\n";
     let once = format_block_html(src, Path::new("."), &[], &[]);
+    assert_eq!(
+      once,
+      "# Project\n\n<p align=\"center\">\n  <img src=\"a.png\" alt=\"badge\" />\n\
+       </p>\n\nSome prose with an <strong>inline</strong>    span here.\n\n\
+       <details>\n  <summary class=\"foo\">More info</summary>\n\n\
+       Extra detail text.\n\n</details>\n"
+    );
     let twice = format_block_html(&once, Path::new("."), &[], &[]);
     assert_eq!(once, twice, "a second pass must be a no-op");
   }
@@ -3052,7 +3056,14 @@ README.md:7 error MD025/single-title/single-h1 Multiple top-level headings";
     }
     let temp = TempDir::new().unwrap();
     let readme = temp.path().join("README.md");
-    std::fs::write(&readme, README_WITH_INLINE_HTML).unwrap();
+    std::fs::write(
+      &readme,
+      "# Project\n\n<p align=\"center\">\n  <img src=\"a.png\"     alt=\"badge\">\n\
+       </p>\n\nSome <strong>inline</strong> prose.\n\n<details>\n\
+       <summary   class=\"x\">More info</summary>\n\nExtra detail text.\n\n\
+       </details>\n",
+    )
+    .unwrap();
 
     let surface = MarkdownSurface;
     let ctx = test_ctx(temp.path(), ResolvedLangConfig::new("markdown"));
@@ -3064,14 +3075,15 @@ README.md:7 error MD025/single-title/single-h1 Multiple top-level headings";
       res.status
     );
 
+    // Prettier's markdown pass alone leaves both tags as written.
     let formatted = std::fs::read_to_string(&readme).unwrap();
-    assert!(
-      formatted.contains("<img src=\"badge.png\" alt=\"badge\" />")
-        || formatted.contains("<img src=\"badge.png\" alt=\"badge\">"),
-      "the badge <img> tag must survive formatting, got: {formatted}"
+    assert_eq!(
+      formatted,
+      "# Project\n\n<p align=\"center\">\n  <img src=\"a.png\" alt=\"badge\" />\n\
+       </p>\n\nSome <strong>inline</strong> prose.\n\n<details>\n  \
+       <summary class=\"x\">More info</summary>\n\nExtra detail text.\n\n\
+       </details>\n"
     );
-    assert!(formatted.contains("<details>"));
-    assert!(formatted.contains("<summary>More info</summary>"));
 
     // Second run must be a no-op.
     let res2 = surface.format(&ctx);
