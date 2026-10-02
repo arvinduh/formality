@@ -3918,6 +3918,26 @@ mod tests {
   }
 
   #[test]
+  #[cfg(not(windows))]
+  fn test_resolve_via_known_install_dir_skips_windows_only_dirs() {
+    // yamllint's chain lists the Python installers, Scoop and WingetName;
+    // off Windows only the Python dirs may be asked for.
+    let found = resolve_via_known_install_dir_with("yamllint", |kind| {
+      assert!(
+        !matches!(
+          kind,
+          KnownInstallDir::ScoopShims
+            | KnownInstallDir::WingetUserLinks
+            | KnownInstallDir::WingetMachineLinks
+        ),
+        "{kind:?} is Windows only"
+      );
+      None
+    });
+    assert_eq!(found, None);
+  }
+
+  #[test]
   fn test_known_install_dir_path_go_reads_no_environment() {
     // Go's directory comes from `go env`, not from any variable this type
     // reads; proven by an env closure that panics if consulted at all.
