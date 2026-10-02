@@ -161,6 +161,11 @@ jobs:
           rustc --version
           rustc --edition 2021 -o "$RUNNER_TEMP/probe.exe" "$RUNNER_TEMP/probe.rs"
           "$RUNNER_TEMP/probe.exe" "$(cygpath -w "$RUNNER_TEMP/probe/w")"
+      - name: Checkout repository
+        uses: actions/checkout@v7
+      - name: Run the Windows shim signal test
+        shell: bash
+        run: cargo test --lib test_windows_shim_launch_failure_exit_codes -- --nocapture
 
   install-regression:
     # Not currently a required branch-protection status check (only
