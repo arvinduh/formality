@@ -1,5 +1,7 @@
 use super::*;
 
+use serde_json;
+
 #[test]
 fn test_span_width_calculation_unicode_cjk() {
   let ascii_span = Span::plain("hello");

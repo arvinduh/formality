@@ -491,6 +491,8 @@ pub fn relativize_text(root: &path::Path, text: &str) -> String {
 mod tests {
   use super::*;
 
+  use colored;
+
   use crate::engine;
 
   #[test]

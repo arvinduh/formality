@@ -6,6 +6,7 @@ use std::io;
 use comfy_table;
 use crossterm;
 use serde;
+use serde_json;
 use unicode_width;
 
 use crate::ui::table;
