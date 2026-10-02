@@ -9,6 +9,7 @@ use super::{
   run_tool_command, run_tool_command_classified, sync_native_config,
   tool_missing_guard,
 };
+use crate::config::ResolvedLangConfig;
 use serde::{Deserialize, Serialize};
 use std::path::PathBuf;
 use std::time::Instant;
@@ -137,6 +138,13 @@ impl DeclaresFacets for PythonSurface {
 /// Standard file extensions recognized for Python source files.
 pub const PYTHON_EXTENSIONS: &[&str] = &["py", "pyi"];
 
+/// `[lang.python.extra_args]` key for both `ruff check` invocations: the
+/// `--select I --fix` import-sort pass of `fml fmt`, and `fml lint`.
+const RUFF_CHECK: &str = "ruff-check";
+
+/// `[lang.python.extra_args]` key for the `ruff format` pass of `fml fmt`.
+const RUFF_FORMAT: &str = "ruff-format";
+
 /// Returns true if `extra_args` includes flags that widen or override rule
 /// selection in Ruff (e.g. `--extend-select` or `--select`).
 #[must_use]
@@ -193,12 +201,14 @@ pub fn is_ruff_import_sort_violation(
   ruff_output_has_lint_findings(stdout, stderr)
 }
 
-/// Builds argument vector for ruff import sorting invocation (`ruff check --select I --fix`).
+/// Builds argument vector for ruff import sorting invocation (`ruff check --select I --fix`),
+/// ending with the `ruff-check` extra args.
 #[must_use]
 pub fn build_ruff_import_sort_args(
   files: &[PathBuf],
-  extra_args: &[String],
+  lang: &ResolvedLangConfig,
 ) -> Vec<String> {
+  let extra_args = lang.tool_args(RUFF_CHECK);
   let mut args = vec![
     "check".to_string(),
     "--select".to_string(),
@@ -216,13 +226,15 @@ pub fn build_ruff_import_sort_args(
   args
 }
 
-/// Builds argument vector for ruff lint check invocation.
+/// Builds argument vector for ruff lint check invocation, ending with the
+/// `ruff-check` extra args.
 #[must_use]
 pub fn build_ruff_check_args(
   files: &[PathBuf],
   fix: bool,
-  extra_args: &[String],
+  lang: &ResolvedLangConfig,
 ) -> Vec<String> {
+  let extra_args = lang.tool_args(RUFF_CHECK);
   let mut args = vec!["check".to_string()];
   if fix {
     args.push("--fix".to_string());
@@ -235,6 +247,27 @@ pub fn build_ruff_check_args(
     }
   }
   args.extend(extra_args.iter().cloned());
+  args
+}
+
+/// Builds argument vector for the `ruff format` pass: `inline_config`, then
+/// the files (`.` when none), then the `ruff-format` extra args.
+#[must_use]
+pub fn build_ruff_format_args(
+  inline_config: &[String],
+  files: &[PathBuf],
+  lang: &ResolvedLangConfig,
+) -> Vec<String> {
+  let mut args = vec!["format".to_string()];
+  args.extend(inline_config.iter().cloned());
+  if files.is_empty() {
+    args.push(".".to_string());
+  } else {
+    for f in files {
+      args.push(f.to_string_lossy().to_string());
+    }
+  }
+  args.extend(lang.tool_args(RUFF_FORMAT).iter().cloned());
   args
 }
 
@@ -323,6 +356,10 @@ impl LanguageSurface for PythonSurface {
     "python"
   }
 
+  fn extra_args_tools(&self) -> &'static [&'static str] {
+    &[RUFF_CHECK, RUFF_FORMAT]
+  }
+
   fn aliases(&self) -> &[&'static str] {
     &["py"]
   }
@@ -350,10 +387,7 @@ impl LanguageSurface for PythonSurface {
     ]
   }
 
-  fn tool_info(
-    &self,
-    _config: &crate::config::ResolvedLangConfig,
-  ) -> Vec<ToolInfo> {
+  fn tool_info(&self, _config: &ResolvedLangConfig) -> Vec<ToolInfo> {
     vec![ToolInfo {
       binary: "ruff",
       description: "Fast Python linter and code formatter",
@@ -383,22 +417,18 @@ impl LanguageSurface for PythonSurface {
     let inline_config =
       build_ruff_inline_config_args(&RuffConfig::from_context(ctx));
 
-    let widens_selection =
-      extra_args_widen_selection(&ctx.lang_config.extra_args);
+    let check_args = ctx.lang_config.tool_args(RUFF_CHECK);
+    let widens_selection = extra_args_widen_selection(check_args);
 
     if ctx.check_only {
       return diff_check_via_tempcopy_classified(
         &files,
         |scratch| {
+          let scratch = [scratch.to_path_buf()];
           let mut isort_cmd = create_tool_command("ruff");
           isort_cmd
-            .arg("check")
-            .arg("--select")
-            .arg("I")
-            .arg("--fix")
-            .args(&inline_config)
-            .arg(scratch);
-          isort_cmd.args(&ctx.lang_config.extra_args);
+            .args(build_ruff_import_sort_args(&scratch, &ctx.lang_config))
+            .args(&inline_config);
           isort_cmd.current_dir(ctx.root.as_path());
           let isort_out = isort_cmd.output()?;
           if !isort_out.status.success() {
@@ -406,8 +436,11 @@ impl LanguageSurface for PythonSurface {
           }
 
           let mut fmt_cmd = create_tool_command("ruff");
-          fmt_cmd.arg("format").args(&inline_config).arg(scratch);
-          fmt_cmd.args(&ctx.lang_config.extra_args);
+          fmt_cmd.args(build_ruff_format_args(
+            &inline_config,
+            &scratch,
+            &ctx.lang_config,
+          ));
           fmt_cmd.current_dir(ctx.root.as_path());
           fmt_cmd.output()
         },
@@ -436,7 +469,7 @@ impl LanguageSurface for PythonSurface {
     let mut isort_cmd = create_tool_command("ruff");
     isort_cmd.args(build_ruff_import_sort_args(
       &files_to_pass,
-      &ctx.lang_config.extra_args,
+      &ctx.lang_config,
     ));
     isort_cmd.args(&inline_config);
     isort_cmd.current_dir(ctx.root.as_path());
@@ -461,7 +494,7 @@ impl LanguageSurface for PythonSurface {
             output.status.code(),
             &stdout,
             &stderr,
-            &ctx.lang_config.extra_args,
+            check_args,
           );
 
           return SurfaceResult {
@@ -490,18 +523,11 @@ impl LanguageSurface for PythonSurface {
     }
 
     let mut cmd = create_tool_command("ruff");
-    cmd.arg("format");
-    cmd.args(&inline_config);
-
-    if files_to_pass.is_empty() {
-      cmd.arg(".");
-    } else {
-      for f in &files_to_pass {
-        cmd.arg(f);
-      }
-    }
-
-    cmd.args(&ctx.lang_config.extra_args);
+    cmd.args(build_ruff_format_args(
+      &inline_config,
+      &files_to_pass,
+      &ctx.lang_config,
+    ));
     cmd.current_dir(ctx.root.as_path());
 
     // `ruff format` (no `--check`) exits 0 formatted-or-not and only exits 2
@@ -532,11 +558,7 @@ impl LanguageSurface for PythonSurface {
       build_ruff_inline_lint_config_args(&RuffConfig::from_context(ctx));
 
     let mut cmd = create_tool_command("ruff");
-    cmd.args(build_ruff_check_args(
-      &files_to_pass,
-      fix,
-      &ctx.lang_config.extra_args,
-    ));
+    cmd.args(build_ruff_check_args(&files_to_pass, fix, &ctx.lang_config));
     cmd.args(&lint_config);
     cmd.current_dir(ctx.root.as_path());
 
@@ -566,13 +588,58 @@ mod tests {
   use std::sync::Arc;
   use tempfile::TempDir;
 
+  /// A python config whose `extra_args` sets `args` for `tool` only.
+  fn lang_with(tool: &str, args: &[&str]) -> ResolvedLangConfig {
+    let mut lang = ResolvedLangConfig::new("python");
+    lang.extra_args = [(
+      tool.to_string(),
+      args.iter().map(ToString::to_string).collect(),
+    )]
+    .into();
+    lang
+  }
+
+  #[test]
+  fn test_python_extra_args_reach_only_their_pass() {
+    // Fixes #210: `ruff-check` args reach both `ruff check` invocations and
+    // never `ruff format`, and `ruff-format` args the reverse.
+    let mut lang = lang_with(RUFF_CHECK, &["--extend-select", "F"]);
+    lang
+      .extra_args
+      .insert(RUFF_FORMAT.to_string(), vec!["--preview".to_string()]);
+    let files = [PathBuf::from("a.py")];
+    let inline = ["--config".to_string(), "line-length=100".to_string()];
+
+    assert_eq!(
+      build_ruff_import_sort_args(&files, &lang),
+      [
+        "check",
+        "--select",
+        "I",
+        "--fix",
+        "a.py",
+        "--extend-select",
+        "F"
+      ]
+    );
+    assert_eq!(
+      build_ruff_check_args(&files, false, &lang),
+      ["check", "a.py", "--extend-select", "F"]
+    );
+    assert_eq!(
+      build_ruff_format_args(&inline, &files, &lang),
+      ["format", "--config", "line-length=100", "a.py", "--preview"]
+    );
+  }
+
   #[test]
   fn test_build_ruff_check_args_with_and_without_fix() {
-    let no_fix = build_ruff_check_args(&[], false, &[]);
+    let no_fix =
+      build_ruff_check_args(&[], false, &ResolvedLangConfig::new("python"));
     assert_eq!(no_fix, vec!["check".to_string(), ".".to_string()]);
 
     let files = vec![PathBuf::from("a.py"), PathBuf::from("b.py")];
-    let extra = vec!["--isolated".to_string()];
+    let extra = lang_with(RUFF_CHECK, &["--isolated"]);
     let with_fix = build_ruff_check_args(&files, true, &extra);
     assert_eq!(
       with_fix,
@@ -686,7 +753,8 @@ mod tests {
   }
   #[test]
   fn test_build_ruff_import_sort_args() {
-    let no_files = build_ruff_import_sort_args(&[], &[]);
+    let no_files =
+      build_ruff_import_sort_args(&[], &ResolvedLangConfig::new("python"));
     assert_eq!(
       no_files,
       vec![
@@ -699,7 +767,7 @@ mod tests {
     );
 
     let files = vec![PathBuf::from("a.py"), PathBuf::from("b.py")];
-    let extra = vec!["--isolated".to_string()];
+    let extra = lang_with(RUFF_CHECK, &["--isolated"]);
     let with_files = build_ruff_import_sort_args(&files, &extra);
     assert_eq!(
       with_files,
@@ -907,10 +975,8 @@ mod tests {
     std::fs::write(temp.path().join("valid.py"), "x = 1\n").unwrap();
 
     let surface = PythonSurface;
-    let mut config = ResolvedLangConfig::new("python");
-    // `--ignore` is a valid `ruff check` option, so the isort pass succeeds.
-    // However, `ruff format` rejects `--ignore`, causing ruff format specifically to fail.
-    config.extra_args = vec!["--ignore".to_string(), "E501".to_string()];
+    // `ruff format` rejects `--ignore`, so the format pass specifically fails.
+    let config = lang_with(RUFF_FORMAT, &["--ignore", "E501"]);
     let ctx = test_ctx(temp.path(), config);
 
     let res = surface.format(&ctx);
@@ -978,8 +1044,7 @@ mod tests {
       .unwrap();
 
     let surface = PythonSurface;
-    let mut config = ResolvedLangConfig::new("python");
-    config.extra_args = vec!["--extend-select".to_string(), "F".to_string()];
+    let config = lang_with(RUFF_CHECK, &["--extend-select", "F"]);
     let ctx = test_ctx(temp.path(), config);
 
     let res = surface.format(&ctx);
@@ -1007,8 +1072,7 @@ mod tests {
       .unwrap();
 
     let surface = PythonSurface;
-    let mut config = ResolvedLangConfig::new("python");
-    config.extra_args = vec!["--extend-select".to_string(), "F".to_string()];
+    let config = lang_with(RUFF_CHECK, &["--extend-select", "F"]);
     let mut ctx = test_ctx(temp.path(), config);
     ctx.check_only = true;
 

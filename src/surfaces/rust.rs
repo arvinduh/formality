@@ -176,6 +176,10 @@ impl LanguageSurface for RustSurface {
     "rust"
   }
 
+  fn extra_args_tools(&self) -> &'static [&'static str] {
+    &["rustfmt", "clippy-driver"]
+  }
+
   fn aliases(&self) -> &[&'static str] {
     &["rs"]
   }
@@ -303,7 +307,7 @@ impl LanguageSurface for RustSurface {
       )
     };
 
-    cmd.args(&ctx.lang_config.extra_args);
+    cmd.args(ctx.lang_config.tool_args("rustfmt"));
     cmd.current_dir(ctx.root.as_path());
 
     run_tool_command(self.name(), &mut cmd)
@@ -343,7 +347,10 @@ impl LanguageSurface for RustSurface {
     }
 
     let mut cmd = create_tool_command("cargo");
-    cmd.args(build_clippy_args(fix, &ctx.lang_config.extra_args));
+    cmd.args(build_clippy_args(
+      fix,
+      ctx.lang_config.tool_args("clippy-driver"),
+    ));
     cmd.current_dir(ctx.root.as_path());
 
     run_tool_command(self.name(), &mut cmd)

@@ -38,6 +38,10 @@ impl LanguageSurface for JsonSurface {
     "json"
   }
 
+  fn extra_args_tools(&self) -> &'static [&'static str] {
+    &["prettier"]
+  }
+
   fn aliases(&self) -> &[&'static str] {
     &[]
   }
@@ -105,7 +109,7 @@ impl LanguageSurface for JsonSurface {
             .arg(parser)
             .args(&inline_config)
             .arg(scratch);
-          cmd.args(&ctx.lang_config.extra_args);
+          cmd.args(ctx.lang_config.tool_args("prettier"));
           cmd.current_dir(ctx.root.as_path());
           cmd.output()
         },
@@ -123,7 +127,7 @@ impl LanguageSurface for JsonSurface {
       cmd.arg(f);
     }
 
-    cmd.args(&ctx.lang_config.extra_args);
+    cmd.args(ctx.lang_config.tool_args("prettier"));
     cmd.current_dir(ctx.root.as_path());
 
     // `prettier --write` exits `0` regardless of whether it reformats and

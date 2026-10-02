@@ -63,6 +63,10 @@ impl LanguageSurface for TypstSurface {
     "typst"
   }
 
+  fn extra_args_tools(&self) -> &'static [&'static str] {
+    &["typstyle"]
+  }
+
   fn aliases(&self) -> &[&'static str] {
     &["typ"]
   }
@@ -111,7 +115,7 @@ impl LanguageSurface for TypstSurface {
             .arg(ctx.lang_config.line_length.to_string())
             .arg("-i")
             .arg(scratch);
-          cmd.args(&ctx.lang_config.extra_args);
+          cmd.args(ctx.lang_config.tool_args("typstyle"));
           cmd.current_dir(ctx.root.as_path());
           cmd.output()
         },
@@ -130,7 +134,7 @@ impl LanguageSurface for TypstSurface {
       cmd.arg(f);
     }
 
-    cmd.args(&ctx.lang_config.extra_args);
+    cmd.args(ctx.lang_config.tool_args("typstyle"));
     cmd.current_dir(ctx.root.as_path());
 
     run_tool_command(self.name(), &mut cmd)

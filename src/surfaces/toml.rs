@@ -174,6 +174,10 @@ impl LanguageSurface for TomlSurface {
     "toml"
   }
 
+  fn extra_args_tools(&self) -> &'static [&'static str] {
+    &["taplo"]
+  }
+
   fn aliases(&self) -> &[&'static str] {
     &[]
   }
@@ -230,7 +234,7 @@ impl LanguageSurface for TomlSurface {
             .arg("format")
             .args(&inline_config)
             .arg(taplo_path_arg(&scratch.to_string_lossy(), cfg!(windows)));
-          cmd.args(&ctx.lang_config.extra_args);
+          cmd.args(ctx.lang_config.tool_args("taplo"));
           cmd.current_dir(ctx.root.as_path());
           cmd.output()
         },
@@ -247,7 +251,7 @@ impl LanguageSurface for TomlSurface {
       cmd.arg(taplo_path_arg(&f.to_string_lossy(), cfg!(windows)));
     }
 
-    cmd.args(&ctx.lang_config.extra_args);
+    cmd.args(ctx.lang_config.tool_args("taplo"));
     cmd.current_dir(ctx.root.as_path());
 
     run_tool_command(self.name(), &mut cmd)
@@ -276,7 +280,7 @@ impl LanguageSurface for TomlSurface {
       cmd.arg(taplo_path_arg(&f.to_string_lossy(), cfg!(windows)));
     }
 
-    cmd.args(&ctx.lang_config.extra_args);
+    cmd.args(ctx.lang_config.tool_args("taplo"));
     cmd.current_dir(ctx.root.as_path());
 
     run_tool_command(self.name(), &mut cmd)

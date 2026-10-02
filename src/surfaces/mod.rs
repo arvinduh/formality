@@ -478,6 +478,13 @@ pub trait LanguageSurface: DeclaresFacets + Send + Sync {
   }
   /// Returns information about required tools for this surface.
   fn tool_info(&self, config: &ResolvedLangConfig) -> Vec<ToolInfo>;
+  /// Keys `[lang.<name>.extra_args]` accepts, one per tool invocation this
+  /// surface makes. Each is the binary name `fml doctor` and the install
+  /// chains use, or `<binary>-<subcommand>` where one binary runs two passes
+  /// (python's `ruff-check`/`ruff-format`). Any other key is a config error.
+  fn extra_args_tools(&self) -> &'static [&'static str] {
+    &[]
+  }
   /// Formats source files using underlying tools.
   fn format(&self, ctx: &ExecutionContext) -> SurfaceResult;
   /// Lints source files using underlying tools.
