@@ -26,7 +26,7 @@
 use colored::Colorize;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
-use tower_lsp::jsonrpc::Result as LspResult;
+use tower_lsp::jsonrpc::{Request, Response, Result as LspResult};
 use tower_lsp::lsp_types::{
   Diagnostic, DiagnosticSeverity, DidChangeWatchedFilesParams,
   DidOpenTextDocumentParams, DidSaveTextDocumentParams,
@@ -35,9 +35,10 @@ use tower_lsp::lsp_types::{
   ServerInfo, TextDocumentIdentifier, TextDocumentSyncCapability,
   TextDocumentSyncKind, TextEdit,
 };
-use tower_lsp::{Client, LanguageServer, LspService, Server};
+use tower_lsp::{Client, ExitedError, LanguageServer, LspService, Server};
 
 use crate::config::FormalityConfig;
+use crate::errors::ExitStatus;
 
 /// Server identity reported in `initialize`'s `ServerInfo`.
 const SERVER_NAME: &str = "formality";
@@ -69,6 +70,8 @@ pub struct FormalityLsp {
   /// only by a successful reload after `formality.toml` /
   /// `.formality.toml` changes.
   config: Arc<tokio::sync::RwLock<Option<FormalityConfig>>>,
+  /// Set once a `shutdown` request has been handled; decides the exit code.
+  shut_down: std::sync::atomic::AtomicBool,
 }
 
 impl FormalityLsp {
@@ -79,6 +82,7 @@ impl FormalityLsp {
       client,
       root: tokio::sync::Mutex::new(None),
       config: Arc::new(tokio::sync::RwLock::new(None)),
+      shut_down: std::sync::atomic::AtomicBool::new(false),
     }
   }
 
@@ -214,6 +218,9 @@ impl LanguageServer for FormalityLsp {
   }
 
   async fn shutdown(&self) -> LspResult<()> {
+    self
+      .shut_down
+      .store(true, std::sync::atomic::Ordering::Release);
     Ok(())
   }
 
@@ -426,14 +433,72 @@ pub fn compute_formatting_edits(before: &str, after: &str) -> Vec<TextEdit> {
 // Entry point called from lib.rs / Commands::Lsp
 // ---------------------------------------------------------------------------
 
+/// Wraps the [`LspService`] to report the `exit` notification as it arrives.
+///
+/// tower-lsp handles `exit` in its own layer and `Server::serve` returns only
+/// at stdin EOF, so a client that keeps stdin open would otherwise keep the
+/// process alive. This wrapper sees every request first and fires `exited`.
+struct ExitSignal {
+  service: LspService<FormalityLsp>,
+  /// Fired once, on the first `exit`; dropped with `serve` at stdin EOF.
+  exited: Option<tokio::sync::oneshot::Sender<ExitStatus>>,
+}
+
+impl tower_service::Service<Request> for ExitSignal {
+  type Response = Option<Response>;
+  type Error = ExitedError;
+  type Future =
+    <LspService<FormalityLsp> as tower_service::Service<Request>>::Future;
+
+  fn poll_ready(
+    &mut self,
+    cx: &mut std::task::Context<'_>,
+  ) -> std::task::Poll<Result<(), ExitedError>> {
+    tower_service::Service::poll_ready(&mut self.service, cx)
+  }
+
+  fn call(&mut self, request: Request) -> Self::Future {
+    let is_exit = request.method() == "exit";
+    let response = tower_service::Service::call(&mut self.service, request);
+    if is_exit && let Some(exited) = self.exited.take() {
+      let shut_down = self
+        .service
+        .inner()
+        .shut_down
+        .load(std::sync::atomic::Ordering::Acquire);
+      // The receiver lives until the process exits.
+      let _ = exited.send(exit_status(shut_down));
+    }
+    response
+  }
+}
+
+/// Maps the LSP spec's exit-code rule onto [`ExitStatus`].
+///
+/// The spec: "The server should exit with `success` code 0 if the shutdown
+/// request has been received before; otherwise with `error` code 1." Code 1
+/// is [`ExitStatus::Violations`]; here it means `exit` came without
+/// `shutdown`, not lint violations.
+fn exit_status(shut_down: bool) -> ExitStatus {
+  if shut_down {
+    ExitStatus::Clean
+  } else {
+    ExitStatus::Violations
+  }
+}
+
 /// Start the formality LSP server on stdio.
 ///
-/// Blocks until the client disconnects. Intended to be called from `fml lsp`.
+/// Blocks until the client sends `exit` or closes stdin. Intended to be called
+/// from `fml lsp`.
+///
+/// Returns the exit status the LSP spec prescribes for `exit` (see
+/// [`exit_status`]), or [`ExitStatus::Clean`] when stdin closes first.
 ///
 /// # Panics
 ///
 /// Panics if the underlying Tokio runtime fails to initialize.
-pub fn run_lsp_server(root: Option<&Path>) {
+pub fn run_lsp_server(root: Option<&Path>) -> ExitStatus {
   // Print a startup banner to stderr (not stdout — that's the LSP channel).
   eprintln!(
     "{} LSP server starting (stdio transport, v{SERVER_VERSION})",
@@ -444,13 +509,22 @@ pub fn run_lsp_server(root: Option<&Path>) {
   }
 
   let rt = tokio::runtime::Runtime::new().expect("tokio runtime");
-  rt.block_on(async {
-    let stdin = tokio::io::stdin();
-    let stdout = tokio::io::stdout();
-
-    let (service, socket) = LspService::new(FormalityLsp::new);
-    Server::new(stdin, stdout, socket).serve(service).await;
-  });
+  let (service, socket) = LspService::new(FormalityLsp::new);
+  let (exited_tx, exited_rx) = tokio::sync::oneshot::channel();
+  let service = ExitSignal {
+    service,
+    exited: Some(exited_tx),
+  };
+  let server = Server::new(tokio::io::stdin(), tokio::io::stdout(), socket);
+  // `serve` owns the sender, so the receiver resolves on `exit` or, when
+  // `serve` returns at stdin EOF, on the dropped sender.
+  rt.spawn(server.serve(service));
+  let status = rt.block_on(exited_rx).unwrap_or(ExitStatus::Clean);
+  // After `exit`, `serve` is still parked on a stdin read on Tokio's blocking
+  // pool, which dropping the runtime would wait for. Shutting down in the
+  // background abandons it; the process exit that follows ends the thread.
+  rt.shutdown_background();
+  status
 }
 
 #[cfg(test)]

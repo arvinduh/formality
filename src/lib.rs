@@ -84,8 +84,7 @@ fn run_command_inner(
   // spawn it in the workspace root, so failing on that config here would
   // kill it before it could tell the editor why.
   if matches!(args.command, Commands::Lsp) {
-    commands::lsp::run_lsp_server(Some(root));
-    return ExitStatus::Clean;
+    return commands::lsp::run_lsp_server(Some(root));
   }
 
   let (mut config, _config_path) =
