@@ -7,7 +7,7 @@
 
 mod common;
 
-use common::lsp::{self, send};
+use common::lsp;
 use std::process::{Child, Stdio};
 use std::sync::mpsc;
 use std::time::{Duration, Instant};
@@ -58,7 +58,7 @@ fn exit_code_after_exit(shutdown: &Shutdown) -> Option<i32> {
   let rx = lsp::messages(&mut child);
 
   let root_uri = tower_lsp::lsp_types::Url::from_file_path(dir.path()).unwrap();
-  send(
+  lsp::send(
     &mut stdin,
     &[serde_json::json!({
       "jsonrpc": "2.0", "id": 1, "method": "initialize",
@@ -66,7 +66,7 @@ fn exit_code_after_exit(shutdown: &Shutdown) -> Option<i32> {
     })],
   );
   await_response(&rx, 1);
-  send(
+  lsp::send(
     &mut stdin,
     &[serde_json::json!({
       "jsonrpc": "2.0", "method": "initialized", "params": {},
@@ -76,14 +76,14 @@ fn exit_code_after_exit(shutdown: &Shutdown) -> Option<i32> {
     serde_json::json!({ "jsonrpc": "2.0", "id": 2, "method": "shutdown" });
   let exit = serde_json::json!({ "jsonrpc": "2.0", "method": "exit" });
   match shutdown {
-    Shutdown::Skip => send(&mut stdin, &[exit]),
+    Shutdown::Skip => lsp::send(&mut stdin, &[exit]),
     Shutdown::Awaited => {
-      send(&mut stdin, &[shutdown_request]);
+      lsp::send(&mut stdin, &[shutdown_request]);
       await_response(&rx, 2);
-      send(&mut stdin, &[exit]);
+      lsp::send(&mut stdin, &[exit]);
     }
     Shutdown::SameWriteAsExit => {
-      send(&mut stdin, &[shutdown_request, exit]);
+      lsp::send(&mut stdin, &[shutdown_request, exit]);
     }
   }
 

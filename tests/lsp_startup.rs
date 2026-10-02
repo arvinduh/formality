@@ -6,43 +6,14 @@
 //! server does. These tests drive the real binary over stdio; the in-process
 //! unit tests in `src/commands/lsp.rs` cannot see that layer.
 
-use std::io::{BufRead, BufReader, Read, Write};
-use std::process::{Command, Stdio};
-use std::sync::mpsc;
+mod common;
+
+use common::lsp;
+use std::process::Stdio;
 use std::time::{Duration, Instant};
 
 /// How long the server gets to answer before the test fails.
 const TIMEOUT: Duration = Duration::from_secs(30);
-
-/// Reads Content-Length framed JSON-RPC messages from `stdout` into `tx`
-/// until the stream closes.
-fn forward_messages(stdout: impl Read, tx: &mpsc::Sender<serde_json::Value>) {
-  let mut reader = BufReader::new(stdout);
-  loop {
-    let mut length = None;
-    loop {
-      let mut line = String::new();
-      if reader.read_line(&mut line).unwrap_or(0) == 0 {
-        return;
-      }
-      let line = line.trim_end();
-      if line.is_empty() {
-        break;
-      }
-      if let Some(value) = line.strip_prefix("Content-Length: ") {
-        length = value.parse::<usize>().ok();
-      }
-    }
-    let mut body = vec![0; length.expect("Content-Length header")];
-    if reader.read_exact(&mut body).is_err() {
-      return;
-    }
-    let message = serde_json::from_slice(&body).expect("JSON-RPC body");
-    if tx.send(message).is_err() {
-      return;
-    }
-  }
-}
 
 #[test]
 fn test_lsp_serves_initialize_with_invalid_root_config() {
@@ -52,33 +23,23 @@ fn test_lsp_serves_initialize_with_invalid_root_config() {
   let xdg = root.join("xdg");
   std::fs::create_dir(&xdg).unwrap();
 
-  let mut child = Command::new(env!("CARGO_BIN_EXE_fml"))
-    .arg("lsp")
-    .current_dir(root)
-    .env("XDG_CONFIG_HOME", &xdg)
-    .env("FORMALITY_NO_UPDATE_CHECK", "1")
-    .stdin(Stdio::piped())
-    .stdout(Stdio::piped())
+  let mut child = lsp::command(root, &xdg)
     .stderr(Stdio::null())
     .spawn()
     .expect("failed to spawn fml lsp");
 
   let root_uri = tower_lsp::lsp_types::Url::from_file_path(root).unwrap();
-  let request = serde_json::json!({
-    "jsonrpc": "2.0",
-    "id": 1,
-    "method": "initialize",
-    "params": { "capabilities": {}, "rootUri": root_uri },
-  })
-  .to_string();
   let mut stdin = child.stdin.take().unwrap();
-  // A child that already exited closes the pipe; the asserts report it.
-  let _ = write!(stdin, "Content-Length: {}\r\n\r\n{request}", request.len());
-  let _ = stdin.flush();
-
-  let (tx, rx) = mpsc::channel();
-  let stdout = child.stdout.take().unwrap();
-  std::thread::spawn(move || forward_messages(stdout, &tx));
+  lsp::send(
+    &mut stdin,
+    &[serde_json::json!({
+      "jsonrpc": "2.0",
+      "id": 1,
+      "method": "initialize",
+      "params": { "capabilities": {}, "rootUri": root_uri },
+    })],
+  );
+  let rx = lsp::messages(&mut child);
 
   let deadline = Instant::now() + TIMEOUT;
   let mut answered = false;
@@ -96,9 +57,7 @@ fn test_lsp_serves_initialize_with_invalid_root_config() {
       error_shown = message["params"]["message"].as_str().map(String::from);
     }
   }
-  let status = child.try_wait().unwrap();
-  let _ = child.kill();
-  let _ = child.wait();
+  let status = lsp::stop(&mut child);
 
   assert!(
     answered,
