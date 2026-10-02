@@ -1,0 +1,88 @@
+name: Spike winget LLVM
+
+on:
+  push:
+    branches: [spike/winget-llvm]
+
+jobs:
+  probe:
+    name: Probe winget LLVM layout
+    runs-on: windows-latest
+    defaults:
+      run:
+        shell: pwsh
+    steps:
+      - name: winget version
+        continue-on-error: true
+        run: |
+          Get-Command winget -ErrorAction SilentlyContinue | Format-List Source
+          winget --version
+
+      - name: Registry PATH before install
+        if: always()
+        continue-on-error: true
+        run: |
+          Write-Host "== HKCU PATH (before) =="
+          ([Environment]::GetEnvironmentVariable('Path', 'User')) -split ';'
+          Write-Host "== HKLM PATH (before) =="
+          ([Environment]::GetEnvironmentVariable('Path', 'Machine')) -split ';'
+
+      - name: Silent winget install
+        id: install
+        if: always()
+        continue-on-error: true
+        timeout-minutes: 20
+        run: |
+          winget install --id LLVM.LLVM -e --silent --accept-package-agreements --accept-source-agreements
+          $code = $LASTEXITCODE
+          Write-Host "WINGET_EXIT=$code"
+          exit $code
+
+      - name: Silent winget install (scope machine retry)
+        if: always() && steps.install.outcome == 'failure'
+        continue-on-error: true
+        timeout-minutes: 20
+        run: |
+          winget install --id LLVM.LLVM -e --silent --scope machine --accept-package-agreements --accept-source-agreements
+          Write-Host "WINGET_MACHINE_EXIT=$LASTEXITCODE"
+
+      - name: LLVM bin listing
+        if: always()
+        continue-on-error: true
+        run: |
+          Write-Host "== $env:ProgramFiles\LLVM\bin clang-* =="
+          Get-ChildItem "$env:ProgramFiles\LLVM\bin" -Filter 'clang-*' -ErrorAction Continue | Select-Object -ExpandProperty FullName
+          Write-Host "== search for clang-tidy.exe under Program Files / LOCALAPPDATA =="
+          Get-ChildItem $env:ProgramFiles, ${env:ProgramFiles(x86)}, $env:LOCALAPPDATA -Recurse -Filter 'clang-tidy.exe' -ErrorAction SilentlyContinue | Select-Object -ExpandProperty FullName
+
+      - name: winget Links dirs
+        if: always()
+        continue-on-error: true
+        run: |
+          foreach ($d in "$env:LOCALAPPDATA\Microsoft\WinGet\Links", "$env:ProgramFiles\WinGet\Links") {
+            Write-Host "== $d (exists: $(Test-Path $d)) =="
+            Get-ChildItem $d -ErrorAction SilentlyContinue | Select-Object -ExpandProperty Name
+          }
+
+      - name: Registry PATH after install
+        if: always()
+        continue-on-error: true
+        run: |
+          $u = (Get-ItemProperty 'HKCU:\Environment' -Name Path -ErrorAction SilentlyContinue).Path
+          $m = (Get-ItemProperty 'HKLM:\SYSTEM\CurrentControlSet\Control\Session Manager\Environment' -Name Path).Path
+          Write-Host "== HKCU\Environment Path (after) =="
+          $u -split ';'
+          Write-Host "== HKLM Session Manager Environment Path (after) =="
+          $m -split ';'
+          Write-Host "LLVM_IN_HKCU=$([bool]($u -split ';' | Where-Object { $_ -match 'LLVM' }))"
+          Write-Host "LLVM_IN_HKLM=$([bool]($m -split ';' | Where-Object { $_ -match 'LLVM' }))"
+
+      - name: Resolve clang-tidy
+        if: always()
+        continue-on-error: true
+        run: |
+          Write-Host "== same process =="
+          Get-Command clang-tidy -ErrorAction SilentlyContinue | Format-List Source
+          Get-Command clang-format -ErrorAction SilentlyContinue | Format-List Source
+          Write-Host "== fresh pwsh child =="
+          pwsh -NoProfile -Command "Get-Command clang-tidy -ErrorAction SilentlyContinue | Format-List Source; Get-Command clang-format -ErrorAction SilentlyContinue | Format-List Source; 'child-done'"
