@@ -1437,8 +1437,37 @@ fn resolve_installed_binary_in(
   binary: &str,
   dir: &std::path::Path,
 ) -> Option<PathBuf> {
-  let candidate = dir.join(format!("{binary}{}", std::env::consts::EXE_SUFFIX));
-  (candidate.is_file() && is_executable_file(&candidate)).then_some(candidate)
+  resolve_installed_binary_with(binary, dir, INSTALLED_BINARY_SUFFIXES)
+}
+
+/// File-name suffixes an installer gives a Windows binary, in probe order.
+///
+/// Scoop names a shim after its app's `bin`: a PE gets `<name>.exe`, while a
+/// `.jar`, `.ps1`, `.bat` or `.cmd` gets `<name>.cmd` (Scoop's ktlint is
+/// `ktlint.jar`, so only `shims\ktlint.cmd` exists). A `.cmd`/`.bat` hit is
+/// spawned through the batch-file path in [`create_tool_command`].
+const WINDOWS_INSTALLED_SUFFIXES: &[&str] = &[".exe", ".cmd", ".bat"];
+
+/// [`WINDOWS_INSTALLED_SUFFIXES`] on Windows; elsewhere the bare name.
+const INSTALLED_BINARY_SUFFIXES: &[&str] = if cfg!(windows) {
+  WINDOWS_INSTALLED_SUFFIXES
+} else {
+  &[""]
+};
+
+/// Returns the first `{binary}{suffix}` in `dir` that is an executable file,
+/// trying `suffixes` in order. Takes the suffixes so the Windows list is
+/// testable on every OS.
+#[must_use]
+fn resolve_installed_binary_with(
+  binary: &str,
+  dir: &std::path::Path,
+  suffixes: &[&str],
+) -> Option<PathBuf> {
+  suffixes.iter().find_map(|suffix| {
+    let candidate = dir.join(format!("{binary}{suffix}"));
+    (candidate.is_file() && is_executable_file(&candidate)).then_some(candidate)
+  })
 }
 
 /// Whether `path` is something the OS would actually agree to execute --
@@ -1451,8 +1480,8 @@ fn resolve_installed_binary_in(
 /// download, a stray shim) would otherwise pass the missing-tool guard and
 /// then fail to exec with `Permission denied` -- the same "found it, can't
 /// run it" shape #293 is about. On Windows executability is carried by the
-/// extension (already handled by `EXE_SUFFIX` above), not by a permission
-/// bit, so there is nothing further to check there.
+/// extension (already handled by `INSTALLED_BINARY_SUFFIXES`), not by a
+/// permission bit, so there is nothing further to check there.
 #[must_use]
 fn is_executable_file(path: &std::path::Path) -> bool {
   #[cfg(unix)]
@@ -3348,7 +3377,16 @@ mod tests {
   /// executable on Unix so it clears the same bar `which::which` applies to
   /// a `PATH` hit (see `is_executable_file`). Returns its full path.
   fn write_bin_fixture(dir: &std::path::Path, binary: &str) -> PathBuf {
-    let path = dir.join(format!("{binary}{}", std::env::consts::EXE_SUFFIX));
+    write_named_fixture(
+      dir,
+      &format!("{binary}{}", std::env::consts::EXE_SUFFIX),
+    )
+  }
+
+  /// Writes an executable stand-in named exactly `file_name` into `dir`,
+  /// with no platform suffix added. Returns its full path.
+  fn write_named_fixture(dir: &std::path::Path, file_name: &str) -> PathBuf {
+    let path = dir.join(file_name);
     std::fs::write(&path, b"#!/bin/sh\n").expect("write fixture binary");
     #[cfg(unix)]
     {
@@ -3431,6 +3469,55 @@ mod tests {
     let tmp = tempfile::tempdir().expect("tempdir");
     std::fs::create_dir(tmp.path().join("goimports")).expect("mkdir");
     assert_eq!(resolve_installed_binary_in("goimports", tmp.path()), None);
+  }
+
+  #[test]
+  fn test_resolve_installed_binary_with_windows_suffixes_finds_scoop_cmd() {
+    // Scoop's ktlint is `"bin": "ktlint.jar"`, so its only shim is
+    // `ktlint.cmd`; probing `.exe` alone reported it missing (#478).
+    let tmp = tempfile::tempdir().expect("tempdir");
+    let cmd = write_named_fixture(tmp.path(), "ktlint.cmd");
+    assert_eq!(
+      resolve_installed_binary_with(
+        "ktlint",
+        tmp.path(),
+        WINDOWS_INSTALLED_SUFFIXES
+      ),
+      Some(cmd),
+    );
+    let bat = write_named_fixture(tmp.path(), "other.bat");
+    assert_eq!(
+      resolve_installed_binary_with(
+        "other",
+        tmp.path(),
+        WINDOWS_INSTALLED_SUFFIXES
+      ),
+      Some(bat),
+    );
+  }
+
+  #[test]
+  fn test_resolve_installed_binary_with_windows_suffixes_prefers_exe() {
+    let tmp = tempfile::tempdir().expect("tempdir");
+    write_named_fixture(tmp.path(), "ktlint.cmd");
+    let exe = write_named_fixture(tmp.path(), "ktlint.exe");
+    assert_eq!(
+      resolve_installed_binary_with(
+        "ktlint",
+        tmp.path(),
+        WINDOWS_INSTALLED_SUFFIXES
+      ),
+      Some(exe),
+      "`.exe` is probed before `.cmd`"
+    );
+  }
+
+  #[test]
+  #[cfg(windows)]
+  fn test_resolve_installed_binary_in_finds_a_cmd_shim_on_windows() {
+    let tmp = tempfile::tempdir().expect("tempdir");
+    let cmd = write_named_fixture(tmp.path(), "ktlint.cmd");
+    assert_eq!(resolve_installed_binary_in("ktlint", tmp.path()), Some(cmd));
   }
 
   #[test]
