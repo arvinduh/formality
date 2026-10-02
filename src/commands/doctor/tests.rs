@@ -1198,13 +1198,8 @@ fn test_doctor_detects_the_surfaces_fmt_runs_under_global_exclude() {
   )
   .unwrap();
 
-  let present =
-    std::cell::LazyCell::new(|| workspace_extensions(root, &config));
-  let doctor: Vec<&str> = default_registry()
-    .detect_surfaces_in(root, &config, &present)
-    .iter()
-    .map(|s| s.name())
-    .collect();
+  let _ = run_doctor(root, false, false, &config);
+  let doctor = LAST_DETECTED.take();
   let scope =
     crate::engine::Scope::resolve(root, &[], &config.resolve_global().exclude);
   let fmt: Vec<&str> =

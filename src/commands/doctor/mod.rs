@@ -559,19 +559,12 @@ pub struct ToolLookupResult {
 }
 use crate::errors::ExitStatus;
 
-/// Walks `root` once and records the extensions of the files `fml fmt`
-/// would run on, `global.exclude` applied, so doctor's detected column
-/// agrees with what actually runs.
-fn workspace_extensions(
-  root: &Path,
-  config: &FormalityConfig,
-) -> crate::surfaces::glob::PresentExtensions {
-  crate::surfaces::glob::PresentExtensions::from_paths(
-    &crate::surfaces::walk_candidate_files(
-      root,
-      &config.resolve_global().exclude,
-    ),
-  )
+#[cfg(test)]
+thread_local! {
+  /// The surfaces the last [`run_doctor`] on this thread detected, so a test
+  /// can check detection at its real call site.
+  static LAST_DETECTED: std::cell::RefCell<Vec<&'static str>> =
+    const { std::cell::RefCell::new(Vec::new()) };
 }
 
 /// Executes the `fml doctor` diagnostic command to scan tools, environment, and hygiene.
@@ -583,9 +576,17 @@ pub fn run_doctor(
   config: &FormalityConfig,
 ) -> ExitStatus {
   // One walk at most, shared by detection, the table's detected column
-  // and the unconfigured-languages note.
-  let present = std::cell::LazyCell::new(|| workspace_extensions(root, config));
+  // and the unconfigured-languages note. `global.exclude` applies, so the
+  // detected column agrees with what `fml fmt` runs.
+  let present = std::cell::LazyCell::new(|| {
+    crate::surfaces::glob::PresentExtensions::scan(
+      root,
+      &config.resolve_global().exclude,
+    )
+  });
   let detected = default_registry().detect_surfaces_in(root, config, &present);
+  #[cfg(test)]
+  LAST_DETECTED.set(detected.iter().map(|s| s.name()).collect());
   let detected_names: HashSet<&'static str> =
     detected.iter().map(|s| s.name()).collect();
   let surfaces: Vec<Box<dyn LanguageSurface>> =

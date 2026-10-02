@@ -202,11 +202,9 @@ impl LanguageServer for FormalityLsp {
 
     if let Some(ref root_path) = root {
       let present = std::cell::LazyCell::new(|| {
-        crate::surfaces::glob::PresentExtensions::from_paths(
-          &crate::surfaces::walk_candidate_files(
-            root_path,
-            &config.resolve_global().exclude,
-          ),
+        crate::surfaces::glob::PresentExtensions::scan(
+          root_path,
+          &config.resolve_global().exclude,
         )
       });
       let detected = crate::surfaces::default_registry()
