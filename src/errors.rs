@@ -4,9 +4,13 @@
 //! establishes (no `anyhow`/`thiserror`, one variant per subsystem).
 
 pub use crate::config::ConfigError;
-use colored::Colorize;
+
+use std::error;
 use std::fmt;
-use std::path::PathBuf;
+use std::io;
+use std::path;
+
+use colored::Colorize;
 
 /// Standard exit statuses for CLI invocations.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
@@ -93,7 +97,7 @@ impl fmt::Display for GitError {
   }
 }
 
-impl std::error::Error for GitError {}
+impl error::Error for GitError {}
 
 /// Errors related to language surfaces or native configuration rendering.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -123,21 +127,21 @@ impl fmt::Display for SurfaceError {
   }
 }
 
-impl std::error::Error for SurfaceError {}
+impl error::Error for SurfaceError {}
 
 /// Standard IO error wrapper with optional path context.
 #[derive(Debug)]
 pub struct IoError {
   /// File or directory path associated with the IO operation, if known.
-  pub path: Option<PathBuf>,
+  pub path: Option<path::PathBuf>,
   /// Underlying standard IO error.
-  pub source: std::io::Error,
+  pub source: io::Error,
 }
 
 impl IoError {
   /// Constructs a new [`IoError`] with optional path context.
   #[must_use]
-  pub fn new(path: Option<PathBuf>, source: std::io::Error) -> Self {
+  pub fn new(path: Option<path::PathBuf>, source: io::Error) -> Self {
     Self { path, source }
   }
 }
@@ -152,8 +156,8 @@ impl fmt::Display for IoError {
   }
 }
 
-impl std::error::Error for IoError {
-  fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
+impl error::Error for IoError {
+  fn source(&self) -> Option<&(dyn error::Error + 'static)> {
     Some(&self.source)
   }
 }
@@ -198,8 +202,8 @@ impl fmt::Display for FormalityError {
   }
 }
 
-impl std::error::Error for FormalityError {
-  fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
+impl error::Error for FormalityError {
+  fn source(&self) -> Option<&(dyn error::Error + 'static)> {
     match self {
       FormalityError::Config(e) => Some(e),
       FormalityError::Git(e) => Some(e),
@@ -234,8 +238,8 @@ impl From<IoError> for FormalityError {
   }
 }
 
-impl From<std::io::Error> for FormalityError {
-  fn from(err: std::io::Error) -> Self {
+impl From<io::Error> for FormalityError {
+  fn from(err: io::Error) -> Self {
     FormalityError::Io(IoError::new(None, err))
   }
 }
@@ -301,7 +305,7 @@ mod tests {
     assert_eq!(cli_err.to_string(), "bad flag");
   }
 
-  fn assert_error<T: std::error::Error>() {}
+  fn assert_error<T: error::Error>() {}
 
   #[test]
   fn test_all_inner_error_enums_implement_std_error() {
