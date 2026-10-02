@@ -223,13 +223,16 @@ fn test_lang_config_extra_args_files_and_exclude() {
   assert!(rust.tool_args("rustfmt").is_empty());
   assert_eq!(
     rust.files,
-    vec![PathBuf::from("src/lib.rs"), PathBuf::from("src/main.rs")]
+    vec![
+      path::PathBuf::from("src/lib.rs"),
+      path::PathBuf::from("src/main.rs")
+    ]
   );
   assert_eq!(
     rust.exclude,
     vec![
-      PathBuf::from("tests/fixtures"),
-      PathBuf::from("src/generated/**")
+      path::PathBuf::from("tests/fixtures"),
+      path::PathBuf::from("src/generated/**")
     ]
   );
 }
