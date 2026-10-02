@@ -3901,6 +3901,10 @@ mod tests {
           KnownInstallDir::WingetMachineLinks,
         ],
       ),
+      (
+        InstallMethod::WingetName("LLVM.LLVM"),
+        &[KnownInstallDir::WingetLlvm],
+      ),
       (InstallMethod::Brew("llvm"), &[KnownInstallDir::BrewLlvm]),
       // Audited as safe -- see `KnownInstallDir`'s doc comment for each.
       (InstallMethod::Apt("x"), &[]),
@@ -4137,21 +4141,38 @@ mod tests {
   #[test]
   #[cfg(not(windows))]
   fn test_resolve_via_known_install_dir_skips_windows_only_dirs() {
-    // yamllint's chain lists the Python installers, Scoop and WingetName;
-    // off Windows only the Python dirs may be asked for.
-    let found = resolve_via_known_install_dir_with("yamllint", |kind| {
-      assert!(
-        !matches!(
-          kind,
-          KnownInstallDir::ScoopShims
-            | KnownInstallDir::WingetUserLinks
-            | KnownInstallDir::WingetMachineLinks
-        ),
-        "{kind:?} is Windows only"
-      );
-      None
+    // yamllint's chain lists the Python installers, Scoop and WingetName,
+    // clang-tidy's Brew("llvm"), WingetName("LLVM.LLVM") and Scoop; off
+    // Windows only the Python and Brew dirs may be asked for.
+    for binary in ["yamllint", "clang-tidy"] {
+      let found = resolve_via_known_install_dir_with(binary, |kind| {
+        assert!(
+          !matches!(
+            kind,
+            KnownInstallDir::ScoopShims
+              | KnownInstallDir::WingetUserLinks
+              | KnownInstallDir::WingetMachineLinks
+              | KnownInstallDir::WingetLlvm
+          ),
+          "{kind:?} is Windows only"
+        );
+        None
+      });
+      assert_eq!(found, None);
+    }
+  }
+
+  #[test]
+  #[cfg(windows)]
+  fn test_resolve_via_known_install_dir_finds_winget_llvm_clang_tidy() {
+    let tmp = tempfile::tempdir().expect("tempdir");
+    let fixture = write_bin_fixture(tmp.path(), "clang-tidy");
+    let dir = tmp.path().to_path_buf();
+
+    let found = resolve_via_known_install_dir_with("clang-tidy", move |kind| {
+      (kind == KnownInstallDir::WingetLlvm).then(|| dir.clone())
     });
-    assert_eq!(found, None);
+    assert_eq!(found, Some(fixture));
   }
 
   #[test]
