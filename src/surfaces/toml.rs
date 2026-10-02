@@ -436,20 +436,18 @@ mod tests {
     let surface = TomlSurface;
     let mut ctx =
       test_ctx(temp.path(), crate::config::ResolvedLangConfig::new("toml"));
-    ctx.paths = Arc::new(vec![file_path.clone()]);
+    ctx.paths = Arc::new(vec![file_path]);
     ctx.check_only = true;
 
     let res = surface.format(&ctx);
-    assert!(!res.is_error(), "format returned error: {:?}", res.status);
-    assert!(
-      res.is_violation(),
-      "expected formatting violations for unformatted TOML, got {:?}",
-      res.status
-    );
-    if let SurfaceStatus::ViolationsFound { diff, .. } = res.status {
-      let diff_str = diff.expect("diff should be present");
-      assert!(diff_str.contains("key_0"));
-    }
+    let SurfaceStatus::ViolationsFound { diff, .. } = res.status else {
+      panic!(
+        "expected formatting violations for unformatted TOML, got {:?}",
+        res.status
+      );
+    };
+    let diff_str = diff.expect("diff should be present");
+    assert!(diff_str.contains("key_0"));
 
     // Check mode on already-formatted >128 KB file must also complete cleanly and return Passed.
     let formatted_path = temp.path().join("large_formatted.toml");

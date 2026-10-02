@@ -198,6 +198,7 @@ pub fn parse_go_version_m(output: &str) -> Option<String> {
 /// Renders a list of [`ProbeArg`]s into arguments for command execution.
 /// Resolves [`ProbeArg::ToolPath`] using the path to `binary` found on PATH.
 /// Returns `None` if [`ProbeArg::ToolPath`] is needed but the binary cannot be resolved.
+#[must_use]
 pub fn render_probe_args(
   binary: &str,
   args: &[ProbeArg],
@@ -395,10 +396,12 @@ impl Version {
     }
   }
 
-  /// Create a `Version` with prerelease metadata. The prerelease must be a
-  /// valid SemVer identifier (what the parse path always yields); one `semver`
-  /// rejects still constructs but makes [`Version::to_semver`] lossy, so
-  /// ordering stops matching structural equality — a `debug_assert` catches it.
+  /// Create a `Version` with prerelease metadata. The prerelease must be
+  /// a valid `SemVer` identifier (what the parse path always yields); one
+  /// `semver` rejects still constructs but makes [`Version::to_semver`] lossy,
+  /// so ordering stops matching structural equality — a `debug_assert`
+  /// catches it.
+  #[cfg(test)]
   pub fn with_prerelease(
     major: u64,
     minor: u64,
@@ -601,7 +604,7 @@ fn is_genuine_prerelease(pre: &str) -> bool {
   };
   let leading_alpha: String = first
     .chars()
-    .take_while(|c| c.is_ascii_alphabetic())
+    .take_while(char::is_ascii_alphabetic)
     .collect();
   if leading_alpha.is_empty() {
     return false;
@@ -618,7 +621,7 @@ impl Version {
   /// `"0"` fallback is unreachable in practice; if a caller hand-builds an
   /// invalid one anyway it sorts below the matching release (rule 9) but two
   /// such strings then compare `Equal` while `PartialEq` sees them distinct —
-  /// [`Version::with_prerelease`]'s `debug_assert` guards that.
+  /// the test-only `Version::with_prerelease`'s `debug_assert` guards that.
   fn to_semver(&self) -> semver::Version {
     let pre = match self.prerelease.as_deref() {
       None | Some("") => semver::Prerelease::EMPTY,
@@ -705,10 +708,10 @@ pub fn reported_raw_version_if_differing<'a>(
   raw_banner: Option<&'a str>,
 ) -> Option<&'a str> {
   let raw = raw_banner.and_then(Version::extract_raw)?;
-  if raw != current.to_string() {
-    Some(raw)
-  } else {
+  if raw == current.to_string() {
     None
+  } else {
+    Some(raw)
   }
 }
 

@@ -4,9 +4,10 @@ The base standard is the global `rust-guide` skill. This document records only
 where `fml` deliberately deviates from it and the rules specific to this
 codebase. Anything `rust-guide` already states is not repeated here.
 
-> The `#N` citations throughout this document predate the 2026-08-26 repo
-> recreation and resolve to unrelated new issues — see
-> [`docs/INDEX.md`](INDEX.md#note-on-pre-recreation-issuepr-numbers).
+> The backticked `#N` citations throughout this document predate the 2026-08-26
+> repo recreation and resolve to unrelated new issues — see
+> [`docs/INDEX.md`](INDEX.md#note-on-pre-recreation-issuepr-numbers). Plain #N
+> citations are current issue/PR numbers.
 
 ## Enforcement tiers
 
@@ -59,11 +60,10 @@ modules (`ui/table`, `config`, `engine/runner`, `engine/version`,
 `src/lib.rs`):** internal code spells out the canonical, structural path (e.g.
 `crate::ui::table`, `crate::engine::version`), never a crate-root shortcut.
 
-Two crate-root re-exports remain, both load-bearing:
-`pub use config::SCHEMA_VERSION;` and `pub use config::schema::generate_schema;`
-are reached as `fml::SCHEMA_VERSION` / `fml::generate_schema` by
-`tests/integration_tests.rs` and `tests/schema_drift.rs`. A re-export earns a
-place at the crate root only by being reached that way by real code.
+One crate-root re-export remains, load-bearing:
+`pub use config::schema::generate_schema;` is reached as `fml::generate_schema`
+by `tests/schema_drift.rs`. A re-export earns a place at the crate root only by
+being reached that way by real code.
 
 ---
 
@@ -91,9 +91,6 @@ Extracted from what all 12 language surfaces do consistently — see
   `const`/`async`/`unsafe` modifiers and joins multi-line signatures; its first
   version matched only single-line `pub fn` signatures and stayed green with
   `#[must_use]` deleted from `ExitStatus::is_clean` (`#201 [pre-recreation]`).
-- **Tier 3:** a pure getter or predicate (no I/O, no mutation) beyond the `is_*`
-  family also carries `#[must_use]`. `clippy::must_use_candidate` is not enabled
-  in this crate, and a name scan cannot tell a pure getter from an impure one.
 
 ---
 
@@ -119,15 +116,13 @@ which reaches every target (lib, bin, and each `tests/*.rs` crate). On top of
   `schemars` lifts a doc comment on a type or field deriving `JsonSchema` (such
   as `LangConfig` in `src/config/mod.rs`) verbatim into
   `schema/formality.schema.json`, where users and IDE tooltips read it. Editing
-  one changes the schema: it fails `tests/schema_drift.rs`, forces a
-  `SCHEMA_VERSION` bump, and a new `sX.Y` schema release marks every user config
-  pinned to an earlier schema as **Stale** (`docs/release.md`). Never edit one
-  incidentally; batch prose fixes onto a schema bump already happening for a
-  functional reason. Internal rationale and tracker syntax (`(Fixes #N)`,
-  `TODO`) go in `//` comments, never in `///` on schema types. **Motivating
-  case:** `#150` / PR `#194` put `(Fixes #150)` into `extra_args` schema
-  tooltips and failed `schema_drift.rs`; the rationale moved to call-site
-  comments.
+  one changes the published schema and fails `tests/schema_drift.rs` until the
+  schema is regenerated. Never edit one incidentally; batch prose fixes onto a
+  schema change already happening for a functional reason. Internal rationale
+  and tracker syntax (`(Fixes #N)`, `TODO`) go in `//` comments, never in `///`
+  on schema types. **Motivating case:** `#150` / PR `#194` put `(Fixes #150)`
+  into `extra_args` schema tooltips and failed `schema_drift.rs`; the rationale
+  moved to call-site comments.
 - **Claims about external tool behavior cite a reproduction.** A doc comment,
   ADR, code rationale, or diagnostic asserting how an external tool behaves
   (exit codes, flag syntax, duplicate-flag handling, error formatting) cites a
@@ -233,9 +228,9 @@ was reverted.
 
 The same holds for prose: doc comments, `--help` text, and `docs/` describe
 behavior that exists today. A planned capability belongs in an issue, and no CI
-check (drift test, generated table, schema pin) may exist only to keep
-speculative prose in sync. **Motivating case:** `#123` — `fml lsp`'s docs
-described a child-LSP router that was never built.
+check (drift test, generated table) may exist only to keep speculative prose in
+sync. **Motivating case:** `#123` — `fml lsp`'s docs described a child-LSP
+router that was never built.
 
 ### `Runner` dispatch
 
@@ -261,15 +256,18 @@ hierarchy in `src/errors.rs` (`#119 [pre-recreation]`) instead of per-module
 - No `anyhow`/`thiserror`; neither is a dependency, and a new error site does
   not add one.
 - `FormalityError` is the top-level enum, one variant per subsystem (`Config`,
-  `Git`, `ToolMissing`, `Surface`, `Io`, plus `InvalidCli(String)`). Each wraps
-  its own enum (`ConfigError`, `GitError`, `ToolMissingError`, `SurfaceError`,
-  `IoError`) implementing `fmt::Display` and `std::error::Error` by hand.
+  `Git`, `Surface`, `Io`, plus `InvalidCli(String)`). Each wraps its own type
+  implementing `fmt::Display` and `std::error::Error` by hand: the enums
+  `ConfigError` (defined in `src/config/mod.rs`, re-exported from
+  `src/errors.rs`), `GitError` and `SurfaceError`, and the struct `IoError`. A
+  missing tool is not an error: it is the run status
+  `SurfaceStatus::ToolMissing`.
 - A new failure in an existing subsystem adds a variant to that subsystem's
   enum, not a new top-level variant and not a bare `String`.
   `InvalidCli(String)` is the deliberate exception for CLI usage errors.
-- `FormalityError::exit_status()` maps every variant to `ExitStatus::Error`
-  (exit code 2). A case needing a different exit status is a design decision to
-  raise, not a special case to add.
+- `impl From<FormalityError> for ExitStatus` (and `From<&FormalityError>`) maps
+  every variant to `ExitStatus::Error` (exit code 2). A case needing a different
+  exit status is a design decision to raise, not a special case to add.
 - User-facing rendering goes through `render_diagnostic()` /
   `print_diagnostic()` (`[ERR]` prefix), not an ad hoc `eprintln!`.
 
@@ -297,6 +295,25 @@ argument builders in isolation.
 **Motivating case:** `#150` / PR `#194` tested `extra_args` forwarding to
 `markdownlint-cli2` by matching `ExecutionError`; `prettier` failed on the same
 flag, so both tests stayed green with the forwarding deleted.
+
+### Exit status: assert only what the test controls
+
+**Rule (tier 2 in `src/`, tier 3 in `tests/`):** a test asserts on the narrowest
+function that makes the decision under test. It does not assert the exit status
+of a full `run_with_args` / `run_cli` run whose outcome also depends on tools or
+environment the test is not about. If the decision is buried in a command
+handler, extract it as a private function that production calls (§4) and test
+that. Lifecycle tests whose subject is the tool (`fmt` then `fmt --check` with
+rustfmt or ruff) are exempt, but skip when that one tool is missing. Unit tests
+in `src/` reach the private function directly, so
+`test_unit_tests_do_not_dispatch_full_commands` (`src/lib.rs`) forbids them from
+calling `run_with_args` at all; `tests/` sees only the public API, so reviewers
+check it there.
+
+**Motivating case:** #291 / PR #400 — `test_relative_root_resolves_to_absolute`
+asserted `ExitStatus::Clean` from a real `fml doctor` run on the checkout. It
+failed 6 of 20 runs while another process relinked `taplo`, and still passed
+with `std::path::absolute` removed.
 
 ### Source-scan tests: assert absence, bound the window, prefer runtime assertions
 

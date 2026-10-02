@@ -38,14 +38,40 @@
 //! that does both). The run summary's remaining-violations clause is
 //! asserted alongside them, from the same runs, because its whole contract
 //! is that it equals the sum of the rows.
+//!
+//! # Why the `PATH`-shim tests are Unix-only (#306)
+//!
+//! `ToolMissing`, `ExecutionError` and `ViolationsFound` come from a `PATH`
+//! of `#!/bin/sh` shims, so those tests are `#[cfg(unix)]`; on Windows only
+//! the five sync statuses run. That is sufficient, and deliberately not
+//! ported to cross-platform shims:
+//!
+//! - What this file pins, the status-to-row mapping (tag, detail text and
+//!   `Style`), lives in `engine::runner` and `ui::table`, which have no
+//!   platform-conditional code. A row renders the same on every OS once the
+//!   status exists, and `Library Tests` (pr-check.yml, ubuntu) asserts all
+//!   eight on every PR.
+//! - What does differ on Windows is how a status is reached: `.cmd`/`.bat`
+//!   shims spawned through `cmd /C` (#103) and `cmd`'s launch failures
+//!   classified as `ExecutionError` (#419). `surfaces::tooling`'s unit tests
+//!   cover the classification, and `Fresh-Install Regression
+//!   (windows-latest)` in install-regression.yml covers it end to end: real
+//!   `fml` against real installed tools, failing on a `[MISS]` or
+//!   `Failed to execute` row for a tool it just installed. Its `paths`
+//!   filter includes `src/surfaces`, `src/engine` and `src/ui`.
+//! - No workflow runs `cargo test` on Windows, so cross-platform shims here
+//!   would run only on a developer's Windows machine, at the cost of a shim
+//!   helper binary or `.cmd` shims, the latter the failure class #103 hit.
+//!
+//! Revisit if a Windows `cargo test` job is ever added.
 
+use std::fmt::Write;
 use std::path::{Path, PathBuf};
 use std::process::Command;
 
 use fml::ui::table::{Palette, Style};
 
-const SCHEMA_LINE: &str =
-  "#:schema https://formality.dev/s1.1/formality.schema.json\n";
+const SCHEMA_LINE: &str = "#:schema https://github.com/arvinduh/formality/releases/latest/download/formality.schema.json\n";
 
 /// The opening SGR escape `Palette::truecolor()` renders `style` with.
 ///
@@ -346,11 +372,13 @@ fn golden_sync_check_renders_passed_drifted_and_manual_rows_with_styles() {
   // matches. Keep the header so it stays formality-managed.
   let rustfmt = root.join(".rustfmt.toml");
   let generated = std::fs::read_to_string(&rustfmt).unwrap();
-  let header: String = generated
-    .lines()
-    .take_while(|l| l.starts_with('#'))
-    .map(|l| format!("{l}\n"))
-    .collect();
+  let header = generated.lines().take_while(|l| l.starts_with('#')).fold(
+    String::new(),
+    |mut acc, l| {
+      let _ = writeln!(acc, "{l}");
+      acc
+    },
+  );
   std::fs::write(&rustfmt, format!("{header}\ntab_spaces = 9\n")).unwrap();
 
   // `ManualConfig`: a config that exists but carries no formality header, so
@@ -408,19 +436,17 @@ fn write_shim(dir: &Path, binary: &str, code: i32) {
     .unwrap();
 }
 
-/// The three statuses that need a real tool invocation, plus `Passed`'s
-/// format-plan spelling, from one `fml fmt` run over a `PATH` containing
-/// nothing but shims this test wrote.
+/// A tree whose `fml fmt` run yields one row each of `ToolMissing`,
+/// `ExecutionError`, `ViolationsFound` and `Passed`, plus the shim directory
+/// that is the run's whole `PATH`. Returns both temp dirs so neither is
+/// dropped early.
 ///
 /// Hermetic by construction: the run cannot see a real `rustfmt`,
 /// `clang-format`, `typstyle` or `taplo`, so these statuses do not depend on
 /// what the machine happens to have installed.
-///
-/// Unix-only: the shims are `#!/bin/sh` scripts. The `NO_COLOR` process
-/// tests remain cross-platform; this is the colour-asserting addition.
 #[cfg(unix)]
-#[test]
-fn golden_fmt_renders_missing_error_and_violation_rows_with_styles() {
+fn missing_error_violation_repo()
+-> (tempfile::TempDir, tempfile::TempDir, PathBuf) {
   let shims = tempfile::tempdir().expect("tempdir");
   // `clang-format` cannot do its job -> `ExecutionError` (#151); `typstyle`
   // exits non-zero through the unclassified `run_tool_command` path ->
@@ -438,7 +464,20 @@ fn golden_fmt_renders_missing_error_and_violation_rows_with_styles() {
   std::fs::write(dir.path().join("doc.typ"), "#let x = 1\n").unwrap();
   std::fs::write(dir.path().join("thing.toml"), "a = 1\n").unwrap();
   let root = temp_root(&dir);
+  (dir, shims, root)
+}
 
+/// The three statuses that need a real tool invocation, plus `Passed`'s
+/// format-plan spelling, from one `fml fmt` run over a `PATH` containing
+/// nothing but shims this test wrote.
+///
+/// Unix-only: the shims are `#!/bin/sh` scripts; the module docs say why
+/// that is sufficient. The `NO_COLOR` process tests remain cross-platform;
+/// this is the colour-asserting addition.
+#[cfg(unix)]
+#[test]
+fn golden_fmt_renders_missing_error_and_violation_rows_with_styles() {
+  let (_dir, shims, root) = missing_error_violation_repo();
   let stdout = run_fml(&root, &["fmt"], Some(shims.path()));
   let rows = rendered_rows(&stdout);
 
@@ -481,6 +520,28 @@ fn golden_fmt_renders_missing_error_and_violation_rows_with_styles() {
   );
 }
 
+/// The run summary keeps a missing tool and an execution error in counters
+/// of their own, apart from the failures (#438), and `--allow-missing` marks
+/// the missing tool as allowed without dropping it from the count.
+///
+/// Folding either one into `failed` would read `2 failed` with that status's
+/// own part gone, and no row assertion above would notice.
+#[cfg(unix)]
+#[test]
+fn golden_fmt_summary_counts_missing_tools_and_errors_apart_from_failures() {
+  let (_dir, shims, root) = missing_error_violation_repo();
+  for (args, expected) in [
+    (&["fmt"][..], "1 passed, 1 failed, 1 missing tool, 1 error"),
+    (
+      &["fmt", "--allow-missing"][..],
+      "1 passed, 1 failed, 1 missing tool (allowed), 1 error",
+    ),
+  ] {
+    let stdout = run_fml(&root, args, Some(shims.path()));
+    assert_eq!(summary_line(&stdout), expected, "fml {args:?}");
+  }
+}
+
 /// Writes an executable shim that prints `stdout` and exits with `code`.
 ///
 /// [`write_shim`]'s silent form covers a tool that says nothing measurable;
@@ -492,10 +553,10 @@ fn golden_fmt_renders_missing_error_and_violation_rows_with_styles() {
 fn write_speaking_shim(dir: &Path, binary: &str, stdout: &str, code: i32) {
   use std::os::unix::fs::PermissionsExt;
   let path = dir.join(binary);
-  let script = stdout
-    .lines()
-    .map(|l| format!("echo '{}'\n", l.replace('\'', "'\\''")))
-    .collect::<String>();
+  let script = stdout.lines().fold(String::new(), |mut acc, l| {
+    let _ = writeln!(acc, "echo '{}'", l.replace('\'', "'\\''"));
+    acc
+  });
   std::fs::write(&path, format!("#!/bin/sh\n{script}exit {code}\n")).unwrap();
   std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o755))
     .unwrap();
@@ -503,6 +564,7 @@ fn write_speaking_shim(dir: &Path, binary: &str, stdout: &str, code: i32) {
 
 /// The run summary `fml` prints under the table, with its styling stripped
 /// and its elapsed time normalised away.
+#[cfg(unix)]
 fn summary_line(stdout: &str) -> String {
   let plain = fml::ui::table::strip_ansi_escapes(stdout);
   let line = plain

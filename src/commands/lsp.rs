@@ -95,11 +95,6 @@ impl FormalityLsp {
     loaded
   }
 
-  /// Returns a clone of the cached config, if present.
-  pub async fn cached_config(&self) -> Option<FormalityConfig> {
-    self.config.read().await.clone()
-  }
-
   /// Invalidates the cached configuration.
   pub async fn invalidate_config(&self) {
     *self.config.write().await = None;
@@ -258,9 +253,9 @@ impl LanguageServer for FormalityLsp {
     // For surfaces with structured-output support wired up (rust via
     // clippy, python via ruff — see `lsp_diagnostics`), publish one
     // `Diagnostic` per real violation with correct range/message/severity —
-    // but only when that structured tool actually ran. `diagnostics_for_file`
-    // returns `None` both for surfaces with no structured parser at all and
-    // for ones whose parser couldn't run this time (binary missing, no
+    // but only when that structured tool actually ran.
+    // `diagnostics_for_file_with_config` returns `None` both for surfaces
+    // with no structured parser at all and for ones whose parser couldn't run this time (binary missing, no
     // project marker file, spawn failure, required config missing) — either
     // way this falls back to running in-process `fml lint` and, on non-zero
     // exit, a single generic warning pointing at the output channel — the
@@ -799,7 +794,7 @@ mod tests {
     let config_path = temp.path().join("formality.toml");
     std::fs::write(&config_path, "[global]\nindent_size = 4\n").unwrap();
 
-    assert!(server.cached_config().await.is_none());
+    assert!(server.config.read().await.clone().is_none());
 
     server
       .initialize(InitializeParams {
@@ -809,7 +804,7 @@ mod tests {
       .await
       .unwrap();
 
-    let cached = server.cached_config().await;
+    let cached = server.config.read().await.clone();
     assert!(cached.is_some());
     let cfg = cached.unwrap();
     assert_eq!(cfg.global.as_ref().and_then(|g| g.indent_size), Some(4));
@@ -831,7 +826,7 @@ mod tests {
       .await
       .unwrap();
 
-    let cfg_before = server.cached_config().await.unwrap();
+    let cfg_before = server.config.read().await.clone().unwrap();
     assert_eq!(
       cfg_before.global.as_ref().and_then(|g| g.indent_size),
       Some(4)
@@ -851,7 +846,7 @@ mod tests {
       })
       .await;
 
-    let cfg_after = server.cached_config().await.unwrap();
+    let cfg_after = server.config.read().await.clone().unwrap();
     assert_eq!(
       cfg_after.global.as_ref().and_then(|g| g.indent_size),
       Some(8)
@@ -874,7 +869,7 @@ mod tests {
       .await
       .unwrap();
 
-    let cfg_before = server.cached_config().await.unwrap();
+    let cfg_before = server.config.read().await.clone().unwrap();
     assert_eq!(
       cfg_before.global.as_ref().and_then(|g| g.line_length),
       Some(100)
@@ -893,7 +888,7 @@ mod tests {
       })
       .await;
 
-    let cfg_after = server.cached_config().await.unwrap();
+    let cfg_after = server.config.read().await.clone().unwrap();
     assert_eq!(
       cfg_after.global.as_ref().and_then(|g| g.line_length),
       Some(120)
@@ -932,7 +927,7 @@ mod tests {
       .await;
 
     // Cached config should still hold old values because invalidation was not triggered
-    let cfg = server.cached_config().await.unwrap();
+    let cfg = server.config.read().await.clone().unwrap();
     assert_eq!(cfg.global.as_ref().and_then(|g| g.indent_size), Some(4));
   }
 

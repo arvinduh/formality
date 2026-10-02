@@ -12,6 +12,11 @@ use crate::errors::ExitStatus;
 /// reporting only under `check`. Provisioning missing tools is `fml doctor
 /// --install`'s job, not this command's (v0.3.0, #282).
 #[allow(clippy::too_many_arguments)]
+#[expect(
+  clippy::fn_params_excessive_bools,
+  reason = "CLI command entry point passes clap flag arguments directly"
+)]
+#[must_use]
 pub fn run_fmt(
   root: &Path,
   config: &FormalityConfig,

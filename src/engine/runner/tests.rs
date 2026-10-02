@@ -175,6 +175,137 @@ fn test_combine_pass_results_execution_error_precedence() {
   ));
 }
 
+/// One status per `SurfaceStatus` variant, every payload tagged with `tag`,
+/// ordered from lowest to highest `combine_pass_results` precedence.
+fn every_status_by_precedence(tag: &str) -> Vec<SurfaceStatus> {
+  vec![
+    SurfaceStatus::Skipped {
+      reason: tag.to_string(),
+    },
+    SurfaceStatus::Passed,
+    SurfaceStatus::ConfigSynced {
+      files: vec![crate::surfaces::SyncedConfigFile::new(tag, true)],
+    },
+    SurfaceStatus::ToolMissing {
+      binary: tag.to_string(),
+      install_hint: tag.to_string(),
+    },
+    SurfaceStatus::ManualConfig {
+      file: tag.to_string(),
+      suggestion: tag.to_string(),
+    },
+    SurfaceStatus::ConfigDrifted {
+      file: tag.to_string(),
+      diff: tag.to_string(),
+    },
+    SurfaceStatus::ViolationsFound {
+      message: tag.to_string(),
+      diff: Some(tag.to_string()),
+    },
+    SurfaceStatus::ExecutionError {
+      message: tag.to_string(),
+    },
+  ]
+}
+
+/// The position `status` holds in [`every_status_by_precedence`].
+///
+/// Exhaustive with no wildcard, so a new `SurfaceStatus` does not compile
+/// until it is given a position here; placing it shifts every later arm,
+/// which fails `test_every_status_by_precedence_lists_each_variant_in_order`
+/// until the fixture lists it at that position too. A variant placed last
+/// shifts nothing, and stable Rust cannot count an enum's variants, so that
+/// one case still needs its fixture entry added by hand.
+fn variant_index(status: &SurfaceStatus) -> usize {
+  match status {
+    SurfaceStatus::Skipped { .. } => 0,
+    SurfaceStatus::Passed => 1,
+    SurfaceStatus::ConfigSynced { .. } => 2,
+    SurfaceStatus::ToolMissing { .. } => 3,
+    SurfaceStatus::ManualConfig { .. } => 4,
+    SurfaceStatus::ConfigDrifted { .. } => 5,
+    SurfaceStatus::ViolationsFound { .. } => 6,
+    SurfaceStatus::ExecutionError { .. } => 7,
+  }
+}
+
+#[test]
+fn test_every_status_by_precedence_lists_each_variant_in_order() {
+  let indices: Vec<usize> = every_status_by_precedence("x")
+    .iter()
+    .map(variant_index)
+    .collect();
+  assert_eq!(indices, (0..indices.len()).collect::<Vec<_>>());
+}
+
+fn combine_statuses(
+  first: SurfaceStatus,
+  second: SurfaceStatus,
+) -> SurfaceStatus {
+  let result = |status| SurfaceResult {
+    surface_name: "test",
+    status,
+    duration: Duration::ZERO,
+  };
+  combine_pass_results(result(first), result(second)).status
+}
+
+#[test]
+fn test_combine_pass_results_higher_precedence_wins_in_either_order() {
+  let ranked = every_status_by_precedence("x");
+  for (i, lower) in ranked.iter().enumerate() {
+    for higher in &ranked[i + 1..] {
+      for (first, second) in [(lower, higher), (higher, lower)] {
+        let combined = combine_statuses(first.clone(), second.clone());
+        assert_eq!(
+          format!("{combined:?}"),
+          format!("{higher:?}"),
+          "{first:?} + {second:?}"
+        );
+      }
+    }
+  }
+}
+
+#[test]
+fn test_combine_pass_results_same_variant_merges_or_keeps_first() {
+  let firsts = every_status_by_precedence("a");
+  let seconds = every_status_by_precedence("b");
+  for (first, second) in firsts.into_iter().zip(seconds) {
+    let expected = match &first {
+      SurfaceStatus::Skipped { .. } => SurfaceStatus::Skipped {
+        reason: "a; b".to_string(),
+      },
+      SurfaceStatus::ViolationsFound { .. } => SurfaceStatus::ViolationsFound {
+        message: "a\nb".to_string(),
+        diff: Some("a\nb".to_string()),
+      },
+      SurfaceStatus::ExecutionError { .. } => SurfaceStatus::ExecutionError {
+        message: "a\nb".to_string(),
+      },
+      other => other.clone(),
+    };
+    let combined = combine_statuses(first, second);
+    assert_eq!(format!("{combined:?}"), format!("{expected:?}"));
+  }
+}
+
+#[test]
+fn test_exit_floor_agrees_with_is_success_and_rises_with_precedence() {
+  let mut previous_floor = 0;
+  for status in every_status_by_precedence("x") {
+    let floor = exit_floor(status.severity(), false);
+    let result = SurfaceResult {
+      surface_name: "test",
+      status,
+      duration: Duration::ZERO,
+    };
+    assert_eq!(result.is_success(), floor == 0, "{:?}", result.status);
+    assert!(floor >= previous_floor, "{:?}", result.status);
+    previous_floor = floor;
+  }
+}
+
 #[test]
 fn test_normalize_diagnostics_keeps_error_signal_lines() {
   // Issue #146, #179: normalization must de-noise (trailing whitespace,
@@ -644,12 +775,8 @@ fn test_execution_context_staged_files_filtering() {
   std::fs::write(&fixture_rs, "fn mock() {}\n").unwrap();
   std::fs::write(&py_file, "print('hi')\n").unwrap();
 
-  let staged_paths = Arc::new(vec![
-    main_rs.clone(),
-    excluded_rs.clone(),
-    fixture_rs.clone(),
-    py_file.clone(),
-  ]);
+  let staged_paths =
+    Arc::new(vec![main_rs.clone(), excluded_rs, fixture_rs, py_file]);
 
   let mut lang_config = crate::config::ResolvedLangConfig::new("rust");
   lang_config.exclude = vec![PathBuf::from("src/generated.rs")];

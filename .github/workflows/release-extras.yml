@@ -8,9 +8,6 @@
 #   - editors/vscode/*.vsix  ->  "Install from VSIX" downloads
 #   - formality.schema.json  ->  `#:schema .../releases/latest/download/
 #     formality.schema.json` and `releases/download/v<x>/...` directives
-#
-# The independent schema-only releases under `s*` tags are unchanged and live
-# in schema-release.yml.
 
 name: Release Extras
 

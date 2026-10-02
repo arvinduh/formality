@@ -15,14 +15,12 @@ pub mod surfaces;
 /// Terminal UI components and layout rendering.
 pub mod ui;
 
-// `generate_schema` and `SCHEMA_VERSION` are re-exported at the crate root
-// because this crate's own integration tests (`tests/schema_drift.rs`,
-// `tests/integration_tests.rs`) reach them as `fml::generate_schema` /
-// `fml::SCHEMA_VERSION` — a real external use, not a compatibility shim.
+// `generate_schema` is re-exported at the crate root because this crate's
+// own integration tests (`tests/schema_drift.rs`) reach it as
+// `fml::generate_schema` — a real external use, not a compatibility shim.
 // Every other item in this crate is reached through its canonical,
 // structural module path (e.g. `crate::engine::update`,
 // `crate::ui::table`); see docs/style-guide.md §1.
-pub use config::SCHEMA_VERSION;
 pub use config::schema::generate_schema;
 
 use cli::{Cli, Commands};
@@ -60,10 +58,7 @@ pub fn run_with_args(args: Cli) -> ExitStatus {
   let project_config_path = config::find_project_config(&root);
 
   let update_notifier = engine::update::spawn_update_check();
-  let schema_notifier =
-    config::schema::spawn_schema_check(project_config_path.as_deref());
   let status = run_command_inner(args, &root, project_config_path.as_deref());
-  config::schema::print_schema_notice(schema_notifier);
   engine::update::print_update_notice(update_notifier);
   status
 }
@@ -632,12 +627,10 @@ mod tests {
         if trimmed.starts_with("//") {
           continue;
         }
-        // Disallow shortcuts like `crate::generate_schema` or `crate::SCHEMA_VERSION`
-        if trimmed.contains("crate::generate_schema")
-          || trimmed.contains("crate::SCHEMA_VERSION")
-        {
+        // Disallow shortcuts like `crate::generate_schema`
+        if trimmed.contains("crate::generate_schema") {
           violations.push(format!(
-            "{}:{}: uses crate-root re-export shortcut instead of canonical path (use `crate::config::schema::generate_schema` / `crate::config::SCHEMA_VERSION`) — see docs/style-guide.md §1",
+            "{}:{}: uses crate-root re-export shortcut instead of canonical path (use `crate::config::schema::generate_schema`) — see docs/style-guide.md §1",
             path.display(),
             i + 1
           ));
@@ -796,5 +789,44 @@ mod tests {
       assert!(resolved.is_absolute(), "`{relative}` stayed relative");
       assert_eq!(resolved, expected);
     }
+  }
+
+  // Tier-2 enforcement for the `src/` half of docs/style-guide.md §6's
+  // exit-status rule (#291): unit tests reach the deciding private function,
+  // so never dispatch a full command. Scans `tests.rs` files and code after
+  // `mod tests {`; no runtime assertion can observe what a test calls.
+  #[test]
+  fn test_unit_tests_do_not_dispatch_full_commands() {
+    let needle = concat!("run_with", "_args(");
+    let mut violations = Vec::new();
+    for entry in ignore::WalkBuilder::new(
+      Path::new(env!("CARGO_MANIFEST_DIR")).join("src"),
+    )
+    .standard_filters(false)
+    .build()
+    .filter_map(Result::ok)
+    .filter(|e| e.path().extension().is_some_and(|ext| ext == "rs"))
+    {
+      let path = entry.path();
+      let content = std::fs::read_to_string(path).unwrap();
+      let start = if path.file_name().is_some_and(|n| n == "tests.rs") {
+        0
+      } else if let Some(idx) = content.find("mod tests {") {
+        content[..idx].matches('\n').count()
+      } else {
+        continue;
+      };
+      for (i, line) in content.lines().enumerate().skip(start) {
+        let code = line.split("//").next().unwrap_or_default();
+        if code.contains(needle) {
+          violations.push(format!("{}:{}", path.display(), i + 1));
+        }
+      }
+    }
+    assert!(
+      violations.is_empty(),
+      "unit test dispatches a full command — see docs/style-guide.md §6:\n{}",
+      violations.join("\n")
+    );
   }
 }

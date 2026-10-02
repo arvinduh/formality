@@ -345,8 +345,7 @@ here is guarded. Reproduced against
 rather than changing it. If you need a flag for exactly one of the two tools,
 there is no way to express that today —
 [#210](https://github.com/arvinduh/formality/issues/210) owns the design for a
-per-tool split (it is a `formality.toml` shape change, so it carries a
-`SCHEMA_VERSION` bump with it).
+per-tool split (it is a `formality.toml` shape change).
 
 ---
 

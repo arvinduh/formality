@@ -10,6 +10,7 @@ use crate::errors::ExitStatus;
 
 /// Runs the `fml sync` command: the `[ConfigSync]` plan, writing by default
 /// and reporting only under `check`, for the resolved target surfaces.
+#[must_use]
 pub fn run_sync(
   root: &Path,
   config: &FormalityConfig,

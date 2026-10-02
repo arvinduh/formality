@@ -1,22 +1,20 @@
 //! `fml init` command: writes a starter `formality.toml` pre-populated with
-//! auto-detected surfaces, or initializes/updates the `#:schema` pin directive
-//! in an existing config file.
+//! auto-detected surfaces.
 
 use colored::Colorize;
 use std::path::Path;
 
 use crate::config::{
-  DEFAULT_CONFIG_FILE_NAME, FormalityConfig, apply_schema_pin,
-  find_project_config,
+  DEFAULT_CONFIG_FILE_NAME, FormalityConfig, find_project_config,
 };
 use crate::errors::{ExitStatus, FormalityError, IoError};
 use crate::surfaces::detect_surfaces_smart;
 
 /// Runs the `fml init` command: writes a starter config file (`formality.toml`
 /// by default, or the dotfile variant with `hidden`) pre-populated with the
-/// auto-detected surfaces. When a config file already exists, updates or
-/// inserts its `#:schema` directive unless `force` is set to overwrite the
-/// file completely.
+/// auto-detected surfaces, refusing to overwrite an existing config unless
+/// `force` is set.
+#[must_use]
 pub fn run_init(
   root: &Path,
   config: &FormalityConfig,
@@ -32,7 +30,13 @@ pub fn run_init(
 
   if let Some(existing) = find_project_config(root) {
     if !force {
-      return apply_schema_pin(&existing);
+      eprintln!(
+        "{} Config file already exists at {}. Use {} to overwrite.",
+        "[ERR]".red().bold(),
+        existing.display(),
+        "--force".bold()
+      );
+      return ExitStatus::Violations;
     }
     // Warn when --force would create a file that is shadowed by an existing
     // higher-priority config (e.g. creating .formality.toml while

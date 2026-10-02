@@ -174,8 +174,9 @@ impl ExecutionContext {
   }
 
   /// Returns the files to pass to a directory-walking CLI tool.
-  /// If paths, lang_config files, or lang_config excludes are specified, returns the filtered files;
-  /// otherwise returns an empty Vec so the tool can scan the whole directory.
+  /// If paths, `lang_config` files, or `lang_config` excludes are specified,
+  /// returns the filtered files; otherwise returns an empty Vec so the tool
+  /// can scan the whole directory.
   #[must_use]
   pub fn files_to_pass(&self, files: Vec<PathBuf>) -> Vec<PathBuf> {
     if !self.paths.is_empty()
@@ -190,6 +191,7 @@ impl ExecutionContext {
 }
 
 /// Builds a minimal `ExecutionContext` for testing language surfaces.
+#[cfg(test)]
 #[must_use]
 pub fn test_ctx(
   root: impl AsRef<Path>,
@@ -254,8 +256,7 @@ impl ToolInfo {
   pub fn effective_install_hint(&self) -> String {
     self
       .install_hint
-      .map(str::to_string)
-      .unwrap_or_else(|| install_hint_for(self.binary))
+      .map_or_else(|| install_hint_for(self.binary), str::to_string)
   }
 
   /// Returns the (program, args) for the first available installer in this
@@ -351,7 +352,43 @@ pub enum SurfaceStatus {
   },
 }
 
+/// How severe a [`SurfaceStatus`] is, ordered least to most severe.
+///
+/// The one encoding of severity: [`SurfaceResult::is_success`] and the
+/// runner's tally, exit code and pass-merging precedence all derive from
+/// [`SurfaceStatus::severity`] rather than restating which status is worse.
+#[derive(Debug, PartialEq, PartialOrd)]
+pub enum Severity {
+  /// Nothing ran.
+  Skipped,
+  /// Ran clean, or wrote the config it was asked to.
+  Passed,
+  /// A required tool binary is not installed.
+  ToolMissing,
+  /// Rule violations, formatting drift or native-config drift.
+  Violation,
+  /// The tool itself failed.
+  Error,
+}
+
 impl SurfaceStatus {
+  /// Classifies this status by [`Severity`].
+  ///
+  /// The match is exhaustive with no wildcard arm, so a new status does not
+  /// compile until it is classified here.
+  #[must_use]
+  pub fn severity(&self) -> Severity {
+    match self {
+      Self::Skipped { .. } => Severity::Skipped,
+      Self::Passed | Self::ConfigSynced { .. } => Severity::Passed,
+      Self::ToolMissing { .. } => Severity::ToolMissing,
+      Self::ViolationsFound { .. }
+      | Self::ConfigDrifted { .. }
+      | Self::ManualConfig { .. } => Severity::Violation,
+      Self::ExecutionError { .. } => Severity::Error,
+    }
+  }
+
   /// Every config file named by a [`SurfaceStatus::ConfigSynced`], in write
   /// order; empty for every other status.
   #[must_use]
@@ -363,7 +400,7 @@ impl SurfaceStatus {
   }
 
   /// The names of the config files this status reports as *newly created*.
-  /// Convenience for tests and callers that only care about creations.
+  #[cfg(test)]
   #[must_use]
   pub fn created_file_names(&self) -> Vec<&str> {
     self
@@ -375,6 +412,7 @@ impl SurfaceStatus {
   }
 
   /// The names of every config file this status reports, created or updated.
+  #[cfg(test)]
   #[must_use]
   pub fn synced_file_names(&self) -> Vec<&str> {
     self
@@ -397,35 +435,10 @@ pub struct SurfaceResult {
 }
 
 impl SurfaceResult {
-  /// Returns `true` if the status represents a clean success or skipped operation.
+  /// Returns `true` if the status is a skip or a clean pass.
   #[must_use]
   pub fn is_success(&self) -> bool {
-    matches!(
-      self.status,
-      SurfaceStatus::Passed
-        | SurfaceStatus::Skipped { .. }
-        | SurfaceStatus::ConfigSynced { .. }
-    )
-  }
-
-  /// Returns `true` if the status represents a formatting or lint violation.
-  #[must_use]
-  pub fn is_violation(&self) -> bool {
-    matches!(
-      self.status,
-      SurfaceStatus::ViolationsFound { .. }
-        | SurfaceStatus::ConfigDrifted { .. }
-        | SurfaceStatus::ManualConfig { .. }
-    )
-  }
-
-  /// Returns `true` if the status represents an execution error or missing tool.
-  #[must_use]
-  pub fn is_error(&self) -> bool {
-    matches!(
-      self.status,
-      SurfaceStatus::ToolMissing { .. } | SurfaceStatus::ExecutionError { .. }
-    )
+    matches!(self.status.severity(), Severity::Skipped | Severity::Passed)
   }
 }
 
@@ -507,7 +520,7 @@ mod tests {
   }
 
   #[test]
-  fn test_surface_result_predicates_cover_every_status_variant() {
+  fn test_is_success_holds_for_skips_and_clean_passes_only() {
     fn result_for(status: SurfaceStatus) -> SurfaceResult {
       SurfaceResult {
         surface_name: "test",
@@ -518,61 +531,45 @@ mod tests {
 
     let passed = result_for(SurfaceStatus::Passed);
     assert!(passed.is_success());
-    assert!(!passed.is_violation());
-    assert!(!passed.is_error());
 
     let skipped = result_for(SurfaceStatus::Skipped {
       reason: "n/a".to_string(),
     });
     assert!(skipped.is_success());
-    assert!(!skipped.is_violation());
-    assert!(!skipped.is_error());
 
     let synced = result_for(SurfaceStatus::ConfigSynced {
       files: vec![SyncedConfigFile::new("x", true)],
     });
     assert!(synced.is_success());
-    assert!(!synced.is_violation());
-    assert!(!synced.is_error());
 
     let violations = result_for(SurfaceStatus::ViolationsFound {
       message: "bad".to_string(),
       diff: None,
     });
     assert!(!violations.is_success());
-    assert!(violations.is_violation());
-    assert!(!violations.is_error());
 
     let drifted = result_for(SurfaceStatus::ConfigDrifted {
       file: "x".to_string(),
       diff: "d".to_string(),
     });
     assert!(!drifted.is_success());
-    assert!(drifted.is_violation());
-    assert!(!drifted.is_error());
 
     let manual = result_for(SurfaceStatus::ManualConfig {
       file: "x".to_string(),
       suggestion: "s".to_string(),
     });
     assert!(!manual.is_success());
-    assert!(manual.is_violation());
-    assert!(!manual.is_error());
 
     let missing = result_for(SurfaceStatus::ToolMissing {
       binary: "x".to_string(),
       install_hint: "h".to_string(),
     });
     assert!(!missing.is_success());
-    assert!(!missing.is_violation());
-    assert!(missing.is_error());
 
     let exec_err = result_for(SurfaceStatus::ExecutionError {
       message: "boom".to_string(),
     });
     assert!(!exec_err.is_success());
-    assert!(!exec_err.is_violation());
-    assert!(exec_err.is_error());
   }
 
   #[test]

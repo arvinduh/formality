@@ -363,6 +363,7 @@ mod tests {
     // deterministic error that names both surfaces and the setting they
     // disagree on, and nothing is written.
     let toml_str = "
+      [global]
       line_length = 80
       [lang.markdown]
       line_length = 100

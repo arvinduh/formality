@@ -16,8 +16,13 @@ pub const STANDARD_IGNORED_DIRS: &[&str] = &[
 /// Returns `true` if `path` has a filename matching temporary file patterns.
 #[must_use]
 pub fn is_temp_file(path: &Path) -> bool {
+  let is_tmp_ext = path
+    .extension()
+    .is_some_and(|ext| ext.eq_ignore_ascii_case("tmp"));
   let name = path.file_name().and_then(|f| f.to_str()).unwrap_or("");
-  name.ends_with(".tmp") || name.contains(".fml-check-tmp.")
+  is_tmp_ext
+    || name.eq_ignore_ascii_case(".tmp")
+    || name.contains(".fml-check-tmp.")
 }
 
 /// Returns `true` if any component of `path` (relative to `root`) matches a standard ignored directory.
@@ -795,6 +800,8 @@ mod tests {
     assert!(ignored(&root.join("vendor/bundle/x")));
     assert!(ignored(&root.join(".git/config")));
     assert!(ignored(&root.join("scratch.tmp")));
+    assert!(ignored(&root.join("scratch.TMP")));
+    assert!(ignored(&root.join(".tmp")));
     assert!(ignored(&root.join("main.fml-check-tmp.rs")));
     assert!(!ignored(&root.join("src/main.rs")));
     assert!(!ignored(&root.join("editors/vscode/src/extension.ts")));
@@ -821,12 +828,8 @@ mod tests {
     std::fs::write(&ignored_rs, "fn ig() {}\n").unwrap();
     std::fs::write(root.join(".gitignore"), "ignored.rs\n").unwrap();
 
-    let specific_staged = vec![
-      main_rs.clone(),
-      excluded_rs.clone(),
-      fixture_rs.clone(),
-      ignored_rs.clone(),
-    ];
+    let specific_staged =
+      vec![main_rs.clone(), excluded_rs, fixture_rs, ignored_rs];
     let exclude = vec![PathBuf::from("src/generated.rs")];
 
     let matched =

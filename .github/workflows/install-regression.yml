@@ -242,11 +242,21 @@ jobs:
           if [ "$RUNNER_OS" = "Windows" ]; then
             fml_bin="$GITHUB_WORKSPACE/target/debug/fml.exe"
           fi
-          "$fml_bin" doctor --install > fml-output.log 2>&1 || true
-          fmt_path="$PATH"
+          fml_path="$PATH"
           if [ "$RUNNER_OS" = "Linux" ]; then
-            # Strip $HOME/.local/bin from PATH for the post-install fml invocation
-            # so CI exercises off-PATH resolution for pipx/uv/pip (PR #310, #312).
+            # Strip $HOME/.local/bin and /opt/pipx_bin from PATH for every fml
+            # invocation, `doctor --install` included, so CI exercises
+            # off-PATH resolution for pipx/uv/pip (PR #310, #312) on tools fml
+            # installed itself. Run on the full PATH, doctor finds the image's
+            # own /opt/pipx_bin/yamllint, installs nothing, and the stripped
+            # lookups that follow report it [MISS] (#436).
+            #
+            # Unset PIPX_HOME for the same reason: the image points it at
+            # /opt/pipx, which already holds a yamllint venv, so `pipx
+            # install` would call yamllint installed and link nothing into
+            # ~/.local/bin.
+            echo "Runner PIPX_HOME: ${PIPX_HOME:-<unset>}"
+            unset PIPX_HOME
             case ":$PATH:" in
               *":$HOME/.local/bin:"*|*":$HOME/.local/bin/:"*)
                 echo "Confirmed: $HOME/.local/bin is present on runner PATH"
@@ -259,10 +269,11 @@ jobs:
                 clean_path="${clean_path:+${clean_path}:}$p"
               fi
             done
-            fmt_path="$clean_path"
+            fml_path="$clean_path"
           fi
-          PATH="$fmt_path" "$fml_bin" fmt >> fml-output.log 2>&1 || true
-          PATH="$fmt_path" "$fml_bin" lint >> fml-output.log 2>&1 || true
+          PATH="$fml_path" "$fml_bin" doctor --install > fml-output.log 2>&1 || true
+          PATH="$fml_path" "$fml_bin" fmt >> fml-output.log 2>&1 || true
+          PATH="$fml_path" "$fml_bin" lint >> fml-output.log 2>&1 || true
           cat fml-output.log
 
           # Only a [MISS] for a tool fml *itself just installed in this same
