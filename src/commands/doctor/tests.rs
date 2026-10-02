@@ -969,7 +969,7 @@ fn test_doctor_table_shows_detected_vs_undetected_status_for_surfaces() {
   let config = FormalityConfig::default();
   let surfaces = all_surfaces();
   let present = std::cell::LazyCell::new(|| {
-    crate::surfaces::glob::PresentExtensions::scan(temp.path())
+    crate::surfaces::glob::PresentExtensions::scan(temp.path(), &[])
   });
   let detected: HashSet<&'static str> = default_registry()
     .detect_surfaces_in(temp.path(), &config, &present)
@@ -1182,4 +1182,35 @@ fn test_run_doctor_walks_the_workspace_at_most_once() {
 
   // Detection and the table's detected column share one walk.
   assert_eq!(crate::surfaces::glob::walk_count::of(temp.path()), 1);
+}
+
+#[test]
+fn test_doctor_detects_the_surfaces_fmt_runs_under_global_exclude() {
+  let temp = tempdir().unwrap();
+  let root = temp.path();
+  std::fs::write(root.join("pyproject.toml"), "[project]\n").unwrap();
+  std::fs::write(root.join("main.rs"), "fn main() {}\n").unwrap();
+  std::fs::create_dir(root.join("ci")).unwrap();
+  std::fs::write(root.join("ci/build.yaml"), "a: 1\n").unwrap();
+  let config = FormalityConfig::parse_str(
+    "[global]\nexclude = [\"ci\", \"pyproject.toml\"]\n",
+    Path::new("formality.toml"),
+  )
+  .unwrap();
+
+  let _ = run_doctor(root, false, false, &config);
+  let doctor = LAST_DETECTED.take();
+  let scope =
+    crate::engine::Scope::resolve(root, &[], &config.resolve_global().exclude);
+  let fmt: Vec<&str> =
+    crate::commands::resolve_target_surfaces(root, &[], &scope, &config)
+      .unwrap()
+      .iter()
+      .map(|s| s.name())
+      .collect();
+
+  // The only `.yaml` file is excluded; the excluded root marker still
+  // activates python in both.
+  assert!(!doctor.contains(&"yaml"), "{doctor:?}");
+  assert_eq!(doctor, fmt);
 }
