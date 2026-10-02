@@ -208,7 +208,6 @@ fn warn_unrecognized_lang_sections(config: &FormalityConfig) {
 }
 
 #[cfg(test)]
-#[allow(missing_docs, clippy::missing_errors_doc, clippy::missing_panics_doc)]
 mod tests {
   use super::*;
 
@@ -519,80 +518,6 @@ mod tests {
     assert!(
       violations.is_empty(),
       "`pub mod` doc comment violation(s) — see docs/style-guide.md §3:\n{}",
-      violations.join("\n")
-    );
-  }
-
-  // Tier-2 enforcement for the test-module allow-doc-lints rule documented in
-  // docs/style-guide.md §3 ("An inline `#[cfg(test)] mod tests` block, or a
-  // directory module's sibling `mod tests;` declaration ... carries
-  // `#[allow(missing_docs, clippy::missing_errors_doc, clippy::missing_panics_doc)]`
-  // directly under the `#[cfg(test)]` attribute").
-  #[test]
-  fn test_test_modules_carry_allow_doc_lints() {
-    let manifest_dir = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
-    let src_dir = manifest_dir.join("src");
-
-    let mut violations = Vec::new();
-    for entry in ignore::WalkBuilder::new(&src_dir)
-      .standard_filters(false)
-      .build()
-      .filter_map(Result::ok)
-      .filter(|e| e.file_type().is_some_and(|ft| ft.is_file()))
-      .filter(|e| e.path().extension().is_some_and(|ext| ext == "rs"))
-    {
-      let path = entry.path();
-      let Ok(content) = std::fs::read_to_string(path) else {
-        continue;
-      };
-      let lines: Vec<&str> = content.lines().collect();
-
-      for (i, line) in lines.iter().enumerate() {
-        let trimmed = line.trim_start();
-        let is_mod_tests = trimmed.starts_with("mod tests {")
-          || trimmed.starts_with("mod tests;")
-          || (trimmed.starts_with("pub mod tests") && trimmed.ends_with(';'));
-
-        if !is_mod_tests {
-          continue;
-        }
-
-        // Check attributes immediately above `mod tests`
-        let attrs: Vec<&str> = lines[..i]
-          .iter()
-          .rev()
-          .take_while(|prior| {
-            let t = prior.trim_start();
-            t.starts_with('#') || t.starts_with("///") || t.starts_with("//")
-          })
-          .map(|l| l.trim_start())
-          .collect();
-
-        let has_cfg_test = attrs.iter().any(|a| a.starts_with("#[cfg(test)]"));
-        if !has_cfg_test {
-          // If it's not a #[cfg(test)] module, skip
-          continue;
-        }
-
-        let has_allow_missing_docs = attrs.iter().any(|a| {
-          a.contains("missing_docs")
-            && a.contains("missing_errors_doc")
-            && a.contains("missing_panics_doc")
-        });
-
-        if !has_allow_missing_docs {
-          violations.push(format!(
-            "{}:{}: `mod tests` is missing `#[allow(missing_docs, clippy::missing_errors_doc, clippy::missing_panics_doc)]` — see docs/style-guide.md §3",
-            path.display(),
-            i + 1,
-          ));
-        }
-      }
-    }
-
-    assert!(
-      violations.is_empty(),
-      "test module `#[allow(...)]` doc lints violation(s) — see docs/style-guide.md §3:\n{}",
       violations.join("\n")
     );
   }

@@ -410,7 +410,6 @@ pub fn diff_check_via_tempcopy_classified(
 }
 
 #[cfg(test)]
-#[allow(missing_docs, clippy::missing_errors_doc, clippy::missing_panics_doc)]
 mod tests {
   use super::*;
   use crate::surfaces::SurfaceStatus;

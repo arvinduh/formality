@@ -553,5 +553,4 @@ impl std::fmt::Display for ConfigError {
 impl std::error::Error for ConfigError {}
 
 #[cfg(test)]
-#[allow(missing_docs, clippy::missing_errors_doc, clippy::missing_panics_doc)]
 mod tests;

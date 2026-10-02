@@ -495,7 +495,6 @@ impl Clone for Box<dyn LanguageSurface> {
 }
 
 #[cfg(test)]
-#[allow(missing_docs, clippy::missing_errors_doc, clippy::missing_panics_doc)]
 mod tests {
   use super::*;
   use crate::surfaces::{
