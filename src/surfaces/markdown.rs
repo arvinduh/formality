@@ -77,6 +77,23 @@ pub struct MarkdownlintConfig {
   /// `MD029` to `false`.
   #[serde(rename = "MD029")]
   pub md029: bool,
+  /// MD031 (blanks-around-fences) rule enablement, `false` in the config fml
+  /// generates (#513). Its fixer puts blank lines around a fence inside a
+  /// list item, which makes a tight list loose, and writes a bare `>` at
+  /// column 0 into a quote nested in an item, which ends the list; prettier
+  /// already puts blank lines around a top-level fence. A project's own
+  /// `.markdownlint.*` replaces this config entirely, so it brings the rule
+  /// and its fixer back unless it also sets `MD031` to `false`.
+  #[serde(rename = "MD031")]
+  pub md031: bool,
+  /// MD032 (blanks-around-lists) rule enablement, `false` in the config fml
+  /// generates (#513) for the same reason as [`Self::md031`]: after a list
+  /// whose item holds a quoted fence, its fixer writes a bare `>` at column
+  /// 0, which renders as an extra empty quote. prettier already puts blank
+  /// lines around a list. A project's own `.markdownlint.*` brings it back
+  /// unless it also sets `MD032` to `false`.
+  #[serde(rename = "MD032")]
+  pub md032: bool,
   /// MD033 (no-inline-html) rule enablement. Shipped default is `false` —
   /// see [`crate::config::MarkdownOptions::no_inline_html`] for why, and
   /// how to opt back in from `formality.toml`.
@@ -132,6 +149,8 @@ fn markdownlint_config_for_lang(
       tables: false,
     },
     md029: false,
+    md031: false,
+    md032: false,
     md033: no_inline_html,
   }
 }
@@ -327,18 +346,16 @@ fn is_unspaced_hash_line(line: &str) -> bool {
       .is_some_and(|c| c != ' ' && c != '\t' && c != '\r' && c != '\n')
 }
 
-/// Whether any line outside a fenced code block passes
-/// [`is_unspaced_hash_line`].
+/// Whether any line passes [`is_unspaced_hash_line`].
 ///
 /// A cheap filter in front of [`escape_continuation_hashes`]'s markdownlint
 /// spawn: a file with no such line cannot hold an escapable finding, so the
-/// common case costs a read and no process. A shebang or `#include` inside a
-/// code block does not count.
+/// common case costs a read and no process. Fenced lines count too (#514):
+/// a fence opened in a list item closes when the item ends, which only
+/// markdownlint and [`BlockScan`] track, so a shebang or `#include` in a code
+/// block costs one spawn.
 fn has_unspaced_hash_line(content: &str) -> bool {
-  let mut fence = None;
-  content
-    .lines()
-    .any(|line| !in_fence(&mut fence, 0, line) && is_unspaced_hash_line(line))
+  content.lines().any(is_unspaced_hash_line)
 }
 
 /// Splits `line` into its leading indent width in columns, advancing from
@@ -1265,6 +1282,8 @@ mod tests {
         tables: false,
       },
       md029: false,
+      md031: false,
+      md032: false,
       md033: false,
     };
     let rendered = cfg.render().unwrap();
@@ -1669,7 +1688,7 @@ README.md:7 error MD025/single-title/single-h1 Multiple top-level headings";
   }
 
   #[test]
-  fn test_has_unspaced_hash_line_ignores_headings_and_fenced_code() {
+  fn test_has_unspaced_hash_line_ignores_headings_only() {
     // MD018's and MD020's own positives (`/^#+[^# \t]/`) must all pass the
     // prefilter, or a candidate never reaches markdownlint.
     for positive in ["#x", "##x", "#x#", "###299 ok.", "#299 for C#"] {
@@ -1680,14 +1699,10 @@ README.md:7 error MD025/single-title/single-h1 Multiple top-level headings";
     }
     assert!(!has_unspaced_hash_line("# T\n\n## Sub\n\n#\n\n# Title#\n"));
     assert!(!has_unspaced_hash_line("#\t tab\n##\n"));
-    assert!(!has_unspaced_hash_line("```sh\n#!/bin/sh\n```\n"));
-    // A shorter or different marker does not close the outer fence.
-    assert!(!has_unspaced_hash_line("````\n```\n#x\n~~~\n#y\n````\n"));
-    assert!(has_unspaced_hash_line("```\ncode\n```\n#after\n"));
-    // Four columns of indent make it no fence marker, so line 3 closes.
-    assert!(has_unspaced_hash_line("```\n    ```\n```\n#after\n"));
-    // A backtick in a backtick opener's info string makes it a code span.
-    assert!(has_unspaced_hash_line("```a`\n#x\n"));
+    // #514: the filter cannot tell a fenced line from one after a fence
+    // that its list item closed, so every fenced line counts.
+    assert!(has_unspaced_hash_line("```sh\n#!/bin/sh\n```\n"));
+    assert!(has_unspaced_hash_line("- a\n  ```\nfoo\n#x\n"));
   }
 
   #[test]
@@ -1732,6 +1747,8 @@ README.md:7 error MD025/single-title/single-h1 Multiple top-level headings";
       "- - -\n\n    code\n#a\n",
       "```\nc\n```\n#a\n",
       "```\n    ```\n```\n#a\n",
+      // A shorter or different marker does not close the fence.
+      "````\n```\n~~~\n````\n#a\n",
       "    ```\n#a\n",
       "    ~~~\n#a\n",
       "```a`\n\n#a\n",
@@ -2023,11 +2040,12 @@ README.md:7 error MD025/single-title/single-h1 Multiple top-level headings";
     );
   }
 
-  /// #479: lists whose rendering markdownlint's MD010 and MD029 fixers
-  /// changed, each with what `fml fmt` must leave. micromark renders every
-  /// pair the same: a tab-indented paragraph stays in its item, and each
-  /// ordered list keeps its start number.
-  const LIST_RENDER_CASES: [(&str, &str); 4] = [
+  /// Lists whose rendering markdownlint's MD010 and MD029 fixers (#479) and
+  /// MD031 and MD032 fixers (#513) changed, each with what `fml fmt` must
+  /// leave. micromark renders every pair the same: a tab-indented paragraph
+  /// stays in its item, each ordered list keeps its start number, a fence
+  /// keeps its list tight, and a quoted fence stays in its item.
+  const LIST_RENDER_CASES: [(&str, &str); 9] = [
     ("# T\n\n- item\n\n\tmore\n", "# T\n\n- item\n\n  more\n"),
     (
       "# T\n\n123456789. item\n\n           more\n",
@@ -2037,6 +2055,27 @@ README.md:7 error MD025/single-title/single-h1 Multiple top-level headings";
     (
       "# T\n\n1. a\n\n```text\nx\n```\n\n2. b\n",
       "# T\n\n1. a\n\n```text\nx\n```\n\n2. b\n",
+    ),
+    (
+      "# T\n\n-\ta\n\t```text\n\t#x\n\t```\n\tp\n",
+      "# T\n\n- a\n  ```text\n  #x\n  ```\n  p\n",
+    ),
+    (
+      "# T\n\n- a\n  ```text\n  ~~~\n  #x\n  ```\n",
+      "# T\n\n- a\n  ```text\n  ~~~\n  #x\n  ```\n",
+    ),
+    (
+      "# T\n\n- a\n  > ```text\n  > x\n  > ```\n  > p\n",
+      "# T\n\n- a\n  > ```text\n  > x\n  > ```\n  >\n  > p\n",
+    ),
+    (
+      "# T\n\n- > ```text\n  > #x\n  > ```\n#Next\n",
+      "# T\n\n- > ```text\n  > #x\n  > ```\n\n\\#Next\n",
+    ),
+    // #514: a fence that its item closes leaves `#x` a lazy continuation.
+    (
+      "# T\n\n- a\n  ```text\nfoo\n#x\n",
+      "# T\n\n- a\n  ```text\n\n  ```\n\nfoo \\#x\n",
     ),
   ];
 
