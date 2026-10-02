@@ -5,6 +5,8 @@
 
 #![allow(dead_code)]
 
+pub mod lsp;
+
 use fml::cli::{Cli, Commands};
 use fml::errors::ExitStatus;
 use std::fs;
