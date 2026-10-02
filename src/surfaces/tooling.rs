@@ -2060,7 +2060,7 @@ mod tests {
     assert!(has_version_pin("ruff==0.16.4"));
     assert!(has_version_pin("golang.org/x/tools/cmd/goimports@v0.49.0"));
     assert!(!has_version_pin("prettier"));
-    assert!(!has_version_pin("@myriaddreamin/tinymist"));
+    assert!(!has_version_pin("@taplo/cli"));
   }
 
   #[test]
@@ -2246,7 +2246,6 @@ mod tests {
     assert_eq!(pinned_installer_for("prettier"), Some("npm"));
     assert_eq!(pinned_installer_for("ruff"), Some("uv"));
     assert_eq!(pinned_installer_for("typstyle"), Some("cargo-binstall"));
-    assert_eq!(pinned_installer_for("tinymist"), Some("cargo-binstall"));
     assert_eq!(pinned_installer_for("biome"), Some("npm"));
     assert_eq!(pinned_installer_for("markdownlint-cli2"), Some("npm"));
     assert_eq!(pinned_installer_for("yamllint"), Some("uv"));
@@ -2921,7 +2920,7 @@ mod tests {
   }
 
   // Coverage for the "at least one real prebuilt-binary installer per OS"
-  // gap this PR also fixes: typstyle/tinymist/taplo have no genuine native
+  // gap this PR also fixes: typstyle/taplo have no genuine native
   // package anywhere, so cargo-binstall (a real prebuilt binary, not a
   // source compile) is their only non-source-compile path on every OS,
   // Linux included.
@@ -2942,9 +2941,9 @@ mod tests {
   fn test_every_source_compile_only_cargo_tool_offers_cargo_binstall_first() {
     // If any of these ever loses its CargoBinstall step, the *only*
     // remaining install path on an OS without a matching Brew/Scoop/Winget
-    // entry (Linux, for all three) becomes compiling from source -- exactly
+    // entry (Linux, for both) becomes compiling from source -- exactly
     // the multi-minute typstyle build the bug report was filed over.
-    for binary in ["typstyle", "tinymist", "taplo"] {
+    for binary in ["typstyle", "taplo"] {
       let chain = install_chain_for(binary)
         .unwrap_or_else(|| panic!("{binary} must have a registered chain"));
       assert!(
@@ -3081,26 +3080,6 @@ mod tests {
       chain,
       None,
       cargo_fallback.as_ref(),
-    ));
-  }
-
-  #[test]
-  fn test_binstall_bootstrap_fixes_brew_pin_lag_for_tinymist() {
-    // tinymist has the identical chain shape to typstyle (pin-carrying
-    // `CargoBinstall` first, `Brew` as fallback) and a confirmed
-    // `expected_binary_version`, so the same #102 mechanism must cover it.
-    let chain =
-      install_chain_for("tinymist").expect("tinymist must have a chain");
-    let expected = pinned_version_for("tinymist");
-    let brew = chain
-      .iter()
-      .find(|m| matches!(m, InstallMethod::Brew(_)))
-      .copied();
-
-    assert!(binstall_bootstrap_would_fix_pin_lag(
-      chain,
-      expected.as_ref(),
-      brew.as_ref(),
     ));
   }
 
