@@ -558,13 +558,25 @@ impl BlockScan {
     // The innermost item this line is indented into.
     let base = self.items.iter().rev().find(|&&col| col <= indent);
     let base = base.map_or(0, |&col| col);
+    let fenced = self.fence.is_some();
     if in_fence(&mut self.fence, base, line) {
+      if !fenced {
+        // An opener is never lazy, so it closes the items it is not in.
+        self.items.retain(|&col| col <= indent);
+      }
       return false;
     }
     if rest.is_empty() {
       return false;
     }
-    if opens {
+    // A block that can interrupt a paragraph is never a lazy continuation,
+    // so it too closes the items it is not inside (#481).
+    let interrupts = indent < base + 4
+      && (is_atx_heading(rest)
+        || is_thematic_break(rest)
+        || rest.starts_with('>')
+        || html_block_end(rest).is_some());
+    if opens || interrupts {
       // Not a lazy continuation, so it closes the items it is not inside.
       self.items.retain(|&col| col <= indent);
     }
@@ -1726,7 +1738,13 @@ README.md:7 error MD025/single-title/single-h1 Multiple top-level headings";
       "<PRE>\nc\n</pre>\n#a\n",
       "+++\nx = 1\n+++\n#a\n",
       "---\nx: 1\n---\n#a\n",
-      // #481: a fence opens at its list item's content column.
+      // #481: a block that is not inside the item closes it.
+      "- a\n* * *\n\n    code\n#a\n",
+      "- a\n## H\n\n    code\n#a\n",
+      "- a\n\n```\nx\n```\n\n    code\n#a\n",
+      "- a\n```\nx\n```\n\n    code\n#a\n",
+      "- a\n> q\n\n    code\n#a\n",
+      "- a\n<!-- c -->\n\n    code\n#a\n",
       "- a\n\n  ```\nx\n\n    code\n#a\n",
       "- a\n\n      ```\n#a\n",
       "10. a\n\n    ```\n    ```\n#a\n",
@@ -1751,6 +1769,7 @@ README.md:7 error MD025/single-title/single-h1 Multiple top-level headings";
       "- i\n===\n#a\n",
       "- > q\n  ===\n#a\n",
       "<span>x</span>\n#a\n",
+      "- a\n  ## H\n  p\n#a\n",
       "- a\n\n  ```\n  ```\n  p\n#a\n",
       "10. a\n    ```\n    #x\n    ```\n    p\n#a\n",
     ];
