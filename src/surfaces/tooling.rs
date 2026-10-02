@@ -1291,8 +1291,8 @@ fn merge_path_entries(current: &str, additional: &str) -> String {
 ///
 /// Needed because on Windows, an installer that registers a new directory
 /// via the registry (Scoop, `winget`) does not update an *already-running*
-/// process's inherited environment block -- only a process started after
-/// the change picks it up. Without this, a tool Scoop/`winget` just
+/// process's inherited environment block, nor that of any child it starts
+/// later. Without this, a tool Scoop/`winget` just
 /// installed mid-run can be completely unresolvable for the rest of this
 /// invocation: not a [`BINARY_CACHE`] staleness problem (already fixed by
 /// [`forget_binary`]) but a genuine "this process's `PATH` string does not
@@ -1400,13 +1400,10 @@ fn go_bin_dir_from_env(gobin: &str, gopath: &str) -> Option<PathBuf> {
 /// `go install golang.org/x/tools/cmd/goimports@v0.49.0`
 /// succeeds and a lookup for `goimports` from `PATH` alone still finds
 /// nothing -- in this process *or a later one*, since nothing durable ever
-/// records that directory anywhere `PATH` gets rebuilt from (contrast the
-/// Scoop/`winget` case: those register their change in the Windows
-/// registry, which every *new* process picks up on its own -- see
-/// [`refresh_windows_path_from_registry`] -- only an *already-running*
-/// process needs that one refreshed by hand). That's why this directory
-/// gets checked directly at lookup time via [`resolve_via_known_install_dir`]
-/// instead of being mutated into some process's `PATH`: mutating a
+/// records that directory anywhere `PATH` gets rebuilt from. That's why this
+/// directory gets checked directly at lookup time via
+/// [`resolve_via_known_install_dir`] instead of being mutated into some
+/// process's `PATH`: mutating a
 /// process's own `PATH` can never help a *different, later* process, which
 /// is exactly the two-process `fml doctor --install` then `fml fmt`
 /// sequence #293 was filed over.
@@ -1507,6 +1504,14 @@ fn is_executable_file(path: &std::path::Path) -> bool {
 ///   `PYTHONUSERBASE` is honored everywhere; the *default* base is only
 ///   derivable on Linux and the other non-macOS Unixes, per
 ///   [`PYTHON_USER_BASE_DEFAULT_IS_DERIVABLE`].
+/// * [`InstallMethod::Scoop`] / `WingetName` / `WingetId` -- Scoop's shims
+///   dir and winget's user- and machine-scope `Links` dirs. Both installers
+///   add their dir to the `PATH` stored in the registry, but a process
+///   inherits its parent's environment block, not the registry, so a
+///   terminal, editor or CI step that was already running never sees it
+///   (Issue #478: winget-installed `typstyle` was `[OK]` in `fml doctor`
+///   and `[MISS]` in the next `fml fmt`, Fresh-Install Regression
+///   windows-latest job 110755434272).
 ///
 /// **Safe without one, and why:**
 ///
@@ -1520,11 +1525,10 @@ fn is_executable_file(path: &std::path::Path) -> bool {
 /// * [`InstallMethod::Cargo`] / `CargoBinstall` / `Rustup` -- `$CARGO_HOME/bin`
 ///   (default `~/.cargo/bin`), which is where `cargo`/`rustup` themselves
 ///   live, so resolving either of those implies the directory is on `PATH`.
-/// * [`InstallMethod::Scoop`] / `WingetName` / `WingetId` -- these register
-///   their `PATH` change in the Windows registry, which every *new* process
-///   inherits on its own; only an already-running process needs
-///   [`refresh_windows_path_from_registry`]. That is a same-process
-///   staleness problem, not a cross-process resolution gap.
+///
+/// Lookup skips the directories of an install method that does not
+/// [`InstallMethod::runs_on`] the current OS, so Scoop's and winget's are
+/// probed on Windows only.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum KnownInstallDir {
   /// `go install`'s output directory -- see [`go_install_bin_dir`].
@@ -1535,6 +1539,13 @@ enum KnownInstallDir {
   UvTool,
   /// The Python user scheme's script directory (`pip`'s user site).
   PythonUser,
+  /// Scoop's shim directory: `$SCOOP\shims`, else `~\scoop\shims`.
+  ScoopShims,
+  /// winget's user-scope alias directory,
+  /// `%LOCALAPPDATA%\Microsoft\WinGet\Links`.
+  WingetUserLinks,
+  /// winget's machine-scope alias directory, `%ProgramFiles%\WinGet\Links`.
+  WingetMachineLinks,
 }
 
 impl KnownInstallDir {
@@ -1548,6 +1559,10 @@ impl KnownInstallDir {
       InstallMethod::Pipx(_) => &[Self::Pipx],
       InstallMethod::Uv(_) => &[Self::UvTool],
       InstallMethod::Pip(_) | InstallMethod::Pip3(_) => &[Self::PythonUser],
+      InstallMethod::Scoop(_) => &[Self::ScoopShims],
+      InstallMethod::WingetName(_) | InstallMethod::WingetId(_) => {
+        &[Self::WingetUserLinks, Self::WingetMachineLinks]
+      }
       InstallMethod::CargoBinstall(_)
       | InstallMethod::Npm(_)
       | InstallMethod::Pnpm(_)
@@ -1555,9 +1570,6 @@ impl KnownInstallDir {
       | InstallMethod::Bun(_)
       | InstallMethod::Apt(_)
       | InstallMethod::Brew(_)
-      | InstallMethod::Scoop(_)
-      | InstallMethod::WingetName(_)
-      | InstallMethod::WingetId(_)
       | InstallMethod::Cargo { .. }
       | InstallMethod::Rustup(_) => &[],
     }
@@ -1609,6 +1621,20 @@ impl KnownInstallDir {
           None
         }
       }
+      Self::ScoopShims => non_empty_dir(&env, "SCOOP")
+        .or_else(|| Some(non_empty_dir(&env, "USERPROFILE")?.join("scoop")))
+        .map(|root| root.join("shims")),
+      Self::WingetUserLinks => Some(
+        non_empty_dir(&env, "LOCALAPPDATA")?
+          .join("Microsoft")
+          .join("WinGet")
+          .join("Links"),
+      ),
+      Self::WingetMachineLinks => Some(
+        non_empty_dir(&env, "ProgramFiles")?
+          .join("WinGet")
+          .join("Links"),
+      ),
     }
   }
 }
@@ -1698,7 +1724,11 @@ fn resolve_via_known_install_dir_with(
 
   let mut probed: Vec<PathBuf> = Vec::new();
   let mut kinds: Vec<KnownInstallDir> = Vec::new();
-  for &kind in chain.iter().flat_map(KnownInstallDir::for_method) {
+  let kinds_in_chain_order = chain
+    .iter()
+    .filter(|method| method.runs_on(std::env::consts::OS))
+    .flat_map(KnownInstallDir::for_method);
+  for &kind in kinds_in_chain_order {
     if kinds.contains(&kind) {
       continue;
     }
@@ -1732,13 +1762,14 @@ fn resolve_via_known_install_dir_with(
 /// already-running process's inherited environment block never sees.
 ///
 /// So `go install`, `pipx`, `uv` and `pip` are all absent from the match
-/// below (compare the Scoop/winget case): their output directories are
-/// never durably on `PATH` for anyone, not just this process, so a
-/// same-process `PATH` mutation would fix nothing that
+/// below: a same-process `PATH` mutation would fix nothing that
 /// [`resolve_via_known_install_dir`] doesn't already fix at lookup time,
-/// for this process *and* the next one. (An earlier version of this
-/// function did carry a `"go" => refresh_go_install_path()` arm; that
-/// function is deleted along with it, per #293's acceptance criteria that
+/// for this process *and* the next one. Scoop and winget keep their arm
+/// because it also puts their dirs on `PATH` for the tools this process
+/// spawns; later processes rely on the known-dir lookup (Issue #478).
+/// (An earlier version of this function did carry a
+/// `"go" => refresh_go_install_path()` arm; that function is deleted along
+/// with it, per #293's acceptance criteria that
 /// the old in-process fix-up not be left behind once lookup-time resolution
 /// supersedes it.)
 pub fn refresh_path_after_install(program: &str) {
@@ -3641,14 +3672,14 @@ mod tests {
     // so there is nothing for the fallback to probe. #293's prose
     // enumeration omitted `Apt` entirely, which is part of why it was wrong.
     //
-    // `clang-tidy`'s chain is `Apt`, `Brew`, `WingetName`, `Scoop`: every
-    // method audited as safe and not one that maps to a `KnownInstallDir`.
-    // The closure panics, so this fails loudly if any of them ever starts
-    // claiming a directory without that decision being made deliberately.
-    let found = resolve_via_known_install_dir_with("clang-tidy", |kind| {
+    // `checkstyle`'s chain is `Brew`, `Apt`: both audited as safe and
+    // neither maps to a `KnownInstallDir`. The closure panics, so this fails
+    // loudly if either ever starts claiming a directory without that
+    // decision being made deliberately.
+    let found = resolve_via_known_install_dir_with("checkstyle", |kind| {
       panic!(
-        "clang-tidy installs only via apt/brew/winget/scoop, all audited as \
-         writing somewhere already on PATH; none may probe {kind:?}"
+        "checkstyle installs only via brew/apt, both audited as writing \
+         somewhere already on PATH; neither may probe {kind:?}"
       )
     });
     assert_eq!(found, None);
@@ -3667,6 +3698,21 @@ mod tests {
       (InstallMethod::Uv("x"), &[KnownInstallDir::UvTool]),
       (InstallMethod::Pip("x"), &[KnownInstallDir::PythonUser]),
       (InstallMethod::Pip3("x"), &[KnownInstallDir::PythonUser]),
+      (InstallMethod::Scoop("x"), &[KnownInstallDir::ScoopShims]),
+      (
+        InstallMethod::WingetName("x"),
+        &[
+          KnownInstallDir::WingetUserLinks,
+          KnownInstallDir::WingetMachineLinks,
+        ],
+      ),
+      (
+        InstallMethod::WingetId("x"),
+        &[
+          KnownInstallDir::WingetUserLinks,
+          KnownInstallDir::WingetMachineLinks,
+        ],
+      ),
       // Audited as safe -- see `KnownInstallDir`'s doc comment for each.
       (InstallMethod::Apt("x"), &[]),
       (InstallMethod::Brew("x"), &[]),
@@ -3683,9 +3729,6 @@ mod tests {
         &[],
       ),
       (InstallMethod::Rustup("x"), &[]),
-      (InstallMethod::Scoop("x"), &[]),
-      (InstallMethod::WingetName("x"), &[]),
-      (InstallMethod::WingetId("x"), &[]),
     ];
 
     for (method, expected) in cases {
