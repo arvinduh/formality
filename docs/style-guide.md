@@ -4,9 +4,10 @@ The base standard is the global `rust-guide` skill. This document records only
 where `fml` deliberately deviates from it and the rules specific to this
 codebase. Anything `rust-guide` already states is not repeated here.
 
-> The `#N` citations throughout this document predate the 2026-08-26 repo
-> recreation and resolve to unrelated new issues — see
-> [`docs/INDEX.md`](INDEX.md#note-on-pre-recreation-issuepr-numbers).
+> The backticked `#N` citations throughout this document predate the 2026-08-26
+> repo recreation and resolve to unrelated new issues — see
+> [`docs/INDEX.md`](INDEX.md#note-on-pre-recreation-issuepr-numbers). Plain #N
+> citations are current issue/PR numbers.
 
 ## Enforcement tiers
 
@@ -291,6 +292,21 @@ argument builders in isolation.
 **Motivating case:** `#150` / PR `#194` tested `extra_args` forwarding to
 `markdownlint-cli2` by matching `ExecutionError`; `prettier` failed on the same
 flag, so both tests stayed green with the forwarding deleted.
+
+### Exit status: assert only what the test controls
+
+**Rule (tier 3):** a test asserts on the narrowest function that makes the
+decision under test. It does not assert the exit status of a full
+`run_with_args` / `run_cli` run whose outcome also depends on tools or
+environment the test is not about. If the decision is buried in a command
+handler, extract it as a private function that production calls (§4) and test
+that. Lifecycle tests whose subject is the tool (`fmt` then `fmt --check` with
+rustfmt or ruff) are exempt, but skip when that one tool is missing.
+
+**Motivating case:** #291 / PR #400 — `test_relative_root_resolves_to_absolute`
+asserted `ExitStatus::Clean` from a real `fml doctor` run on the checkout. It
+failed 6 of 20 runs while another process relinked `taplo`, and still passed
+with `std::path::absolute` removed.
 
 ### Source-scan tests: assert absence, bound the window, prefer runtime assertions
 
