@@ -80,8 +80,29 @@ pub fn walk_candidate_files(
   root: &Path,
   global_excludes: &[PathBuf],
 ) -> Vec<PathBuf> {
-  let mut results = Vec::new();
-  let walker = ignore::WalkBuilder::new(root)
+  let results: Vec<PathBuf> = candidate_file_paths(root)
+    .map(ignore::DirEntry::into_path)
+    .collect();
+
+  if global_excludes.is_empty() {
+    results
+  } else {
+    let normalized_exclude: Vec<NormalizedExclude<'_>> = global_excludes
+      .iter()
+      .map(|ex| NormalizedExclude::new(ex, root))
+      .collect();
+    results
+      .into_iter()
+      .filter(|file| !is_excluded_normalized(file, root, &normalized_exclude))
+      .collect()
+  }
+}
+
+/// Yields every regular candidate file under `root`. This is the one place
+/// the candidate ignore rules live: gitignore, standard ignored dirs, temp
+/// files.
+fn candidate_file_paths(root: &Path) -> impl Iterator<Item = ignore::DirEntry> {
+  ignore::WalkBuilder::new(root)
     .hidden(false)
     .git_ignore(true)
     .git_global(true)
@@ -96,27 +117,9 @@ pub fn walk_candidate_files(
       }
       true
     })
-    .build();
-
-  for entry in walker.filter_map(Result::ok) {
-    let path = entry.path();
-    if path.is_file() {
-      results.push(path.to_path_buf());
-    }
-  }
-
-  if global_excludes.is_empty() {
-    results
-  } else {
-    let normalized_exclude: Vec<NormalizedExclude<'_>> = global_excludes
-      .iter()
-      .map(|ex| NormalizedExclude::new(ex, root))
-      .collect();
-    results
-      .into_iter()
-      .filter(|file| !is_excluded_normalized(file, root, &normalized_exclude))
-      .collect()
-  }
+    .build()
+    .filter_map(Result::ok)
+    .filter(|entry| entry.path().is_file())
 }
 
 /// Filters in-memory candidate files matching surface extensions, explicit include patterns, and exclude patterns.
