@@ -487,13 +487,26 @@ fn exit_status(shut_down: bool) -> ExitStatus {
   }
 }
 
+/// Maps how the `serve` task ended, absent an `exit`, onto [`ExitStatus`].
+///
+/// `Ok` is stdin EOF, a normal stop. A [`tokio::task::JoinError`] is a
+/// handler panic (the panic hook has already printed it), which must not read
+/// as a clean exit to the client.
+fn serve_status(joined: &Result<(), tokio::task::JoinError>) -> ExitStatus {
+  match joined {
+    Ok(()) => ExitStatus::Clean,
+    Err(_) => ExitStatus::Error,
+  }
+}
+
 /// Start the formality LSP server on stdio.
 ///
 /// Blocks until the client sends `exit` or closes stdin. Intended to be called
 /// from `fml lsp`.
 ///
 /// Returns the exit status the LSP spec prescribes for `exit` (see
-/// [`exit_status`]), or [`ExitStatus::Clean`] when stdin closes first.
+/// [`exit_status`]), [`ExitStatus::Clean`] when stdin closes first, or
+/// [`ExitStatus::Error`] when a handler panics (see [`serve_status`]).
 ///
 /// # Panics
 ///
@@ -518,8 +531,14 @@ pub fn run_lsp_server(root: Option<&Path>) -> ExitStatus {
   let server = Server::new(tokio::io::stdin(), tokio::io::stdout(), socket);
   // `serve` owns the sender, so the receiver resolves on `exit` or, when
   // `serve` returns at stdin EOF, on the dropped sender.
-  rt.spawn(server.serve(service));
-  let status = rt.block_on(exited_rx).unwrap_or(ExitStatus::Clean);
+  let serve = rt.spawn(server.serve(service));
+  let status = match rt.block_on(exited_rx) {
+    Ok(status) => status,
+    // `serve` dropped the sender, so it has already finished or unwound and
+    // this second wait returns at once. Never `resume_unwind` a panic here:
+    // dropping the runtime while unwinding would block on the stdin read.
+    Err(_) => serve_status(&rt.block_on(serve)),
+  };
   // After `exit`, `serve` is still parked on a stdin read on Tokio's blocking
   // pool, which dropping the runtime would wait for. Shutting down in the
   // background abandons it; the process exit that follows ends the thread.
@@ -1059,6 +1078,21 @@ mod tests {
       !prod_code.contains("Command::new"),
       "src/commands/lsp.rs production code must not spawn child processes"
     );
+  }
+
+  #[test]
+  fn test_serve_status_normal_stop_is_clean() {
+    assert_eq!(serve_status(&Ok(())), ExitStatus::Clean);
+  }
+
+  #[test]
+  fn test_serve_status_handler_panic_is_error() {
+    let rt = tokio::runtime::Builder::new_current_thread()
+      .build()
+      .unwrap();
+    let joined = rt.block_on(rt.spawn(async { panic!("handler panic") }));
+    assert!(joined.as_ref().is_err_and(tokio::task::JoinError::is_panic));
+    assert_eq!(serve_status(&joined), ExitStatus::Error);
   }
 
   /// Drains the `window/showMessage` notifications the server has sent so far.
