@@ -80,6 +80,14 @@ fn run_command_inner(
   root: &Path,
   project_config_path: Option<&Path>,
 ) -> ExitStatus {
+  // The server loads and reports its own config at `initialize`. Editors
+  // spawn it in the workspace root, so failing on that config here would
+  // kill it before it could tell the editor why.
+  if matches!(args.command, Commands::Lsp) {
+    commands::lsp::run_lsp_server(Some(root));
+    return ExitStatus::Clean;
+  }
+
   let (mut config, _config_path) =
     match FormalityConfig::load_layered_with_path(project_config_path) {
       Ok(res) => res,
@@ -170,8 +178,7 @@ fn run_command_inner(
     }
 
     Commands::Lsp => {
-      commands::lsp::run_lsp_server(Some(root));
-      ExitStatus::Clean
+      unreachable!("`lsp` is dispatched before the config load")
     }
   }
 }
