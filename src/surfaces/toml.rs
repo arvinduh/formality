@@ -273,7 +273,7 @@ impl LanguageSurface for TomlSurface {
     cmd.arg("lint");
 
     for f in &files {
-      cmd.arg(f);
+      cmd.arg(taplo_path_arg(&f.to_string_lossy(), cfg!(windows)));
     }
 
     cmd.args(&ctx.lang_config.extra_args);
@@ -455,6 +455,29 @@ mod tests {
     assert_eq!(
       std::fs::read_to_string(&file).unwrap(),
       "[package]\nname = \"x\"\n"
+    );
+  }
+
+  #[test]
+  fn test_toml_lint_reads_file_under_glob_metacharacter_dir() {
+    if !check_binary_exists("taplo") {
+      return;
+    }
+    let temp = TempDir::new().unwrap();
+    let dir = temp.path().join("a[b](c){d,e}");
+    std::fs::create_dir(&dir).unwrap();
+    let file = dir.join("f.toml");
+    std::fs::write(&file, "a = [\n").unwrap();
+
+    let mut ctx =
+      test_ctx(temp.path(), crate::config::ResolvedLangConfig::new("toml"));
+    ctx.paths = Arc::new(vec![file]);
+    let res = TomlSurface.lint(&ctx, false);
+
+    assert!(
+      matches!(res.status, SurfaceStatus::ViolationsFound { .. }),
+      "{:?}",
+      res.status
     );
   }
 
