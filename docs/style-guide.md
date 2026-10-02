@@ -256,15 +256,18 @@ hierarchy in `src/errors.rs` (`#119 [pre-recreation]`) instead of per-module
 - No `anyhow`/`thiserror`; neither is a dependency, and a new error site does
   not add one.
 - `FormalityError` is the top-level enum, one variant per subsystem (`Config`,
-  `Git`, `ToolMissing`, `Surface`, `Io`, plus `InvalidCli(String)`). Each wraps
-  its own enum (`ConfigError`, `GitError`, `ToolMissingError`, `SurfaceError`,
-  `IoError`) implementing `fmt::Display` and `std::error::Error` by hand.
+  `Git`, `Surface`, `Io`, plus `InvalidCli(String)`). Each wraps its own type
+  implementing `fmt::Display` and `std::error::Error` by hand: the enums
+  `ConfigError` (defined in `src/config/mod.rs`, re-exported from
+  `src/errors.rs`), `GitError` and `SurfaceError`, and the struct `IoError`. A
+  missing tool is not an error: it is the run status
+  `SurfaceStatus::ToolMissing`.
 - A new failure in an existing subsystem adds a variant to that subsystem's
   enum, not a new top-level variant and not a bare `String`.
   `InvalidCli(String)` is the deliberate exception for CLI usage errors.
-- `FormalityError::exit_status()` maps every variant to `ExitStatus::Error`
-  (exit code 2). A case needing a different exit status is a design decision to
-  raise, not a special case to add.
+- `impl From<FormalityError> for ExitStatus` (and `From<&FormalityError>`) maps
+  every variant to `ExitStatus::Error` (exit code 2). A case needing a different
+  exit status is a design decision to raise, not a special case to add.
 - User-facing rendering goes through `render_diagnostic()` /
   `print_diagnostic()` (`[ERR]` prefix), not an ad hoc `eprintln!`.
 
