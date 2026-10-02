@@ -436,6 +436,7 @@ pub struct ResolvedLangConfig {
   pub extra: BTreeMap<String, toml::Value>,
 }
 
+#[cfg(test)]
 impl ResolvedLangConfig {
   /// Creates a [`ResolvedLangConfig`] with default settings for the named surface.
   #[must_use]

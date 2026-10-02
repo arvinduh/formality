@@ -18,6 +18,7 @@ use std::path::{Path, PathBuf};
 
 impl FormalityConfig {
   /// Constructs an empty [`FormalityConfig`] with no global or language overrides.
+  #[cfg(test)]
   #[must_use]
   pub fn empty() -> Self {
     Self {

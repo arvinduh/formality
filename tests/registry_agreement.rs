@@ -45,7 +45,7 @@
 //! and adding it to `EXTRA_CHECKED_BINARIES` would just require exempting
 //! it from both sides for no benefit.
 
-use fml::config::ResolvedLangConfig;
+use fml::config::FormalityConfig;
 use fml::engine::version::mstv;
 use fml::surfaces::{all_surfaces, tooling};
 use std::collections::BTreeSet;
@@ -139,7 +139,7 @@ fn checked_binaries() -> BTreeSet<&'static str> {
   let mut binaries: BTreeSet<&'static str> = all_surfaces()
     .iter()
     .flat_map(|s| {
-      let config = ResolvedLangConfig::new(s.name());
+      let config = FormalityConfig::with_defaults().resolve_for_lang(s.name());
       s.tool_info(&config).into_iter().map(|t| t.binary)
     })
     .collect();

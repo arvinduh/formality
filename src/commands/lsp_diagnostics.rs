@@ -1477,8 +1477,8 @@ type DiagnosticsRunner =
 /// (today: only `json`, which is format-only and has no linter to parse
 /// output from).
 ///
-/// Split out of [`diagnostics_for_file`] rather than inlined into its match
-/// so `test_every_surface_except_json_has_a_structured_parser` can check
+/// Split out of [`diagnostics_for_file_with_config`] rather than inlined into
+/// its match so `test_every_surface_except_json_has_a_structured_parser` can check
 /// the wiring exhaustively against the surface registry without shelling
 /// out to a single linter — a new surface added without a parser here fails
 /// that test instead of silently falling back to the generic warning.
@@ -1508,16 +1508,7 @@ fn diagnostics_runner_for_surface(surface: &str) -> Option<DiagnosticsRunner> {
 /// or it does but the underlying tool/config couldn't be run this time
 /// (binary missing, no project marker file, spawn failure, required config
 /// missing). `Some(vec![])` means the tool ran and genuinely found nothing.
-#[must_use]
-pub fn diagnostics_for_file(
-  root: &Path,
-  file: &Path,
-) -> Option<Vec<Diagnostic>> {
-  diagnostics_for_file_with_config(root, file, None)
-}
-
-/// Returns structured per-violation `Diagnostic`s for `file` reusing a cached
-/// [`FormalityConfig`] if provided.
+/// `config` reuses a cached [`FormalityConfig`] when provided.
 #[must_use]
 pub fn diagnostics_for_file_with_config(
   root: &Path,
@@ -1686,7 +1677,7 @@ mod tests {
       } else {
         assert!(
           diagnostics_runner_for_surface(name).is_some(),
-          "surface `{name}` has no structured-diagnostics parser wired into diagnostics_for_file"
+          "surface `{name}` has no structured-diagnostics parser wired into diagnostics_for_file_with_config"
         );
       }
     }
@@ -1716,10 +1707,20 @@ mod tests {
     // prettier-based) — every other surface this crate supports now has a
     // structured-diagnostics parser wired up here.
     assert!(
-      diagnostics_for_file(Path::new("."), Path::new("data.json")).is_none()
+      diagnostics_for_file_with_config(
+        Path::new("."),
+        Path::new("data.json"),
+        None
+      )
+      .is_none()
     );
     assert!(
-      diagnostics_for_file(Path::new("."), Path::new("notes.txt")).is_none()
+      diagnostics_for_file_with_config(
+        Path::new("."),
+        Path::new("notes.txt"),
+        None
+      )
+      .is_none()
     );
   }
 
@@ -2438,7 +2439,10 @@ mod tests {
     // directory with no `Cargo.toml` must fall back to `fml lint`, not
     // publish an empty (false "clean") diagnostics list.
     let dir = tempfile::tempdir().unwrap();
-    assert!(diagnostics_for_file(dir.path(), Path::new("main.rs")).is_none());
+    assert!(
+      diagnostics_for_file_with_config(dir.path(), Path::new("main.rs"), None)
+        .is_none()
+    );
   }
 
   #[test]
@@ -2557,15 +2561,24 @@ mod tests {
   #[test]
   fn test_diagnostics_for_file_none_when_directory_named_manifest() {
     // End-to-end check via public entry point: directories named like
-    // manifests must not fool diagnostics_for_file into reporting clean.
+    // manifests must not fool diagnostics_for_file_with_config into
+    // reporting clean.
     let dir = tempfile::tempdir().unwrap();
     std::fs::create_dir(dir.path().join("Cargo.toml")).unwrap();
-    assert!(diagnostics_for_file(dir.path(), Path::new("main.rs")).is_none());
+    assert!(
+      diagnostics_for_file_with_config(dir.path(), Path::new("main.rs"), None)
+        .is_none()
+    );
 
     let dir_go = tempfile::tempdir().unwrap();
     std::fs::create_dir(dir_go.path().join("go.mod")).unwrap();
     assert!(
-      diagnostics_for_file(dir_go.path(), Path::new("main.go")).is_none()
+      diagnostics_for_file_with_config(
+        dir_go.path(),
+        Path::new("main.go"),
+        None
+      )
+      .is_none()
     );
   }
 }
