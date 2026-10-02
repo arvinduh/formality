@@ -182,7 +182,7 @@ fn test_lsp_stdout_carries_only_json_rpc_frames() {
     .env("FORMALITY_NO_UPDATE_CHECK", "1")
     .stdin(Stdio::piped())
     .stdout(Stdio::piped())
-    .stderr(Stdio::null())
+    .stderr(Stdio::piped())
     .spawn()
     .expect("failed to spawn fml lsp");
 
@@ -202,13 +202,28 @@ fn test_lsp_stdout_carries_only_json_rpc_frames() {
     deadline: Instant::now() + TIMEOUT,
   };
   let mut stdin = child.stdin.take().unwrap();
+  // Drained on its own thread so a full pipe never stalls the server; it
+  // ends once the child is killed below.
+  let mut stderr = child.stderr.take().unwrap();
+  let stderr_reader = std::thread::spawn(move || {
+    let mut log = String::new();
+    let _ = stderr.read_to_string(&mut log);
+    log
+  });
 
   let outcome = exchange(&mut stdin, &mut transcript, root, &file);
   let status = child.try_wait().unwrap();
   let _ = child.kill();
   let _ = child.wait();
+  let log = stderr_reader.join().unwrap();
 
   if let Err(reason) = outcome {
     panic!("{reason}\nchild exit status: {status:?}");
   }
+  // The report moved off stdout, not out of existence: the lint fallback's
+  // diagnostic points the user at this log.
+  assert!(
+    log.contains("fml lint (1 surface)"),
+    "run report missing from stderr:\n{log}"
+  );
 }
