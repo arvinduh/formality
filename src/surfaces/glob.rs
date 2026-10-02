@@ -608,6 +608,8 @@ mod tests {
     let paths = [PathBuf::from("a/Main.RS"), PathBuf::from("b/notes")];
     let present = PresentExtensions::from_paths(&paths);
     assert!(present.contains("rs"));
+    // The test's cwd (the crate root) holds `.md` files, so this fails if
+    // `from_paths` walks the disk instead of reading the list.
     assert!(!present.contains("md"));
   }
 
