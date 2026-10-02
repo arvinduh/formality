@@ -295,13 +295,17 @@ flag, so both tests stayed green with the forwarding deleted.
 
 ### Exit status: assert only what the test controls
 
-**Rule (tier 3):** a test asserts on the narrowest function that makes the
-decision under test. It does not assert the exit status of a full
-`run_with_args` / `run_cli` run whose outcome also depends on tools or
+**Rule (tier 2 in `src/`, tier 3 in `tests/`):** a test asserts on the narrowest
+function that makes the decision under test. It does not assert the exit status
+of a full `run_with_args` / `run_cli` run whose outcome also depends on tools or
 environment the test is not about. If the decision is buried in a command
 handler, extract it as a private function that production calls (§4) and test
 that. Lifecycle tests whose subject is the tool (`fmt` then `fmt --check` with
-rustfmt or ruff) are exempt, but skip when that one tool is missing.
+rustfmt or ruff) are exempt, but skip when that one tool is missing. Unit tests
+in `src/` reach the private function directly, so
+`test_unit_tests_do_not_dispatch_full_commands` (`src/lib.rs`) forbids them from
+calling `run_with_args` at all; `tests/` sees only the public API, so reviewers
+check it there.
 
 **Motivating case:** #291 / PR #400 — `test_relative_root_resolves_to_absolute`
 asserted `ExitStatus::Clean` from a real `fml doctor` run on the checkout. It
