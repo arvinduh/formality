@@ -60,6 +60,7 @@ undocumented_unsafe_blocks = "deny"
 case_sensitive_file_extension_comparisons = "warn"
 fn_params_excessive_bools = "warn"
 if_not_else = "warn"
+items_after_statements = "warn"
 map_unwrap_or = "warn"
 match_same_arms = "warn"
 match_wildcard_for_single_variants = "warn"
@@ -71,6 +72,7 @@ unreadable_literal = "warn"
 format_collect = "warn"
 implicit_hasher = "warn"
 redundant_clone = "warn"
+trivially_copy_pass_by_ref = "warn"
 
 # Config for 'dist' (cargo-dist): GitHub Releases are the only channel - no
 # crates.io publish. See docs/release.md and issue #134.
