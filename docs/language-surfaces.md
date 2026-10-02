@@ -366,9 +366,12 @@ auto-detection walks the tree once.
 
 For `fml fmt`, `fml lint`, `fml fix` and `fml sync` with no path arguments,
 `present` comes from the runner's own candidate list, so the whole run walks the
-tree once. That list has `global.exclude` applied: a file matched only by
-`global.exclude` does not activate its surface, since fml ignores excluded files
-everywhere. A surface's own `exclude` does not affect detection.
+tree once. That list has `global.exclude` applied: an extension seen only in
+globally excluded files no longer activates its surface, since fml ignores
+excluded files everywhere. A marker file at the root (`Cargo.toml`,
+`pyproject.toml`, ...) still activates its surface even when `global.exclude`
+matches it, because markers are checked at the root, not in the candidate list.
+A surface's own `exclude` does not affect detection.
 
 `fml doctor` shows detection and tool status for active surfaces, and
 `fml doctor --all` shows both for every surface in the fleet.
