@@ -134,17 +134,33 @@ impl PresentExtensions {
   /// records every UTF-8 file extension seen.
   #[must_use]
   pub fn scan(root: &Path) -> Self {
-    let mut seen = std::collections::HashSet::new();
+    let mut present = Self(std::collections::HashSet::new());
     for entry in candidate_file_paths(root) {
-      let Some(ext) = entry.path().extension().and_then(|e| e.to_str()) else {
-        continue;
-      };
-      let ext = ascii_lowercase(ext);
-      if !seen.contains(ext.as_ref()) {
-        seen.insert(ext.into_owned());
-      }
+      present.record(entry.path());
     }
-    Self(seen)
+    present
+  }
+
+  /// Records the extensions of `paths`, a candidate list the caller already
+  /// walked, so detection and the runner share that one walk.
+  #[must_use]
+  pub fn from_paths(paths: &[PathBuf]) -> Self {
+    let mut present = Self(std::collections::HashSet::new());
+    for path in paths {
+      present.record(path);
+    }
+    present
+  }
+
+  /// Adds `path`'s UTF-8 extension, allocating only for a new one.
+  fn record(&mut self, path: &Path) {
+    let Some(ext) = path.extension().and_then(|e| e.to_str()) else {
+      return;
+    };
+    let ext = ascii_lowercase(ext);
+    if !self.0.contains(ext.as_ref()) {
+      self.0.insert(ext.into_owned());
+    }
   }
 
   /// Whether a candidate file with extension `ext` exists, ignoring ASCII
@@ -529,6 +545,14 @@ mod tests {
     assert!(present.contains("Rs"));
     assert!(!present.contains("js"));
     assert!(!present.contains("py"));
+  }
+
+  #[test]
+  fn test_present_extensions_from_paths_reads_only_the_given_list() {
+    let paths = [PathBuf::from("a/Main.RS"), PathBuf::from("b/notes")];
+    let present = PresentExtensions::from_paths(&paths);
+    assert!(present.contains("rs"));
+    assert!(!present.contains("md"));
   }
 
   #[test]
