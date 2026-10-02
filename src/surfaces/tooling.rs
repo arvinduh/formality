@@ -1547,6 +1547,10 @@ fn is_executable_file(path: &std::path::Path) -> bool {
 ///   (Issue #478: winget-installed `typstyle` was `[OK]` in `fml doctor`
 ///   and `[MISS]` in the next `fml fmt`, Fresh-Install Regression
 ///   windows-latest job 110755434272).
+/// * [`InstallMethod::WingetName`]`("LLVM.LLVM")` -- `%ProgramFiles%\LLVM\bin`
+///   instead of the `Links` dirs: `LLVM.LLVM` is an installer package, not a
+///   portable one, so winget links nothing, and a silent install leaves that
+///   dir off the registry `PATH` too (Issue #489, windows-latest probe).
 ///
 /// **Safe without one, and why:**
 ///
@@ -1586,6 +1590,8 @@ enum KnownInstallDir {
   WingetUserLinks,
   /// winget's machine-scope alias directory, `%ProgramFiles%\WinGet\Links`.
   WingetMachineLinks,
+  /// The `bin` of winget's `LLVM.LLVM` installer, `%ProgramFiles%\LLVM\bin`.
+  WingetLlvm,
   /// The `bin` of Homebrew's keg-only `llvm`, `<prefix>/opt/llvm/bin`.
   BrewLlvm,
 }
@@ -1602,6 +1608,7 @@ impl KnownInstallDir {
       InstallMethod::Uv(_) => &[Self::UvTool],
       InstallMethod::Pip(_) | InstallMethod::Pip3(_) => &[Self::PythonUser],
       InstallMethod::Scoop(_) => &[Self::ScoopShims],
+      InstallMethod::WingetName("LLVM.LLVM") => &[Self::WingetLlvm],
       InstallMethod::WingetName(_) | InstallMethod::WingetId(_) => {
         &[Self::WingetUserLinks, Self::WingetMachineLinks]
       }
@@ -1684,6 +1691,11 @@ impl KnownInstallDir {
         non_empty_dir(&env, "ProgramFiles")?
           .join("WinGet")
           .join("Links"),
+      ),
+      Self::WingetLlvm => Some(
+        non_empty_dir(&env, "ProgramFiles")?
+          .join("LLVM")
+          .join("bin"),
       ),
     }
   }
@@ -4045,6 +4057,7 @@ mod tests {
       KnownInstallDir::ScoopShims,
       KnownInstallDir::WingetUserLinks,
       KnownInstallDir::WingetMachineLinks,
+      KnownInstallDir::WingetLlvm,
     ] {
       assert_eq!(
         kind.path_with(no_go_bin_dir, &env),
@@ -4076,6 +4089,15 @@ mod tests {
           .join("WinGet")
           .join("Links")
       )
+    );
+  }
+
+  #[test]
+  fn test_known_install_dir_path_winget_llvm_is_program_files_llvm_bin() {
+    let env = fake_env(&[("ProgramFiles", r"C:\Program Files")]);
+    assert_eq!(
+      KnownInstallDir::WingetLlvm.path_with(no_go_bin_dir, &env),
+      Some(PathBuf::from(r"C:\Program Files").join("LLVM").join("bin"))
     );
   }
 
