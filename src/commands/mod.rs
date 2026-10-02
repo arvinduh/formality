@@ -549,4 +549,29 @@ mod tests {
     assert!(String::from_utf8_lossy(&out).contains("rust"));
     assert_eq!(glob::walk_count::of(root), 1);
   }
+
+  #[test]
+  fn test_file_matched_only_by_global_exclude_does_not_activate_its_surface() {
+    let temp = TempDir::new().unwrap();
+    let root = temp.path();
+    fs::write(root.join("main.rs"), "fn main() {}\n").unwrap();
+    fs::create_dir(root.join("gen")).unwrap();
+    fs::write(root.join("gen/tool.py"), "x = 1\n").unwrap();
+    let detected = |config: &FormalityConfig| -> Vec<&'static str> {
+      let scope = Scope::resolve(root, &[], &config.resolve_global().exclude);
+      resolve_target_surfaces(root, &[], &scope, config)
+        .unwrap()
+        .iter()
+        .map(|s| s.name())
+        .collect()
+    };
+
+    assert_eq!(detected(&FormalityConfig::empty()), ["rust", "python"]);
+    let excluding = FormalityConfig::parse_str(
+      "[global]\nexclude = [\"gen\"]\n",
+      Path::new("formality.toml"),
+    )
+    .unwrap();
+    assert_eq!(detected(&excluding), ["rust"]);
+  }
 }
