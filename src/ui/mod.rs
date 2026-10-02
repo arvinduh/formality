@@ -6,6 +6,8 @@ pub mod table;
 /// One shared relative-vs-absolute rendering for filesystem paths in output.
 pub mod paths;
 
+use std::env;
+
 /// Returns whether the environment explicitly asks for *no* color, per the
 /// `NO_COLOR` convention (<https://no-color.org>): the variable set to any
 /// non-empty value. Empty means "unset" there, so `NO_COLOR=` deliberately
@@ -17,7 +19,7 @@ pub mod paths;
 /// here rather than being re-checked ad hoc at each site.
 #[must_use]
 pub fn no_color_requested() -> bool {
-  std::env::var("NO_COLOR").is_ok_and(|value| !value.is_empty())
+  env::var("NO_COLOR").is_ok_and(|value| !value.is_empty())
 }
 
 /// Returns whether the environment asks for color even though stdout may
@@ -25,7 +27,7 @@ pub fn no_color_requested() -> bool {
 /// Actions (whose log viewer renders ANSI but whose steps are not TTYs).
 #[must_use]
 pub fn color_forced() -> bool {
-  std::env::var("FORCE_COLOR").is_ok()
-    || std::env::var("CLICOLOR_FORCE").is_ok()
-    || std::env::var("GITHUB_ACTIONS").is_ok()
+  env::var("FORCE_COLOR").is_ok()
+    || env::var("CLICOLOR_FORCE").is_ok()
+    || env::var("GITHUB_ACTIONS").is_ok()
 }

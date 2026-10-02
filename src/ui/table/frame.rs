@@ -3,12 +3,11 @@
 //! `Frame`, built once per command from its primary table, guarantees every
 //! rule that command prints is the same width.
 
-use super::render::detect_terminal_width;
-use super::wrap;
-use super::{
-  Palette, Style, max_line_display_width, separator_line, strip_ansi_escapes,
-};
-use unicode_width::{UnicodeWidthChar, UnicodeWidthStr};
+use unicode_width;
+
+use crate::ui::table;
+use crate::ui::table::render;
+use crate::ui::table::wrap;
 
 /// The 80-column output target from issue #122, honored unless the real
 /// terminal is genuinely narrower.
@@ -34,7 +33,7 @@ impl Frame {
   /// The width cap: [`TARGET_WIDTH`], or the real terminal width when narrower.
   #[must_use]
   pub fn cap() -> usize {
-    (detect_terminal_width() as usize).min(TARGET_WIDTH)
+    (render::detect_terminal_width() as usize).min(TARGET_WIDTH)
   }
 
   /// A frame sized to an already-rendered body: the body's widest line,
@@ -42,7 +41,7 @@ impl Frame {
   #[must_use]
   pub fn for_body(rendered_body: &str) -> Self {
     let cap = Self::cap();
-    let content = max_line_display_width(rendered_body);
+    let content = table::max_line_display_width(rendered_body);
     let width = if content == 0 { cap } else { content.min(cap) };
     Self {
       width: width.max(MIN_WIDTH.min(cap)),
@@ -68,13 +67,13 @@ impl Frame {
   /// The bare (uncolored) rule line.
   #[must_use]
   pub fn rule(&self) -> String {
-    separator_line(self.width)
+    table::separator_line(self.width)
   }
 
   /// The rule line, dimmed with `palette`.
   #[must_use]
-  pub fn dim_rule(&self, palette: &Palette) -> String {
-    palette.apply(&self.rule(), Style::Dim)
+  pub fn dim_rule(&self, palette: &table::Palette) -> String {
+    palette.apply(&self.rule(), table::Style::Dim)
   }
 
   /// Wrap free-form prose `text` so no line exceeds [`Frame::width`], breaking
@@ -100,7 +99,12 @@ impl Frame {
   /// here. A blank `body` collapses to just `title` + rule. The returned block
   /// has no trailing newline.
   #[must_use]
-  pub fn section(&self, title: &str, body: &str, palette: &Palette) -> String {
+  pub fn section(
+    &self,
+    title: &str,
+    body: &str,
+    palette: &table::Palette,
+  ) -> String {
     let rule = self.dim_rule(palette);
     let body = body.trim_matches('\n');
     if body.is_empty() {
@@ -116,7 +120,7 @@ impl Frame {
 /// a wrapped `  • [WARN]  message…` continues aligned under `message`, not back
 /// at column 0. Computed on the ANSI-stripped text; capped at `max` columns.
 fn hang_indent(line: &str, max: usize) -> String {
-  let plain = strip_ansi_escapes(line);
+  let plain = table::strip_ansi_escapes(line);
   let bytes = plain.as_bytes();
   let mut i = 0;
   while i < bytes.len() && bytes[i] == b' ' {
@@ -147,7 +151,7 @@ fn hang_indent(line: &str, max: usize) -> String {
   }
   let cols: usize = plain[..i]
     .chars()
-    .map(|c| UnicodeWidthChar::width(c).unwrap_or(0))
+    .map(|c| unicode_width::UnicodeWidthChar::width(c).unwrap_or(0))
     .sum();
   " ".repeat(cols.min(max))
 }
@@ -158,7 +162,7 @@ fn hang_indent(line: &str, max: usize) -> String {
 /// [`hang_indent`]). Returns the line untouched when it already fits.
 fn wrap_prose_line(line: &str, width: usize) -> String {
   let width = width.max(8);
-  if max_line_display_width(line) <= width {
+  if table::max_line_display_width(line) <= width {
     return line.to_string();
   }
   let lead_len = line.chars().take_while(|c| *c == ' ').count();
@@ -195,7 +199,7 @@ fn wrap_prose_line(line: &str, width: usize) -> String {
           cur_w = hang.chars().count();
         }
         lines.last_mut().unwrap().push_str(&piece);
-        cur_w += piece.as_str().width();
+        cur_w += unicode_width::UnicodeWidthStr::width(piece.as_str());
         fresh = false;
       }
       continue;
@@ -222,7 +226,8 @@ mod tests {
   #[test]
   fn section_is_header_rule_body_rule() {
     let frame = Frame::capped();
-    let out = frame.section("TITLE", "line one\nline two", &Palette::none());
+    let out =
+      frame.section("TITLE", "line one\nline two", &table::Palette::none());
     let lines: Vec<&str> = out.lines().collect();
     assert_eq!(lines[0], "TITLE");
     assert!(lines[1].chars().all(|c| c == '─'));
@@ -235,7 +240,7 @@ mod tests {
   #[test]
   fn empty_body_collapses_to_title_and_one_rule() {
     let frame = Frame::capped();
-    let out = frame.section("TITLE", "", &Palette::none());
+    let out = frame.section("TITLE", "", &table::Palette::none());
     assert_eq!(out.lines().count(), 2);
   }
 
@@ -268,7 +273,7 @@ mod tests {
       assert_eq!(lead, 12, "continuation not hang-indented: {cont:?}");
     }
     for l in &out {
-      assert!(max_line_display_width(l) <= 40, "over width: {l:?}");
+      assert!(table::max_line_display_width(l) <= 40, "over width: {l:?}");
     }
   }
 
@@ -291,9 +296,6 @@ mod tests {
   /// fails this test.
   #[test]
   fn table_and_prose_wrap_agree_on_shared_corpus() {
-    use super::super::Span;
-    use super::super::render::wrap_spans;
-
     let unbreakable = "u".repeat(200);
     let corpus = format!(
       "The quick brown fox jumps over the lazy dog then trots down \
@@ -303,7 +305,7 @@ mod tests {
 
     for width in [20usize, 40, 80] {
       let table_lines: Vec<String> =
-        wrap_spans(&[Span::plain(corpus.as_str())], width)
+        render::wrap_spans(&[table::Span::plain(corpus.as_str())], width)
           .iter()
           .map(|line| line.iter().map(|s| s.text.as_str()).collect::<String>())
           .collect();
@@ -321,7 +323,7 @@ mod tests {
 
       for line in table_lines.iter().chain(prose_lines.iter()) {
         assert!(
-          max_line_display_width(line) <= width,
+          table::max_line_display_width(line) <= width,
           "line exceeds width {width}: {line:?}"
         );
       }

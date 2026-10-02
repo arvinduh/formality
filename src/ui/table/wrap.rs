@@ -3,7 +3,9 @@
 //! ([`super::frame::wrap_prose_line`]). One break-character policy, one
 //! tokenizer, so tables and prose wrap the same way — see #269.
 
-use unicode_width::UnicodeWidthChar;
+use std::mem;
+
+use unicode_width;
 
 /// Characters after which a soft line break is allowed when wrapping: path
 /// separators and list punctuation. A break is also always allowed at a
@@ -51,7 +53,7 @@ pub(super) fn units(s: &str) -> Vec<Unit> {
     if c == ' ' {
       if !cur.is_empty() {
         out.push(Unit {
-          text: std::mem::take(&mut cur),
+          text: mem::take(&mut cur),
           width: cur_w,
           is_space: false,
         });
@@ -65,10 +67,10 @@ pub(super) fn units(s: &str) -> Vec<Unit> {
       continue;
     }
     cur.push(c);
-    cur_w += UnicodeWidthChar::width(c).unwrap_or(0);
+    cur_w += unicode_width::UnicodeWidthChar::width(c).unwrap_or(0);
     if BREAK_AFTER.contains(&c) {
       out.push(Unit {
-        text: std::mem::take(&mut cur),
+        text: mem::take(&mut cur),
         width: cur_w,
         is_space: false,
       });
@@ -112,9 +114,9 @@ pub(super) fn hard_split(text: &str, width: usize) -> Vec<String> {
   let mut cur = String::new();
   let mut w = 0;
   for ch in text.chars() {
-    let cw = UnicodeWidthChar::width(ch).unwrap_or(0);
+    let cw = unicode_width::UnicodeWidthChar::width(ch).unwrap_or(0);
     if w + cw > width && !cur.is_empty() {
-      out.push(std::mem::take(&mut cur));
+      out.push(mem::take(&mut cur));
       w = 0;
     }
     cur.push(ch);
