@@ -62,6 +62,7 @@ map_unwrap_or = "warn"
 match_wildcard_for_single_variants = "warn"
 must_use_candidate = "warn"
 redundant_closure_for_method_calls = "warn"
+needless_pass_by_value = "warn"
 unreadable_literal = "warn"
 # Performance
 format_collect = "warn"

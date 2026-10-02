@@ -23,7 +23,7 @@ pub fn run_fmt(
   check: bool,
   staged: bool,
   changed: bool,
-  lang: Vec<String>,
+  lang: &[String],
   paths: Vec<PathBuf>,
   allow_missing: bool,
 ) -> ExitStatus {

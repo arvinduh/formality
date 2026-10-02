@@ -24,7 +24,7 @@ pub fn run_fix(
   check: bool,
   staged: bool,
   changed: bool,
-  lang: Vec<String>,
+  lang: &[String],
   paths: Vec<PathBuf>,
   allow_missing: bool,
 ) -> ExitStatus {

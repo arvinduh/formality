@@ -294,7 +294,7 @@ fn test_combine_pass_results_same_variant_merges_or_keeps_first() {
 fn test_exit_floor_agrees_with_is_success_and_rises_with_precedence() {
   let mut previous_floor = 0;
   for status in every_status_by_precedence("x") {
-    let floor = exit_floor(status.severity(), false);
+    let floor = exit_floor(&status.severity(), false);
     let result = SurfaceResult {
       surface_name: "test",
       status,
@@ -905,7 +905,7 @@ fn test_runner_missing_tool_exit_code_is_violations() {
 
   // Lint unstaged & staged
   let unstaged_lint = Runner::run(
-    vec![Box::new(MockMissingSurface)],
+    &[Box::new(MockMissingSurface)],
     &root,
     &[],
     &Plan::lint(false),
@@ -914,7 +914,7 @@ fn test_runner_missing_tool_exit_code_is_violations() {
   assert_eq!(unstaged_lint, ExitStatus::Violations);
 
   let staged_lint = Runner::run(
-    vec![Box::new(MockMissingSurface)],
+    &[Box::new(MockMissingSurface)],
     &root,
     &staged_paths,
     &Plan::lint(false),
@@ -925,7 +925,7 @@ fn test_runner_missing_tool_exit_code_is_violations() {
 
   // Fmt unstaged & staged, write mode
   let unstaged_fmt = Runner::run(
-    vec![Box::new(MockMissingSurface)],
+    &[Box::new(MockMissingSurface)],
     &root,
     &[],
     &Plan::fmt(false, false),
@@ -934,7 +934,7 @@ fn test_runner_missing_tool_exit_code_is_violations() {
   assert_eq!(unstaged_fmt, ExitStatus::Violations);
 
   let staged_fmt = Runner::run(
-    vec![Box::new(MockMissingSurface)],
+    &[Box::new(MockMissingSurface)],
     &root,
     &staged_paths,
     &Plan::fmt(false, false),
@@ -946,7 +946,7 @@ fn test_runner_missing_tool_exit_code_is_violations() {
   // Fmt --check (Mode::Report) — the fix is unconditional on mode, so this
   // must also be non-zero, not just the write form above.
   let check_fmt = Runner::run(
-    vec![Box::new(MockMissingSurface)],
+    &[Box::new(MockMissingSurface)],
     &root,
     &[],
     &Plan::fmt(true, false),
@@ -956,7 +956,7 @@ fn test_runner_missing_tool_exit_code_is_violations() {
 
   // Fix (Lint + Format) — a plan neither prior case exercises directly.
   let fix = Runner::run(
-    vec![Box::new(MockMissingSurface)],
+    &[Box::new(MockMissingSurface)],
     &root,
     &[],
     &Plan::fix(false, false),
@@ -1100,7 +1100,7 @@ fn test_runner_allow_missing_silences_tool_missing_but_not_violations() {
 
   // A missing tool alone: exit 1 without --allow-missing.
   let without_flag = Runner::run(
-    vec![Box::new(MockMissingSurface)],
+    &[Box::new(MockMissingSurface)],
     &root,
     &[],
     &Plan::fmt(false, false),
@@ -1110,7 +1110,7 @@ fn test_runner_allow_missing_silences_tool_missing_but_not_violations() {
 
   // ...and exit 0 with --allow-missing.
   let with_flag = Runner::run(
-    vec![Box::new(MockMissingSurface)],
+    &[Box::new(MockMissingSurface)],
     &root,
     &[],
     &Plan::fmt(false, true),
@@ -1122,7 +1122,7 @@ fn test_runner_allow_missing_silences_tool_missing_but_not_violations() {
   // exit 1 even with --allow-missing -- the flag only silences the
   // ToolMissing arm, never a genuine violation.
   let missing_and_violating = Runner::run(
-    vec![Box::new(MockMissingSurface), Box::new(MockViolatingSurface)],
+    &[Box::new(MockMissingSurface), Box::new(MockViolatingSurface)],
     &root,
     &[],
     &Plan::fmt(false, true),
@@ -1134,7 +1134,7 @@ fn test_runner_allow_missing_silences_tool_missing_but_not_violations() {
   // even with --allow-missing -- the flag only silences the ToolMissing arm,
   // never an operational fault, which outranks a plain violation too.
   let missing_and_erroring = Runner::run(
-    vec![Box::new(MockMissingSurface), Box::new(MockErroringSurface)],
+    &[Box::new(MockMissingSurface), Box::new(MockErroringSurface)],
     &root,
     &[],
     &Plan::fmt(false, true),

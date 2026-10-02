@@ -125,7 +125,7 @@ fn run_command_inner(
       check,
       staged,
       changed,
-      lang,
+      &lang,
       paths,
       allow_missing,
     ),
@@ -143,7 +143,7 @@ fn run_command_inner(
       check,
       staged,
       changed,
-      lang,
+      &lang,
       paths,
       allow_missing,
     ),
@@ -160,17 +160,17 @@ fn run_command_inner(
       &config,
       staged,
       changed,
-      lang,
+      &lang,
       paths,
       allow_missing,
     ),
 
     Commands::Sync { check, lang } => {
-      commands::sync::run_sync(root, &config, check, lang)
+      commands::sync::run_sync(root, &config, check, &lang)
     }
 
     Commands::Lsp => {
-      commands::lsp::run_lsp_server(Some(root.to_path_buf()));
+      commands::lsp::run_lsp_server(Some(root));
       ExitStatus::Clean
     }
   }

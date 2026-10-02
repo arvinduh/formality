@@ -218,7 +218,7 @@ impl LanguageServer for FormalityLsp {
       false,
       false,
       false,
-      vec![],
+      &[],
       vec![path.clone()],
       false,
     );
@@ -275,7 +275,7 @@ impl LanguageServer for FormalityLsp {
         &config,
         false,
         false,
-        vec![],
+        &[],
         vec![path.clone()],
         false,
       );
@@ -393,15 +393,13 @@ pub fn compute_formatting_edits(before: &str, after: &str) -> Vec<TextEdit> {
 /// # Panics
 ///
 /// Panics if the underlying Tokio runtime fails to initialize.
-// Takes owned Option<PathBuf> from the top-level CLI command runner for uniform handler signature.
-#[allow(clippy::needless_pass_by_value)]
-pub fn run_lsp_server(root: Option<PathBuf>) {
+pub fn run_lsp_server(root: Option<&Path>) {
   // Print a startup banner to stderr (not stdout — that's the LSP channel).
   eprintln!(
     "{} LSP server starting (stdio transport, v{SERVER_VERSION})",
     "formality".cyan().bold()
   );
-  if let Some(ref r) = root {
+  if let Some(r) = root {
     eprintln!("  workspace root: {}", r.display());
   }
 
