@@ -120,6 +120,34 @@ impl InstallMethod {
     }
   }
 
+  /// Returns whether this method can ever install anything on `os`, a
+  /// [`std::env::consts::OS`] value, regardless of what is on `PATH` now.
+  ///
+  /// System package managers are tied to their platforms; language package
+  /// managers run everywhere their toolchain does.
+  #[must_use]
+  pub fn runs_on(&self, os: &str) -> bool {
+    match self {
+      InstallMethod::Apt(_) => os == "linux",
+      InstallMethod::Brew(_) => matches!(os, "macos" | "linux"),
+      InstallMethod::Scoop(_)
+      | InstallMethod::WingetName(_)
+      | InstallMethod::WingetId(_) => os == "windows",
+      InstallMethod::CargoBinstall(_)
+      | InstallMethod::Npm(_)
+      | InstallMethod::Pnpm(_)
+      | InstallMethod::Yarn(_)
+      | InstallMethod::Bun(_)
+      | InstallMethod::Uv(_)
+      | InstallMethod::Pipx(_)
+      | InstallMethod::Pip(_)
+      | InstallMethod::Pip3(_)
+      | InstallMethod::Cargo { .. }
+      | InstallMethod::Rustup(_)
+      | InstallMethod::GoInstall(_) => true,
+    }
+  }
+
   /// Builds the executable command tuple `(program, args)` to execute this
   /// installation method.
   #[must_use]
@@ -2016,6 +2044,33 @@ mod tests {
     assert!(has_version_pin("golang.org/x/tools/cmd/goimports@v0.49.0"));
     assert!(!has_version_pin("prettier"));
     assert!(!has_version_pin("@taplo/cli"));
+  }
+
+  #[test]
+  fn test_install_method_runs_on_its_platforms_only() {
+    let cases = [
+      (InstallMethod::Apt("x"), [true, false, false]),
+      (InstallMethod::Brew("x"), [true, true, false]),
+      (InstallMethod::Scoop("x"), [false, false, true]),
+      (InstallMethod::WingetName("x"), [false, false, true]),
+      (InstallMethod::WingetId("x"), [false, false, true]),
+      (InstallMethod::Npm("x"), [true, true, true]),
+      (InstallMethod::Pip("x"), [true, true, true]),
+      (
+        InstallMethod::Cargo {
+          package: "x",
+          locked: true,
+        },
+        [true, true, true],
+      ),
+      (InstallMethod::GoInstall("x"), [true, true, true]),
+    ];
+    for (method, expected) in cases {
+      for (os, want) in ["linux", "macos", "windows"].into_iter().zip(expected)
+      {
+        assert_eq!(method.runs_on(os), want, "{method:?} on {os}");
+      }
+    }
   }
 
   #[test]

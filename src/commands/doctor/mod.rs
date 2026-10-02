@@ -292,7 +292,7 @@ fn install_missing_tools_framed(
       println!(
         "\n  {} {}\n    Manual install: {}",
         "[MISS]".yellow().bold(),
-        miss_headline(tool.binary),
+        miss_headline(tool.binary, std::env::consts::OS),
         install_hint
       );
       all_ok = false;
@@ -365,11 +365,15 @@ enum InstallOutcome {
   NoInstaller,
 }
 
-/// Says why `binary` got no install command: fml has no install chain for it
-/// at all (it ships inside a toolchain the user brings, e.g. `gofmt` with
-/// Go), or it has one and none of that chain's package managers is on `PATH`.
-fn miss_headline(binary: &str) -> String {
-  if install_chain_for(binary).is_some() {
+/// Says why `binary` got no install command on `os` (a
+/// [`std::env::consts::OS`] value): no step of its install chain can run
+/// there (`gofmt` has no chain, it ships with Go; `checkstyle` has only
+/// `brew` and `apt` steps, so none on Windows), or some step can and its
+/// package manager is not on `PATH`.
+fn miss_headline(binary: &str, os: &str) -> String {
+  let has_path = install_chain_for(binary)
+    .is_some_and(|chain| chain.iter().any(|method| method.runs_on(os)));
+  if has_path {
     format!("No automatic package manager found for {}.", binary.bold())
   } else {
     format!("fml has no install path for {} on this OS.", binary.bold())
