@@ -1538,16 +1538,16 @@ enum KnownInstallDir {
 }
 
 impl KnownInstallDir {
-  /// Which directory, if any, this install method writes into that `PATH`
+  /// Which directories, if any, this install method writes into that `PATH`
   /// is not guaranteed to cover. See the type's doc comment for the audit
   /// behind each arm; the `match` is exhaustive on purpose.
   #[must_use]
-  fn for_method(method: &InstallMethod) -> Option<Self> {
+  fn for_method(method: &InstallMethod) -> &'static [Self] {
     match method {
-      InstallMethod::GoInstall(_) => Some(Self::Go),
-      InstallMethod::Pipx(_) => Some(Self::Pipx),
-      InstallMethod::Uv(_) => Some(Self::UvTool),
-      InstallMethod::Pip(_) | InstallMethod::Pip3(_) => Some(Self::PythonUser),
+      InstallMethod::GoInstall(_) => &[Self::Go],
+      InstallMethod::Pipx(_) => &[Self::Pipx],
+      InstallMethod::Uv(_) => &[Self::UvTool],
+      InstallMethod::Pip(_) | InstallMethod::Pip3(_) => &[Self::PythonUser],
       InstallMethod::CargoBinstall(_)
       | InstallMethod::Npm(_)
       | InstallMethod::Pnpm(_)
@@ -1559,7 +1559,7 @@ impl KnownInstallDir {
       | InstallMethod::WingetName(_)
       | InstallMethod::WingetId(_)
       | InstallMethod::Cargo { .. }
-      | InstallMethod::Rustup(_) => None,
+      | InstallMethod::Rustup(_) => &[],
     }
   }
 
@@ -1698,7 +1698,7 @@ fn resolve_via_known_install_dir_with(
 
   let mut probed: Vec<PathBuf> = Vec::new();
   let mut kinds: Vec<KnownInstallDir> = Vec::new();
-  for kind in chain.iter().filter_map(KnownInstallDir::for_method) {
+  for &kind in chain.iter().flat_map(KnownInstallDir::for_method) {
     if kinds.contains(&kind) {
       continue;
     }
@@ -3661,34 +3661,31 @@ mod tests {
     // exhaustive with no `_` arm, so a new variant breaks the build there;
     // this table is what keeps an *existing* variant from being silently
     // re-classified.
-    let cases: &[(InstallMethod, Option<KnownInstallDir>)] = &[
-      (
-        InstallMethod::GoInstall("x@latest"),
-        Some(KnownInstallDir::Go),
-      ),
-      (InstallMethod::Pipx("x"), Some(KnownInstallDir::Pipx)),
-      (InstallMethod::Uv("x"), Some(KnownInstallDir::UvTool)),
-      (InstallMethod::Pip("x"), Some(KnownInstallDir::PythonUser)),
-      (InstallMethod::Pip3("x"), Some(KnownInstallDir::PythonUser)),
+    let cases: &[(InstallMethod, &[KnownInstallDir])] = &[
+      (InstallMethod::GoInstall("x@latest"), &[KnownInstallDir::Go]),
+      (InstallMethod::Pipx("x"), &[KnownInstallDir::Pipx]),
+      (InstallMethod::Uv("x"), &[KnownInstallDir::UvTool]),
+      (InstallMethod::Pip("x"), &[KnownInstallDir::PythonUser]),
+      (InstallMethod::Pip3("x"), &[KnownInstallDir::PythonUser]),
       // Audited as safe -- see `KnownInstallDir`'s doc comment for each.
-      (InstallMethod::Apt("x"), None),
-      (InstallMethod::Brew("x"), None),
-      (InstallMethod::Npm("x"), None),
-      (InstallMethod::Pnpm("x"), None),
-      (InstallMethod::Yarn("x"), None),
-      (InstallMethod::Bun("x"), None),
-      (InstallMethod::CargoBinstall("x"), None),
+      (InstallMethod::Apt("x"), &[]),
+      (InstallMethod::Brew("x"), &[]),
+      (InstallMethod::Npm("x"), &[]),
+      (InstallMethod::Pnpm("x"), &[]),
+      (InstallMethod::Yarn("x"), &[]),
+      (InstallMethod::Bun("x"), &[]),
+      (InstallMethod::CargoBinstall("x"), &[]),
       (
         InstallMethod::Cargo {
           package: "x",
           locked: true,
         },
-        None,
+        &[],
       ),
-      (InstallMethod::Rustup("x"), None),
-      (InstallMethod::Scoop("x"), None),
-      (InstallMethod::WingetName("x"), None),
-      (InstallMethod::WingetId("x"), None),
+      (InstallMethod::Rustup("x"), &[]),
+      (InstallMethod::Scoop("x"), &[]),
+      (InstallMethod::WingetName("x"), &[]),
+      (InstallMethod::WingetId("x"), &[]),
     ];
 
     for (method, expected) in cases {
