@@ -948,6 +948,11 @@ fn scan_html_tags(s: &str) -> Option<Vec<HtmlTagToken>> {
 /// emits, which already cover the *whole* node (start of the opening `<` to
 /// past the node's last byte), never an inline HTML span embedded in a
 /// paragraph.
+///
+/// Only top-level blocks count. A block nested in any container (blockquote,
+/// list item, footnote) carries that container's `> ` prefixes or indent on
+/// every line; prettier's html parser would read the prefixes as text and
+/// re-indent the lines out of the container, so such blocks stay as written.
 fn extract_html_block_ranges(src: &str) -> Vec<(usize, usize)> {
   let mut spans = Vec::new();
   // These extensions don't change how HTML blocks are delimited (that's
@@ -958,9 +963,17 @@ fn extract_html_block_ranges(src: &str) -> Vec<(usize, usize)> {
     | Options::ENABLE_STRIKETHROUGH
     | Options::ENABLE_FOOTNOTES
     | Options::ENABLE_TASKLISTS;
+  let mut depth = 0usize;
   for (event, range) in Parser::new_ext(src, opts).into_offset_iter() {
-    if let Event::Start(Tag::HtmlBlock) = event {
-      spans.push((range.start, range.end));
+    match event {
+      Event::Start(tag) => {
+        if depth == 0 && tag == Tag::HtmlBlock {
+          spans.push((range.start, range.end));
+        }
+        depth += 1;
+      }
+      Event::End(_) => depth -= 1,
+      _ => {}
     }
   }
   spans
@@ -2770,6 +2783,20 @@ README.md:7 error MD025/single-title/single-h1 Multiple top-level headings";
       !src[s..e].contains("<strong>"),
       "the block span must not swallow the later inline HTML"
     );
+  }
+
+  #[test]
+  fn test_extract_html_block_ranges_skips_blocks_inside_containers() {
+    // Block HTML in a blockquote carries `> ` prefixes and in a list item
+    // carries the item's indent: prettier's html parser would mangle the
+    // former and dedent the latter out of the list.
+    for src in [
+      "> <div align=\"center\">\n> <img src=\"a.png\">\n> </div>\n",
+      "- item\n\n  <div align=\"center\">\n  <img src=\"a.png\">\n  </div>\n",
+      "Text[^1].\n\n[^1]: <div>\n    <img src=\"a.png\">\n    </div>\n",
+    ] {
+      assert_eq!(extract_html_block_ranges(src), vec![], "in: {src}");
+    }
   }
 
   #[test]
