@@ -1768,10 +1768,12 @@ pub fn refresh_path_after_install(program: &str) {
 /// the OS's own "No such file or directory" for the plain name stays the
 /// error the user sees.
 ///
-/// Windows additionally keeps its batch-file handling: `npm`/`pnpm`/`yarn`/
-/// `npx` and any resolved `.cmd`/`.bat` shim must be run through `cmd /C`
-/// rather than spawned directly, except npm's `ktlint.cmd`, whose jar is run
-/// with `java -jar` because the shim itself cannot launch (#402).
+/// On Windows `npm`/`pnpm`/`yarn`/`npx` run through `cmd /C`. A resolved
+/// `.cmd`/`.bat` shim is spawned by its path: `std` runs it through
+/// `cmd.exe` and quotes its arguments for batch files, so `%VAR%` in an
+/// argument is not expanded (it is under a hand-built `cmd /C <shim>`).
+/// npm's `ktlint.cmd` is the exception: its jar is run with `java -jar`
+/// because the shim itself cannot launch (#402).
 #[must_use]
 pub fn create_tool_command(binary: &str) -> std::process::Command {
   #[cfg(windows)]
@@ -1795,17 +1797,6 @@ pub fn create_tool_command(binary: &str) -> std::process::Command {
     let mut cmd = create_tool_command("java");
     cmd.arg("-jar").arg(jar);
     return cmd;
-  }
-
-  #[cfg(windows)]
-  {
-    if let Some(ext) = path.extension().and_then(|e| e.to_str())
-      && (ext.eq_ignore_ascii_case("cmd") || ext.eq_ignore_ascii_case("bat"))
-    {
-      let mut cmd = std::process::Command::new("cmd");
-      cmd.arg("/C").arg(&path);
-      return cmd;
-    }
   }
 
   std::process::Command::new(path)
