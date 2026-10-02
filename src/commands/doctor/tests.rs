@@ -265,7 +265,7 @@ fn test_stale_unpinnable_explanation() {
 fn test_pinned_version_for_golangci_lint() {
   assert_eq!(
     pinned_version_for("golangci-lint"),
-    Some(Version::new(2, 13, 1))
+    Some(Version::new(2, 13, 2))
   );
 }
 
