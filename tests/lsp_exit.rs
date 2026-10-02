@@ -5,8 +5,10 @@
 //! act on `exit` itself. The in-process unit tests in `src/commands/lsp.rs`
 //! never run `serve` or the process exit path.
 
-use std::io::{BufRead, BufReader, Read, Write};
-use std::process::{Child, Command, Stdio};
+mod common;
+
+use common::lsp;
+use std::process::{Child, Stdio};
 use std::sync::mpsc;
 use std::time::{Duration, Instant};
 
@@ -15,18 +17,6 @@ const RESPONSE_TIMEOUT: Duration = Duration::from_secs(30);
 
 /// How long the server gets to exit after `exit` before the test fails.
 const EXIT_TIMEOUT: Duration = Duration::from_secs(5);
-
-/// Writes framed JSON-RPC messages to the server in a single write.
-fn send(stdin: &mut impl Write, messages: &[serde_json::Value]) {
-  let mut framed = String::new();
-  for message in messages {
-    let text = message.to_string();
-    framed.push_str(&format!("Content-Length: {}\r\n\r\n{text}", text.len()));
-  }
-  // A child that already exited closes the pipe; the asserts report it.
-  let _ = stdin.write_all(framed.as_bytes());
-  let _ = stdin.flush();
-}
 
 /// How the client sends `shutdown` before `exit`.
 enum Shutdown {
@@ -38,48 +28,9 @@ enum Shutdown {
   SameWriteAsExit,
 }
 
-/// Reads Content-Length framed JSON-RPC messages from `stdout` into `tx`
-/// until the stream closes.
-fn forward_messages(stdout: impl Read, tx: &mpsc::Sender<serde_json::Value>) {
-  let mut reader = BufReader::new(stdout);
-  loop {
-    let mut length = None;
-    loop {
-      let mut line = String::new();
-      if reader.read_line(&mut line).unwrap_or(0) == 0 {
-        return;
-      }
-      let line = line.trim_end();
-      if line.is_empty() {
-        break;
-      }
-      if let Some(value) = line.strip_prefix("Content-Length: ") {
-        length = value.parse::<usize>().ok();
-      }
-    }
-    let mut body = vec![0; length.expect("Content-Length header")];
-    if reader.read_exact(&mut body).is_err() {
-      return;
-    }
-    let message = serde_json::from_slice(&body).expect("JSON-RPC body");
-    if tx.send(message).is_err() {
-      return;
-    }
-  }
-}
-
 /// Spawns `fml lsp` in an empty workspace with piped stdio.
 fn spawn_server(root: &std::path::Path) -> Child {
-  Command::new(env!("CARGO_BIN_EXE_fml"))
-    .arg("lsp")
-    .current_dir(root)
-    .env("XDG_CONFIG_HOME", root)
-    .env("FORMALITY_NO_UPDATE_CHECK", "1")
-    .env("NO_COLOR", "1")
-    .env_remove("FORCE_COLOR")
-    .env_remove("CLICOLOR_FORCE")
-    .stdin(Stdio::piped())
-    .stdout(Stdio::piped())
+  lsp::no_color(&mut lsp::command(root, root))
     .stderr(Stdio::null())
     .spawn()
     .expect("failed to spawn fml lsp")
@@ -104,12 +55,10 @@ fn exit_code_after_exit(shutdown: &Shutdown) -> Option<i32> {
   let dir = tempfile::tempdir().expect("tempdir");
   let mut child = spawn_server(dir.path());
   let mut stdin = child.stdin.take().unwrap();
-  let (tx, rx) = mpsc::channel();
-  let stdout = child.stdout.take().unwrap();
-  std::thread::spawn(move || forward_messages(stdout, &tx));
+  let rx = lsp::messages(&mut child);
 
   let root_uri = tower_lsp::lsp_types::Url::from_file_path(dir.path()).unwrap();
-  send(
+  lsp::send(
     &mut stdin,
     &[serde_json::json!({
       "jsonrpc": "2.0", "id": 1, "method": "initialize",
@@ -117,7 +66,7 @@ fn exit_code_after_exit(shutdown: &Shutdown) -> Option<i32> {
     })],
   );
   await_response(&rx, 1);
-  send(
+  lsp::send(
     &mut stdin,
     &[serde_json::json!({
       "jsonrpc": "2.0", "method": "initialized", "params": {},
@@ -127,14 +76,14 @@ fn exit_code_after_exit(shutdown: &Shutdown) -> Option<i32> {
     serde_json::json!({ "jsonrpc": "2.0", "id": 2, "method": "shutdown" });
   let exit = serde_json::json!({ "jsonrpc": "2.0", "method": "exit" });
   match shutdown {
-    Shutdown::Skip => send(&mut stdin, &[exit]),
+    Shutdown::Skip => lsp::send(&mut stdin, &[exit]),
     Shutdown::Awaited => {
-      send(&mut stdin, &[shutdown_request]);
+      lsp::send(&mut stdin, &[shutdown_request]);
       await_response(&rx, 2);
-      send(&mut stdin, &[exit]);
+      lsp::send(&mut stdin, &[exit]);
     }
     Shutdown::SameWriteAsExit => {
-      send(&mut stdin, &[shutdown_request, exit]);
+      lsp::send(&mut stdin, &[shutdown_request, exit]);
     }
   }
 
