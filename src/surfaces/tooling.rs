@@ -3865,6 +3865,9 @@ mod tests {
       KnownInstallDir::Pipx,
       KnownInstallDir::UvTool,
       KnownInstallDir::PythonUser,
+      KnownInstallDir::ScoopShims,
+      KnownInstallDir::WingetUserLinks,
+      KnownInstallDir::WingetMachineLinks,
     ] {
       assert_eq!(
         kind.path_with(no_go_bin_dir, &env),
@@ -3872,6 +3875,46 @@ mod tests {
         "{kind:?} must decline rather than fabricate a path"
       );
     }
+  }
+
+  #[test]
+  fn test_known_install_dir_path_winget_links_user_and_machine_scope() {
+    let env = fake_env(&[
+      ("LOCALAPPDATA", r"C:\Users\u\AppData\Local"),
+      ("ProgramFiles", r"C:\Program Files"),
+    ]);
+    assert_eq!(
+      KnownInstallDir::WingetUserLinks.path_with(no_go_bin_dir, &env),
+      Some(
+        PathBuf::from(r"C:\Users\u\AppData\Local")
+          .join("Microsoft")
+          .join("WinGet")
+          .join("Links")
+      )
+    );
+    assert_eq!(
+      KnownInstallDir::WingetMachineLinks.path_with(no_go_bin_dir, &env),
+      Some(
+        PathBuf::from(r"C:\Program Files")
+          .join("WinGet")
+          .join("Links")
+      )
+    );
+  }
+
+  #[test]
+  fn test_known_install_dir_path_scoop_prefers_scoop_over_profile() {
+    let profile = fake_env(&[("USERPROFILE", r"C:\Users\u")]);
+    assert_eq!(
+      KnownInstallDir::ScoopShims.path_with(no_go_bin_dir, &profile),
+      Some(PathBuf::from(r"C:\Users\u").join("scoop").join("shims"))
+    );
+    let both =
+      fake_env(&[("SCOOP", r"D:\scoop"), ("USERPROFILE", r"C:\Users\u")]);
+    assert_eq!(
+      KnownInstallDir::ScoopShims.path_with(no_go_bin_dir, &both),
+      Some(PathBuf::from(r"D:\scoop").join("shims"))
+    );
   }
 
   #[test]
