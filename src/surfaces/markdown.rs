@@ -2841,7 +2841,8 @@ README.md:7 error MD025/single-title/single-h1 Multiple top-level headings";
     if !check_binary_exists("prettier") {
       return;
     }
-    let src = "<p align=\"center\">\r\n<img src=\"a.png\"     alt=\"b\">\r\n</p>\r\n";
+    let src =
+      "<p align=\"center\">\r\n<img src=\"a.png\"     alt=\"b\">\r\n</p>\r\n";
     let crlf = ["--end-of-line=crlf".to_string()];
     assert_eq!(
       format_block_html(src, Path::new("."), &crlf, &[]),
