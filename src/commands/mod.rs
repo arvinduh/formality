@@ -631,6 +631,30 @@ mod tests {
   }
 
   #[test]
+  fn test_explicit_directory_run_walks_it_once() {
+    let temp = TempDir::new().unwrap();
+    let src = temp.path().join("src");
+    fs::create_dir(&src).unwrap();
+    fs::write(src.join("main.rs"), "fn main() {}\n").unwrap();
+    fs::write(src.join("notes.md"), "# Notes\n").unwrap();
+
+    let mut out = Vec::new();
+    let _ = run_resolved(
+      &mut out,
+      temp.path(),
+      &FormalityConfig::empty(),
+      &[],
+      std::slice::from_ref(&src),
+      &Plan::fmt(true, true),
+    );
+
+    // Selection and both surfaces' runs share one expansion of `src`.
+    let out = String::from_utf8_lossy(&out);
+    assert!(out.contains("rust") && out.contains("markdown"), "{out}");
+    assert_eq!(glob::walk_count::of(&src), 1);
+  }
+
+  #[test]
   fn test_file_matched_only_by_global_exclude_does_not_activate_its_surface() {
     let temp = TempDir::new().unwrap();
     let root = temp.path();

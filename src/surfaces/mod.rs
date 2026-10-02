@@ -114,7 +114,9 @@ pub struct ExecutionContext {
   pub lang_config: ResolvedLangConfig,
   /// Whether to perform check-only mode without mutating files.
   pub check_only: bool,
-  /// Pre-discovered candidate files for the workspace, if single-walk was performed.
+  /// The run's candidate files, found once for every surface: the workspace
+  /// walk when `paths` is empty, otherwise `paths` expanded. `None` makes
+  /// [`Self::matched_files`] find the files itself.
   pub candidate_files: Option<Arc<Vec<PathBuf>>>,
 }
 
@@ -122,15 +124,16 @@ impl ExecutionContext {
   /// Discovers target files for the surface matching extensions, honoring scoped paths, files, and excludes.
   #[must_use]
   pub fn matched_files(&self, extensions: &[&str]) -> Vec<PathBuf> {
-    if !self.paths.is_empty() {
-      find_files_with_ext(
+    let Some(candidates) = &self.candidate_files else {
+      return find_files_with_ext(
         self.root.as_path(),
         extensions,
         &self.paths,
         &self.lang_config.files,
         &self.lang_config.exclude,
-      )
-    } else if let Some(ref candidates) = self.candidate_files {
+      );
+    };
+    if self.paths.is_empty() {
       let includes: Vec<String> = self
         .lang_config
         .files
@@ -144,13 +147,18 @@ impl ExecutionContext {
         &self.lang_config.exclude,
       )
     } else {
-      find_files_with_ext(
+      // Explicit paths, already expanded: what `find_files_with_ext` would
+      // select from them, without walking a directory argument again.
+      let filter = glob::FileFilter::new(
         self.root.as_path(),
         extensions,
-        &self.paths,
-        &self.lang_config.files,
         &self.lang_config.exclude,
-      )
+      );
+      candidates
+        .iter()
+        .filter(|file| filter.matches(file))
+        .cloned()
+        .collect()
     }
   }
 

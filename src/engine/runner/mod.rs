@@ -244,7 +244,9 @@ impl Runner {
     // one of the (up to 12) surfaces per invocation.
     let global_config = Arc::new(config.resolve_global());
     let (paths, candidate_files) = match scope {
-      Scope::Paths { args, .. } => (Arc::clone(args), None),
+      Scope::Paths { args, files } => {
+        (Arc::clone(args), Some(Arc::clone(files)))
+      }
       Scope::Workspace(files) => (Arc::default(), Some(Arc::clone(files))),
     };
     let shared = SharedRun {
