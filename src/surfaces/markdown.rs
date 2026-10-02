@@ -44,6 +44,10 @@ pub struct MarkdownlintMd013 {
 }
 
 /// Native `.markdownlint.json` configuration representation for Markdown linting.
+#[expect(
+  clippy::struct_excessive_bools,
+  reason = "mirrors markdownlint's native per-rule keys"
+)]
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct MarkdownlintConfig {
   /// Warning comment header block.
