@@ -1,14 +1,17 @@
 //! JSON Schema generation for `formality.toml`.
 //!
 //! Exposes [`generate_schema`], which uses [`schemars`] to produce the JSON
-//! Schema matching [`FormalityConfig`].
+//! Schema matching [`config::FormalityConfig`].
 
-use crate::config::FormalityConfig;
+use schemars;
+use serde_json;
+
+use crate::config;
 
 /// Generates the JSON Schema for formality configuration dynamically using schemars.
 #[must_use]
 pub fn generate_schema() -> String {
-  let schema = schemars::schema_for!(FormalityConfig);
+  let schema = schemars::schema_for!(config::FormalityConfig);
   serde_json::to_string_pretty(&schema).unwrap_or_default()
 }
 

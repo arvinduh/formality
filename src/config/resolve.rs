@@ -3,27 +3,28 @@
 //! sources plus per-surface defaults into [`super::ResolvedGlobalConfig`] /
 //! [`super::ResolvedLangConfig`].
 
-use super::facets::LayoutFacet;
-use super::lang_table::{build_resolved_lang_config, lang_options_table};
-use super::options::MarkdownOptions;
-use super::{
-  CONFIG_FILE_CANDIDATES, ConfigError, FormalityConfig, GlobalConfig,
-  ResolvedGlobalConfig, ResolvedLangConfig,
-};
-use crate::surfaces::SurfaceRegistry;
-use std::collections::BTreeMap;
-use std::fmt::Write as _;
+use std::collections;
+use std::fmt::Write;
 use std::fs;
-use std::path::{Path, PathBuf};
+use std::path;
 
-impl FormalityConfig {
+use crate::config;
+use crate::config::facets;
+// Macros, imported by name: the X-macro's recursion and its `$callback`
+// ident resolve at the call site, so a module path cannot reach them.
+use crate::config::lang_table::build_resolved_lang_config;
+use crate::config::lang_table::lang_options_table;
+use crate::config::options;
+use crate::surfaces;
+
+impl config::FormalityConfig {
   /// Constructs an empty [`FormalityConfig`] with no global or language overrides.
   #[cfg(test)]
   #[must_use]
   pub fn empty() -> Self {
     Self {
       global: None,
-      lang: BTreeMap::new(),
+      lang: collections::BTreeMap::new(),
     }
   }
 
@@ -31,8 +32,8 @@ impl FormalityConfig {
   #[must_use]
   pub fn with_defaults() -> Self {
     Self {
-      global: Some(GlobalConfig::default()),
-      lang: BTreeMap::new(),
+      global: Some(config::GlobalConfig::default()),
+      lang: collections::BTreeMap::new(),
     }
   }
 
@@ -43,7 +44,10 @@ impl FormalityConfig {
   /// Returns a [`ConfigError::Parse`] if the TOML is invalid,
   /// [`ConfigError::UnknownKey`] for a key this `fml` does not accept, or
   /// [`ConfigError::InvalidValue`] if a value has the wrong type.
-  pub fn parse_str(content: &str, path: &Path) -> Result<Self, ConfigError> {
+  pub fn parse_str(
+    content: &str,
+    path: &path::Path,
+  ) -> Result<Self, config::ConfigError> {
     super::strict::parse(content, path)
   }
 
@@ -52,9 +56,9 @@ impl FormalityConfig {
   /// # Errors
   ///
   /// Returns a [`ConfigError::Io`] if the file cannot be read, or [`ConfigError::Parse`] if the TOML is invalid.
-  pub fn load_file(path: &Path) -> Result<Self, ConfigError> {
+  pub fn load_file(path: &path::Path) -> Result<Self, config::ConfigError> {
     let content =
-      fs::read_to_string(path).map_err(|source| ConfigError::Io {
+      fs::read_to_string(path).map_err(|source| config::ConfigError::Io {
         path: path.to_path_buf(),
         source,
       })?;
@@ -62,7 +66,7 @@ impl FormalityConfig {
   }
 
   /// Merges `other` configuration settings into `self`.
-  pub fn merge(&mut self, other: FormalityConfig) {
+  pub fn merge(&mut self, other: config::FormalityConfig) {
     if let Some(other_global) = other.global {
       if let Some(ref mut our_global) = self.global {
         our_global.merge(other_global);
@@ -82,8 +86,8 @@ impl FormalityConfig {
 
   /// Resolves the global configuration settings.
   #[must_use]
-  pub fn resolve_global(&self) -> ResolvedGlobalConfig {
-    let base = GlobalConfig::default();
+  pub fn resolve_global(&self) -> config::ResolvedGlobalConfig {
+    let base = config::GlobalConfig::default();
     let current = self.global.as_ref();
     let current_layout = current.and_then(|g| g.layout.as_ref());
 
@@ -113,14 +117,14 @@ impl FormalityConfig {
       .unwrap_or(base.use_tabs.unwrap_or(false));
     let prose_wrap = current_layout.and_then(|l| l.prose_wrap.clone());
 
-    let layout = LayoutFacet {
+    let layout = facets::LayoutFacet {
       indent_size: Some(indent_size),
       line_length: Some(line_length),
       use_tabs: Some(use_tabs),
       prose_wrap,
     };
 
-    ResolvedGlobalConfig {
+    config::ResolvedGlobalConfig {
       languages: current.and_then(|g| g.languages.clone()),
       ignore_languages: current.and_then(|g| g.ignore_languages.clone()),
       indent_size,
@@ -141,18 +145,18 @@ impl FormalityConfig {
   pub fn resolve_for_lang_with_global(
     &self,
     lang_name: &str,
-    global: &ResolvedGlobalConfig,
-  ) -> ResolvedLangConfig {
+    global: &config::ResolvedGlobalConfig,
+  ) -> config::ResolvedLangConfig {
     let lang_cfg = self.lang.get(lang_name);
 
     let (layout, indent_size, line_length, use_tabs, prose_wrap) =
       resolve_layout_for_lang(lang_name, lang_cfg, global);
 
     let markdown = lang_cfg
-      .and_then(super::LangConfig::markdown_options)
+      .and_then(config::LangConfig::markdown_options)
       .or_else(|| {
         if lang_name == "markdown" {
-          Some(MarkdownOptions {
+          Some(options::MarkdownOptions {
             prose_wrap: prose_wrap.clone(),
             no_inline_html: None,
           })
@@ -192,7 +196,10 @@ impl FormalityConfig {
 
   /// Resolves effective configuration settings for a specific named language surface.
   #[must_use]
-  pub fn resolve_for_lang(&self, lang_name: &str) -> ResolvedLangConfig {
+  pub fn resolve_for_lang(
+    &self,
+    lang_name: &str,
+  ) -> config::ResolvedLangConfig {
     let global = self.resolve_global();
     self.resolve_for_lang_with_global(lang_name, &global)
   }
@@ -212,7 +219,7 @@ impl FormalityConfig {
   #[must_use]
   pub fn unrecognized_lang_sections(
     &self,
-    registry: &SurfaceRegistry,
+    registry: &surfaces::SurfaceRegistry,
   ) -> Vec<&str> {
     self
       .lang
@@ -229,8 +236,8 @@ impl FormalityConfig {
   ///
   /// Returns a [`ConfigError`] if reading or parsing any discovered configuration file fails.
   pub fn load_layered(
-    repo_root: Option<&Path>,
-  ) -> Result<(Self, Option<PathBuf>), ConfigError> {
+    repo_root: Option<&path::Path>,
+  ) -> Result<(Self, Option<path::PathBuf>), config::ConfigError> {
     let project_config_path = if let Some(root) = repo_root {
       find_project_config(root)
     } else if let Ok(cwd) = std::env::current_dir() {
@@ -250,8 +257,8 @@ impl FormalityConfig {
   ///
   /// Returns a [`ConfigError`] if reading or parsing any discovered configuration file fails.
   pub fn load_layered_with_path(
-    project_config_path: Option<&Path>,
-  ) -> Result<(Self, Option<PathBuf>), ConfigError> {
+    project_config_path: Option<&path::Path>,
+  ) -> Result<(Self, Option<path::PathBuf>), config::ConfigError> {
     let mut config = Self::with_defaults();
 
     // 1. User config (cross-platform: Linux, macOS, Windows)
@@ -339,7 +346,7 @@ impl FormalityConfig {
 }
 /// Searches parent directories starting from `start_dir` for project config files (`formality.toml` / `.formality.toml`).
 #[must_use]
-pub fn find_project_config(start_dir: &Path) -> Option<PathBuf> {
+pub fn find_project_config(start_dir: &path::Path) -> Option<path::PathBuf> {
   let mut current = if start_dir.is_file() {
     start_dir.parent()?.to_path_buf()
   } else {
@@ -347,7 +354,7 @@ pub fn find_project_config(start_dir: &Path) -> Option<PathBuf> {
   };
 
   loop {
-    for &candidate_name in CONFIG_FILE_CANDIDATES {
+    for &candidate_name in config::CONFIG_FILE_CANDIDATES {
       let candidate = current.join(candidate_name);
       if candidate.is_file() {
         return Some(candidate);
@@ -369,10 +376,10 @@ pub fn find_project_config(start_dir: &Path) -> Option<PathBuf> {
 
 /// Finds the global user configuration across Linux, macOS, and Windows.
 #[must_use]
-pub fn find_user_config() -> Option<PathBuf> {
+pub fn find_user_config() -> Option<path::PathBuf> {
   // 1. XDG_CONFIG_HOME (Linux / Custom Unix)
   if let Ok(xdg_config) = std::env::var("XDG_CONFIG_HOME") {
-    let path = PathBuf::from(&xdg_config)
+    let path = path::PathBuf::from(&xdg_config)
       .join("formality")
       .join("config.toml");
     if path.is_file() {
@@ -382,7 +389,7 @@ pub fn find_user_config() -> Option<PathBuf> {
 
   // 2. APPDATA (Windows)
   if let Ok(app_data) = std::env::var("APPDATA") {
-    let path = PathBuf::from(&app_data)
+    let path = path::PathBuf::from(&app_data)
       .join("formality")
       .join("config.toml");
     if path.is_file() {
@@ -392,7 +399,7 @@ pub fn find_user_config() -> Option<PathBuf> {
 
   // 3. HOME directory (Linux, macOS, Unix)
   if let Ok(home) = std::env::var("HOME") {
-    let home_path = PathBuf::from(&home);
+    let home_path = path::PathBuf::from(&home);
 
     // Standard Linux ~/.config/formality/config.toml
     let xdg_fallback = home_path
@@ -416,7 +423,7 @@ pub fn find_user_config() -> Option<PathBuf> {
 
   // 4. USERPROFILE (Windows fallback)
   if let Ok(user_profile) = std::env::var("USERPROFILE") {
-    let win_fallback = PathBuf::from(user_profile)
+    let win_fallback = path::PathBuf::from(user_profile)
       .join(".config")
       .join("formality")
       .join("config.toml");
@@ -430,9 +437,9 @@ pub fn find_user_config() -> Option<PathBuf> {
 
 fn resolve_layout_for_lang(
   lang_name: &str,
-  lang_cfg: Option<&super::LangConfig>,
-  global: &ResolvedGlobalConfig,
-) -> (LayoutFacet, usize, usize, bool, Option<String>) {
+  lang_cfg: Option<&config::LangConfig>,
+  global: &config::ResolvedGlobalConfig,
+) -> (facets::LayoutFacet, usize, usize, bool, Option<String>) {
   let lang_layout = lang_cfg.and_then(|l| l.layout.as_ref());
 
   // Java's indent width is dictated by the configured google-java-format
@@ -444,7 +451,7 @@ fn resolve_layout_for_lang(
   // `CheckstyleConfig::from_context`, both of which just read this value.
   let java_style_is_aosp = lang_name == "java"
     && lang_cfg
-      .and_then(super::LangConfig::java_options)
+      .and_then(config::LangConfig::java_options)
       .and_then(|j| j.style)
       .as_deref()
       == Some("aosp");
@@ -473,7 +480,7 @@ fn resolve_layout_for_lang(
     .or_else(|| lang_layout.and_then(|l| l.prose_wrap.clone()))
     .or_else(|| global.layout.prose_wrap.clone());
 
-  let layout = LayoutFacet {
+  let layout = facets::LayoutFacet {
     indent_size: Some(indent_size),
     line_length: Some(line_length),
     use_tabs: Some(use_tabs),
