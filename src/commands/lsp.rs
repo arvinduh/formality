@@ -78,6 +78,10 @@ impl FormalityLsp {
   }
 
   /// Returns the cached configuration, or loads and caches it if not yet present.
+  ///
+  /// An invalid config is reported once (see [`Self::load_config`]) and the
+  /// built-in defaults are cached in its place, so later requests reuse them
+  /// instead of re-reporting the same error.
   pub async fn get_or_load_config(
     &self,
     root: Option<&Path>,
@@ -89,10 +93,35 @@ impl FormalityLsp {
     if let Some(config) = lock.as_ref() {
       return config.clone();
     }
-    let loaded = FormalityConfig::load_layered(root)
-      .map_or_else(|_| FormalityConfig::with_defaults(), |(c, _)| c);
+    let loaded = self
+      .load_config(root, "using the built-in defaults")
+      .await
+      .unwrap_or_else(FormalityConfig::with_defaults);
     *lock = Some(loaded.clone());
     loaded
+  }
+
+  /// Loads the layered config for `root`, reporting a failure to the client.
+  ///
+  /// `fallback` names what the server uses instead; it is part of the message.
+  ///
+  /// # Side Effects
+  ///
+  /// On failure, sends one `window/showMessage` (ERROR) carrying the
+  /// [`crate::config::ConfigError`] text and returns `None`.
+  async fn load_config(
+    &self,
+    root: Option<&Path>,
+    fallback: &str,
+  ) -> Option<FormalityConfig> {
+    match FormalityConfig::load_layered(root) {
+      Ok((config, _)) => Some(config),
+      Err(err) => {
+        let message = format!("[formality] invalid config, {fallback}: {err}");
+        self.client.show_message(MessageType::ERROR, message).await;
+        None
+      }
+    }
   }
 
   /// Invalidates the cached configuration.
@@ -119,9 +148,12 @@ impl LanguageServer for FormalityLsp {
 
     *self.root.lock().await = root.clone();
 
-    // Cache resolved config at initialize time.
-    let config = FormalityConfig::load_layered(root.as_deref())
-      .map_or_else(|_| FormalityConfig::with_defaults(), |(c, _)| c);
+    // Cache resolved config at initialize time. An invalid config has no
+    // earlier valid one to fall back to, so the defaults stand in.
+    let config = self
+      .load_config(root.as_deref(), "using the built-in defaults")
+      .await
+      .unwrap_or_else(FormalityConfig::with_defaults);
     *self.config.write().await = Some(config);
 
     Ok(InitializeResult {
