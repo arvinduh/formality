@@ -1850,8 +1850,9 @@ pub fn refresh_path_after_install(program: &str) {
 /// `check_binary_exists`/`tool_missing_guard` decide a tool is present via
 /// `resolve_binary_path`, which consults every [`KnownInstallDir`] the
 /// binary's own install chain could have written to -- `go install`'s output
-/// directory (`GOBIN`, else `$GOPATH/bin`), and pipx/uv/pip's `~/.local/bin`
-/// (#297) -- in addition to `PATH`. A bare
+/// directory (`GOBIN`, else `$GOPATH/bin`), pipx/uv/pip's `~/.local/bin`
+/// (#297), Scoop's `shims`, winget's `Links` and Homebrew's llvm keg `bin`
+/// -- in addition to `PATH`. A bare
 /// `Command::new(binary)` re-does a *`PATH`-only* search inside the OS's
 /// `execvp`, so a binary found only through that fallback would pass the
 /// missing-tool guard and then fail to exec -- "found it, can't run it",
