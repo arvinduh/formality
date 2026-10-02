@@ -1330,5 +1330,4 @@ fn print_sync_notice(frame: &Frame, palette: &Palette) {
 }
 
 #[cfg(test)]
-#[allow(missing_docs, clippy::missing_errors_doc, clippy::missing_panics_doc)]
 mod tests;

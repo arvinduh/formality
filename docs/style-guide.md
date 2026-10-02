@@ -104,12 +104,6 @@ which reaches every target (lib, bin, and each `tests/*.rs` crate). On top of
 - Every `pub mod` declaration carries an outer `///` doc comment above the `mod`
   keyword, though `missing_docs` does not require it. **Tier 2 (enforced by
   `test_pub_mod_declarations_carry_doc_comments` in `src/lib.rs`).**
-- An inline `#[cfg(test)] mod tests` block, or a directory module's sibling
-  `mod tests;` declaration (§1), carries
-  `#[allow(missing_docs, clippy::missing_errors_doc, clippy::missing_panics_doc)]`
-  directly under `#[cfg(test)]`. Test functions document themselves by name
-  (§2). **Tier 2 (enforced by `test_test_modules_carry_allow_doc_lints` in
-  `src/lib.rs`).**
 - The `//!` header is enforced by `test_files_carry_module_doc_comment` in
   `src/lib.rs`. A §1 `tests.rs` sibling file is exempt.
 - **Doc comments on `JsonSchema`-derived types are published output.**
