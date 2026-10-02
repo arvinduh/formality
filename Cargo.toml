@@ -1,20 +1,12 @@
 [package]
 name = "fml"
-version = "0.2.1"
+version = "0.3.0"
 edition = "2024"
 authors = ["Arvin Duh"]
 description = "One CLI to format, lint, and sync configs across all languages"
 license = "MIT"
 readme = "README.md"
 repository = "https://github.com/arvinduh/formality"
-
-[lib]
-name = "fml"
-path = "src/lib.rs"
-
-[[bin]]
-name = "fml"
-path = "src/main.rs"
 
 [dependencies]
 clap = { version = "4.6.6", features = [
@@ -36,37 +28,50 @@ similar = { version = "3.1.2", features = ["text"] }
 tempfile = "3.27.0"
 toml = "1.1.4"
 tower-lsp = "0.20"
-tokio = { version = "1", features = [
-  "rt-multi-thread",
-  "io-std",
-  "sync",
-  "macros",
-] }
+tower-service = "0.3"
+tokio = { version = "1", features = ["rt-multi-thread", "io-std", "sync"] }
 unicode-width = "0.2"
 which = "8.0.5"
 serde_yaml = "0.9.34"
 semver = "1.0.28"
 pulldown-cmark = "0.13"
 
+[dev-dependencies]
+futures = { version = "0.3", default-features = false }
+tokio = { version = "1", features = ["macros"] }
+
 [lints.rust]
-unexpected_cfgs = { level = "warn", check-cfg = ['cfg(test)'] }
+missing_docs = "warn"
+unsafe_op_in_unsafe_fn = "deny"
+unused_qualifications = "warn"
 
-[package.metadata.binstall]
-pkg-url = "{ repo }/releases/download/v{ version }/{ name }-{ target }.tar.gz"
-bin-dir = "{ bin }{ binary-ext }"
-pkg-fmt = "tgz"
-
-[package.metadata.binstall.overrides.x86_64-pc-windows-msvc]
-pkg-url = "{ repo }/releases/download/v{ version }/{ name }-{ target }.zip"
-pkg-fmt = "zip"
-
-# Windows MSI installer metadata (consumed by cargo-dist via `cargo wix`).
-# GUIDs are unique to this project - freshly generated, never copied.
-[package.metadata.wix]
-upgrade-guid = "16EA66A7-4E4F-4B2D-9EB3-BE52F4992BF8"
-path-guid = "0ADA61F5-692E-40C7-8519-594697CBB30A"
-license = false
-eula = false
+[lints.clippy]
+# Docs
+doc_markdown = "warn"
+missing_errors_doc = "warn"
+missing_panics_doc = "warn"
+# Imports
+wildcard_imports = "deny"
+single_component_path_imports = "allow" # `use some_crate;` manifests
+# Hygiene
+dbg_macro = "deny"
+todo = "warn"
+undocumented_unsafe_blocks = "deny"
+# Idioms
+case_sensitive_file_extension_comparisons = "warn"
+fn_params_excessive_bools = "warn"
+if_not_else = "warn"
+map_unwrap_or = "warn"
+match_same_arms = "warn"
+match_wildcard_for_single_variants = "warn"
+must_use_candidate = "warn"
+redundant_closure_for_method_calls = "warn"
+needless_pass_by_value = "warn"
+unreadable_literal = "warn"
+# Performance
+format_collect = "warn"
+implicit_hasher = "warn"
+redundant_clone = "warn"
 
 # Config for 'dist' (cargo-dist): GitHub Releases are the only channel - no
 # crates.io publish. See docs/release.md and issue #134.
@@ -76,30 +81,24 @@ cargo-dist-version = "0.32.0"
 # CI backends to support
 ci = "github"
 # The installers to generate for each app
-installers = ["shell", "powershell", "msi"]
+installers = ["shell", "powershell"]
 # Target platforms to build apps for (Rust target-triple syntax)
 targets = [
   "x86_64-unknown-linux-gnu",
-  "aarch64-unknown-linux-gnu",
-  "x86_64-apple-darwin",
   "aarch64-apple-darwin",
   "x86_64-pc-windows-msvc",
 ]
-# Path(s) installers place binaries in, tried in order. `~/.local/bin` first
-# because the old install.sh and every README recipe put `fml` there - keep
-# upgrading that copy instead of dropping a second one elsewhere and letting
-# PATH order decide which wins. (dist rejects the `CARGO_HOME` keyword when
-# combined with other paths, so the cargo bin dir is spelled out literally.)
+# Path(s) installers place binaries in, tried in order. `~/.local/bin` first:
+# the per-user bin dir most Linux distros already put on PATH, and it needs no
+# Rust toolchain. (dist rejects the `CARGO_HOME` keyword when combined with
+# other paths, so the cargo bin dir is spelled out literally.)
 install-path = ["$HOME/.local/bin", "$HOME/.cargo/bin"]
 # Whether to install an updater program (kept out of scope - see issue #121)
 install-updater = false
 # Skip checking whether the specified configuration files are up to date
 allow-dirty = ["ci"]
-# Keep archive names as `fml-<target>.tar.gz` / `.zip` so existing
-# `releases/latest/download/fml-<target>...` URLs and the
-# `[package.metadata.binstall]` block above stay valid.
-unix-archive = ".tar.gz"
-windows-archive = ".zip"
+# GitHub already attaches source archives to every release
+source-tarball = false
 
 [profile.dist]
 inherits = "release"

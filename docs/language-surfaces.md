@@ -8,6 +8,11 @@ currently in the fleet: what tools each one wraps, what "Smart Format"
 config file(s) `fml sync` manages, and what per-language `[lang.<name>]` options
 are available beyond the shared [facet rosetta](facet-rosetta.md).
 
+`<name>` is the surface's canonical name, as in each `[lang.<name>] options`
+entry below. An alias (`[lang.py]`) or another casing (`[lang.RUST]`) fails
+config loading with the section to rename it to; a name matching no surface
+loads with an `Unrecognized language section` warning.
+
 Every surface also supports the shared `[global]` keys where its facet support
 allows (`indent_size`, `line_length`, `use_tabs`, `prose_wrap`) — this guide
 only documents facets/options _specific_ to that surface. See
@@ -45,7 +50,7 @@ machine-generated shape.
   `import_sort` configurable; `trailing_comma`, `prose_wrap`, `edition`,
   `standard` unsupported.
 - **`extra_args` handling**: `--extend-select` on the import pass is
-  discriminated so exit 1 with findings reports as `[FAIL] Violations found`
+  discriminated so exit 1 with findings reports as a `[FAIL]` violation row
   rather than `[ERR] Execution error` (Fixes
   [#208](https://github.com/arvinduh/formality/issues/208)); see
   [`extra_args` and exit-code contracts](#extra_args-and-exit-code-contracts).
@@ -114,7 +119,15 @@ machine-generated shape.
   padding) → `prettier --write` (prose formatting) → a third, in-process pass
   that formats **block-level** embedded HTML (Fixes #253; see below), the Smart
   Format order that keeps `fml lint`'s markdownlint pass from immediately
-  failing on cosmetic issues `fml fmt` could have fixed.
+  failing on cosmetic issues `fml fmt` could have fixed. A step before the fixer
+  and another after prettier escape a `#` that starts a paragraph continuation
+  line, whether the author or prettier's prose wrap put it there (`#299)`
+  becomes `\#299)`, which renders the same). Otherwise MD018/MD020 report it,
+  and `markdownlint --fix` turns the prose into a heading (#314, #413). An
+  unspaced `#Title` that opens its own block is left to the fixer, which makes
+  it `# Title`. `fml fix`'s lint pass escapes before its own `--fix` too.
+  markdownlint picks the lines from the content on stdin, so it never writes the
+  file.
 - **Block-level embedded HTML formatting**: `#120` ships MD033/no-inline-html
   disabled by default because ordinary README idioms — a centered badge block
   (`<p align="center">` + `<img>`), a `<details>`/`<summary>` disclosure
@@ -210,8 +223,8 @@ machine-generated shape.
 ## Typst
 
 - **Format**: `typstyle`.
-- **Lint**: none dedicated — Typst diagnostics flow through the LSP (`tinymist`)
-  rather than a standalone `fml lint` linter today.
+- **Lint**: none dedicated — Typst diagnostics flow through `fml lsp`, which
+  runs `typst compile`, rather than a standalone `fml lint` linter today.
 - **Managed config**: none — `typstyle` is driven entirely by CLI flags (e.g.
   `--column`) rather than a persisted config file.
 - **`[lang.typst]` options**: none currently (reserved for future knobs).
@@ -313,7 +326,7 @@ The flags known to do this, each reproduced against the version
 
 | Surface        | Flag                     | Status                           | What you'll see                                                                                                                                                                                                                          |
 | -------------- | ------------------------ | -------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| **python**     | `--extend-select <rule>` | **Handled (Fixes #208)**         | On the `ruff check --select I --fix` import pass, exit 1 when selection is widened or findings are present is classified as `[FAIL] Violations found` with process exit 1, not `[ERR] Execution error`. Verified on `ruff 0.16.4`.       |
+| **python**     | `--extend-select <rule>` | **Handled (Fixes #208)**         | On the `ruff check --select I --fix` import pass, exit 1 when selection is widened or findings are present is classified as a `[FAIL]` violation row with process exit 1, not `[ERR] Execution error`. Verified on `ruff 0.16.4`.        |
 | **java**       | `--set-exit-if-changed`  | **Unguarded — known limitation** | `google-java-format --replace` still rewrites the file, then exits 1 because it changed something; reported as `[ERR] Execution error` rather than a successful format. Verified on `google-java-format@2.3.0` (upstream 1.35.0).        |
 | **javascript** | `--linter-enabled`       | **Refused** with an explanation  | Not actually an instance of the above: `fml fmt` passes this flag itself and biome rejects it given twice, so the format pass fails either way. `fml` now says so instead of surfacing biome's opaque error. Verified on `biome@2.5.10`. |
 
@@ -374,8 +387,7 @@ here is guarded. Reproduced against
 rather than changing it. If you need a flag for exactly one of the two tools,
 there is no way to express that today —
 [#210](https://github.com/arvinduh/formality/issues/210) owns the design for a
-per-tool split (it is a `formality.toml` shape change, so it carries a
-`SCHEMA_VERSION` bump with it).
+per-tool split (it is a `formality.toml` shape change).
 
 ---
 

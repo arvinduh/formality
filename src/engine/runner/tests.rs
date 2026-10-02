@@ -175,6 +175,137 @@ fn test_combine_pass_results_execution_error_precedence() {
   ));
 }
 
+/// One status per `SurfaceStatus` variant, every payload tagged with `tag`,
+/// ordered from lowest to highest `combine_pass_results` precedence.
+fn every_status_by_precedence(tag: &str) -> Vec<SurfaceStatus> {
+  vec![
+    SurfaceStatus::Skipped {
+      reason: tag.to_string(),
+    },
+    SurfaceStatus::Passed,
+    SurfaceStatus::ConfigSynced {
+      files: vec![crate::surfaces::SyncedConfigFile::new(tag, true)],
+    },
+    SurfaceStatus::ToolMissing {
+      binary: tag.to_string(),
+      install_hint: tag.to_string(),
+    },
+    SurfaceStatus::ManualConfig {
+      file: tag.to_string(),
+      suggestion: tag.to_string(),
+    },
+    SurfaceStatus::ConfigDrifted {
+      file: tag.to_string(),
+      diff: tag.to_string(),
+    },
+    SurfaceStatus::ViolationsFound {
+      message: tag.to_string(),
+      diff: Some(tag.to_string()),
+    },
+    SurfaceStatus::ExecutionError {
+      message: tag.to_string(),
+    },
+  ]
+}
+
+/// The position `status` holds in [`every_status_by_precedence`].
+///
+/// Exhaustive with no wildcard, so a new `SurfaceStatus` does not compile
+/// until it is given a position here; placing it shifts every later arm,
+/// which fails `test_every_status_by_precedence_lists_each_variant_in_order`
+/// until the fixture lists it at that position too. A variant placed last
+/// shifts nothing, and stable Rust cannot count an enum's variants, so that
+/// one case still needs its fixture entry added by hand.
+fn variant_index(status: &SurfaceStatus) -> usize {
+  match status {
+    SurfaceStatus::Skipped { .. } => 0,
+    SurfaceStatus::Passed => 1,
+    SurfaceStatus::ConfigSynced { .. } => 2,
+    SurfaceStatus::ToolMissing { .. } => 3,
+    SurfaceStatus::ManualConfig { .. } => 4,
+    SurfaceStatus::ConfigDrifted { .. } => 5,
+    SurfaceStatus::ViolationsFound { .. } => 6,
+    SurfaceStatus::ExecutionError { .. } => 7,
+  }
+}
+
+#[test]
+fn test_every_status_by_precedence_lists_each_variant_in_order() {
+  let indices: Vec<usize> = every_status_by_precedence("x")
+    .iter()
+    .map(variant_index)
+    .collect();
+  assert_eq!(indices, (0..indices.len()).collect::<Vec<_>>());
+}
+
+fn combine_statuses(
+  first: SurfaceStatus,
+  second: SurfaceStatus,
+) -> SurfaceStatus {
+  let result = |status| SurfaceResult {
+    surface_name: "test",
+    status,
+    duration: Duration::ZERO,
+  };
+  combine_pass_results(result(first), result(second)).status
+}
+
+#[test]
+fn test_combine_pass_results_higher_precedence_wins_in_either_order() {
+  let ranked = every_status_by_precedence("x");
+  for (i, lower) in ranked.iter().enumerate() {
+    for higher in &ranked[i + 1..] {
+      for (first, second) in [(lower, higher), (higher, lower)] {
+        let combined = combine_statuses(first.clone(), second.clone());
+        assert_eq!(
+          format!("{combined:?}"),
+          format!("{higher:?}"),
+          "{first:?} + {second:?}"
+        );
+      }
+    }
+  }
+}
+
+#[test]
+fn test_combine_pass_results_same_variant_merges_or_keeps_first() {
+  let firsts = every_status_by_precedence("a");
+  let seconds = every_status_by_precedence("b");
+  for (first, second) in firsts.into_iter().zip(seconds) {
+    let expected = match &first {
+      SurfaceStatus::Skipped { .. } => SurfaceStatus::Skipped {
+        reason: "a; b".to_string(),
+      },
+      SurfaceStatus::ViolationsFound { .. } => SurfaceStatus::ViolationsFound {
+        message: "a\nb".to_string(),
+        diff: Some("a\nb".to_string()),
+      },
+      SurfaceStatus::ExecutionError { .. } => SurfaceStatus::ExecutionError {
+        message: "a\nb".to_string(),
+      },
+      other => other.clone(),
+    };
+    let combined = combine_statuses(first, second);
+    assert_eq!(format!("{combined:?}"), format!("{expected:?}"));
+  }
+}
+
+#[test]
+fn test_exit_floor_agrees_with_is_success_and_rises_with_precedence() {
+  let mut previous_floor = 0;
+  for status in every_status_by_precedence("x") {
+    let floor = exit_floor(&status.severity(), false);
+    let result = SurfaceResult {
+      surface_name: "test",
+      status,
+      duration: Duration::ZERO,
+    };
+    assert_eq!(result.is_success(), floor == 0, "{:?}", result.status);
+    assert!(floor >= previous_floor, "{:?}", result.status);
+    previous_floor = floor;
+  }
+}
+
 #[test]
 fn test_normalize_diagnostics_keeps_error_signal_lines() {
   // Issue #146, #179: normalization must de-noise (trailing whitespace,
@@ -529,63 +660,65 @@ fn test_runner_single_walk_polyglot_repo() {
   );
 
   // Filter in-memory for each surface
-  let rust_files = crate::surfaces::filter_files_for_surface(
+  let rust_files = crate::surfaces::filter_candidates_with_ext(
     &candidates,
-    &crate::surfaces::rust::RustSurface,
+    LanguageSurface::file_extensions(&crate::surfaces::rust::RustSurface),
     &[],
     &[],
   );
   assert_eq!(rust_files.len(), 1);
   assert!(rust_files[0].ends_with("main.rs"));
 
-  let py_files = crate::surfaces::filter_files_for_surface(
+  let py_files = crate::surfaces::filter_candidates_with_ext(
     &candidates,
-    &crate::surfaces::python::PythonSurface,
+    LanguageSurface::file_extensions(&crate::surfaces::python::PythonSurface),
     &[],
     &[],
   );
   assert_eq!(py_files.len(), 1);
   assert!(py_files[0].ends_with("script.py"));
 
-  let md_files = crate::surfaces::filter_files_for_surface(
+  let md_files = crate::surfaces::filter_candidates_with_ext(
     &candidates,
-    &crate::surfaces::markdown::MarkdownSurface,
+    LanguageSurface::file_extensions(
+      &crate::surfaces::markdown::MarkdownSurface,
+    ),
     &[],
     &[],
   );
   assert_eq!(md_files.len(), 1);
   assert!(md_files[0].ends_with("README.md"));
 
-  let yaml_files = crate::surfaces::filter_files_for_surface(
+  let yaml_files = crate::surfaces::filter_candidates_with_ext(
     &candidates,
-    &crate::surfaces::yaml::YamlSurface,
+    LanguageSurface::file_extensions(&crate::surfaces::yaml::YamlSurface),
     &[],
     &[],
   );
   assert_eq!(yaml_files.len(), 1);
   assert!(yaml_files[0].ends_with("config.yaml"));
 
-  let json_files = crate::surfaces::filter_files_for_surface(
+  let json_files = crate::surfaces::filter_candidates_with_ext(
     &candidates,
-    &crate::surfaces::json::JsonSurface,
+    LanguageSurface::file_extensions(&crate::surfaces::json::JsonSurface),
     &[],
     &[],
   );
   assert_eq!(json_files.len(), 1);
   assert!(json_files[0].ends_with("data.json"));
 
-  let typst_files = crate::surfaces::filter_files_for_surface(
+  let typst_files = crate::surfaces::filter_candidates_with_ext(
     &candidates,
-    &crate::surfaces::typst::TypstSurface,
+    LanguageSurface::file_extensions(&crate::surfaces::typst::TypstSurface),
     &[],
     &[],
   );
   assert_eq!(typst_files.len(), 1);
   assert!(typst_files[0].ends_with("doc.typ"));
 
-  let toml_files = crate::surfaces::filter_files_for_surface(
+  let toml_files = crate::surfaces::filter_candidates_with_ext(
     &candidates,
-    &crate::surfaces::toml::TomlSurface,
+    LanguageSurface::file_extensions(&crate::surfaces::toml::TomlSurface),
     &[],
     &[],
   );
@@ -642,12 +775,8 @@ fn test_execution_context_staged_files_filtering() {
   std::fs::write(&fixture_rs, "fn mock() {}\n").unwrap();
   std::fs::write(&py_file, "print('hi')\n").unwrap();
 
-  let staged_paths = Arc::new(vec![
-    main_rs.clone(),
-    excluded_rs.clone(),
-    fixture_rs.clone(),
-    py_file.clone(),
-  ]);
+  let staged_paths =
+    Arc::new(vec![main_rs.clone(), excluded_rs, fixture_rs, py_file]);
 
   let mut lang_config = crate::config::ResolvedLangConfig::new("rust");
   lang_config.exclude = vec![PathBuf::from("src/generated.rs")];
@@ -672,9 +801,9 @@ fn test_passed_detail_reads_as_already_in_sync_for_sync() {
   // matched formality.toml.
   assert_eq!(passed_detail(&Plan::sync(false)), "Already in sync");
   assert_eq!(passed_detail(&Plan::sync(true)), "Already in sync");
-  assert_eq!(passed_detail(&Plan::fmt(false)), "Clean / Formatted");
-  assert_eq!(passed_detail(&Plan::lint()), "Clean / Formatted");
-  assert_eq!(passed_detail(&Plan::fix(false)), "Clean / Formatted");
+  assert_eq!(passed_detail(&Plan::fmt(false, false)), "Clean / Formatted");
+  assert_eq!(passed_detail(&Plan::lint(false)), "Clean / Formatted");
+  assert_eq!(passed_detail(&Plan::fix(false, false)), "Clean / Formatted");
 }
 
 #[test]
@@ -763,50 +892,255 @@ impl LanguageSurface for MockMissingSurface {
 }
 
 #[test]
-fn test_runner_missing_tool_exit_code_is_clean() {
+fn test_runner_missing_tool_exit_code_is_violations() {
+  // #252: a missing tool is an unmet precondition, not a clean run — it must
+  // not let the process exit 0. It is also not `ExitStatus::Error`: the tool
+  // correctly determined it could not proceed, which is the same severity as
+  // a real violation, not an operational fault. Exercised across `lint` and
+  // `fmt`, staged and unstaged, and both `--check`/write forms, since the
+  // fix is unconditional on mode.
   let root = PathBuf::from(".");
   let config = FormalityConfig::default();
   let staged_paths = vec![PathBuf::from("test.mock")];
 
   // Lint unstaged & staged
   let unstaged_lint = Runner::run(
-    vec![Box::new(MockMissingSurface)],
+    &[Box::new(MockMissingSurface)],
     &root,
     &[],
-    &Plan::lint(),
+    &Plan::lint(false),
     &config,
   );
-  assert_eq!(unstaged_lint, ExitStatus::Clean);
+  assert_eq!(unstaged_lint, ExitStatus::Violations);
 
   let staged_lint = Runner::run(
-    vec![Box::new(MockMissingSurface)],
+    &[Box::new(MockMissingSurface)],
     &root,
     &staged_paths,
-    &Plan::lint(),
+    &Plan::lint(false),
     &config,
   );
-  assert_eq!(staged_lint, ExitStatus::Clean);
+  assert_eq!(staged_lint, ExitStatus::Violations);
   assert_eq!(unstaged_lint, staged_lint);
 
-  // Fmt unstaged & staged
+  // Fmt unstaged & staged, write mode
   let unstaged_fmt = Runner::run(
-    vec![Box::new(MockMissingSurface)],
+    &[Box::new(MockMissingSurface)],
     &root,
     &[],
-    &Plan::fmt(false),
+    &Plan::fmt(false, false),
     &config,
   );
-  assert_eq!(unstaged_fmt, ExitStatus::Clean);
+  assert_eq!(unstaged_fmt, ExitStatus::Violations);
 
   let staged_fmt = Runner::run(
-    vec![Box::new(MockMissingSurface)],
+    &[Box::new(MockMissingSurface)],
     &root,
     &staged_paths,
-    &Plan::fmt(false),
+    &Plan::fmt(false, false),
     &config,
   );
-  assert_eq!(staged_fmt, ExitStatus::Clean);
+  assert_eq!(staged_fmt, ExitStatus::Violations);
   assert_eq!(unstaged_fmt, staged_fmt);
+
+  // Fmt --check (Mode::Report) — the fix is unconditional on mode, so this
+  // must also be non-zero, not just the write form above.
+  let check_fmt = Runner::run(
+    &[Box::new(MockMissingSurface)],
+    &root,
+    &[],
+    &Plan::fmt(true, false),
+    &config,
+  );
+  assert_eq!(check_fmt, ExitStatus::Violations);
+
+  // Fix (Lint + Format) — a plan neither prior case exercises directly.
+  let fix = Runner::run(
+    &[Box::new(MockMissingSurface)],
+    &root,
+    &[],
+    &Plan::fix(false, false),
+    &config,
+  );
+  assert_eq!(fix, ExitStatus::Violations);
+}
+
+/// A surface whose format/lint pass always reports a real violation --
+/// distinct from [`MockMissingSurface`], which reports `ToolMissing`.
+#[derive(Debug, Clone)]
+struct MockViolatingSurface;
+
+impl crate::surfaces::DeclaresFacets for MockViolatingSurface {
+  fn facet_support(
+    &self,
+    _: crate::surfaces::Facet,
+  ) -> crate::surfaces::FacetSupport {
+    crate::surfaces::FacetSupport::Unsupported
+  }
+}
+
+impl LanguageSurface for MockViolatingSurface {
+  fn name(&self) -> &'static str {
+    "mock_violating"
+  }
+  fn file_extensions(&self) -> &[&'static str] {
+    &["mock2"]
+  }
+  fn detect(&self, _: &Path) -> bool {
+    true
+  }
+  fn tool_info(
+    &self,
+    _: &crate::config::ResolvedLangConfig,
+  ) -> Vec<crate::surfaces::ToolInfo> {
+    vec![]
+  }
+  fn format(&self, _: &ExecutionContext) -> SurfaceResult {
+    SurfaceResult {
+      surface_name: self.name(),
+      status: SurfaceStatus::ViolationsFound {
+        message: "unformatted".to_string(),
+        diff: None,
+      },
+      duration: Duration::from_millis(1),
+    }
+  }
+  fn lint(&self, _: &ExecutionContext, _: bool) -> SurfaceResult {
+    SurfaceResult {
+      surface_name: self.name(),
+      status: SurfaceStatus::ViolationsFound {
+        message: "lint violation".to_string(),
+        diff: None,
+      },
+      duration: Duration::from_millis(1),
+    }
+  }
+  fn sync_config(&self, _: &ExecutionContext, _: bool) -> SurfaceResult {
+    SurfaceResult {
+      surface_name: self.name(),
+      status: SurfaceStatus::Passed,
+      duration: Duration::from_millis(1),
+    }
+  }
+  fn clone_box(&self) -> Box<dyn LanguageSurface> {
+    Box::new(self.clone())
+  }
+}
+
+/// A surface whose format/lint pass always reports an operational fault --
+/// distinct from [`MockMissingSurface`] (`ToolMissing`) and
+/// [`MockViolatingSurface`] (`ViolationsFound`).
+#[derive(Debug, Clone)]
+struct MockErroringSurface;
+
+impl crate::surfaces::DeclaresFacets for MockErroringSurface {
+  fn facet_support(
+    &self,
+    _: crate::surfaces::Facet,
+  ) -> crate::surfaces::FacetSupport {
+    crate::surfaces::FacetSupport::Unsupported
+  }
+}
+
+impl LanguageSurface for MockErroringSurface {
+  fn name(&self) -> &'static str {
+    "mock_erroring"
+  }
+  fn file_extensions(&self) -> &[&'static str] {
+    &["mock3"]
+  }
+  fn detect(&self, _: &Path) -> bool {
+    true
+  }
+  fn tool_info(
+    &self,
+    _: &crate::config::ResolvedLangConfig,
+  ) -> Vec<crate::surfaces::ToolInfo> {
+    vec![]
+  }
+  fn format(&self, _: &ExecutionContext) -> SurfaceResult {
+    SurfaceResult {
+      surface_name: self.name(),
+      status: SurfaceStatus::ExecutionError {
+        message: "tool crashed".to_string(),
+      },
+      duration: Duration::from_millis(1),
+    }
+  }
+  fn lint(&self, _: &ExecutionContext, _: bool) -> SurfaceResult {
+    SurfaceResult {
+      surface_name: self.name(),
+      status: SurfaceStatus::ExecutionError {
+        message: "tool crashed".to_string(),
+      },
+      duration: Duration::from_millis(1),
+    }
+  }
+  fn sync_config(&self, _: &ExecutionContext, _: bool) -> SurfaceResult {
+    SurfaceResult {
+      surface_name: self.name(),
+      status: SurfaceStatus::Passed,
+      duration: Duration::from_millis(1),
+    }
+  }
+  fn clone_box(&self) -> Box<dyn LanguageSurface> {
+    Box::new(self.clone())
+  }
+}
+
+#[test]
+fn test_runner_allow_missing_silences_tool_missing_but_not_violations() {
+  // #252 / #163: `--allow-missing` must silence a missing tool's
+  // contribution to the exit code (restoring #163's guarantee) while
+  // leaving a real violation elsewhere fatal, and leaving the missing-tool
+  // row itself visible either way (the whole point is not recreating the
+  // original silent-pass bug).
+  let root = PathBuf::from(".");
+  let config = FormalityConfig::default();
+
+  // A missing tool alone: exit 1 without --allow-missing.
+  let without_flag = Runner::run(
+    &[Box::new(MockMissingSurface)],
+    &root,
+    &[],
+    &Plan::fmt(false, false),
+    &config,
+  );
+  assert_eq!(without_flag, ExitStatus::Violations);
+
+  // ...and exit 0 with --allow-missing.
+  let with_flag = Runner::run(
+    &[Box::new(MockMissingSurface)],
+    &root,
+    &[],
+    &Plan::fmt(false, true),
+    &config,
+  );
+  assert_eq!(with_flag, ExitStatus::Clean);
+
+  // A missing tool AND a real violation (on a different surface): still
+  // exit 1 even with --allow-missing -- the flag only silences the
+  // ToolMissing arm, never a genuine violation.
+  let missing_and_violating = Runner::run(
+    &[Box::new(MockMissingSurface), Box::new(MockViolatingSurface)],
+    &root,
+    &[],
+    &Plan::fmt(false, true),
+    &config,
+  );
+  assert_eq!(missing_and_violating, ExitStatus::Violations);
+
+  // A missing tool AND an execution error (on a different surface): exit 2
+  // even with --allow-missing -- the flag only silences the ToolMissing arm,
+  // never an operational fault, which outranks a plain violation too.
+  let missing_and_erroring = Runner::run(
+    &[Box::new(MockMissingSurface), Box::new(MockErroringSurface)],
+    &root,
+    &[],
+    &Plan::fmt(false, true),
+    &config,
+  );
+  assert_eq!(missing_and_erroring, ExitStatus::Error);
 }
 
 #[test]

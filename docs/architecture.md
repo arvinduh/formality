@@ -13,17 +13,17 @@ crate (`src/lib.rs`), which declares the seven top-level modules (`cli`,
 `commands`, `config`, `engine`, `errors`, `surfaces`, `ui`), owns the actual
 subcommand dispatch (`run_command_inner` — the single `match args.command` that
 routes every `Commands` variant to its handler, after loading and merging
-config), and re-exports two crate-root items reached that way by this crate's
-own integration tests (`SCHEMA_VERSION`, `generate_schema`) — see
-[style-guide.md](style-guide.md) §1 for why those two survived the
-`#133 [pre-recreation]` alias-minimization sweep while the rest of the old
-`DEPRECATED / STALE ALIAS` block did not: new code always uses the canonical
-structural path, never a crate-root shortcut. `src/cli.rs` defines the
-`clap`-based argument parser only (`Cli`, `Commands`, `MigrateCommands`) — it
-parses, it does not dispatch. `src/errors.rs` is the crate-wide error hierarchy
-— `FormalityError` and its per-subsystem inner enums (`ConfigError`, `GitError`,
-`ToolMissingError`, `SurfaceError`, `IoError`) — with no `anyhow`/`thiserror`
-dependency; see [style-guide.md](style-guide.md) §5 for the full convention.
+config), and re-exports one crate-root item reached that way by this crate's own
+integration tests (`generate_schema`) — see [style-guide.md](style-guide.md) §1
+for why it survived the `#133 [pre-recreation]` alias-minimization sweep while
+the rest of the old `DEPRECATED / STALE ALIAS` block did not: new code always
+uses the canonical structural path, never a crate-root shortcut. `src/cli.rs`
+defines the `clap`-based argument parser only (`Cli`, `Commands`) — it parses,
+it does not dispatch. `src/errors.rs` is the crate-wide error hierarchy —
+`FormalityError` and its per-subsystem inner types (`GitError`, `SurfaceError`,
+the `IoError` struct, and `ConfigError`, which `src/config` defines and this
+file re-exports) — with no `anyhow`/`thiserror` dependency; see
+[style-guide.md](style-guide.md) §5 for the full convention.
 
 ## `src/config`
 
@@ -33,13 +33,15 @@ used both to validate config and to generate `schema/formality.schema.json` for
 `fml schema`. `facets.rs` defines the canonical facet vocabulary (indentation,
 line length, import sorting, ...) — see [facet-rosetta.md](facet-rosetta.md) for
 what a facet is and why it exists. `lang_table.rs` is an X-macro table
-generating the repetitive per-language options wiring shared by
-`LangConfig`/`resolve_for_lang`/ `default_tools_for_lang`, so adding a new typed
-per-language option doesn't require hand-wiring it in three places. `options.rs`
-holds the per-language strongly-typed formatting option structs (e.g.
-`RustfmtConfig`); `resolve.rs` implements the actual cascade-merge and
-path-resolution logic that turns raw parsed TOML into a
-`ResolvedGlobalConfig`/`ResolvedLangConfig` a surface can act on.
+generating the repetitive per-language options wiring shared by `LangConfig`,
+`resolve_for_lang` and strict parsing, so adding a new typed per-language option
+doesn't require hand-wiring it in each place. `options.rs` holds the
+per-language strongly-typed formatting option structs (e.g. `RustOptions`);
+`strict.rs` parses one config document, rejecting a key the typed structs do not
+declare or a value of the wrong type with its key path and line; `resolve.rs`
+implements the actual cascade-merge and path-resolution logic that turns raw
+parsed TOML into a `ResolvedGlobalConfig`/`ResolvedLangConfig` a surface can act
+on.
 
 ## `src/engine`
 
@@ -81,34 +83,32 @@ See [language-surfaces.md](language-surfaces.md) for what each surface wraps and
 Terminal UI rendering, currently just semantic table formatting
 (`ui/table/mod.rs`, `render.rs`): width policies, wrapping/truncation,
 terminal-width clamping, and semantic color roles. This is the same machinery
-both `fml table`'s public JSON-spec renderer and `fml`'s own internal output
-(`fml doctor`) render through — see [table-spec.md](table-spec.md) for the JSON
-specification it consumes.
+both `fml::ui::table`'s public JSON-spec renderer (the `fml table` CLI command
+that used to front it was removed in v0.3.0 (#255)) and `fml`'s own internal
+output (`fml doctor`) render through — see [table-spec.md](table-spec.md) for
+the JSON specification it consumes.
 
 ## `src/commands`
 
 Mostly one file per CLI subcommand handler, dispatched from `run_command_inner`
 in `src/lib.rs`: `fmt.rs`, `lint.rs`, `fix.rs` (the composite
 lint-fix-then-format pipeline — see [style-guide.md](style-guide.md) §4's
-`Runner` dispatch section), `sync.rs`, `init.rs`, `migrate.rs` (config
-schema-reference migration), `schema.rs` (`fml schema`, JSON Schema generation),
-`table.rs` (`fml table`), `lsp.rs` and `lsp_diagnostics.rs` (the `fml lsp`
+`Runner` dispatch section), `sync.rs`, `init.rs`, `schema.rs` (`fml schema`,
+JSON Schema generation), `lsp.rs` and `lsp_diagnostics.rs` (the `fml lsp`
 Language Server — document formatting via `fml fmt` plus diagnostics publishing
 via `fml lint`, with `lsp_diagnostics.rs` providing structured per-violation
 diagnostics, `#159 [pre-recreation]`), and `doctor/` (a directory module —
 `mod.rs`, `gitignore.rs`, `venv.rs` — implementing `fml doctor`'s
-workspace/toolchain verification checks). Tool installation lives in
-`doctor/mod.rs` (`install_missing_tools`, `preflight_install` — the latter also
-called by `fmt`/`lint`/`fix` for their `--install` flag). The deprecated
-`fml install` and `fml list-surfaces` / `fml surfaces` dispatch directly to
-`doctor::run_doctor`. `mod.rs` at the top of this directory also holds shared
-helpers used by more than one command handler (e.g. the missing-tool warning
-printer).
+workspace/toolchain verification checks). Tool installation lives entirely in
+`doctor/mod.rs` (`install_missing_tools_framed`), called only by
+`fml doctor --install`. `fmt`/`lint`/`fix` instead call
+`preflight_warn_stale_tools`, which only warns about stale tools, never
+installs. `mod.rs` at the top of this directory also holds shared helpers used
+by more than one command handler.
 
 ## Cross-cutting: process and release docs
 
-Two things intentionally live outside `src/` and this map: the multi-agent
-orchestration process (worktrees, QA gate, dispatch order — see
-`.agents/orchestrate.md`) and the release procedure (binary `v*` tags, schema
-`s*` tags — see [release.md](release.md)). Neither is a code module, so neither
+Two things intentionally live outside `src/` and this map: the repo's process
+facts (gate, CI checks, merge rules — see `AGENTS.md`) and the release procedure
+(`v*` tags — see [release.md](release.md)). Neither is a code module, so neither
 gets a paragraph here; both are linked from [docs/INDEX.md](INDEX.md).

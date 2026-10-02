@@ -5,7 +5,7 @@ use super::{
   DeclaresFacets, ExecutionContext, Facet, FacetSupport, LanguageSurface,
   NativeConfig, PrettierConfig, SurfaceResult, ToolInfo,
   build_prettier_inline_args, classify_all_nonzero_as_error,
-  create_tool_command, diff_check_via_tempcopy_classified, find_files_with_ext,
+  create_tool_command, diff_check_via_tempcopy_classified,
   lint_fix_unsupported, render_native_config, run_tool_command,
   run_tool_command_classified, sync_native_config, tool_missing_guard,
 };
@@ -171,11 +171,8 @@ impl LanguageSurface for YamlSurface {
     Box::new(*self)
   }
 
-  fn detect(&self, root: &Path) -> bool {
-    root.join(".yamllint").is_file()
-      || root.join(".yamllint.yaml").is_file()
-      || root.join(".yamllint.yml").is_file()
-      || !find_files_with_ext(root, YAML_EXTENSIONS, &[], &[], &[]).is_empty()
+  fn marker_files(&self) -> &[&'static str] {
+    &[".yamllint", ".yamllint.yaml", ".yamllint.yml"]
   }
 
   fn tool_info(
@@ -186,14 +183,14 @@ impl LanguageSurface for YamlSurface {
       ToolInfo {
         binary: "prettier",
         description: "YAML formatter",
-        install_hint: "Install via: npm install -g prettier (or pnpm add -g prettier / brew install prettier / winget install Prettier.Prettier)",
+        install_hint: None,
         is_required_for_fmt: true,
         is_required_for_lint: false,
       },
       ToolInfo {
         binary: "yamllint",
         description: "YAML linter",
-        install_hint: "Install via: pip install yamllint (or uv tool install yamllint / brew install yamllint / winget install yamllint)",
+        install_hint: None,
         is_required_for_fmt: false,
         is_required_for_lint: true,
       },
@@ -203,12 +200,8 @@ impl LanguageSurface for YamlSurface {
   fn format(&self, ctx: &ExecutionContext) -> SurfaceResult {
     let start = Instant::now();
 
-    if let Some(res) = tool_missing_guard(
-      self.name(),
-      "prettier",
-      start,
-      Some("npm install -g prettier"),
-    ) {
+    if let Some(res) = tool_missing_guard(self.name(), "prettier", start, None)
+    {
       return res;
     }
 
@@ -274,12 +267,8 @@ impl LanguageSurface for YamlSurface {
       return lint_fix_unsupported(self.name(), start);
     }
 
-    if let Some(res) = tool_missing_guard(
-      self.name(),
-      "yamllint",
-      start,
-      Some("pip install yamllint"),
-    ) {
+    if let Some(res) = tool_missing_guard(self.name(), "yamllint", start, None)
+    {
       return res;
     }
 
@@ -341,7 +330,6 @@ impl LanguageSurface for YamlSurface {
 }
 
 #[cfg(test)]
-#[allow(missing_docs, clippy::missing_errors_doc, clippy::missing_panics_doc)]
 mod tests {
   use super::*;
   use crate::config::ResolvedLangConfig;

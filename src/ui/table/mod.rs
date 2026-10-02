@@ -9,6 +9,10 @@ pub mod render;
 /// shares — see [`frame::Frame`].
 pub mod frame;
 
+/// The shared word-wrap tokenizer used by both `render` (table cells) and
+/// `frame` (prose blocks) — see #269.
+mod wrap;
+
 pub use frame::Frame;
 pub use render::{
   Table, detect_terminal_width, max_line_display_width, render, render_json,
@@ -599,6 +603,5 @@ impl Layout {
 }
 
 #[cfg(test)]
-#[allow(missing_docs, clippy::missing_errors_doc, clippy::missing_panics_doc)]
 #[path = "tests.rs"]
 mod tests;

@@ -1,3 +1,6 @@
+//! Guards the lockstep between the binary's version in `Cargo.toml` and the
+//! VS Code extension's version in `editors/vscode/package.json`.
+
 use std::fs;
 use std::path::PathBuf;
 

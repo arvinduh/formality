@@ -1,8 +1,6 @@
 //! `fml lint` command: lints the resolved target surfaces via [`Runner`].
 //!
-//! `lint` never writes. The deprecated `--fix` spelling is handled by
-//! [`crate::run_command_inner`], which dispatches it to [`super::fix`]
-//! rather than giving `lint` a writing form of its own.
+//! `lint` never writes; applying fixes is [`super::fix`]'s job.
 
 use std::path::{Path, PathBuf};
 
@@ -11,17 +9,19 @@ use crate::config::FormalityConfig;
 use crate::engine::Plan;
 use crate::errors::ExitStatus;
 
-/// Runs the `fml lint` command: the `[Lint]` plan, always report-only,
-/// optionally installing missing tools first.
+/// Runs the `fml lint` command: the `[Lint]` plan, always report-only.
+/// Provisioning missing tools is `fml doctor --install`'s job, not this
+/// command's (v0.3.0, #282).
 #[allow(clippy::too_many_arguments)]
+#[must_use]
 pub fn run_lint(
   root: &Path,
   config: &FormalityConfig,
   staged: bool,
   changed: bool,
-  lang: Vec<String>,
-  install: bool,
+  lang: &[String],
   paths: Vec<PathBuf>,
+  allow_missing: bool,
 ) -> ExitStatus {
   dispatch_plan(
     root,
@@ -29,9 +29,7 @@ pub fn run_lint(
     staged,
     changed,
     lang,
-    install,
     paths,
-    &Plan::lint(),
-    "linting",
+    &Plan::lint(allow_missing),
   )
 }

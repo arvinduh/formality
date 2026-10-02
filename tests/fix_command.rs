@@ -1,3 +1,7 @@
+//! End-to-end coverage for `fml fix`: per-surface lint-then-format
+//! lifecycles, path targeting, `--staged`/`--changed` filtering, and the
+//! post-fix re-check that reports what remains unfixed.
+
 mod common;
 
 use common::{fix_cmd, fmt_cmd, init_git_repo, lint_cmd, run_cli, temp_repo};
@@ -57,7 +61,7 @@ fn test_fix_command_targeted_paths() {
     staged: false,
     changed: false,
     lang: vec!["toml".to_string()],
-    install: false,
+    allow_missing: false,
     paths: vec![target_file.clone()],
   };
   assert_eq!(run_cli(root, fix_args), 0);
@@ -75,10 +79,21 @@ fn test_fix_command_unsupported_autofix_surfaces() {
   let root = temp.path();
   let toml_file = root.join("sample.toml");
 
-  assert_eq!(run_cli(root, fix_cmd(false, &["toml"])), 0);
-
-  let formatted = fs::read_to_string(&toml_file).unwrap();
-  assert!(formatted.contains("name = \"test\""));
+  let exit_code = run_cli(root, fix_cmd(false, &["toml"]));
+  if fml::surfaces::check_binary_exists("taplo") {
+    assert_eq!(exit_code, 0);
+    let formatted = fs::read_to_string(&toml_file).unwrap();
+    // The unformatted fixture already contains the substring
+    // `name = "test"`, so `formatted.contains(..)` alone would pass even if
+    // taplo never ran (vacuous). Assert the full reformatted content -- the
+    // stray leading space before `name` is exactly what taplo strips --
+    // so this actually verifies formatting happened.
+    assert_eq!(formatted, "[package]\nname = \"test\"\n");
+  } else {
+    // ToolMissing is now loud: a project with TOML files and no taplo must
+    // not exit clean (Fixes #252).
+    assert_eq!(exit_code, fml::errors::ExitStatus::Violations);
+  }
 }
 
 #[test]
@@ -95,7 +110,7 @@ fn test_fix_command_invalid_surface_and_mutual_exclusion() {
     staged: true,
     changed: true,
     lang: vec![],
-    install: false,
+    allow_missing: false,
     paths: vec![],
   };
   assert_eq!(run_cli(root, conflict_args), 2);
@@ -105,8 +120,22 @@ fn test_fix_command_invalid_surface_and_mutual_exclusion() {
 fn test_fix_command_polyglot_detection() {
   let manifest_dir = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
   let fixture = manifest_dir.join("tests/fixtures/polyglot_repo");
+  let cargo_toml = fixture.join("Cargo.toml");
+  let before = fs::read_to_string(&cargo_toml).unwrap();
 
-  assert_eq!(run_cli(&fixture, fix_cmd(false, &["toml"])), 0);
+  let exit_code = run_cli(&fixture, fix_cmd(false, &["toml"]));
+  if fml::surfaces::check_binary_exists("taplo") {
+    assert_eq!(exit_code, 0);
+    // The fixture's Cargo.toml is already well-formatted, so taplo leaves
+    // it byte-for-byte identical -- confirms the polyglot repo's toml
+    // surface was actually detected and run, not skipped.
+    let after = fs::read_to_string(&cargo_toml).unwrap();
+    assert_eq!(after, before);
+  } else {
+    // ToolMissing is now loud: a project with TOML files and no taplo must
+    // not exit clean (Fixes #252).
+    assert_eq!(exit_code, fml::errors::ExitStatus::Violations);
+  }
 }
 
 #[test]
@@ -152,7 +181,7 @@ fn test_fix_command_staged_with_explicit_paths_filtering() {
     staged: true,
     changed: false,
     lang: vec!["toml".to_string()],
-    install: false,
+    allow_missing: false,
     paths: vec![target_file.clone()],
   };
   assert_eq!(run_cli(root, fix_args), 0);
@@ -203,7 +232,7 @@ fn test_fix_command_changed_with_explicit_paths_filtering() {
     staged: false,
     changed: true,
     lang: vec!["toml".to_string()],
-    install: false,
+    allow_missing: false,
     paths: vec![target_file.clone()],
   };
   assert_eq!(run_cli(root, fix_args), 0);
@@ -227,10 +256,14 @@ fn test_fix_command_python_composite_lifecycle() {
   let script_py = root.join("main.py");
 
   let exit_code = run_cli(root, fix_cmd(false, &["python"]));
-  assert_eq!(exit_code, 0);
   if fml::surfaces::check_binary_exists("ruff") {
+    assert_eq!(exit_code, 0);
     let formatted = fs::read_to_string(&script_py).unwrap();
     assert!(formatted.contains("def foo(x, y):"));
+  } else {
+    // ToolMissing is now loud: a project with Python files and no ruff must
+    // not exit clean (Fixes #252).
+    assert_eq!(exit_code, fml::errors::ExitStatus::Violations);
   }
 }
 
@@ -244,10 +277,14 @@ fn test_fix_command_javascript_composite_lifecycle() {
   let script_js = root.join("index.js");
 
   let exit_code = run_cli(root, fix_cmd(false, &["javascript"]));
-  assert_eq!(exit_code, 0);
   if fml::surfaces::check_binary_exists("biome") {
+    assert_eq!(exit_code, 0);
     let formatted = fs::read_to_string(&script_js).unwrap();
     assert!(formatted.contains("function add(a, b) {"));
+  } else {
+    // ToolMissing is now loud: a project with JS files and no biome must not
+    // exit clean (Fixes #252).
+    assert_eq!(exit_code, fml::errors::ExitStatus::Violations);
   }
 }
 
@@ -289,7 +326,7 @@ fn test_fix_command_reports_pass_when_format_pass_resolves_lint_violation() {
   );
 
   // ... and a subsequent plain lint agrees the tree is clean.
-  assert_eq!(run_cli(root, lint_cmd(false, &["markdown"])), 0);
+  assert_eq!(run_cli(root, lint_cmd(&["markdown"])), 0);
 }
 
 /// Issue #116, inverse guard: a violation that *neither* pass can fix must
@@ -325,10 +362,14 @@ fn test_fix_command_markdown_composite_lifecycle() {
   let readme_md = root.join("README.md");
 
   let exit_code = run_cli(root, fix_cmd(false, &["markdown"]));
-  assert_eq!(exit_code, 0);
-  if fml::surfaces::check_binary_exists("prettier") {
+  if markdown_toolchain_available() {
+    assert_eq!(exit_code, 0);
     let formatted = fs::read_to_string(&readme_md).unwrap();
     assert!(formatted.contains("# Title"));
+  } else {
+    // ToolMissing is now loud: a project with markdown files and a missing
+    // prettier/markdownlint must not exit clean (Fixes #252).
+    assert_eq!(exit_code, fml::errors::ExitStatus::Violations);
   }
 }
 
@@ -456,34 +497,42 @@ fn test_fix_check_and_fix_agree_when_no_pass_can_fix() {
   );
 }
 
-/// Issue #118: `fml lint --fix` is the deprecated spelling of `fml fix` and
-/// must keep working for one minor release — dispatching to the *fix* plan,
-/// so the tree is left formatted rather than lint-fixed-but-unformatted.
+/// Issue #394: with `indent_size = 4`, prettier's `tabWidth` is 4, so prettier
+/// indents a nested bullet list by 4 spaces. markdownlint's MD007 `indent`
+/// must match so `fml fix` followed by `fml lint` passes without oscillation.
 #[test]
-fn test_deprecated_lint_fix_runs_the_fix_plan() {
+fn test_fix_command_markdown_nested_list_indent_sync() {
   if !markdown_toolchain_available() {
     eprintln!(
-      "SKIP: test_deprecated_lint_fix_runs_the_fix_plan \
-       — markdownlint/prettier not on PATH"
+      "SKIP: test_fix_command_markdown_nested_list_indent_sync        — markdownlint/prettier not on PATH"
     );
     return;
   }
 
-  let temp =
-    temp_repo(&[("doc.md", "# Title\n\nSome paragraph   with   spaces.\n")]);
-  let root = temp.path();
-  let doc_md = root.join("doc.md");
+  for indent_size in [2, 4] {
+    let config = format!(
+      "[global]
+indent_size = {indent_size}
+"
+    );
+    let doc = "# Title
 
-  assert_eq!(run_cli(root, lint_cmd(true, &["markdown"])), 0);
+* item
+    * nested
+";
+    let temp =
+      temp_repo(&[("formality.toml", config.as_str()), ("doc.md", doc)]);
+    let root = temp.path();
 
-  // The format pass ran: `fml lint --fix` used to leave this collapsed-run
-  // of spaces alone, because it never reformatted.
-  let after = fs::read_to_string(&doc_md).unwrap();
-  assert!(
-    !after.contains("   with   "),
-    "`fml lint --fix` must dispatch to the fix plan, which reformats; got:\n{after}"
-  );
-
-  // And the tree it left behind is genuinely clean.
-  assert_eq!(run_cli(root, fmt_cmd(true, &["markdown"])), 0);
+    assert_eq!(
+      run_cli(root, fix_cmd(false, &["markdown"])),
+      0,
+      "fml fix failed for indent_size = {indent_size}"
+    );
+    assert_eq!(
+      run_cli(root, lint_cmd(&["markdown"])),
+      0,
+      "subsequent fml lint failed for indent_size = {indent_size}"
+    );
+  }
 }

@@ -38,8 +38,7 @@ repository:
     (`json`) is the one sanctioned exception, named explicitly in that test.
   - `src/surfaces/editorconfig.rs`: `glob_for_surface()` match arm and
     `CANONICAL_FLEET_ORDER` entry.
-  - Prose surface counts in doc comments and documentation (e.g.
-    `SurfaceRegistry::new()` doc comment).
+  - Prose surface counts in doc comments and documentation.
 - [ ] **6. Test coverage** (see
       [Style Guide §1](style-guide.md#1-modulefile-hierarchy) for the
       inline-`mod tests`-vs-sibling-`tests.rs` convention):
@@ -87,9 +86,9 @@ impl DeclaresFacets for FooSurface {
 }
 ```
 
-There is no wildcard fallback arm — the `match` must be exhaustive over
-`Facet::ALL`, by design, so a new surface cannot accidentally skip declaring a
-position on any facet. Every arm needs an honest answer: does the real tool
+There is no wildcard fallback arm — the `match` must be exhaustive over every
+`Facet` variant, by design, so a new surface cannot accidentally skip declaring
+a position on any facet. Every arm needs an honest answer: does the real tool
 support configuring this, does it enforce one fixed value (document _why_ in a
 comment, the way `go.rs`/`java.rs`/`kotlin.rs` do), or is the concept simply
 absent for this language. Update [docs/facet-rosetta.md](facet-rosetta.md) with
@@ -100,10 +99,9 @@ the same row once this is decided.
 ```rust
 impl LanguageSurface for FooSurface {
   fn name(&self) -> &'static str { "foo" }
-  fn display_name(&self) -> &'static str { "Foo" } // optional, defaults to name()
   fn aliases(&self) -> &[&'static str] { &["foolang"] } // alternate names
   fn file_extensions(&self) -> &[&'static str] { FOO_EXTENSIONS }
-  fn detect(&self, root: &Path) -> bool { /* any file_extensions() present under root? */ }
+  fn marker_files(&self) -> &[&'static str] { &["foo.lock", ".foofmt.toml"] } // root manifests/configs
   fn tool_info(&self, config: &ResolvedLangConfig) -> Vec<ToolInfo> { /* binaries + install hints */ }
   fn format(&self, ctx: &ExecutionContext) -> SurfaceResult { /* Smart Format pass */ }
   fn lint(&self, ctx: &ExecutionContext, fix: bool) -> SurfaceResult { /* linter invocation */ }
@@ -115,6 +113,12 @@ impl LanguageSurface for FooSurface {
 
 Key implementation notes drawn from the existing fleet of surfaces:
 
+- **Detection is data, not code**: do not write `detect()`. The default
+  activates the surface when any `marker_files()` entry is a regular file at the
+  workspace root, or any non-ignored file under the root has one of
+  `file_extensions()`. A surface with no manifest or config file (JSON, Typst)
+  omits `marker_files()`. Override `detect()` only when detection genuinely
+  differs from that rule, and say why in a comment on the override.
 - **Smart Format ordering (Rule #7)**: `format()` must leave files in a state
   that will not immediately fail a trivial structural lint check. If the tool
   ecosystem separates "mechanical fix" (import sorting, blank-line
@@ -347,8 +351,7 @@ nothing for that file. See "Shared config files" in
   - Add `"foo"` to `CANONICAL_FLEET_ORDER`.
 
 - **Prose surface counts**: Update doc comments and prose mentioning the fleet
-  count (e.g. `SurfaceRegistry::new()` doc comment "default fleet of 12 language
-  surfaces", `cli.rs`, `README.md`).
+  count (e.g. `cli.rs`, `README.md`).
 
 ---
 
@@ -359,8 +362,8 @@ Add tests across the test suites:
 1. **Per-surface unit tests**: Inline in `src/surfaces/<lang>.rs`
    (`#[cfg(test)] mod tests { ... }` — see
    [Style Guide §1](style-guide.md#1-modulefile-hierarchy)), test
-   `facet_support()` across all `Facet::ALL`, `detect()` with positive/negative
-   temp fixtures, `tool_info()`, and `supports_lint_fix()`.
+   `facet_support()` for every `Facet` variant, `detect()` with
+   positive/negative temp fixtures, `tool_info()`, and `supports_lint_fix()`.
 2. **Registry tests (inline in `src/surfaces/registry.rs`)**:
    - In `test_all_fleet_surfaces_present()`: update
      `assert_eq!(surfaces.len(), N)` and add `"foo"` to the `expected` list.

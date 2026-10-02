@@ -1,8 +1,10 @@
 //! `fml schema` command: generates and writes/prints the JSON Schema for
 //! `formality.toml`.
 //!
-//! Deprecated: use `cargo test --test schema_drift` (or
-//! `UPDATE_SCHEMA=1 cargo test --test schema_drift`) and [`crate::config::schema::generate_schema`].
+//! A supported, user-facing command: it is how anyone working offline, or
+//! vendoring the schema into their own repo, gets the same artifact the
+//! `#:schema` URL serves, and it is what the release pipeline runs to
+//! generate the published schema asset.
 
 use colored::Colorize;
 use std::path::PathBuf;
@@ -12,6 +14,7 @@ use crate::errors::{ExitStatus, FormalityError, IoError};
 
 /// Runs the `fml schema` command: generates the JSON Schema for
 /// `formality.toml` and either writes it to `output` or prints it to stdout.
+#[must_use]
 pub fn run_schema(output: Option<PathBuf>) -> ExitStatus {
   let schema_json = generate_schema();
   if let Some(target_file) = output {

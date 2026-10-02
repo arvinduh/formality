@@ -42,8 +42,10 @@ mind:
    are verified and never overwritten without explicit confirmation.
 5. **Automated Tool Management (`fml doctor --install`)**: Missing binary
    dependencies are detected and can be auto-installed via package managers
-   (`cargo`, `npm`, `pip`, `brew`, `rustup`). `fml fmt -i` and `fml lint -i`
-   support on-demand installations.
+   (`cargo`, `npm`, `pip`, `brew`, `rustup`). `fml doctor --install` is the only
+   install spelling — `fmt`/`lint`/`fix` no longer take `-i`/`--install`
+   (removed in v0.3.0, #282); provision tools with `fml doctor --install` first,
+   then run them.
 6. **Blazing Parallel Runner**: Multi-threaded execution (`rayon`) runs
    independent language surfaces concurrently.
 7. **Always Dogfood**: Always test and verify with the freshly built binary
@@ -51,7 +53,9 @@ mind:
    your `PATH`.
 8. **Deterministic Exit Codes**:
    - `0`: All clean / passed.
-   - `1`: Formatting or lint violations found, or config drift detected.
+   - `1`: Formatting or lint violations found, config drift detected, or a
+     required tool is missing (opt out with `--allow-missing` on `fmt`, `lint`,
+     and `fix`).
    - `2`: Underlying execution error or operational failure.
 
 ---
@@ -88,7 +92,7 @@ mind:
 3. **Install tool dependencies (optional/on-demand)**:
 
    ```bash
-   cargo run -q -- install
+   cargo run -q -- doctor --install
    ```
 
 ---
@@ -100,8 +104,8 @@ mind:
 - `src/surfaces`: Per-language surface implementations (1 file per surface). See
   [`docs/new-surface-guide.md`](docs/new-surface-guide.md) to add a surface.
 - `src/ui`: CLI table rendering and user interface formatting.
-- `src/commands`: Subcommand implementations (`fmt`, `lint`, `sync`, `install`,
-  `table`, etc.).
+- `src/commands`: Subcommand implementations (`fmt`, `lint`, `fix`, `sync`,
+  `doctor`, `init`, etc.).
 - `docs/`: In-depth specification docs
   ([`facet-rosetta.md`](docs/facet-rosetta.md),
   [`language-surfaces.md`](docs/language-surfaces.md),
@@ -116,13 +120,14 @@ Before committing or submitting a pull request, you **must** run and pass the
 presubmit suite:
 
 ```bash
-cargo test --lib -q && cargo clippy --all-targets -- -D warnings
+cargo test && cargo clippy --all-targets -- -D warnings
 cargo run -q -- fmt
 ```
 
 ### Explanation of Presubmit Commands
 
-1. `cargo test --lib -q`: Runs library unit tests silently.
+1. `cargo test`: Runs the full unit and integration suite (`--lib` alone skips
+   `tests/`).
 2. `cargo clippy --all-targets -- -D warnings`: Ensures zero Clippy warnings
    across all targets (lib, bins, tests, examples).
 3. `cargo run -q -- fmt`: Dogfoods the freshly built `fml` binary to format the
@@ -170,19 +175,28 @@ When triggered on `git commit`, the hook:
 
 1. Builds the local binary fresh with `cargo build -q --bin fml` (exiting with
    failure if the build fails).
-2. Runs mechanical formatting on staged files: `$FML fmt --staged`.
-3. Runs semantic linting on staged files: `$FML lint --staged`.
+2. Runs mechanical formatting on staged files:
+   `$FML fmt --staged --allow-missing`.
+3. Runs semantic linting on staged files: `$FML lint --staged --allow-missing`.
+
+Both steps pass `--allow-missing` so a missing _optional_ linter on your machine
+doesn't block a commit that stages files for that surface (#163) — the surface
+still prints `[MISS]`, it just doesn't fail the hook on its own. A real
+formatting/lint violation or an execution error still fails the commit
+regardless.
 
 ---
 
 ## Pull Request Process
 
-1. **Create a topic branch**: Branch off `main` with a descriptive name:
+1. **Create a topic branch** off `main`, named `<type>/<slug>`: the Conventional
+   Commit type, then the fewest words that identify the change. No issue number;
+   the PR body carries `Fixes #N`.
 
    ```bash
-   git checkout -b feat/my-new-feature
+   git checkout -b feat/diagnostics
    # or
-   git checkout -b fix/issue-123
+   git checkout -b fix/spawn
    ```
 
 2. **Make your changes**: Ensure all existing comments and docstrings unrelated
@@ -199,24 +213,31 @@ When triggered on `git commit`, the hook:
    git push -u origin <branch-name>
    ```
 
-6. **Open a Pull Request**: Use `gh pr create`:
+6. **Open a Pull Request**: title it `<type>(<scope>): <summary>` (it becomes
+   the squash commit subject) and put `Fixes #N` in the body:
 
    ```bash
-   gh pr create --title "type(scope): summary (#issue)" --body "Description of changes... Closes #issue"
+   gh pr create --title "fix(config): resolve editorconfig drift false positive" --body "Fixes #88"
    ```
 
-7. **CI PR Checks (Tier 2 Quality Gate)**: GitHub Actions executes 3 parallel
-   jobs on every PR:
-   - **`Library Tests`** (_required branch protection status check_): Runs
-     `cargo clippy --all-targets -- -D warnings` and the full unit/integration
-     test suite (`cargo test --verbose`).
+7. **CI PR Checks (Tier 2 Quality Gate)**: `.github/workflows/pr-check.yml` runs
+   3 parallel jobs on every PR. Branch protection on `main` requires
+   `Library Tests` and `Formality Dogfooding`; see
+   [`AGENTS.md`](AGENTS.md#ci-and-merging) for the merge rules.
+   - **`Library Tests`**: Runs `cargo clippy --all-targets -- -D warnings` and
+     the full unit/integration test suite (`cargo test --verbose`).
    - **`Formality Dogfooding`**: Runs `fml fmt --check` and `fml lint` against
-     this repository's live tree, verifies schema drift
+     this repository's live tree, and verifies schema drift
      (`cargo test --test schema_drift` vs. `schema/formality.schema.json`;
-     regenerate via `UPDATE_SCHEMA=1 cargo test -j 2 --test schema_drift`), and
-     enforces forward `SCHEMA_VERSION` progression in `src/config/schema.rs`.
+     regenerate via `UPDATE_SCHEMA=1 cargo test -j 2 --test schema_drift`).
    - **`Security Audit`**: Runs `cargo audit` against the Rust advisory
      database.
+
+   The separate `Install Regression` workflow
+   (`.github/workflows/install-regression.yml`) runs only on PRs touching its
+   `paths` list. Its `Fresh-Install Regression` jobs, a 3-OS matrix, exercise
+   `fml doctor --install`; they are not required status checks, so a PR the
+   workflow skips is never left waiting on them.
 
 ---
 
@@ -226,24 +247,25 @@ Commits **must** strictly follow the
 [Conventional Commits](https://www.conventionalcommits.org/) specification:
 
 ```text
-<type>(<scope>): <description> (Fixes #<issue>)
+<type>(<scope>): <description>
 ```
+
+The issue reference goes in the PR body as `Fixes #N`, not in each commit.
 
 ### Commit Types
 
 - `feat`: A new feature or surface capability
 - `fix`: A bug fix
-- `docs`: Documentation updates (e.g.,
-  `docs(community): add CONTRIBUTING.md (Fixes #129)`)
+- `docs`: Documentation updates (e.g., `docs(community): add CONTRIBUTING.md`)
 - `refactor`: Code restructuring without functional changes
 - `test`: Adding or modifying unit/integration tests
 - `chore`: Maintenance, dependencies, or workflow changes
 
 ### Example Commit Messages
 
-- `feat(engine): add multi-threaded execution for typst surface (Fixes #42)`
-- `fix(config): resolve drift check false positive in editorconfig (Fixes #88)`
-- `docs(community): add CONTRIBUTING.md and issue templates (Fixes #129)`
+- `feat(engine): add multi-threaded execution for typst surface`
+- `fix(config): resolve drift check false positive in editorconfig`
+- `docs(community): add CONTRIBUTING.md and issue templates`
 
 ---
 
@@ -253,8 +275,9 @@ Commits **must** strictly follow the
   requests.
 - **Ask before modifying**:
   - Branch protection rules or required CI status check names.
-  - Project version bumps (managed by dedicated release automation, not manual
-    edits).
+  - Project version bumps: no tool bumps the version; a bump is a hand edit in a
+    dedicated `chore(release)` PR (see [`docs/release.md`](docs/release.md) and
+    [`AGENTS.md`](AGENTS.md#ask-first)).
 - **Never rely on global binaries**: Always test with `cargo run -q -- ...`.
 - **Preserve API contracts**: When modifying signatures, search and update all
   invocation sites across the repository.

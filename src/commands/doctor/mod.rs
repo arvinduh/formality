@@ -26,7 +26,7 @@ use crate::engine::version::{
 use crate::surfaces::{
   LanguageSurface, ToolInfo, all_surfaces, check_binary_exists,
   create_tool_command, default_registry, detect_surfaces_smart,
-  pinned_version_for,
+  install_chain_for, matches_name_or_alias, pinned_version_for,
 };
 use crate::ui::paths::display_path;
 use crate::ui::table::{
@@ -38,21 +38,8 @@ use std::collections::{HashMap, HashSet};
 use std::fmt::Write as _;
 use std::path::Path;
 
-/// Install a deduplicated list of missing tools.
-///
-/// Prints progress to stdout and returns `true` if every tool either
-/// installed successfully or already had a known auto-install command,
-/// `false` if any tool could not be installed.
-#[must_use]
-pub fn install_missing_tools(missing: &[ToolInfo]) -> bool {
-  // Standalone entry point (`fml fmt/lint/fix --install` preflight): no scan
-  // table to size the frame against, so use the plain 80-col cap. This caller
-  // prints no tally of its own, so it keeps the pass/fail bit only.
-  install_missing_tools_framed(missing, &Frame::capped()).all_ok
-}
-
-/// [`install_missing_tools`] rendered inside `frame` so `fml doctor --install`
-/// brackets this block with the same rule width as every other section it
+/// Installs a deduplicated list of missing tools, rendered inside `frame` so
+/// `fml doctor --install` brackets this block with the same rule width as every other section it
 /// prints (the "Installing…" progress block, then the Install Summary table).
 ///
 /// Returns the whole per-tool outcome set rather than just a pass/fail bit,
@@ -78,7 +65,7 @@ fn install_missing_tools_framed(
   println!("{}", frame.dim_rule(&palette));
 
   // Bootstrap cargo-binstall once, up front, if any tool here would prefer
-  // it and it isn't on PATH yet. Tools like typstyle/tinymist have no real
+  // it and it isn't on PATH yet. Tools like typstyle have no real
   // native package on any OS -- cargo-binstall (a prebuilt binary, fetched
   // from the crate's GitHub releases) is their only non-source-compile
   // install path everywhere, including Linux. Without this, a chain would
@@ -143,7 +130,7 @@ fn install_missing_tools_framed(
           // in `BINARY_CACHE` (`surfaces::tooling`). Evict that entry now
           // that the install just succeeded, so every lookup for the rest
           // of this process -- including the `Runner::run` pass that
-          // executes right after `install_missing_tools` returns -- sees
+          // executes right after `install_missing_tools_framed` returns -- sees
           // the binary on `PATH` instead of replaying the stale "not
           // found" result and reporting a tool we just installed as still
           // missing.
@@ -183,7 +170,7 @@ fn install_missing_tools_framed(
           // the binary isn't resolvable: there is nothing to probe, and an
           // unpinned tool must not pay for a probe it never needed.
           let expected = if on_path {
-            crate::surfaces::pinned_version_for(tool.binary)
+            pinned_version_for(tool.binary)
           } else {
             None
           };
@@ -219,9 +206,10 @@ fn install_missing_tools_framed(
               });
             }
             InstallOutcome::Warn => {
-              let actual_str = actual
-                .map(|v| v.to_string())
-                .unwrap_or_else(|| "an unparseable version".to_string());
+              let actual_str = actual.map_or_else(
+                || "an unparseable version".to_string(),
+                |v| v.to_string(),
+              );
               let expected_str =
                 expected.map(|v| v.to_string()).unwrap_or_default();
               println!(
@@ -300,18 +288,19 @@ fn install_missing_tools_framed(
         }
       }
     } else {
+      let install_hint = tool.effective_install_hint();
       println!(
-        "\n  {} No automatic package manager found for {}.\n    Manual install: {}",
+        "\n  {} {}\n    Manual install: {}",
         "[MISS]".yellow().bold(),
-        tool.binary.bold(),
-        tool.install_hint
+        miss_headline(tool.binary, std::env::consts::OS),
+        install_hint
       );
       all_ok = false;
       summary_rows.push(InstallSummaryRow {
         binary: tool.binary,
         installer: "-".to_string(),
         outcome: InstallOutcome::NoInstaller,
-        detail: tool.install_hint.to_string(),
+        detail: install_hint,
       });
     }
   }
@@ -334,8 +323,7 @@ fn install_missing_tools_framed(
 /// Install Summary table was rendered from, so the tally and that table can
 /// never disagree: there is only one source of truth for both.
 struct InstallRunReport {
-  /// `true` iff every attempted tool installed cleanly — the value the
-  /// pass/fail-only [`install_missing_tools`] entry point still returns.
+  /// `true` iff every attempted tool installed cleanly.
   all_ok: bool,
   /// One entry per tool this run attempted, in attempt order.
   rows: Vec<InstallSummaryRow>,
@@ -377,6 +365,21 @@ enum InstallOutcome {
   NoInstaller,
 }
 
+/// Says why `binary` got no install command on `os` (a
+/// [`std::env::consts::OS`] value): no step of its install chain can run
+/// there (`gofmt` has no chain, it ships with Go; `checkstyle` has only
+/// `brew` and `apt` steps, so none on Windows), or some step can and its
+/// package manager is not on `PATH`.
+fn miss_headline(binary: &str, os: &str) -> String {
+  let has_path = install_chain_for(binary)
+    .is_some_and(|chain| chain.iter().any(|method| method.runs_on(os)));
+  if has_path {
+    format!("No automatic package manager found for {}.", binary.bold())
+  } else {
+    format!("fml has no install path for {} on this OS.", binary.bold())
+  }
+}
+
 /// Decide what a successful install *command* actually accomplished, from
 /// the two facts the install site has just established: whether the binary
 /// now resolves on `PATH`, and — for a pinned tool only — what version it
@@ -406,7 +409,7 @@ fn classify_install_outcome(
 
 /// Renders and prints the post-install recap table as a framed section, using
 /// the caller's `frame` so its rule matches the rest of the command's output:
-/// one row per tool this `install_missing_tools` call attempted, its
+/// one row per tool this `install_missing_tools_framed` call attempted, its
 /// installer, and the outcome. A no-op if `rows` is empty.
 fn print_install_summary_table(rows: &[InstallSummaryRow], frame: &Frame) {
   if rows.is_empty() {
@@ -453,47 +456,10 @@ fn print_install_summary_table(rows: &[InstallSummaryRow], frame: &Frame) {
   );
 }
 
-/// Collect the tools required by `surfaces` for the given actions (format and/or
-/// lint) that need installing — genuinely missing, or present but
-/// [`ToolStatus::Stale`] *and* the selected installer carries a matching
-/// inline pin — then install them. If a stale tool's selected installer
-/// cannot pin to `expected_binary_version`, reinstall is skipped with an
-/// explanatory warning. Returns `false` if any scheduled tool could not be
-/// installed.
-#[must_use]
-pub fn preflight_install(
-  surfaces: &[Box<dyn LanguageSurface>],
-  config: &FormalityConfig,
-  for_fmt: bool,
-  for_lint: bool,
-) -> bool {
-  let mut to_install: Vec<ToolInfo> = Vec::new();
-
-  for (tool, lookup) in required_tools(surfaces, config, for_fmt, for_lint) {
-    let selected_pin =
-      crate::surfaces::selected_pinned_version_for(tool.binary);
-    if needs_install(
-      lookup.is_installed,
-      lookup.status.as_ref(),
-      selected_pin.as_ref(),
-    ) {
-      to_install.push(tool);
-    } else if lookup.is_installed
-      && let Some(ToolStatus::Stale { current, pinned }) =
-        lookup.status.as_ref()
-    {
-      let expl = stale_unpinnable_explanation(tool.binary, current, pinned);
-      eprintln!("  {} {}", "[WARN] ".yellow().bold(), expl);
-    }
-  }
-
-  install_missing_tools(&to_install)
-}
-
-/// Preflight check for `fml fmt`, `fml lint`, and `fml fix` without `--install`:
-/// scans all required tools for the active target surfaces and emits a non-blocking
-/// warning to stderr if any tool is present but [`ToolStatus::Stale`] relative to
-/// its pinned version.
+/// Preflight check for `fml fmt`, `fml lint`, and `fml fix`: scans all
+/// required tools for the active target surfaces and emits a non-blocking
+/// warning to stderr if any tool is present but [`ToolStatus::Stale`]
+/// relative to its pinned version.
 pub fn preflight_warn_stale_tools(
   surfaces: &[Box<dyn LanguageSurface>],
   config: &FormalityConfig,
@@ -513,10 +479,7 @@ pub fn preflight_warn_stale_tools(
 
 /// Collects the deduplicated set of tools that `surfaces` requires for the
 /// given actions (format and/or lint), each paired with its resolved
-/// [`ToolLookupResult`]. Shared by [`preflight_install`] and
-/// [`preflight_warn_stale_tools`], which both need "which tools does this run
-/// require" answered identically: same dedup-by-binary rule, same
-/// fmt/lint requirement predicate, same lookup call per tool.
+/// [`ToolLookupResult`], for [`preflight_warn_stale_tools`].
 fn required_tools(
   surfaces: &[Box<dyn LanguageSurface>],
   config: &FormalityConfig,
@@ -557,7 +520,7 @@ pub fn format_stale_tool_warning(
   pinned: &Version,
 ) -> String {
   format!(
-    "tool '{binary}' is stale (v{current} != pinned v{pinned}); run 'fml doctor --install' or pass '--install' to update"
+    "tool '{binary}' is stale (v{current} != pinned v{pinned}); run 'fml doctor --install' to update"
   )
 }
 
@@ -577,49 +540,6 @@ pub(crate) fn format_version_details(
   match detail {
     Some(d) => format!(" (v{current} {d}{raw_suffix})"),
     None => format!(" (v{current}{raw_suffix})"),
-  }
-}
-
-/// Pure helper that collects stale tool warning messages for a sequence of
-/// (tool_binary_name, status) pairs, deduplicating tool names.
-#[must_use]
-pub fn collect_stale_tool_warnings<'a>(
-  tools: impl IntoIterator<Item = (&'a str, Option<&'a ToolStatus>)>,
-) -> Vec<String> {
-  let mut warnings = Vec::new();
-  let mut seen = HashSet::new();
-  for (binary, status) in tools {
-    if !seen.insert(binary) {
-      continue;
-    }
-    if let Some(ToolStatus::Stale { current, pinned }) = status {
-      warnings.push(format_stale_tool_warning(binary, current, pinned));
-    }
-  }
-  warnings
-}
-
-/// Whether a tool needs (re)installing: genuinely absent, or present but
-/// [`ToolStatus::Stale`] *and* the selected installer carries an inline pin
-/// matching `expected_binary_version`. If the tool is stale but the selected
-/// installer cannot pin to `expected_binary_version` (e.g. an unpinned system
-/// package manager like `brew`), reinstall is skipped to prevent an unresolvable
-/// reinstall loop (#11).
-/// Split out as a pure function, independent of any subprocess probing, so
-/// the reinstall decision itself is unit-testable (see `tests.rs`) without
-/// needing a real stale/pinned binary on `PATH`.
-#[must_use]
-pub fn needs_install(
-  is_installed: bool,
-  status: Option<&ToolStatus>,
-  selected_pin: Option<&Version>,
-) -> bool {
-  if !is_installed {
-    return true;
-  }
-  match status {
-    Some(ToolStatus::Stale { pinned, .. }) => selected_pin == Some(pinned),
-    _ => false,
   }
 }
 
@@ -684,9 +604,6 @@ pub fn run_doctor(
   // .gitignore Cache Hygiene Check
   print_gitignore_hygiene(root, &surfaces, &frame, &palette);
 
-  // Configuration Schema Version Check
-  print_schema_version_check(root, &frame, &palette);
-
   // Auto-install mode. Genuinely `[MISS]`ing tools and `[STALE]` tools whose
   // selected installer carries a matching pin are reinstalled. If a stale tool's
   // selected installer cannot pin to `expected_binary_version`, reinstall is
@@ -696,14 +613,14 @@ pub fn run_doctor(
     Vec::new();
 
   for tool in &scan.stale {
-    let expected = crate::surfaces::pinned_version_for(tool.binary);
+    let expected = pinned_version_for(tool.binary);
     let selected_pin =
       crate::surfaces::selected_pinned_version_for(tool.binary);
     if let Some(ref exp) = expected {
       if selected_pin.as_ref() == Some(exp) {
         to_install.push(tool.clone());
       } else {
-        let current = crate::engine::version::probe_tool_version(tool.binary)
+        let current = probe_tool_version(tool.binary)
           .unwrap_or_else(|| Version::new(0, 0, 0));
         unpinnable_stale_tools.push((tool.clone(), current, exp.clone()));
       }
@@ -782,7 +699,11 @@ fn clippy_probe_succeeds(driver_bin: &str, cargo_bin: &str) -> bool {
 /// "installed" means (#106). [`check_binary_exists`] is a memoized
 /// `which::which` — a filesystem lookup, no process spawn — so asking it
 /// again after an install costs nothing and is not a second round of version
-/// probes.
+/// probes. (A cache miss for a Go-installed binary can spawn `go env` once,
+/// as the lookup-time fallback for `$GOBIN`/`$GOPATH/bin` -- see
+/// `surfaces::tooling::resolve_via_known_install_dir` -- but that result is
+/// memoized in the same `BINARY_CACHE` too, so it still costs nothing on
+/// the second ask.)
 fn tool_is_on_path(binary: &str) -> bool {
   // The rust surface (and `probe_tool_version`/`get_raw_tool_version`
   // elsewhere in this crate) register/accept the clippy tool under any of
@@ -1164,10 +1085,10 @@ fn print_unconfigured_languages(
   };
   let mut unconfigured = Vec::new();
   for surface in all_surfaces() {
-    if !explicit_langs.iter().any(|l| {
-      l.eq_ignore_ascii_case(surface.name())
-        || surface.aliases().iter().any(|a| a.eq_ignore_ascii_case(l))
-    }) && surface.detect(root)
+    if !explicit_langs
+      .iter()
+      .any(|l| matches_name_or_alias(surface.name(), surface.aliases(), l))
+      && surface.detect(root)
     {
       unconfigured.push(surface.name());
     }
@@ -1330,46 +1251,6 @@ fn print_gitignore_hygiene(
   );
 }
 
-fn print_schema_version_check(root: &Path, frame: &Frame, palette: &Palette) {
-  let Some(config_path) = crate::config::find_project_config(root) else {
-    return;
-  };
-  let status = crate::config::schema::check_schema_version_file(&config_path);
-  let crate::config::schema::SchemaStatus::Stale { version, expected } = status
-  else {
-    return;
-  };
-  let filename = config_path
-    .file_name()
-    .and_then(|n| n.to_str())
-    .unwrap_or("formality.toml");
-
-  let mut body = String::new();
-  let _ = writeln!(
-    body,
-    "  • {} {} references outdated schema version 's{}' (current: 's{}')",
-    "[WARN] ".yellow().bold(),
-    filename.bold(),
-    version.to_string().yellow().bold(),
-    expected.to_string().green().bold()
-  );
-  let _ = write!(
-    body,
-    "    {} Update #:schema directive in {} to pin 's{}'.",
-    "Tip:".cyan().bold(),
-    filename.bold(),
-    expected.to_string().bold()
-  );
-  println!(
-    "{}",
-    frame.section(
-      &"Configuration Schema Version:".yellow().bold().to_string(),
-      &frame.wrap_body(&body),
-      palette,
-    )
-  );
-}
-
 /// Builds the user-facing explanation for why a stale tool was not scheduled
 /// for auto-reinstall (#11).
 #[must_use]
@@ -1453,5 +1334,4 @@ fn print_sync_notice(frame: &Frame, palette: &Palette) {
 }
 
 #[cfg(test)]
-#[allow(missing_docs, clippy::missing_errors_doc, clippy::missing_panics_doc)]
 mod tests;

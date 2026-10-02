@@ -13,9 +13,10 @@ name: PR Check
 #      fix_command.rs by calling fml::run_with_args(...) in-process - so
 #      this job already behaviorally validates that fmt/lint/sync produce
 #      correct output. That's also why this job builds fml and runs
-#      `fml install` before the test suite: this job's runner starts with
-#      none of those tools installed, and it's a separate parallel runner
-#      from Job 2, so Job 2 installing its own copies doesn't help it.
+#      `fml doctor --install` before the test suite: this job's runner
+#      starts with none of those tools installed, and it's a separate
+#      parallel runner from Job 2, so Job 2 installing its own copies
+#      doesn't help it.
 #   2. Formality Dogfooding - runs fml against THIS repo's own live tree.
 #      Job 1 already proves fmt/lint *work correctly*; this job proves this
 #      repo's checked-in state actually *complies* with them right now -
@@ -27,14 +28,13 @@ name: PR Check
 #      config drift isn't a thing this repo's own tree can have (see #184
 #      discussion / design note). This job also asserts the checked-in
 #      schema/formality.schema.json has no drift from
-#      what the freshly built binary generates, and that any change to it is
-#      paired with a SCHEMA_VERSION bump in src/config/schema.rs (see #185).
+#      what the freshly built binary generates.
 #   3. Security Audit - cargo audit against the advisory database.
 #
-# "Library Tests" is the required branch-protection status check name -
-# GitHub branch protection matches on job `name`, not job id, so keep that
-# name exactly if this job is ever renamed or restructured, or update
-# branch protection in lockstep.
+# "Library Tests" and "Formality Dogfooding" are the required
+# branch-protection status check names - GitHub branch protection matches on
+# job `name`, not job id, so keep those names exactly if either job is ever
+# renamed or restructured, or update branch protection in lockstep.
 on:
   pull_request:
     branches: ["main"]
@@ -83,7 +83,7 @@ jobs:
         # on PATH before `cargo test --verbose` runs, mirroring Job 2 and
         # the old ci.yml. Without this, e.g. fix_command.rs's TOML-surface
         # tests fail on a clean runner with no taplo installed.
-        run: ./target/debug/fml install
+        run: ./target/debug/fml doctor --install
 
       - name: Run full test suite
         run: cargo test --verbose
@@ -98,8 +98,8 @@ jobs:
       - name: Set up Rust toolchain
         # clippy is required (not just rustfmt) because `fml lint` on the
         # rust surface is `cargo clippy` - without the component, `fml
-        # install`/`fml doctor` won't catch the gap either: they probe
-        # clippy-driver via `which`, and rustup's shim at
+        # doctor --install`/`fml doctor` won't catch the gap either: they
+        # probe clippy-driver via `which`, and rustup's shim at
         # ~/.cargo/bin/clippy-driver exists even when the component isn't
         # installed, so it false-positives as [READY].
         uses: dtolnay/rust-toolchain@1.98.1
@@ -113,7 +113,7 @@ jobs:
         run: cargo build
 
       - name: Install tool dependencies via fml
-        run: ./target/debug/fml install
+        run: ./target/debug/fml doctor --install
 
       - name: Check formatting
         run: ./target/debug/fml fmt --check
@@ -134,255 +134,6 @@ jobs:
           ./target/debug/fml schema --output schema/formality.schema.json
           ./target/debug/fml fmt schema/formality.schema.json
           git diff --exit-code schema/formality.schema.json
-
-      - name: Enforce schema version progression
-        # If schema/formality.schema.json actually changed relative to main,
-        # SCHEMA_VERSION in src/config/schema.rs must have INCREASED (not just
-        # differed) - a schema edit without a forward version bump means
-        # consumers pinning `#:schema .../s{major}.{minor}/...` can silently
-        # drift onto a schema that no longer matches what they pinned, and a
-        # version *decrease* would break that pinning just as badly (see
-        # #185).
-        #
-        # The extraction below deliberately does NOT match the const
-        # declaration as one literal line. rustfmt (max_width = 80, resolved
-        # inline by fml from this repo's formality.toml `line_length`)
-        # reformats
-        # `SchemaVersion { major: 1, minor: 0 }` onto multiple lines as soon
-        # as either number needs 2 digits (verified locally: `minor: 10` or
-        # `major: 10` already overflow 80 cols), which would make a
-        # single-line regex match nothing - silently, since this step runs
-        # under `set -e` with no pipefail. Squashing whitespace first keeps
-        # the same anchor text working regardless of how rustfmt wraps the
-        # literal. Do not "simplify" this back to a one-line match - the
-        # very next minor bump (s1.10) is enough to break it.
-        #
-        # `| head -n1` on each extraction is deliberate, not redundant with
-        # `grep -o`: if the anchor pattern ever matches twice (e.g. a second
-        # occurrence of the literal `SCHEMA_VERSION: SchemaVersion =
-        # SchemaVersion { major:` text elsewhere in the squashed file), `grep
-        # -o` prints every match, collapsing `$pr_major` etc. into a
-        # multi-line value like `$'9\n1'`. `-m1` on grep does NOT fix this -
-        # it caps matching *lines*, and the squashed source is one line - so
-        # the numeric `[ ... ]` comparisons below would then throw "integer
-        # expression expected" from *inside* an `if` condition, which `set
-        # -e` does not abort on; the condition just evaluates false and the
-        # gate silently waves the change through with a garbled message
-        # instead of failing. `head -n1` collapses to the first match so the
-        # numeric comparison (or the empty-match guard) behaves correctly
-        # instead of failing open.
-        run: |
-          git fetch --depth=1 origin main
-
-          extract_major() { tr -d ' \n' | grep -oP 'SCHEMA_VERSION:SchemaVersion=SchemaVersion\{major:\K\d+' | head -n1 || true; }
-          extract_minor() { tr -d ' \n' | grep -oP 'SCHEMA_VERSION:SchemaVersion=SchemaVersion\{major:\d+,minor:\K\d+' | head -n1 || true; }
-
-          if ! git diff --quiet origin/main -- schema/formality.schema.json; then
-            main_major=$(git show origin/main:src/config/schema.rs | extract_major)
-            main_minor=$(git show origin/main:src/config/schema.rs | extract_minor)
-            pr_major=$(extract_major < src/config/schema.rs)
-            pr_minor=$(extract_minor < src/config/schema.rs)
-
-            if [ -z "$main_major" ] || [ -z "$main_minor" ] || [ -z "$pr_major" ] || [ -z "$pr_minor" ]; then
-              echo "::error file=src/config/schema.rs::could not parse SCHEMA_VERSION from src/config/schema.rs (main: major='$main_major' minor='$main_minor', PR: major='$pr_major' minor='$pr_minor'). Has the SCHEMA_VERSION declaration been reformatted in a way the extraction pattern doesn't handle? Update the pattern in .github/workflows/pr-check.yml."
-              exit 1
-            fi
-
-            if [ "$pr_major" -lt "$main_major" ] || { [ "$pr_major" -eq "$main_major" ] && [ "$pr_minor" -le "$main_minor" ]; }; then
-              echo "::error file=src/config/schema.rs::schema/formality.schema.json changed relative to main, but SCHEMA_VERSION was not incremented forward (main: ${main_major}.${main_minor}, PR: ${pr_major}.${pr_minor}). Bump SCHEMA_VERSION (major or minor, strictly forward) in src/config/schema.rs alongside any schema change."
-              exit 1
-            fi
-            echo "schema/formality.schema.json changed and SCHEMA_VERSION was incremented forward (${main_major}.${main_minor} -> ${pr_major}.${pr_minor}) - OK."
-          else
-            echo "schema/formality.schema.json unchanged relative to main - no version bump required."
-          fi
-
-  install-regression:
-    # Not currently a required branch-protection status check (only
-    # "Library Tests" is) -- adding one is a call for whoever owns branch
-    # protection to make deliberately, not a side effect of adding this job.
-    # This job exists specifically to catch a class of bug `test-lib`'s
-    # ubuntu-only `fml install` step could not: a tool installed within an
-    # `fml ... --install` invocation being reported ToolMissing by the very
-    # next step of that *same* invocation, because a per-process PATH-lookup
-    # cache (`surfaces::tooling::BINARY_CACHE`) memoized the pre-install
-    # "not found" result and was never evicted after the install succeeded.
-    # The bug itself is platform-independent (pure in-process caching, no
-    # OS-specific code path), but the concrete report that caught it was on
-    # a Windows runner with none of the tools pre-cached -- exactly the kind
-    # of clean-machine, first-run state this matrix reproduces on all three
-    # OSes rather than relying on it to only ever repro on Windows again.
-    # Also catches two more classes in the same family, where the binary
-    # genuinely is not on this process's PATH rather than merely
-    # mis-cached: a Scoop/winget install registering its new PATH entry in
-    # the Windows registry, which an already-running process's environment
-    # block never picks up on its own (see
-    # `tooling::refresh_windows_path_from_registry`), and `go install`
-    # writing into $GOBIN/$GOPATH/bin, which is on PATH only if the user
-    # put it there -- it is not on the stock ubuntu or windows runner
-    # images, so `goimports` reproduces this every run (see
-    # `tooling::refresh_go_install_path`). And exercises the cargo-binstall
-    # auto-bootstrap path (typstyle has no native package on any OS -- see
-    # `tooling::ensure_cargo_binstall`).
-    name: Fresh-Install Regression (${{ matrix.os }})
-    strategy:
-      fail-fast: false
-      matrix:
-        os: [ubuntu-latest, macos-latest, windows-latest]
-    runs-on: ${{ matrix.os }}
-    steps:
-      - name: Checkout repository
-        uses: actions/checkout@v7
-
-      - name: Set up Rust toolchain
-        uses: dtolnay/rust-toolchain@1.98.1
-        with:
-          components: clippy, rustfmt
-
-      - name: Set up Rust cache
-        # cache-bin: false is what makes "fresh install" true. The default
-        # (true) also caches ~/.cargo/bin, which persists every tool a
-        # previous run of this job installed with cargo/cargo-binstall
-        # (typstyle, taplo, ...) into the next run -- so those tools were
-        # already on PATH before `fml fmt --install` ran and their install
-        # chains, including the cargo-binstall bootstrap this job is meant
-        # to exercise, were never entered at all. The workspace target
-        # cache (what actually makes this job fast) is unaffected.
-        uses: Swatinem/rust-cache@v2
-        with:
-          cache-bin: "false"
-
-      - name: Set up a JDK google-java-format can run on
-        # google-java-format 1.28+ requires JDK 21; the stock ubuntu runner
-        # image still defaults to JDK 17, on which the formatter dies with a
-        # NoClassDefFoundError for an internal javac class. That is a
-        # property of the runner image, not of fml's install chain -- but it
-        # left the java surface permanently [FAIL] in this job's output,
-        # which is exactly the kind of standing red that trains people to
-        # stop reading it. (fml itself now explains that failure instead of
-        # dumping the raw stack trace; see `explain_jvm_incompatibility` in
-        # surfaces/java.rs.)
-        uses: actions/setup-java@v6
-        with:
-          distribution: temurin
-          java-version: "21"
-
-      - name: Build fml
-        run: cargo build
-
-      - name: Scaffold a synthetic project covering every registered surface
-        # One file per surface in surfaces::registry::default_registry() (12
-        # total, kept in sync by hand -- see the Rust unit test in this repo
-        # that also enumerates them), in a scratch dir outside the checkout
-        # so it can't collide with this repo's own formality.toml / dogfood
-        # state. Exercises every tool's install chain on all three OSes, not
-        # just the handful the original report happened to touch.
-        #
-        # Sample.java and Sample.kt are PascalCase because their own
-        # toolchains require it: ktlint's standard:filename rule fails a
-        # lowercase .kt outright (a violation that says nothing about
-        # installs, which is all this job is here to test).
-        shell: bash
-        run: |
-          set -e
-          mkdir -p "$RUNNER_TEMP/fml-install-regress"
-          cd "$RUNNER_TEMP/fml-install-regress"
-          {
-            echo '[global]'
-            echo 'indent_size = 2'
-            echo 'line_length = 80'
-            echo 'end_of_line = "lf"'
-            echo 'charset = "utf-8"'
-            echo 'insert_final_newline = true'
-            echo 'trim_trailing_whitespace = true'
-          } > formality.toml
-          printf 'fn main() {}\n' > sample.rs
-          printf 'x = 1\n' > sample.py
-          printf 'int main() { return 0; }\n' > sample.cpp
-          printf 'public class Sample {\n  public static void main(String[] args) {}\n}\n' > Sample.java
-          printf 'package main\n\nfunc main() {}\n' > sample.go
-          printf '# Title\n\nSome text.\n' > sample.md
-          printf 'key: value\n' > sample.yaml
-          printf '{}\n' > sample.json
-          printf 'key = "value"\n' > sample.toml
-          printf '= Heading\n\nSome text.\n' > sample.typ
-          printf 'const x = 1;\n' > sample.js
-          printf 'fun main() {}\n' > Sample.kt
-
-      - name: fml fmt --install on a runner with none of the tools pre-cached
-        # Deliberately does NOT gate on fml's own exit code: a tool that
-        # installs but doesn't land on its exact pinned version (a stale
-        # Homebrew bottle, an npm registry lag, ...) is a real but separate
-        # concern the existing convergence guard already surfaces as a
-        # [WARN] and a non-clean exit -- unrelated to, and much flakier
-        # than, the two things this job exists to catch (both below).
-        #
-        # Failure signature 1: `[MISS] <lang> Missing binary: <tool>` for a
-        # tool that has its own `[OK] Successfully installed <tool>` line
-        # earlier in the same output -- the in-process BINARY_CACHE
-        # staleness bug this job was written for, and the $GOBIN/$GOPATH/bin
-        # PATH gap in `tooling::refresh_go_install_path`. Scoped to exactly
-        # that intersection on purpose: a tool fml never claimed to install
-        # (no chain available on this runner) reporting [MISS] is a runner
-        # image gap, not a regression, and is reported as a notice instead.
-        #
-        # Failure signature 2: a convergence-guard [WARN] whose detail says
-        # "reports an unparseable version" specifically (as opposed to
-        # "reports X, expected Y" with two real version numbers, which is
-        # just an upstream package manager lagging the pin -- tolerated).
-        # "unparseable" fires when the post-install version probe couldn't
-        # resolve/run the binary *at all*, not just parse unexpected output
-        # -- e.g. Scoop/winget on Windows registering the new PATH entry in
-        # the registry, which an already-running process's environment
-        # block never picks up on its own.
-        shell: bash
-        env:
-          # This step parses tool names out of fml's own output, so it needs
-          # that output plain: the workflow-level CLICOLOR_FORCE/FORCE_COLOR
-          # (plus GITHUB_ACTIONS, which fml also treats as force-color) wrap
-          # every tool name in SGR escapes, and the extractions below would
-          # then capture escape bytes instead of a name -- matching nothing
-          # and passing the job no matter what fml actually reported.
-          # NO_COLOR takes precedence over all three (see
-          # `ui::no_color_requested`).
-          NO_COLOR: "1"
-        run: |
-          set +o pipefail
-          cd "$RUNNER_TEMP/fml-install-regress"
-          fml_bin="$GITHUB_WORKSPACE/target/debug/fml"
-          if [ "$RUNNER_OS" = "Windows" ]; then
-            fml_bin="$GITHUB_WORKSPACE/target/debug/fml.exe"
-          fi
-          "$fml_bin" fmt --install > fml-output.log 2>&1 || true
-          cat fml-output.log
-
-          # Only a [MISS] for a tool fml *itself just installed in this same
-          # invocation* is the regression described above. A bare
-          # `grep -q '[MISS]'` also fires for a tool this runner has no
-          # install chain for at all -- on macOS images that ship no Go,
-          # `gofmt`/`goimports` (fml deliberately installs formatters, not
-          # whole language toolchains) -- which is a gap in the runner
-          # image, not a bug in fml, and made this job unpassable on macOS
-          # for a reason no change to this repo could fix.
-          installed=$(sed -n 's/.*Successfully installed \([^ ]*\).*/\1/p' fml-output.log | sort -u)
-          missing=$(sed -n 's/.*Missing binary: \([^ ]*\).*/\1/p' fml-output.log | sort -u)
-          nonempty() { printf '%s\n' "$1" | sed '/^$/d'; }
-          regressed=$(comm -12 <(nonempty "$installed") <(nonempty "$missing"))
-
-          if [ -n "$regressed" ]; then
-            echo "::error::fml reported as [MISS] tools it had just installed within the same invocation: $(nonempty "$regressed" | tr '\n' ' ')-- see the log above. This is the exact regression this job exists to catch."
-            exit 1
-          fi
-          if grep -q 'unparseable version' fml-output.log; then
-            echo "::error::fml could not resolve/run a tool it just installed (reported 'an unparseable version', meaning the post-install probe found nothing to run at all, not just unexpected --version output) -- see the log above."
-            exit 1
-          fi
-
-          uninstallable=$(nonempty "$missing" | grep -vxF -f <(nonempty "$installed") || true)
-          if [ -n "$uninstallable" ]; then
-            echo "::notice::Tolerated: fml never reported installing these on $RUNNER_OS, so their absence is a runner-image gap rather than the install-then-miss regression this job guards: $(nonempty "$uninstallable" | tr '\n' ' ')"
-          fi
-          echo "No just-installed tool reported as missing, and no unresolvable just-installed tool -- regression check passed."
 
   security-audit:
     name: Security Audit

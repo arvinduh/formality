@@ -4,10 +4,7 @@
 //! [`super::ResolvedLangConfig`].
 
 use super::facets::LayoutFacet;
-use super::lang_table::{
-  build_resolved_lang_config, default_tool_opt, impl_default_tools_fn,
-  lang_options_table,
-};
+use super::lang_table::{build_resolved_lang_config, lang_options_table};
 use super::options::MarkdownOptions;
 use super::{
   CONFIG_FILE_CANDIDATES, ConfigError, FormalityConfig, GlobalConfig,
@@ -21,6 +18,7 @@ use std::path::{Path, PathBuf};
 
 impl FormalityConfig {
   /// Constructs an empty [`FormalityConfig`] with no global or language overrides.
+  #[cfg(test)]
   #[must_use]
   pub fn empty() -> Self {
     Self {
@@ -42,12 +40,11 @@ impl FormalityConfig {
   ///
   /// # Errors
   ///
-  /// Returns a [`ConfigError::Parse`] if the TOML is invalid or does not match the schema.
+  /// Returns a [`ConfigError::Parse`] if the TOML is invalid,
+  /// [`ConfigError::UnknownKey`] for a key this `fml` does not accept, or
+  /// [`ConfigError::InvalidValue`] if a value has the wrong type.
   pub fn parse_str(content: &str, path: &Path) -> Result<Self, ConfigError> {
-    toml::from_str(content).map_err(|source| ConfigError::Parse {
-      path: path.to_path_buf(),
-      source,
-    })
+    super::strict::parse(content, path)
   }
 
   /// Loads and parses configuration from a file path.
@@ -120,7 +117,7 @@ impl FormalityConfig {
       indent_size: Some(indent_size),
       line_length: Some(line_length),
       use_tabs: Some(use_tabs),
-      prose_wrap: prose_wrap.clone(),
+      prose_wrap,
     };
 
     ResolvedGlobalConfig {
@@ -148,7 +145,6 @@ impl FormalityConfig {
   ) -> ResolvedLangConfig {
     let lang_cfg = self.lang.get(lang_name);
 
-    let (default_fmt, default_lint) = default_tools_for_lang(lang_name);
     let (layout, indent_size, line_length, use_tabs, prose_wrap) =
       resolve_layout_for_lang(lang_name, lang_cfg, global);
 
@@ -172,12 +168,6 @@ impl FormalityConfig {
       lang_cfg,
       lang_name,
       lang_name.to_string(),
-      lang_cfg
-        .and_then(|l| l.format_tool.clone())
-        .or_else(|| default_fmt.map(std::string::ToString::to_string)),
-      lang_cfg
-        .and_then(|l| l.lint_tool.clone())
-        .or_else(|| default_lint.map(std::string::ToString::to_string)),
       indent_size,
       line_length,
       use_tabs,
@@ -208,15 +198,16 @@ impl FormalityConfig {
   }
 
   /// Returns the raw `[lang.X]` section names from this config whose `X`
-  /// does not match any known surface's canonical name or alias, as
-  /// registered in `registry`.
+  /// is not the canonical name of a surface registered in `registry`.
+  /// Parsing already rejects aliases and case variants, so what remains
+  /// names no surface at all.
   ///
   /// This intentionally does *not* flag section names that are valid
-  /// surface names/aliases but simply aren't detected/active in the
+  /// surface names but simply aren't detected/active in the
   /// current workspace (e.g. `[lang.rust]` in a Python-only repo) — that
   /// is a legitimate pre-configuration for a language the user expects to
-  /// add later, not a mistake. It only flags names that don't resolve to
-  /// *any* registered surface at all, which is almost always a typo (e.g.
+  /// add later, not a mistake. It only flags names that match no
+  /// registered surface, which is almost always a typo (e.g.
   /// `[lang.pythonn]`).
   #[must_use]
   pub fn unrecognized_lang_sections(
@@ -226,8 +217,8 @@ impl FormalityConfig {
     self
       .lang
       .keys()
-      .filter(|name| registry.resolve_canonical_name(name).is_none())
-      .map(std::string::String::as_str)
+      .filter(|name| registry.surfaces().iter().all(|s| s.name() != *name))
+      .map(String::as_str)
       .collect()
   }
 
@@ -293,13 +284,9 @@ impl FormalityConfig {
     let mut out = String::new();
     out.push_str("# formality configuration file\n");
     out.push_str("# https://github.com/arvinduh/formality\n");
-    // Reference the schema from the versioned GitHub Release asset under the schema tag
-    // (s{major}.{minor}, e.g. s1.0) — never from a raw git branch URL — so users are
-    // always pinned to a specific schema release rather than an ever-changing main branch.
-    out.push_str(&format!(
-      "#:schema https://github.com/arvinduh/formality/releases/download/s{}/formality.schema.json\n\n",
-      crate::config::schema::SCHEMA_VERSION
-    ));
+    out.push_str(
+      "#:schema https://github.com/arvinduh/formality/releases/latest/download/formality.schema.json\n\n",
+    );
     out.push_str("[global]\n");
     out.push_str("indent_size = 2\n");
     out.push_str("line_length = 80\n");
@@ -338,7 +325,7 @@ impl FormalityConfig {
 
     out.push_str(
       "\n# Detected language surfaces below. Uncomment a section to override\n\
-       # its defaults (indent_size, line_length, format_tool, lint_tool, ...).\n\
+       # its defaults (indent_size, line_length, ...).\n\
        # Leave commented out to keep using formality's built-in defaults.\n",
     );
     for lang in langs {
@@ -440,8 +427,6 @@ pub fn find_user_config() -> Option<PathBuf> {
 
   None
 }
-
-lang_options_table!(impl_default_tools_fn);
 
 fn resolve_layout_for_lang(
   lang_name: &str,

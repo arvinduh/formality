@@ -4,14 +4,25 @@
 use super::{
   DeclaresFacets, ExecutionContext, Facet, FacetSupport, LanguageSurface,
   NativeConfig, SurfaceResult, SurfaceStatus, ToolInfo, check_binary_exists,
-  create_tool_command, find_files_with_ext, find_manifest_upwards,
+  create_tool_command, find_manifest_upwards, install_hint_for,
   render_native_config, run_tool_command, sync_native_config,
   tool_missing_guard, tool_missing_result,
 };
 use serde::{Deserialize, Serialize};
-use std::path::{Path, PathBuf};
+use std::path::PathBuf;
 use std::process::Command;
 use std::time::Instant;
+
+/// Single source for `cargo`'s manual install hint: it has no `ALL_CHAINS`
+/// row (it ships with the Rust toolchain itself, via rustup, not through
+/// any package manager tracked there), so unlike `rustfmt`/`clippy-driver`
+/// below it can't be derived via `install_hint_for`. Referenced from both
+/// `tool_info` and the `lint()` guard so the two copies cannot drift apart
+/// the way #264 found taplo's hand-copied strings had -- which is exactly
+/// what had already happened here (`"Install Rust via rustup: ..."` vs
+/// `"Install Rust via ..."`, no `rustup` mention) before this constant
+/// existed.
+const CARGO_INSTALL_HINT: &str = "Install Rust via rustup: https://rustup.rs";
 
 /// Native `.rustfmt.toml` configuration representation for Rust formatting.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
@@ -157,6 +168,9 @@ pub(crate) fn build_rustfmt_fallback_cmd(
   c
 }
 
+/// Source file extensions owned by the Rust surface.
+const RUST_EXTENSIONS: &[&str] = &["rs"];
+
 impl LanguageSurface for RustSurface {
   fn name(&self) -> &'static str {
     "rust"
@@ -167,7 +181,7 @@ impl LanguageSurface for RustSurface {
   }
 
   fn file_extensions(&self) -> &[&'static str] {
-    &["rs"]
+    RUST_EXTENSIONS
   }
 
   fn clone_box(&self) -> Box<dyn LanguageSurface> {
@@ -178,9 +192,8 @@ impl LanguageSurface for RustSurface {
     true
   }
 
-  fn detect(&self, root: &Path) -> bool {
-    root.join("Cargo.toml").is_file()
-      || !find_files_with_ext(root, &["rs"], &[], &[], &[]).is_empty()
+  fn marker_files(&self) -> &[&'static str] {
+    &["Cargo.toml"]
   }
 
   fn tool_info(
@@ -191,21 +204,23 @@ impl LanguageSurface for RustSurface {
       ToolInfo {
         binary: "cargo",
         description: "Rust package manager & build tool",
-        install_hint: "Install Rust via rustup: https://rustup.rs",
+        // No ALL_CHAINS row: cargo ships with the Rust toolchain itself
+        // (via rustup) rather than through any package manager here.
+        install_hint: Some(CARGO_INSTALL_HINT),
         is_required_for_fmt: true,
         is_required_for_lint: true,
       },
       ToolInfo {
         binary: "rustfmt",
         description: "Rust code formatter",
-        install_hint: "Run: rustup component add rustfmt",
+        install_hint: None,
         is_required_for_fmt: true,
         is_required_for_lint: false,
       },
       ToolInfo {
         binary: "clippy-driver",
         description: "Rust linter (cargo clippy)",
-        install_hint: "Run: rustup component add clippy",
+        install_hint: None,
         is_required_for_fmt: false,
         is_required_for_lint: true,
       },
@@ -222,11 +237,11 @@ impl LanguageSurface for RustSurface {
         self.name(),
         start,
         "cargo / rustfmt",
-        "Run: rustup component add rustfmt",
+        &install_hint_for("rustfmt"),
       );
     }
 
-    let files = ctx.matched_files(&["rs"]);
+    let files = ctx.matched_files(RUST_EXTENSIONS);
     if let Some(res) = ctx.early_out_if_empty(&files, self.name(), start) {
       return res;
     }
@@ -297,12 +312,9 @@ impl LanguageSurface for RustSurface {
   fn lint(&self, ctx: &ExecutionContext, fix: bool) -> SurfaceResult {
     let start = Instant::now();
 
-    if let Some(res) = tool_missing_guard(
-      self.name(),
-      "cargo",
-      start,
-      Some("Install Rust via https://rustup.rs"),
-    ) {
+    if let Some(res) =
+      tool_missing_guard(self.name(), "cargo", start, Some(CARGO_INSTALL_HINT))
+    {
       return res;
     }
 
@@ -350,7 +362,6 @@ impl LanguageSurface for RustSurface {
 }
 
 #[cfg(test)]
-#[allow(missing_docs, clippy::missing_errors_doc, clippy::missing_panics_doc)]
 mod tests {
   use super::*;
   use crate::config::ResolvedLangConfig;
@@ -584,9 +595,7 @@ mod tests {
       "--edition flag must be passed to rustfmt"
     );
     assert_eq!(
-      args
-        .get(edition_idx.unwrap() + 1)
-        .map(std::string::String::as_str),
+      args.get(edition_idx.unwrap() + 1).map(String::as_str),
       Some("2024"),
       "edition value must be 2024"
     );
@@ -596,9 +605,7 @@ mod tests {
       "--config flag must be passed to rustfmt"
     );
     assert_eq!(
-      args
-        .get(config_idx.unwrap() + 1)
-        .map(std::string::String::as_str),
+      args.get(config_idx.unwrap() + 1).map(String::as_str),
       Some("max_width=80")
     );
     assert!(!args.contains(&"--check".to_string()));
@@ -620,7 +627,7 @@ mod tests {
     assert_eq!(
       check_args
         .get(check_edition_idx.unwrap() + 1)
-        .map(std::string::String::as_str),
+        .map(String::as_str),
       Some("2021")
     );
     assert!(check_args.contains(&"--check".to_string()));

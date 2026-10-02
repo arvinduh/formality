@@ -12,9 +12,9 @@ module map) · [Facet Rosetta](docs/facet-rosetta.md) (the canonical
 cross-language config vocabulary) ·
 [Language Surface Guides](docs/language-surfaces.md) (per-surface tools, config,
 and behavior) · [Adding a New Surface](docs/new-surface-guide.md) ·
-[`fml table` Spec](docs/table-spec.md) · [Style Guide](docs/style-guide.md) ·
-[Release Procedure](docs/release.md) ·
-[Compatibility Matrix](docs/compatibility.md) · [ADRs](docs/adr/README.md)
+[Table Spec](docs/table-spec.md) (`fml::ui::table`) ·
+[Style Guide](docs/style-guide.md) · [Release Procedure](docs/release.md) ·
+[ADRs](docs/adr/README.md)
 
 ---
 
@@ -31,15 +31,17 @@ and behavior) · [Adding a New Surface](docs/new-surface-guide.md) ·
   warns instead of overwriting them.
 - **Automated tool installer (`fml doctor --install`)**: Detects missing
   binaries and auto-installs them via system package managers (`cargo`, `npm`,
-  `pip`, `brew`, `rustup`). Pass `--install` / `-i` to `fml fmt` or `fml lint`
-  to install on-demand before the run — no separate setup step needed.
+  `pip`, `brew`, `rustup`). It is the only install step — run it once before
+  `fml fmt` / `fml lint` / `fml fix`, no separate setup script needed.
 - **Blazing parallel runner**: Runs independent language surfaces concurrently
   using multi-threaded execution (`rayon`).
 - **Fine-grained targeting**: Target specific files, directories, Git staged
   (`--staged`), or modified files (`--changed`).
 - **Deterministic exit codes**:
   - `0`: All clean / passed.
-  - `1`: Formatting or lint violations found, or config drift detected.
+  - `1`: Formatting or lint violations found, config drift detected, or a
+    required tool is missing (opt out with `--allow-missing` on `fmt`, `lint`,
+    and `fix`).
   - `2`: Underlying execution error or operational failure.
 
 ---
@@ -71,90 +73,26 @@ surface? See [docs/new-surface-guide.md](docs/new-surface-guide.md).
 
 ## Installation
 
-### 1-Line Quick Install
+Each command downloads the prebuilt binary from the latest
+[GitHub Release](https://github.com/arvinduh/formality/releases/latest) and puts
+`fml` on your `PATH`. No Rust toolchain required. The shell installer also
+verifies the download's checksum; the PowerShell installer does not. Both are
+generated and published by [cargo-dist](https://opensource.axo.dev/cargo-dist/).
 
-These download the matching prebuilt binary from the latest
-[GitHub Release](https://github.com/arvinduh/formality/releases/latest) and put
-`fml` on your `PATH`. No Rust toolchain required. The shell installer (Linux &
-macOS) also verifies the download's checksum; the PowerShell installer (Windows)
-does not. The installer scripts are generated and published by
-[cargo-dist](https://opensource.axo.dev/cargo-dist/).
-
-#### Linux & macOS
+### Linux (x64) and macOS (Apple Silicon)
 
 ```bash
 curl --proto '=https' --tlsv1.2 -LsSf https://github.com/arvinduh/formality/releases/latest/download/fml-installer.sh | sh
 ```
 
-#### Windows (PowerShell)
+### Windows (x64)
 
 ```powershell
 powershell -c "irm https://github.com/arvinduh/formality/releases/latest/download/fml-installer.ps1 | iex"
 ```
 
-#### Windows (`.msi`)
-
-Download and run
-[`fml-x86_64-pc-windows-msvc.msi`](https://github.com/arvinduh/formality/releases/latest/download/fml-x86_64-pc-windows-msvc.msi)
-from the latest release.
-
-> The shorter
-> `raw.githubusercontent.com/arvinduh/formality/main/install.{sh,ps1}` URLs
-> still work — they now forward to the installers above.
-
-### Build from source via `cargo`
-
-`fml` is not published to crates.io; build it from the Git repository (needs a
-Rust toolchain). The trailing `fml` package name is required — the repository
-carries more than one binary-bearing manifest, so the bare form errors.
-
-```bash
-cargo install --git https://github.com/arvinduh/formality fml
-```
-
-### Direct Prebuilt Binaries
-
-Prebuilt standalone binaries are attached to every
-[GitHub Release](https://github.com/arvinduh/formality/releases/latest). Each
-archive holds the `fml` binary plus `LICENSE` and `README.md`; the commands
-below pull out only the binary.
-
-#### macOS (Apple Silicon / ARM64)
-
-```bash
-curl -fsSL https://github.com/arvinduh/formality/releases/latest/download/fml-aarch64-apple-darwin.tar.gz | tar -xz fml
-mkdir -p ~/.local/bin && mv fml ~/.local/bin/fml
-```
-
-#### macOS (Intel / x86_64)
-
-```bash
-curl -fsSL https://github.com/arvinduh/formality/releases/latest/download/fml-x86_64-apple-darwin.tar.gz | tar -xz fml
-mkdir -p ~/.local/bin && mv fml ~/.local/bin/fml
-```
-
-#### Linux (x86_64)
-
-```bash
-curl -fsSL https://github.com/arvinduh/formality/releases/latest/download/fml-x86_64-unknown-linux-gnu.tar.gz | tar -xz fml
-mkdir -p ~/.local/bin && mv fml ~/.local/bin/fml
-```
-
-#### Linux (ARM64 / aarch64)
-
-```bash
-curl -fsSL https://github.com/arvinduh/formality/releases/latest/download/fml-aarch64-unknown-linux-gnu.tar.gz | tar -xz fml
-mkdir -p ~/.local/bin && mv fml ~/.local/bin/fml
-```
-
-#### Windows (x86_64 / PowerShell)
-
-```powershell
-Invoke-WebRequest -Uri https://github.com/arvinduh/formality/releases/latest/download/fml-x86_64-pc-windows-msvc.zip -OutFile fml.zip
-Expand-Archive fml.zip -DestinationPath fml-tmp -Force
-mkdir $HOME\bin -Force; Move-Item fml-tmp\fml.exe $HOME\bin\fml.exe -Force
-Remove-Item -Recurse fml.zip, fml-tmp
-```
+There is no native ARM64 Windows build. On ARM64 Windows the installer installs
+the x64 build, which runs under Windows' built-in x64 emulation.
 
 ---
 
@@ -196,8 +134,9 @@ fml sync --check
 # Format all detected surfaces in parallel
 fml fmt
 
-# First run on a fresh clone? Install missing tools then format in one step
-fml fmt --install
+# First run on a fresh clone? Install missing tools, then format
+fml doctor --install
+fml fmt
 
 # Format only Git staged files (pre-commit hook)
 fml fmt --staged
@@ -212,9 +151,6 @@ fml fmt --check
 # Run linters across all active surfaces (never writes)
 fml lint
 
-# Install missing tools then lint in one step
-fml lint --install
-
 # Apply lint fixes and reformat, across all active surfaces, in one command
 # (the single "clean everything up" entrypoint)
 fml fix
@@ -227,18 +163,29 @@ fml fix --check
 
 `--check` is the only mode flag. It never writes; its absence writes.
 
-| command            | passes                | writes? | exit 0                         | exit 1                                            |
-| ------------------ | --------------------- | ------- | ------------------------------ | ------------------------------------------------- |
-| `fml fmt`          | format                | yes     | formatted                      | a formatter reported a violation                  |
-| `fml fmt --check`  | format                | no      | already formatted              | a file would be reformatted                       |
-| `fml lint`         | lint                  | never   | no violations                  | violations                                        |
-| `fml fix`          | lint-fix, then format | yes     | clean after both passes        | violations remain after both passes               |
-| `fml fix --check`  | lint, then format     | no      | `fml fix` would change nothing | `fml fix` would change files, or leave violations |
-| `fml sync`         | config sync           | yes     | native configs written         | —                                                 |
-| `fml sync --check` | config sync           | no      | native configs in sync         | a native config has drifted                       |
+| command            | passes                | writes? | exit 0                         | exit 1                                                                                              |
+| ------------------ | --------------------- | ------- | ------------------------------ | --------------------------------------------------------------------------------------------------- |
+| `fml fmt`          | format                | yes     | formatted                      | a formatter reported a violation, or a required tool is missing (`--allow-missing`)                 |
+| `fml fmt --check`  | format                | no      | already formatted              | a file would be reformatted, or a required tool is missing (`--allow-missing`)                      |
+| `fml lint`         | lint                  | never   | no violations                  | violations, or a required tool is missing (`--allow-missing`)                                       |
+| `fml fix`          | lint-fix, then format | yes     | clean after both passes        | violations remain after both passes, or a required tool is missing (`--allow-missing`)              |
+| `fml fix --check`  | lint, then format     | no      | `fml fix` would change nothing | `fml fix` would change files or leave violations, or a required tool is missing (`--allow-missing`) |
+| `fml sync`         | config sync           | yes     | native configs written         | —                                                                                                   |
+| `fml sync --check` | config sync           | no      | native configs in sync         | a native config has drifted                                                                         |
+
+`--allow-missing` (on `fmt`, `lint`, and `fix` only) keeps a _missing_ required
+tool from failing the run on its own — the surface is still reported (a `[MISS]`
+row and a `(allowed)` summary marker, never silently), but the run exits 0 as
+long as nothing else failed. A real violation or an execution error still exits
+non-zero regardless of the flag. `sync` and `doctor` don't expose it: `sync`
+never invokes a formatter/linter binary, so it has no `ToolMissing` precondition
+to opt out of, and `doctor`'s whole purpose is reporting missing tools, so
+silencing that would defeat it.
 
 Exit code `2` means an operational failure for every command — an invalid
-config, or a tool that crashed — never a rule violation or missing tool.
+config, or a tool that crashed. A missing required tool is exit `1`, the same
+severity as a rule violation, not `2` — unless `--allow-missing` is passed, in
+which case it alone does not affect the exit code at all.
 
 `fml lint --check` is rejected rather than accepted as a no-op: `lint` never
 writes, so a mode flag on it would be meaningless clutter.
@@ -272,23 +219,6 @@ have a real lint auto-fix mode (`supports_lint_fix()`) versus which only
 reformat under `fml fix` because their linter is diagnostics-only (e.g. Java's
 `checkstyle`, YAML's `yamllint`, TOML's `taplo lint`).
 
-### Deprecated spellings
-
-| deprecated          | use instead                                                                            | removed in |
-| ------------------- | -------------------------------------------------------------------------------------- | ---------- |
-| `fml lint --fix`    | `fml fix`                                                                              | `v0.4.0`   |
-| `fml install`       | `fml doctor --install`                                                                 | `v0.4.0`   |
-| `fml list-surfaces` | `fml doctor`                                                                           | `v0.4.0`   |
-| `fml surfaces`      | `fml doctor`                                                                           | `v0.4.0`   |
-| `fml schema`        | `cargo test --test schema_drift` (or `UPDATE_SCHEMA=1 cargo test --test schema_drift`) | `v0.4.0`   |
-| `fml table`         | `fml::ui::table`                                                                       | `v0.4.0`   |
-
-`fml lint --fix` still works and now runs the full `fml fix` pipeline — lint
-fixes _and_ formatting — after printing a notice to stderr. `fml install`,
-`fml list-surfaces` / `fml surfaces`, `fml schema`, and `fml table` also remain
-temporarily available as deprecated CLI commands that print a notice to stderr
-before executing.
-
 ---
 
 ## Configuration (`formality.toml` or `.formality.toml`)
@@ -296,10 +226,8 @@ before executing.
 ### Minimal setup (zero boilerplate)
 
 ```toml
-# Always pin to a specific schema tag (e.g. s1.0) — the schema is a release
-# asset, not a raw branch file. Tagged independently of the binary's v* release
-# (major.minor: major = breaking schema change, minor = additive/compatible).
-#:schema https://github.com/arvinduh/formality/releases/download/s1.0/formality.schema.json
+# The schema of the latest fml release, as `fml init` writes it.
+#:schema https://github.com/arvinduh/formality/releases/latest/download/formality.schema.json
 
 [global]
 languages = ["rust", "toml", "markdown"]  # Explicit active surfaces
@@ -307,14 +235,25 @@ indent_size = 2
 line_length = 80
 ```
 
-Run `fml init` to rewrite an existing `#:schema` line to point at the current
-release's schema tag (or insert one if it's missing). It only touches that
-single line — it does not attempt to rewrite config content for a breaking
-schema change, since that's a human decision.
+There is one schema, matching the latest release. Before 1.0.0 a config written
+for one `fml` may not load in another: a key or value this `fml` does not accept
+fails with the file, key path and line, and a pointer to `fml --version` and
+`fml schema`:
 
 ```text
-$ fml init
-[OK] Updated formality.toml schema reference: s0.9 -> s1.0
+[ERR] unknown key `lang.python.format_tool` in formality.toml:5. It may need a newer fml (`fml --version`), or it is misspelled or was removed; `fml schema` lists the keys this fml accepts.
+```
+
+Editors fetch the `#:schema` URL directly, so most projects never need a local
+copy. When you do — working offline or air-gapped, or matching an older `fml` —
+`fml schema` writes the schema of the `fml` you are running:
+
+```bash
+# Print the JSON Schema to stdout
+fml schema
+
+# Or write it to a file
+fml schema --output formality.schema.json
 ```
 
 ### Full configuration with overrides
@@ -363,8 +302,8 @@ Commands:
   sync     Sync native tool configs from canonical globals
   doctor   Diagnose installed toolchains with install hints
   init     Scaffold a new formality.toml configuration
+  schema   Write the JSON Schema for formality.toml to stdout or a file
   lsp      Start the formality LSP server (stdio transport)
-  migrate  Migrate project files to match the current formality release
   help     Print this message or the help of the given subcommand(s)
 
 Options:
@@ -376,30 +315,29 @@ Options:
 
 ### Key flags
 
-| Command       | Flag        | Description                                                                                    |
-| :------------ | :---------- | :--------------------------------------------------------------------------------------------- |
-| `fml fmt`     | `--check`   | Exit 1 if any file would be reformatted (CI safe)                                              |
-| `fml fmt`     | `--install` | Auto-install missing tools for active surfaces, then format                                    |
-| `fml fmt`     | `--staged`  | Operate only on `git diff --cached` files                                                      |
-| `fml fmt`     | `--changed` | Operate only on `git diff` (unstaged) files                                                    |
-| `fml fmt`     | `--lang`    | Filter to a specific surface, e.g. `--lang rust`                                               |
-| `fml lint`    | `--install` | Auto-install missing tools for active surfaces, then lint                                      |
-| `fml lint`    | `--staged`  | Operate only on `git diff --cached` files                                                      |
-| `fml lint`    | `--changed` | Operate only on `git diff` (unstaged) files                                                    |
-| `fml lint`    | `--lang`    | Filter to a specific surface                                                                   |
-| `fml fix`     | `--check`   | Exit 1 if `fml fix` would change anything; writes nothing (CI safe)                            |
-| `fml fix`     | `--staged`  | Operate only on `git diff --cached` files                                                      |
-| `fml fix`     | `--changed` | Operate only on `git diff` (unstaged) files                                                    |
-| `fml fix`     | `--lang`    | Filter to a specific surface                                                                   |
-| `fml fix`     | `--install` | Auto-install missing tools for active surfaces, then fix                                       |
-| `fml sync`    | `--check`   | Exit 1 if any native config is out of sync                                                     |
-| `fml sync`    | `--lang`    | Filter to a specific surface                                                                   |
-| `fml doctor`  | `--all`     | Show all surfaces, not just active ones                                                        |
-| `fml doctor`  | `--install` | Auto-install all missing toolchains                                                            |
-| `fml init`    | `--force`   | Overwrite an existing config file                                                              |
-| `fml init`    | `--hidden`  | Write `.formality.toml` instead of `formality.toml`                                            |
-| `fml table`   | `--json`    | Table spec JSON string (reads stdin if omitted) — see [docs/table-spec.md](docs/table-spec.md) |
-| `fml migrate` | `schema`    | Rewrite `#:schema` directive in config to match current release                                |
+| Command      | Flag              | Description                                                          |
+| :----------- | :---------------- | :------------------------------------------------------------------- |
+| `fml fmt`    | `--check`         | Exit 1 if any file would be reformatted (CI safe)                    |
+| `fml fmt`    | `--staged`        | Operate only on `git diff --cached` files                            |
+| `fml fmt`    | `--changed`       | Operate only on `git diff` (unstaged) files                          |
+| `fml fmt`    | `--lang`          | Filter to a specific surface, e.g. `--lang rust`                     |
+| `fml fmt`    | `--allow-missing` | A missing required tool alone does not fail the run (still reported) |
+| `fml lint`   | `--staged`        | Operate only on `git diff --cached` files                            |
+| `fml lint`   | `--changed`       | Operate only on `git diff` (unstaged) files                          |
+| `fml lint`   | `--lang`          | Filter to a specific surface                                         |
+| `fml lint`   | `--allow-missing` | A missing required tool alone does not fail the run (still reported) |
+| `fml fix`    | `--check`         | Exit 1 if `fml fix` would change anything; writes nothing (CI safe)  |
+| `fml fix`    | `--staged`        | Operate only on `git diff --cached` files                            |
+| `fml fix`    | `--changed`       | Operate only on `git diff` (unstaged) files                          |
+| `fml fix`    | `--lang`          | Filter to a specific surface                                         |
+| `fml fix`    | `--allow-missing` | A missing required tool alone does not fail the run (still reported) |
+| `fml sync`   | `--check`         | Exit 1 if any native config is out of sync                           |
+| `fml sync`   | `--lang`          | Filter to a specific surface                                         |
+| `fml doctor` | `--all`           | Show all surfaces, not just active ones                              |
+| `fml doctor` | `--install`       | Auto-install all missing toolchains                                  |
+| `fml init`   | `--force`         | Overwrite an existing config file                                    |
+| `fml init`   | `--hidden`        | Write `.formality.toml` instead of `formality.toml`                  |
+| `fml schema` | `-o`, `--output`  | Write the JSON Schema to `<FILE>` instead of stdout                  |
 
 ---
 
@@ -448,10 +386,29 @@ generated output rather than derive it from `formality.toml`.
 
 ### GitHub Actions
 
-The only prerequisite is `fml` itself. Once it's on `PATH`,
-`fml doctor --install` handles every downstream tool (`ruff`, `prettier`,
+For most surfaces the only prerequisite is `fml` itself. Once it's on `PATH`,
+`fml doctor --install` handles the downstream tools (`ruff`, `prettier`,
 `markdownlint-cli2`, `taplo`, …) — no extra `setup-ruff`, `setup-node`, or
 `npm install` steps required.
+
+A few surfaces run tools that ship with, run on, or install through a language
+toolchain that `fml doctor --install` does not install. Add the matching setup
+step before `fml doctor --install` if your project uses one of them:
+
+| Surface | Tools that need it                                                                                                                | Toolchain        | Setup action                                                         |
+| :------ | :-------------------------------------------------------------------------------------------------------------------------------- | :--------------- | :------------------------------------------------------------------- |
+| Rust    | `cargo` (ships with Rust), `rustfmt`, `clippy` (installed only via `rustup`)                                                      | Rust, via rustup | `dtolnay/rust-toolchain@stable` with `components: rustfmt, clippy`   |
+| Typst   | `typstyle` (without Homebrew, Scoop or winget: installed via `cargo`)                                                             | Rust             | `dtolnay/rust-toolchain@stable`                                      |
+| Go      | `gofmt` (ships with Go), `goimports` (installed only via `go install`), `golangci-lint` (without Homebrew or Scoop: `go install`) | Go               | `actions/setup-go@v7` with `go-version`                              |
+| Java    | `google-java-format`                                                                                                              | JDK 21+          | `actions/setup-java@v6` with `distribution` and `java-version: "21"` |
+| Kotlin  | `ktlint`                                                                                                                          | JVM              | `actions/setup-java@v6` with `distribution` and `java-version`       |
+
+On GitHub-hosted Ubuntu runners the Java row always needs its setup step: the
+default JDK there is 17. For the other rows, check the runner image's
+preinstalled software list, or just add the setup action; it is harmless when
+the toolchain is already there. Self-hosted and container runners need every row
+that applies, plus Node and Python for the npm- and pip-installed tools when
+Homebrew is absent.
 
 ```yaml
 - name: Install fml
@@ -459,6 +416,12 @@ The only prerequisite is `fml` itself. Once it's on `PATH`,
     curl --proto '=https' --tlsv1.2 -LsSf
     https://github.com/arvinduh/formality/releases/latest/download/fml-installer.sh
     | sh
+
+# Only for Java projects; see the table above.
+# - uses: actions/setup-java@v6
+#   with:
+#     distribution: temurin
+#     java-version: "21"
 
 - name: Install tool dependencies
   run: fml doctor --install
@@ -473,17 +436,6 @@ The only prerequisite is `fml` itself. Once it's on `PATH`,
   run: fml lint
 ```
 
-Rust-heavy projects that already have a Rust toolchain step can combine
-`fml doctor --install` and the format/lint check into a single flag:
-
-```yaml
-- name: Check formatting
-  run: fml fmt --check --install
-
-- name: Lint
-  run: fml lint --install
-```
-
 > **Tip**: Set `FORMALITY_NO_UPDATE_CHECK=1` in your CI environment to suppress
 > the update-check network request on every invocation.
 
@@ -496,8 +448,15 @@ command; no extra tooling required:
 git config core.hooksPath .githooks
 ```
 
-The hook (`fmt --staged` → `lint --staged`) runs on every commit. Commit the
-`.githooks/` directory so the whole team gets it on clone.
+The hook (`fmt --staged --allow-missing` → `lint --staged --allow-missing`) runs
+on every commit. Commit the `.githooks/` directory so the whole team gets it on
+clone.
+
+The hook passes `--allow-missing`: a teammate missing one optional linter still
+sees `[MISS]` printed for that surface, but the commit isn't blocked by it —
+only a real formatting/lint violation or an execution error stops the commit.
+Without the flag, a single machine-local missing binary would block every commit
+that stages a file of that type (#163).
 
 #### If your project uses the pre-commit framework
 

@@ -5,7 +5,7 @@ use super::{
   DeclaresFacets, ExecutionContext, Facet, FacetSupport, LanguageSurface,
   NativeConfig, SurfaceResult, SurfaceStatus, ToolInfo,
   classify_all_nonzero_as_error, create_tool_command,
-  diff_check_via_tempcopy_classified, extra_args_set_flag, find_files_with_ext,
+  diff_check_via_tempcopy_classified, extra_args_set_flag,
   render_native_config, run_tool_command, run_tool_command_classified,
   sync_native_config, tool_missing_guard,
 };
@@ -205,7 +205,8 @@ impl DeclaresFacets for JavaScriptSurface {
   }
 }
 
-/// Standard file extensions recognized for JavaScript and TypeScript source files.
+/// Standard file extensions recognized for JavaScript and `TypeScript` source
+/// files.
 pub const JS_TS_EXTENSIONS: &[&str] =
   &["js", "jsx", "ts", "tsx", "mjs", "cjs", "mts", "cts"];
 
@@ -361,12 +362,8 @@ impl LanguageSurface for JavaScriptSurface {
     true
   }
 
-  fn detect(&self, root: &Path) -> bool {
-    root.join("biome.json").is_file()
-      || root.join("biome.jsonc").is_file()
-      || root.join("tsconfig.json").is_file()
-      || root.join("package.json").is_file()
-      || !find_files_with_ext(root, JS_TS_EXTENSIONS, &[], &[], &[]).is_empty()
+  fn marker_files(&self) -> &[&'static str] {
+    &["biome.json", "biome.jsonc", "tsconfig.json", "package.json"]
   }
 
   fn tool_info(
@@ -376,7 +373,7 @@ impl LanguageSurface for JavaScriptSurface {
     vec![ToolInfo {
       binary: "biome",
       description: "Fast formatter and linter for JavaScript, TypeScript, JSX and TSX",
-      install_hint: "Install via: npm install -g @biomejs/biome (or pnpm add -g / yarn global add / bun add -g / brew install biome)",
+      install_hint: None,
       is_required_for_fmt: true,
       is_required_for_lint: true,
     }]
@@ -411,12 +408,7 @@ impl LanguageSurface for JavaScriptSurface {
       };
     }
 
-    if let Some(res) = tool_missing_guard(
-      self.name(),
-      "biome",
-      start,
-      Some("npm install -g @biomejs/biome"),
-    ) {
+    if let Some(res) = tool_missing_guard(self.name(), "biome", start, None) {
       return res;
     }
 
@@ -475,12 +467,7 @@ impl LanguageSurface for JavaScriptSurface {
   fn lint(&self, ctx: &ExecutionContext, fix: bool) -> SurfaceResult {
     let start = Instant::now();
 
-    if let Some(res) = tool_missing_guard(
-      self.name(),
-      "biome",
-      start,
-      Some("npm install -g @biomejs/biome"),
-    ) {
+    if let Some(res) = tool_missing_guard(self.name(), "biome", start, None) {
       return res;
     }
 
@@ -517,7 +504,6 @@ impl LanguageSurface for JavaScriptSurface {
 }
 
 #[cfg(test)]
-#[allow(missing_docs, clippy::missing_errors_doc, clippy::missing_panics_doc)]
 mod tests {
   use super::*;
   use crate::config::{JavaScriptOptions, ResolvedLangConfig};

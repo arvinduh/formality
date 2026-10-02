@@ -43,8 +43,8 @@ pub mod yaml;
 
 pub use native::{
   AUTO_GENERATED_HEADER, AUTO_GENERATED_JSON_COMMENT, EDITORCONFIG_FILE_NAME,
-  NativeConfig, generate_editorconfig, generate_editorconfig_from_config,
-  render_native_config, serialize_json_pretty, serialize_toml_with_header,
+  NativeConfig, generate_editorconfig_from_config, render_native_config,
+  serialize_json_pretty, serialize_toml_with_header,
   serialize_yaml_with_header, sync_editorconfig, sync_native_config,
 };
 pub use prettier::{
@@ -60,13 +60,13 @@ use std::time::{Duration, Instant};
 
 pub use glob::{
   STANDARD_IGNORED_DIRS, build_repo_gitignore, filter_candidates_with_ext,
-  filter_files_for_surface, find_files_with_ext, find_manifest_upwards,
-  is_excluded, is_repo_ignored, is_standard_ignored, is_temp_file,
-  matches_pattern, simple_glob_match, walk_candidate_files,
+  find_files_with_ext, find_manifest_upwards, is_standard_ignored,
+  is_temp_file, matches_pattern, simple_glob_match, walk_candidate_files,
 };
+pub(crate) use registry::matches_name_or_alias;
 pub use registry::{
-  SurfaceRegistry, all_surfaces, default_registry, detect_surfaces,
-  detect_surfaces_smart, get_surface_by_name, resolve_canonical_name,
+  SurfaceRegistry, all_surfaces, default_registry, detect_surfaces_smart,
+  get_surface_by_name,
 };
 pub use sync::{
   diff_check_via_tempcopy, diff_check_via_tempcopy_classified,
@@ -76,9 +76,9 @@ pub use tooling::{
   ExitClass, InstallMethod, chain_wants_cargo_binstall, check_binary_exists,
   classify_all_nonzero_as_error, classify_exit_one_as_violation,
   create_tool_command, ensure_cargo_binstall, extra_args_set_flag,
-  forget_binary, has_cargo_binstall, install_chain_for, lint_fix_unsupported,
-  merge_tool_streams, pinned_installer_for, pinned_version_for,
-  refresh_go_install_path, refresh_path_after_install,
+  forget_binary, has_cargo_binstall, install_chain_for, install_hint_for,
+  lint_fix_unsupported, merge_tool_streams, pinned_installer_for,
+  pinned_version_for, refresh_path_after_install,
   refresh_windows_path_from_registry, resolve_binary_path, run_tool_command,
   run_tool_command_classified, selected_install_method_for,
   selected_pinned_version_for, set_binary_path_for_test, tool_missing_guard,
@@ -119,12 +119,6 @@ pub struct ExecutionContext {
 }
 
 impl ExecutionContext {
-  /// Returns whether explicit file or directory paths were targeted.
-  #[must_use]
-  pub fn is_scoped(&self) -> bool {
-    !self.paths.is_empty()
-  }
-
   /// Discovers target files for the surface matching extensions, honoring scoped paths, files, and excludes.
   #[must_use]
   pub fn matched_files(&self, extensions: &[&str]) -> Vec<PathBuf> {
@@ -180,8 +174,9 @@ impl ExecutionContext {
   }
 
   /// Returns the files to pass to a directory-walking CLI tool.
-  /// If paths, lang_config files, or lang_config excludes are specified, returns the filtered files;
-  /// otherwise returns an empty Vec so the tool can scan the whole directory.
+  /// If paths, `lang_config` files, or `lang_config` excludes are specified,
+  /// returns the filtered files; otherwise returns an empty Vec so the tool
+  /// can scan the whole directory.
   #[must_use]
   pub fn files_to_pass(&self, files: Vec<PathBuf>) -> Vec<PathBuf> {
     if !self.paths.is_empty()
@@ -196,6 +191,7 @@ impl ExecutionContext {
 }
 
 /// Builds a minimal `ExecutionContext` for testing language surfaces.
+#[cfg(test)]
 #[must_use]
 pub fn test_ctx(
   root: impl AsRef<Path>,
@@ -218,8 +214,25 @@ pub struct ToolInfo {
   pub binary: &'static str,
   /// Human-readable tool description.
   pub description: &'static str,
-  /// Installation instructions hint.
-  pub install_hint: &'static str,
+  /// Installation instructions override. `None` (the common case, and the
+  /// default for every tool with a real install-preference chain) derives
+  /// the hint from `binary`'s registered chain via
+  /// [`Self::effective_install_hint`], so the printed text can never drift
+  /// out of sync with the chain the way hand-written prose did (Fixes
+  /// #264). `Some(..)` is reserved for two narrow cases, both of which
+  /// must be exactly one named `const` referenced from every call site for
+  /// that tool (never a repeated string literal — that is the exact #264
+  /// drift shape, just moved one level up):
+  /// - `binary` has no install chain at all (it ships inside a toolchain
+  ///   rather than through a package manager — e.g. `cargo`, `gofmt`).
+  /// - `binary` has a chain, but the chain has a real coverage gap a
+  ///   package-manager command can't express (no entry at all for some
+  ///   platform, or a manual-download fallback) — e.g.
+  ///   `google-java-format`/`checkstyle`, whose chains have no Windows
+  ///   entry. Reach for this only when the gap is real; a chain that
+  ///   already covers every platform (e.g. `ktlint`'s) should stay `None`
+  ///   even if its old hand-written hint said something extra.
+  pub install_hint: Option<&'static str>,
   /// Whether this tool is required for formatting.
   pub is_required_for_fmt: bool,
   /// Whether this tool is required for linting.
@@ -230,7 +243,20 @@ impl ToolInfo {
   /// Returns the first available installer in this tool's preference chain.
   #[must_use]
   pub fn selected_install_method(&self) -> Option<InstallMethod> {
-    tooling::selected_install_method_for(self.binary)
+    selected_install_method_for(self.binary)
+  }
+
+  /// The install hint to actually print: `install_hint` when this tool
+  /// declared an override, or the chain-derived text from
+  /// [`tooling::install_hint_for`] otherwise. This is the one place that
+  /// picks between the two, so every call site (`tool_missing_guard`'s
+  /// `None` sites, `fml doctor`'s printed tables) reads the exact same
+  /// text for the exact same tool.
+  #[must_use]
+  pub fn effective_install_hint(&self) -> String {
+    self
+      .install_hint
+      .map_or_else(|| install_hint_for(self.binary), str::to_string)
   }
 
   /// Returns the (program, args) for the first available installer in this
@@ -326,7 +352,43 @@ pub enum SurfaceStatus {
   },
 }
 
+/// How severe a [`SurfaceStatus`] is, ordered least to most severe.
+///
+/// The one encoding of severity: [`SurfaceResult::is_success`] and the
+/// runner's tally, exit code and pass-merging precedence all derive from
+/// [`SurfaceStatus::severity`] rather than restating which status is worse.
+#[derive(Debug, PartialEq, PartialOrd)]
+pub enum Severity {
+  /// Nothing ran.
+  Skipped,
+  /// Ran clean, or wrote the config it was asked to.
+  Passed,
+  /// A required tool binary is not installed.
+  ToolMissing,
+  /// Rule violations, formatting drift or native-config drift.
+  Violation,
+  /// The tool itself failed.
+  Error,
+}
+
 impl SurfaceStatus {
+  /// Classifies this status by [`Severity`].
+  ///
+  /// The match is exhaustive with no wildcard arm, so a new status does not
+  /// compile until it is classified here.
+  #[must_use]
+  pub fn severity(&self) -> Severity {
+    match self {
+      Self::Skipped { .. } => Severity::Skipped,
+      Self::Passed | Self::ConfigSynced { .. } => Severity::Passed,
+      Self::ToolMissing { .. } => Severity::ToolMissing,
+      Self::ViolationsFound { .. }
+      | Self::ConfigDrifted { .. }
+      | Self::ManualConfig { .. } => Severity::Violation,
+      Self::ExecutionError { .. } => Severity::Error,
+    }
+  }
+
   /// Every config file named by a [`SurfaceStatus::ConfigSynced`], in write
   /// order; empty for every other status.
   #[must_use]
@@ -338,7 +400,7 @@ impl SurfaceStatus {
   }
 
   /// The names of the config files this status reports as *newly created*.
-  /// Convenience for tests and callers that only care about creations.
+  #[cfg(test)]
   #[must_use]
   pub fn created_file_names(&self) -> Vec<&str> {
     self
@@ -350,6 +412,7 @@ impl SurfaceStatus {
   }
 
   /// The names of every config file this status reports, created or updated.
+  #[cfg(test)]
   #[must_use]
   pub fn synced_file_names(&self) -> Vec<&str> {
     self
@@ -372,35 +435,10 @@ pub struct SurfaceResult {
 }
 
 impl SurfaceResult {
-  /// Returns `true` if the status represents a clean success or skipped operation.
+  /// Returns `true` if the status is a skip or a clean pass.
   #[must_use]
   pub fn is_success(&self) -> bool {
-    matches!(
-      self.status,
-      SurfaceStatus::Passed
-        | SurfaceStatus::Skipped { .. }
-        | SurfaceStatus::ConfigSynced { .. }
-    )
-  }
-
-  /// Returns `true` if the status represents a formatting or lint violation.
-  #[must_use]
-  pub fn is_violation(&self) -> bool {
-    matches!(
-      self.status,
-      SurfaceStatus::ViolationsFound { .. }
-        | SurfaceStatus::ConfigDrifted { .. }
-        | SurfaceStatus::ManualConfig { .. }
-    )
-  }
-
-  /// Returns `true` if the status represents an execution error or missing tool.
-  #[must_use]
-  pub fn is_error(&self) -> bool {
-    matches!(
-      self.status,
-      SurfaceStatus::ToolMissing { .. } | SurfaceStatus::ExecutionError { .. }
-    )
+    matches!(self.status.severity(), Severity::Skipped | Severity::Passed)
   }
 }
 
@@ -408,10 +446,6 @@ impl SurfaceResult {
 pub trait LanguageSurface: DeclaresFacets + Send + Sync {
   /// Canonical surface identifier name (e.g. `"rust"`, `"python"`).
   fn name(&self) -> &'static str;
-  /// Human-readable display name.
-  fn display_name(&self) -> &'static str {
-    self.name()
-  }
   /// Alternative alias names recognized for this surface.
   fn aliases(&self) -> &[&'static str] {
     &[]
@@ -420,8 +454,23 @@ pub trait LanguageSurface: DeclaresFacets + Send + Sync {
   fn file_extensions(&self) -> &[&'static str] {
     &[]
   }
+  /// Root-level filenames (manifests, tool configs) that mark this surface
+  /// as active even when no source file exists yet.
+  fn marker_files(&self) -> &[&'static str] {
+    &[]
+  }
   /// Detects whether this language surface is active in workspace `root`.
-  fn detect(&self, root: &Path) -> bool;
+  ///
+  /// The default is active when any `marker_files()` entry is a regular file
+  /// directly under `root` (a directory of that name does not count), or
+  /// when any non-ignored file under `root` has one of `file_extensions()`.
+  /// Markers are checked first: they are single `stat` calls, while the
+  /// extension check walks the whole tree.
+  fn detect(&self, root: &Path) -> bool {
+    self.marker_files().iter().any(|m| root.join(m).is_file())
+      || !find_files_with_ext(root, self.file_extensions(), &[], &[], &[])
+        .is_empty()
+  }
   /// Returns information about required tools for this surface.
   fn tool_info(&self, config: &ResolvedLangConfig) -> Vec<ToolInfo>;
   /// Formats source files using underlying tools.
@@ -461,7 +510,6 @@ impl Clone for Box<dyn LanguageSurface> {
 }
 
 #[cfg(test)]
-#[allow(missing_docs, clippy::missing_errors_doc, clippy::missing_panics_doc)]
 mod tests {
   use super::*;
   use crate::surfaces::{
@@ -486,72 +534,86 @@ mod tests {
   }
 
   #[test]
-  fn test_surface_result_predicates_cover_every_status_variant() {
+  fn test_default_detect_markers_are_root_regular_files_only() {
+    let surface = rust::RustSurface;
+    let dir_marker = tempfile::TempDir::new().unwrap();
+    std::fs::create_dir(dir_marker.path().join("Cargo.toml")).unwrap();
+    assert!(!surface.detect(dir_marker.path()));
+
+    let nested_marker = tempfile::TempDir::new().unwrap();
+    std::fs::create_dir(nested_marker.path().join("sub")).unwrap();
+    std::fs::write(nested_marker.path().join("sub/Cargo.toml"), "").unwrap();
+    assert!(!surface.detect(nested_marker.path()));
+
+    let root_marker = tempfile::TempDir::new().unwrap();
+    std::fs::write(root_marker.path().join("Cargo.toml"), "").unwrap();
+    assert!(surface.detect(root_marker.path()));
+  }
+
+  #[test]
+  fn test_default_detect_finds_nested_extension_outside_ignored_dirs() {
+    let surface = typst::TypstSurface;
+    let temp = tempfile::TempDir::new().unwrap();
+    std::fs::create_dir_all(temp.path().join("target/a")).unwrap();
+    std::fs::write(temp.path().join("target/a/doc.typ"), "").unwrap();
+    assert!(!surface.detect(temp.path()));
+
+    std::fs::create_dir_all(temp.path().join("docs/a")).unwrap();
+    std::fs::write(temp.path().join("docs/a/doc.typ"), "").unwrap();
+    assert!(surface.detect(temp.path()));
+  }
+
+  #[test]
+  fn test_is_success_holds_for_skips_and_clean_passes_only() {
     fn result_for(status: SurfaceStatus) -> SurfaceResult {
       SurfaceResult {
         surface_name: "test",
         status,
-        duration: std::time::Duration::from_millis(0),
+        duration: Duration::from_millis(0),
       }
     }
 
     let passed = result_for(SurfaceStatus::Passed);
     assert!(passed.is_success());
-    assert!(!passed.is_violation());
-    assert!(!passed.is_error());
 
     let skipped = result_for(SurfaceStatus::Skipped {
       reason: "n/a".to_string(),
     });
     assert!(skipped.is_success());
-    assert!(!skipped.is_violation());
-    assert!(!skipped.is_error());
 
     let synced = result_for(SurfaceStatus::ConfigSynced {
       files: vec![SyncedConfigFile::new("x", true)],
     });
     assert!(synced.is_success());
-    assert!(!synced.is_violation());
-    assert!(!synced.is_error());
 
     let violations = result_for(SurfaceStatus::ViolationsFound {
       message: "bad".to_string(),
       diff: None,
     });
     assert!(!violations.is_success());
-    assert!(violations.is_violation());
-    assert!(!violations.is_error());
 
     let drifted = result_for(SurfaceStatus::ConfigDrifted {
       file: "x".to_string(),
       diff: "d".to_string(),
     });
     assert!(!drifted.is_success());
-    assert!(drifted.is_violation());
-    assert!(!drifted.is_error());
 
     let manual = result_for(SurfaceStatus::ManualConfig {
       file: "x".to_string(),
       suggestion: "s".to_string(),
     });
     assert!(!manual.is_success());
-    assert!(manual.is_violation());
-    assert!(!manual.is_error());
 
     let missing = result_for(SurfaceStatus::ToolMissing {
       binary: "x".to_string(),
       install_hint: "h".to_string(),
     });
     assert!(!missing.is_success());
-    assert!(!missing.is_violation());
-    assert!(missing.is_error());
 
     let exec_err = result_for(SurfaceStatus::ExecutionError {
       message: "boom".to_string(),
     });
     assert!(!exec_err.is_success());
-    assert!(!exec_err.is_violation());
-    assert!(exec_err.is_error());
   }
 
   #[test]

@@ -10,18 +10,19 @@ use crate::errors::ExitStatus;
 
 /// Runs the `fml sync` command: the `[ConfigSync]` plan, writing by default
 /// and reporting only under `check`, for the resolved target surfaces.
+#[must_use]
 pub fn run_sync(
   root: &Path,
   config: &FormalityConfig,
   check: bool,
-  lang: Vec<String>,
+  lang: &[String],
 ) -> ExitStatus {
-  let surfaces = match resolve_target_surfaces(root, &lang, &[], config) {
+  let surfaces = match resolve_target_surfaces(root, lang, &[], config) {
     Ok(s) => s,
     Err(e) => {
       e.print_diagnostic();
       return ExitStatus::Error;
     }
   };
-  Runner::run(surfaces, root, &[], &Plan::sync(check), config)
+  Runner::run(&surfaces, root, &[], &Plan::sync(check), config)
 }

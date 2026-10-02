@@ -4,8 +4,7 @@
 
 use crate::errors::{FormalityError, SurfaceError};
 pub use crate::surfaces::editorconfig::{
-  EDITORCONFIG_FILE_NAME, generate_editorconfig,
-  generate_editorconfig_from_config, sync_editorconfig,
+  EDITORCONFIG_FILE_NAME, generate_editorconfig_from_config, sync_editorconfig,
 };
 use crate::surfaces::{
   ExecutionContext, SurfaceResult, SurfaceStatus, sync_file_helper,
@@ -89,8 +88,10 @@ pub fn serialize_json_pretty<T: Serialize>(
 /// # Errors
 ///
 /// Returns a [`FormalityError`] if JSON, YAML, or TOML serialization fails.
-// Native tool configuration filenames (e.g. .golangci.yml, .clang-format) are fixed static ASCII strings.
-#[allow(clippy::case_sensitive_file_extension_comparisons)]
+#[expect(
+  clippy::case_sensitive_file_extension_comparisons,
+  reason = "native config filenames are fixed static ASCII strings"
+)]
 pub fn render_native_config<T: Serialize + NativeConfig>(
   cfg: &T,
 ) -> Result<String, FormalityError> {
@@ -143,7 +144,6 @@ pub fn sync_native_config<C: NativeConfig>(
 }
 
 #[cfg(test)]
-#[allow(missing_docs, clippy::missing_errors_doc, clippy::missing_panics_doc)]
 mod tests {
   use super::*;
   use crate::config::ResolvedLangConfig;

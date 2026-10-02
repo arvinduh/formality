@@ -8,6 +8,4 @@
 * text=auto eol=lf
 
 # Preserve native line endings for assets where CRLF is meaningful/expected.
-*.bat text eol=crlf
 *.cmd text eol=crlf
-*.ps1 text eol=crlf

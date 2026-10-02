@@ -5,12 +5,12 @@ use super::{
   DeclaresFacets, ExecutionContext, ExitClass, Facet, FacetSupport,
   LanguageSurface, NativeConfig, SurfaceResult, SurfaceStatus, ToolInfo,
   classify_all_nonzero_as_error, create_tool_command,
-  diff_check_via_tempcopy_classified, find_files_with_ext, merge_tool_streams,
-  render_native_config, run_tool_command, run_tool_command_classified,
-  sync_native_config, tool_missing_guard,
+  diff_check_via_tempcopy_classified, merge_tool_streams, render_native_config,
+  run_tool_command, run_tool_command_classified, sync_native_config,
+  tool_missing_guard,
 };
 use serde::{Deserialize, Serialize};
-use std::path::{Path, PathBuf};
+use std::path::PathBuf;
 use std::time::Instant;
 
 /// Format configuration subsection for `ruff.toml`.
@@ -339,14 +339,15 @@ impl LanguageSurface for PythonSurface {
     true
   }
 
-  fn detect(&self, root: &Path) -> bool {
-    root.join("pyproject.toml").is_file()
-      || root.join("requirements.txt").is_file()
-      || root.join("setup.py").is_file()
-      || root.join("Pipfile").is_file()
-      || root.join("ruff.toml").is_file()
-      || root.join(".ruff.toml").is_file()
-      || !find_files_with_ext(root, PYTHON_EXTENSIONS, &[], &[], &[]).is_empty()
+  fn marker_files(&self) -> &[&'static str] {
+    &[
+      "pyproject.toml",
+      "requirements.txt",
+      "setup.py",
+      "Pipfile",
+      "ruff.toml",
+      ".ruff.toml",
+    ]
   }
 
   fn tool_info(
@@ -356,7 +357,7 @@ impl LanguageSurface for PythonSurface {
     vec![ToolInfo {
       binary: "ruff",
       description: "Fast Python linter and code formatter",
-      install_hint: "Install via: uv tool install ruff (or pip install ruff / brew install ruff / cargo binstall ruff)",
+      install_hint: None,
       is_required_for_fmt: true,
       is_required_for_lint: true,
     }]
@@ -367,9 +368,7 @@ impl LanguageSurface for PythonSurface {
   fn format(&self, ctx: &ExecutionContext) -> SurfaceResult {
     let start = Instant::now();
 
-    if let Some(res) =
-      tool_missing_guard(self.name(), "ruff", start, Some("pip install ruff"))
-    {
+    if let Some(res) = tool_missing_guard(self.name(), "ruff", start, None) {
       return res;
     }
 
@@ -518,9 +517,7 @@ impl LanguageSurface for PythonSurface {
   fn lint(&self, ctx: &ExecutionContext, fix: bool) -> SurfaceResult {
     let start = Instant::now();
 
-    if let Some(res) =
-      tool_missing_guard(self.name(), "ruff", start, Some("pip install ruff"))
-    {
+    if let Some(res) = tool_missing_guard(self.name(), "ruff", start, None) {
       return res;
     }
 
@@ -559,13 +556,13 @@ impl LanguageSurface for PythonSurface {
 }
 
 #[cfg(test)]
-#[allow(missing_docs, clippy::missing_errors_doc, clippy::missing_panics_doc)]
 mod tests {
   use super::*;
   use crate::config::{
     PythonOptions, ResolvedGlobalConfig, ResolvedLangConfig,
   };
   use crate::surfaces::{check_binary_exists, test_ctx};
+  use std::path::Path;
   use std::sync::Arc;
   use tempfile::TempDir;
 

@@ -256,7 +256,6 @@ impl From<&FormalityError> for ExitStatus {
 pub type Result<T, E = FormalityError> = std::result::Result<T, E>;
 
 #[cfg(test)]
-#[allow(missing_docs, clippy::missing_errors_doc, clippy::missing_panics_doc)]
 mod tests {
   use super::*;
 

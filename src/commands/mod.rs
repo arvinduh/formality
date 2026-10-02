@@ -14,18 +14,12 @@ pub mod lint;
 pub mod lsp;
 /// Structured per-violation lint diagnostics for `fml lsp` (Fixes #159 [pre-recreation]).
 pub mod lsp_diagnostics;
-/// Config schema-reference migration CLI command handler.
-pub mod migrate;
 /// JSON Schema generator CLI command handler.
 pub mod schema;
 /// Native configuration synchronization CLI command handler.
 pub mod sync;
-/// Output table formatting helper CLI command.
-pub mod table;
 
 use std::path::{Path, PathBuf};
-
-use colored::Colorize;
 
 use crate::config::FormalityConfig;
 use crate::engine::{Pass, Plan, Runner};
@@ -35,29 +29,20 @@ use crate::surfaces::{
   get_surface_by_name,
 };
 
-/// Prints a warning that one or more required tools failed to auto-install,
-/// so the affected language(s) may have been skipped for this `verb`.
-pub fn warn_tool_install_failed(verb: &str) {
-  eprintln!(
-    "{} One or more required tools failed to install automatically; {verb} may be skipped for affected languages.",
-    "[WARN]".yellow().bold()
-  );
-}
-
 /// Dispatches a [`Plan`] across target surfaces for the `fmt`, `lint`, and
 /// `fix` commands after resolving git paths, target surfaces, and preflight
-/// tool requirements.
-#[allow(clippy::too_many_arguments)]
+/// tool requirements. Provisioning missing tools is `fml doctor --install`'s
+/// job now, not these commands' — see #282; this dispatch only warns about
+/// stale tools, never installs.
+#[must_use]
 pub fn dispatch_plan(
   root: &Path,
   config: &FormalityConfig,
   staged: bool,
   changed: bool,
-  lang: Vec<String>,
-  install: bool,
+  lang: &[String],
   paths: Vec<PathBuf>,
   plan: &Plan,
-  verb: &'static str,
 ) -> ExitStatus {
   let target_paths = match resolve_git_paths(root, staged, changed, paths) {
     Ok(p) => p,
@@ -67,14 +52,37 @@ pub fn dispatch_plan(
     }
   };
 
-  let surfaces =
-    match resolve_target_surfaces(root, &lang, &target_paths, config) {
-      Ok(s) => s,
-      Err(e) => {
-        e.print_diagnostic();
-        return ExitStatus::Error;
-      }
-    };
+  run_resolved(
+    &mut std::io::stdout(),
+    root,
+    config,
+    lang,
+    &target_paths,
+    plan,
+  )
+}
+
+/// Runs `plan` against already-resolved `paths`: resolves target surfaces,
+/// warns about stale tools, then runs the passes and renders the report into
+/// `out`.
+///
+/// `out` is stdout for the CLI and stderr for `fml lsp`, whose stdout carries
+/// the JSON-RPC transport; one stray byte there breaks a strict client.
+fn run_resolved(
+  out: &mut dyn std::io::Write,
+  root: &Path,
+  config: &FormalityConfig,
+  lang: &[String],
+  paths: &[PathBuf],
+  plan: &Plan,
+) -> ExitStatus {
+  let surfaces = match resolve_target_surfaces(root, lang, paths, config) {
+    Ok(s) => s,
+    Err(e) => {
+      e.print_diagnostic();
+      return ExitStatus::Error;
+    }
+  };
 
   // Which tools to preflight follows directly from the plan's passes: a
   // plan that formats needs the formatters, a plan that lints needs the
@@ -82,26 +90,9 @@ pub fn dispatch_plan(
   let for_fmt = plan.includes(Pass::Format);
   let for_lint = plan.includes(Pass::Lint);
 
-  let mut install_failed = false;
-  if install {
-    if !crate::commands::doctor::preflight_install(
-      &surfaces, config, for_fmt, for_lint,
-    ) {
-      warn_tool_install_failed(verb);
-      install_failed = true;
-    }
-  } else {
-    crate::commands::doctor::preflight_warn_stale_tools(
-      &surfaces, config, for_fmt, for_lint,
-    );
-  }
+  doctor::preflight_warn_stale_tools(&surfaces, config, for_fmt, for_lint);
 
-  let status = Runner::run(surfaces, root, &target_paths, plan, config);
-  if install_failed && status.is_clean() {
-    ExitStatus::Error
-  } else {
-    status
-  }
+  Runner::run_into(out, &surfaces, root, paths, plan, config)
 }
 
 fn normalize_path(path: &Path) -> PathBuf {
@@ -294,7 +285,6 @@ pub fn resolve_target_surfaces(
 }
 
 #[cfg(test)]
-#[allow(missing_docs, clippy::missing_errors_doc, clippy::missing_panics_doc)]
 mod tests {
   use super::*;
   use std::fs;
@@ -339,8 +329,7 @@ mod tests {
       .arg("init")
       .current_dir(root)
       .output()
-      .map(|o| o.status.success())
-      .unwrap_or(false);
+      .is_ok_and(|o| o.status.success());
     if !init_ok {
       return;
     }
@@ -429,8 +418,7 @@ mod tests {
       .arg("init")
       .current_dir(root)
       .output()
-      .map(|o| o.status.success())
-      .unwrap_or(false);
+      .is_ok_and(|o| o.status.success());
     if !init_ok {
       return;
     }

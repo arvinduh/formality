@@ -6,7 +6,7 @@ use super::{SurfaceResult, SurfaceStatus};
 use crate::engine::version::Version;
 use std::collections::HashMap;
 use std::path::PathBuf;
-use std::sync::{Mutex, OnceLock};
+use std::sync::{Mutex, OnceLock, PoisonError};
 use std::time::Instant;
 
 /// A package-manager-level way to install a CLI tool: knows how to detect
@@ -42,11 +42,26 @@ pub enum InstallMethod {
   /// `pipx install <package>`. Requires `pipx` on PATH. Same `name==version`
   /// pinning convention as [`InstallMethod::Uv`].
   Pipx(&'static str),
-  /// `pip install --user <package>`. Requires `pip` on PATH. Same
+  /// `pip install <package>`. Requires `pip` on PATH. Same
   /// `name==version` pinning convention as [`InstallMethod::Uv`].
+  ///
+  /// **No `--user`**, deliberately. These two doc comments used to say
+  /// `pip install --user <package>` while [`InstallMethod::command`] emitted
+  /// no such flag; the drift became user-visible once #264 started rendering
+  /// install methods into printed hints (which render from `command()`), and
+  /// #297 resolved it in favour of the code rather than the comment. `--user`
+  /// is *rejected outright* inside an active virtualenv ("Can not perform a
+  /// '--user' install"), which is exactly where a bare `pip` most often
+  /// resolves, so adding the flag would break the common case to satisfy a
+  /// comment. Without it, pip installs into the prefix of the `pip` that ran
+  /// — the venv's `bin`, or the system prefix — which is on `PATH` by
+  /// construction whenever that `pip` was invocable. The user scheme is still
+  /// reachable without the flag (PEP 370 configuration, distro-patched pips),
+  /// so [`KnownInstallDir::PythonUser`] covers that directory anyway.
   Pip(&'static str),
-  /// `pip3 install --user <package>`. Requires `pip3` on PATH. Same
-  /// `name==version` pinning convention as [`InstallMethod::Uv`].
+  /// `pip3 install <package>`. Requires `pip3` on PATH. Same
+  /// `name==version` pinning convention as [`InstallMethod::Uv`], and the
+  /// same deliberate absence of `--user` as [`InstallMethod::Pip`].
   Pip3(&'static str),
   /// `apt-get install -y <package>`. Requires `apt-get` on PATH.
   Apt(&'static str),
@@ -105,12 +120,40 @@ impl InstallMethod {
     }
   }
 
+  /// Returns whether this method can ever install anything on `os`, a
+  /// [`std::env::consts::OS`] value, regardless of what is on `PATH` now.
+  ///
+  /// System package managers are tied to their platforms; language package
+  /// managers run everywhere their toolchain does.
+  #[must_use]
+  pub fn runs_on(&self, os: &str) -> bool {
+    match self {
+      InstallMethod::Apt(_) => os == "linux",
+      InstallMethod::Brew(_) => matches!(os, "macos" | "linux"),
+      InstallMethod::Scoop(_)
+      | InstallMethod::WingetName(_)
+      | InstallMethod::WingetId(_) => os == "windows",
+      InstallMethod::CargoBinstall(_)
+      | InstallMethod::Npm(_)
+      | InstallMethod::Pnpm(_)
+      | InstallMethod::Yarn(_)
+      | InstallMethod::Bun(_)
+      | InstallMethod::Uv(_)
+      | InstallMethod::Pipx(_)
+      | InstallMethod::Pip(_)
+      | InstallMethod::Pip3(_)
+      | InstallMethod::Cargo { .. }
+      | InstallMethod::Rustup(_)
+      | InstallMethod::GoInstall(_) => true,
+    }
+  }
+
   /// Builds the executable command tuple `(program, args)` to execute this
   /// installation method.
   #[must_use]
   pub fn command(&self) -> (String, Vec<String>) {
     fn strs(v: &[&str]) -> Vec<String> {
-      v.iter().map(std::string::ToString::to_string).collect()
+      v.iter().map(ToString::to_string).collect()
     }
     match self {
       InstallMethod::CargoBinstall(pkg) => {
@@ -241,6 +284,60 @@ impl InstallMethod {
       InstallMethod::GoInstall(_) => "go",
     }
   }
+
+  /// Renders the shell command this method runs, for display in an install
+  /// hint. Deliberately **not** [`InstallMethod::command()`]: that method
+  /// probes the local machine (e.g. whether `sudo` is on `PATH` for
+  /// [`InstallMethod::Apt`]) so the *executed* command matches whatever
+  /// machine is running it, but a printed hint has to read the same on every
+  /// machine, including one that hasn't installed anything yet. This is the
+  /// only place that distinction matters — every other variant's rendering
+  /// agrees with `command()` byte-for-byte.
+  fn describe(&self) -> String {
+    match self {
+      InstallMethod::Apt(pkg) => format!("sudo apt-get install -y {pkg}"),
+      other => {
+        let (program, args) = other.command();
+        if args.is_empty() {
+          program
+        } else {
+          format!("{program} {}", args.join(" "))
+        }
+      }
+    }
+  }
+}
+
+/// Renders `binary`'s registered [`ALL_CHAINS`] install-preference chain as a
+/// single human-readable hint string, in the chain's own order — the one
+/// place install guidance is composed from the chain data instead of being
+/// restated by hand per call site (Fixes #264). A tool with no chain row
+/// (one that ships inside a toolchain rather than through a package
+/// manager, e.g. `cargo` or `gofmt`) has no generic advice to give here;
+/// callers for those tools pass their own override instead of relying on
+/// this fallback (see [`crate::surfaces::ToolInfo::install_hint`]).
+#[must_use]
+pub fn install_hint_for(binary: &str) -> String {
+  let Some(chain) = install_chain_for(binary) else {
+    return format!(
+      "No known install method for '{binary}' -- check its own documentation."
+    );
+  };
+  let Some((first, rest)) = chain.split_first() else {
+    return format!(
+      "No known install method for '{binary}' -- check its own documentation."
+    );
+  };
+  if rest.is_empty() {
+    format!("Install via: {}", first.describe())
+  } else {
+    let rest = rest.iter().map(InstallMethod::describe).collect::<Vec<_>>();
+    format!(
+      "Install via: {} (or {})",
+      first.describe(),
+      rest.join(" / ")
+    )
+  }
 }
 
 // --- Pinned tool versions -------------------------------------------------
@@ -276,9 +373,9 @@ impl InstallMethod {
 //
 // Bumping a pin is a deliberate action, same as bumping
 // `rust-toolchain.toml`: update the literal(s) here, re-run the presubmit
-// dogfooding (`fmt`/`lint`/`doctor --all`/`install`) to confirm the new
-// version doesn't reformat/re-lint this repo's own tree differently, then
-// commit.
+// dogfooding (`fmt`/`lint`/`doctor --all`/`doctor --install`) to confirm
+// the new version doesn't reformat/re-lint this repo's own tree
+// differently, then commit.
 
 // `CargoBinstall` sits *below* the npm family here, unlike every other
 // chain that lists it, and deliberately so: cargo-binstall only installs a
@@ -316,24 +413,6 @@ const TYPSTYLE_CHAIN: &[InstallMethod] = &[
   InstallMethod::WingetName("typstyle"),
   InstallMethod::Cargo {
     package: "typstyle@0.15.1",
-    locked: true,
-  },
-];
-
-// `Npm("@myriaddreamin/tinymist")` used to live here but never corresponded
-// to a real published package (404 on npm; the whole `@myriaddreamin` scope
-// only publishes Typst.ts WASM bindings, not this CLI, and the unscoped
-// `tinymist` package is likewise a WASM analyzer module) -- confirmed by
-// direct registry lookup while fixing #195 [pre-recreation]. Dropped rather than pinned: no
-// npm distribution of this CLI exists to pin a version of. cargo-binstall
-// (first below) and the plain `cargo install` fallback already cover it.
-const TINYMIST_CHAIN: &[InstallMethod] = &[
-  InstallMethod::CargoBinstall("tinymist@0.15.2"),
-  InstallMethod::Brew("tinymist"),
-  InstallMethod::Scoop("tinymist"),
-  InstallMethod::WingetName("Myriad-Dreamin.tinymist"),
-  InstallMethod::Cargo {
-    package: "tinymist@0.15.2",
     locked: true,
   },
 ];
@@ -428,8 +507,18 @@ const GOOGLE_JAVA_FORMAT_CHAIN: &[InstallMethod] = &[
 // that consume some *other* tool's output and reformat it as Checkstyle XML,
 // not a wrapper that installs the actual `checkstyle` Java tool). Dropped
 // rather than pinned: no npm distribution of this tool exists, and the
-// Brew/Apt entries above already cover the platforms that have a real
+// Brew/Apt entries below already cover the platforms that have a real
 // install path.
+//
+// No Windows entry, because no Windows package exists (#324). winget has
+// none: `winget install checkstyle --accept-source-agreements
+// --accept-package-agreements` on the windows-2025-vs2026 20260925.250.1
+// runner image prints "No package found matching input criteria." and
+// exits -1978335212 (APPINSTALLER_CLI_ERROR_NO_APPLICATIONS_FOUND),
+// searching both the `winget` and `msstore` sources (PR #431, Fresh-Install
+// Regression windows-latest). Scoop's official Main, Extras and Java buckets
+// carry no `checkstyle` manifest either (2026-10-01); only unofficial
+// buckets do, which `scoop install checkstyle` never reaches.
 const CHECKSTYLE_CHAIN: &[InstallMethod] = &[
   InstallMethod::Brew("checkstyle"),
   InstallMethod::Apt("checkstyle"),
@@ -446,7 +535,7 @@ const GOLANGCI_LINT_CHAIN: &[InstallMethod] = &[
   InstallMethod::Brew("golangci-lint"),
   InstallMethod::Scoop("golangci-lint"),
   InstallMethod::GoInstall(
-    "github.com/golangci/golangci-lint/v2/cmd/golangci-lint@v2.13.1",
+    "github.com/golangci/golangci-lint/v2/cmd/golangci-lint@v2.13.2",
   ),
 ];
 
@@ -474,6 +563,29 @@ const KTLINT_CHAIN: &[InstallMethod] = &[
   InstallMethod::Npm("@naturalcycles/ktlint@1.16.1"),
   InstallMethod::Apt("ktlint"),
 ];
+
+/// Where `KTLINT_CHAIN`'s npm wrapper puts ktlint's self-executing jar,
+/// relative to the directory holding npm's `ktlint.cmd` shim.
+///
+/// The jar carries a `#!/bin/sh` launcher, so on Windows npm's cmd-shim runs
+/// it as `"/bin/sh" ...\resources\ktlint`, which `cmd` cannot find (#402).
+/// [`npm_ktlint_jar`] lets [`create_tool_command`] run it with `java -jar`.
+const NPM_KTLINT_JAR: &str =
+  "node_modules/@naturalcycles/ktlint/resources/ktlint";
+
+/// Returns the jar behind `shim` when `binary` is ktlint and `shim` is the
+/// `ktlint.cmd` the `@naturalcycles/ktlint` npm wrapper installed.
+fn npm_ktlint_jar(binary: &str, shim: &std::path::Path) -> Option<PathBuf> {
+  if binary != "ktlint"
+    || !shim
+      .extension()
+      .is_some_and(|ext| ext.eq_ignore_ascii_case("cmd"))
+  {
+    return None;
+  }
+  let jar = shim.parent()?.join(NPM_KTLINT_JAR);
+  jar.is_file().then_some(jar)
+}
 
 /// One row of the tool-chain registry: the canonical binary name, its
 /// ordered installer preference chain, and (if known) the exact version
@@ -519,7 +631,7 @@ struct ToolChain {
 /// drifted apart from each other).
 ///
 /// `expected_binary_version` status per row, and why:
-/// - `Some(...)`: `typstyle`, `tinymist`, `ruff`, `prettier`, `biome`,
+/// - `Some(...)`: `typstyle`, `ruff`, `prettier`, `biome`,
 ///   `markdownlint-cli2`, `yamllint`, `golangci-lint` — each ships its own CLI directly
 ///   (not a repackaging of some other project's binary) and every
 ///   registry-resolved pin in its chain agrees on the same version, so the
@@ -543,7 +655,7 @@ struct ToolChain {
 ///   `checkstyle`, `rustfmt`, `clippy-driver` — every entry in these chains
 ///   is an unpinned system-package-manager/rustup install.
 /// - `None`, unverified even though internally consistent: `clang-format`
-///   — its `Pipx`/`Pip`/`Pip3` entries agree on `22.1.8`, and the PyPI
+///   — its `Pipx`/`Pip`/`Pip3` entries agree on `22.1.8`, and the `PyPI`
 ///   `clang-format` wheel plausibly bundles a matching prebuilt binary, but
 ///   that hasn't been independently confirmed the way taplo/ktlint's
 ///   mismatches were, and the apt/brew/winget/scoop fallbacks in the same
@@ -560,11 +672,6 @@ const ALL_CHAINS: &[ToolChain] = &[
     binary: "typstyle",
     chain: TYPSTYLE_CHAIN,
     expected_binary_version: Some(Version::new(0, 15, 1)),
-  },
-  ToolChain {
-    binary: "tinymist",
-    chain: TINYMIST_CHAIN,
-    expected_binary_version: Some(Version::new(0, 15, 2)),
   },
   ToolChain {
     binary: "ruff",
@@ -629,7 +736,7 @@ const ALL_CHAINS: &[ToolChain] = &[
   ToolChain {
     binary: "golangci-lint",
     chain: GOLANGCI_LINT_CHAIN,
-    expected_binary_version: Some(Version::new(2, 13, 1)),
+    expected_binary_version: Some(Version::new(2, 13, 2)),
   },
   ToolChain {
     binary: "ktlint",
@@ -713,16 +820,52 @@ pub fn pinned_installer_for(binary: &str) -> Option<&'static str> {
 static BINARY_CACHE: OnceLock<Mutex<HashMap<String, Option<PathBuf>>>> =
   OnceLock::new();
 
-/// Resolves `binary` to its concrete path on `PATH`, memoized per-process so
-/// repeated lookups for the same binary don't re-hit the filesystem.
+/// Resolves `binary` to its concrete path, memoized per-process so repeated
+/// lookups for the same binary don't re-hit the filesystem (or, for the
+/// fallback below, re-spawn a process).
+///
+/// Checks `PATH` first via `which::which`, then -- only if that fails --
+/// falls back to [`resolve_via_known_install_dir`], which consults the one
+/// known-but-not-on-`PATH` install location this crate's installers use
+/// (see that function's doc comment). This is the lookup-time half of the
+/// fix for #293: a tool an *earlier* `fml` process installed into that
+/// directory must still resolve here, in a brand-new process that starts
+/// with a stock environment and never ran that installer itself.
+///
+/// **The lock is never held across the resolution itself.** The cache guard
+/// is taken to read, dropped, and only re-taken to insert. That is load
+/// bearing twice over:
+///
+/// 1. *Correctness.* [`resolve_via_known_install_dir`] spawns `go env`
+///    through [`create_tool_command`], which calls **back into this
+///    function** to resolve `go` itself. [`BINARY_CACHE`]'s
+///    `std::sync::Mutex` is not reentrant, so re-locking it on the same
+///    thread while the first guard was alive is a documented
+///    panic-or-deadlock (a deadlock on Windows' SRWLOCK) -- and it would
+///    fire on exactly the lookup this fallback exists for.
+/// 2. *Throughput.* Surfaces fan out over `rayon`
+///    (`crate::engine::runner`), so holding the single global cache mutex
+///    across a process spawn would stall every other surface's lookups
+///    behind one `go env`.
+///
+/// The cost of dropping the guard is that two threads racing on the same
+/// cold binary can both resolve it. That is harmless: resolution is a pure
+/// read of `PATH`/the filesystem, both threads compute the same answer, and
+/// the second insert overwrites the first with an equal value.
 #[must_use]
 pub fn resolve_binary_path(binary: &str) -> Option<PathBuf> {
   let cache = BINARY_CACHE.get_or_init(|| Mutex::new(HashMap::new()));
-  let mut guard = cache.lock().unwrap_or_else(|e| e.into_inner());
-  if let Some(resolved) = guard.get(binary) {
-    return resolved.clone();
+  {
+    let guard = cache.lock().unwrap_or_else(PoisonError::into_inner);
+    if let Some(resolved) = guard.get(binary) {
+      return resolved.clone();
+    }
   }
-  let resolved = which::which(binary).ok();
+  // Deliberately outside the critical section -- see the doc comment above.
+  let resolved = which::which(binary)
+    .ok()
+    .or_else(|| resolve_via_known_install_dir(binary));
+  let mut guard = cache.lock().unwrap_or_else(PoisonError::into_inner);
   guard.insert(binary.to_string(), resolved.clone());
   resolved
 }
@@ -732,8 +875,9 @@ pub fn resolve_binary_path(binary: &str) -> Option<PathBuf> {
 /// filesystem instead of returning a stale memoized result.
 ///
 /// Required after a successful install performed *within the same process*
-/// (`fml fmt --install`, `fml lint --install`, `fml doctor --install`): the
-/// preflight scan that decided a tool needed installing already called
+/// (`fml doctor --install`, the only remaining in-process installer as of
+/// v0.3.0 — see #282): the preflight scan that decided a tool needed
+/// installing already called
 /// [`check_binary_exists`] on it and memoized the miss. Without evicting that
 /// entry here, every lookup for the rest of this invocation -- including the
 /// one the just-installed tool's own surface makes before actually running
@@ -742,7 +886,7 @@ pub fn resolve_binary_path(binary: &str) -> Option<PathBuf> {
 /// `PATH` and a fresh lookup would find it immediately.
 pub fn forget_binary(binary: &str) {
   let cache = BINARY_CACHE.get_or_init(|| Mutex::new(HashMap::new()));
-  let mut guard = cache.lock().unwrap_or_else(|e| e.into_inner());
+  let mut guard = cache.lock().unwrap_or_else(PoisonError::into_inner);
   guard.remove(binary);
 }
 
@@ -750,7 +894,7 @@ pub fn forget_binary(binary: &str) {
 #[doc(hidden)]
 pub fn set_binary_path_for_test(binary: &str, path: Option<PathBuf>) {
   let cache = BINARY_CACHE.get_or_init(|| Mutex::new(HashMap::new()));
-  let mut guard = cache.lock().unwrap_or_else(|e| e.into_inner());
+  let mut guard = cache.lock().unwrap_or_else(PoisonError::into_inner);
   guard.insert(binary.to_string(), path);
 }
 
@@ -785,6 +929,13 @@ pub fn tool_missing_result(
 
 /// Returns `Some(SurfaceResult)` with `SurfaceStatus::ToolMissing` if `binary`
 /// is not found on `PATH`, or `None` if it is available.
+///
+/// `hint` is an optional override; `None` falls back to
+/// [`install_hint_for`], the same derivation [`ToolInfo::effective_install_hint`]
+/// uses, so a caller that doesn't need a bespoke message (nearly all of
+/// them) never has to restate the chain's install prose by hand.
+///
+/// [`ToolInfo::effective_install_hint`]: crate::surfaces::ToolInfo::effective_install_hint
 #[must_use]
 pub fn tool_missing_guard(
   name: &'static str,
@@ -792,10 +943,11 @@ pub fn tool_missing_guard(
   start: Instant,
   hint: Option<&'static str>,
 ) -> Option<SurfaceResult> {
-  if !check_binary_exists(binary) {
-    Some(tool_missing_result(name, start, binary, hint.unwrap_or("")))
-  } else {
+  if check_binary_exists(binary) {
     None
+  } else {
+    let hint = hint.map_or_else(|| install_hint_for(binary), str::to_string);
+    Some(tool_missing_result(name, start, binary, &hint))
   }
 }
 
@@ -817,8 +969,8 @@ pub fn tool_missing_guard(
 ///
 /// The value is deliberately *not* compared against the one `fml` passes.
 /// Today's only caller is biome's `--linter-enabled`, and biome rejects that
-/// flag given twice outright (`argument \`--linter-enabled\` cannot be used
-/// multiple times in this context`) — before parsing either value. So a
+/// flag given twice outright ("argument `--linter-enabled` cannot be used
+/// multiple times in this context") — before parsing either value. So a
 /// restatement is exactly as broken as a contradiction, and matching on the
 /// value would let half the broken spellings through.
 ///
@@ -922,7 +1074,7 @@ pub fn chain_wants_cargo_binstall(chain: &[InstallMethod]) -> bool {
 /// bootstrapping it never itself falls back to compiling `cargo-binstall`
 /// from source. Uses the same `curl ... | sh` pattern rustup's own installer
 /// documents (`--proto '=https' --tlsv1.2 -sSf`) on Linux/macOS, and the
-/// equivalent PowerShell script on Windows. Returns `false` (rather than
+/// equivalent `PowerShell` script on Windows. Returns `false` (rather than
 /// propagating an error) on any failure to run the script -- a missing
 /// `curl`/`powershell`, no network, or a non-zero exit -- so the caller can
 /// fall through to the next installer in the chain instead of aborting.
@@ -964,8 +1116,8 @@ fn run_cargo_binstall_bootstrap() -> bool {
 /// source compile) if `cargo` is present but `cargo-binstall` itself isn't
 /// yet on `PATH`.
 ///
-/// This exists so tools with no genuine native package anywhere (`typstyle`,
-/// `tinymist`; `taplo`/`ruff` as a fallback) get a real prebuilt-binary
+/// This exists so tools with no genuine native package anywhere (`typstyle`;
+/// `taplo`/`ruff` as a fallback) get a real prebuilt-binary
 /// install path on every OS instead of silently dropping straight to
 /// `cargo install --locked` source compilation just because `cargo-binstall`
 /// itself hadn't been bootstrapped yet. Side-effecting (spawns a network
@@ -984,7 +1136,7 @@ pub fn ensure_cargo_binstall() -> bool {
   }
 
   let cell = BINSTALL_BOOTSTRAP.get_or_init(|| Mutex::new(None));
-  let mut guard = cell.lock().unwrap_or_else(|e| e.into_inner());
+  let mut guard = cell.lock().unwrap_or_else(PoisonError::into_inner);
   if let Some(available) = *guard {
     return available;
   }
@@ -1006,12 +1158,12 @@ pub fn ensure_cargo_binstall() -> bool {
 /// currently resolves to, when that installer can't itself pin to the tool's
 /// confirmed `expected_binary_version`.
 ///
-/// This is the `typstyle`/`tinymist` case: their chains list
+/// This is the `typstyle` case: its chain lists
 /// `CargoBinstall("<tool>@<pin>")` first, but on a machine where
 /// `cargo-binstall` isn't on `PATH` yet the first *available* method is
 /// `Brew`, whose core-tap bottle routinely trails the crates.io pin
 /// (`typstyle` 0.15.0 vs. the pinned 0.15.1). Installing via that lagging
-/// Homebrew formula then trips `install_missing_tools`' post-install
+/// Homebrew formula then trips `install_missing_tools_framed`' post-install
 /// convergence guard -- a spurious `[WARN]` + non-clean exit on every macOS
 /// `fml doctor --install` until the bottle catches up. Bootstrapping `cargo-binstall`
 /// up front lets the already-first, pin-carrying prebuilt win instead;
@@ -1092,7 +1244,17 @@ pub fn tool_would_benefit_from_cargo_binstall_bootstrap(binary: &str) -> bool {
 /// Windows-specific, side-effecting part of the refresh this supports is
 /// [`refresh_windows_path_from_registry`], which sources `additional` from
 /// the registry and applies the result via `std::env::set_var`.
+///
+/// That one production caller is itself `#[cfg(windows)]`-gated, so on
+/// every other target this function has no production caller at all --
+/// `#[allow(dead_code)]` there is a deliberate cross-platform-code
+/// allowance, not the unreachable-logic case dead-code scrutiny is aimed
+/// at: the code is live and necessary on Windows, and staying compiled
+/// (and directly unit-tested, see the tests below) on every other platform
+/// is what keeps its logic honest without needing an actual Windows
+/// machine to test it on.
 #[must_use]
+#[cfg_attr(not(windows), allow(dead_code))]
 fn merge_path_entries(current: &str, additional: &str) -> String {
   let separator = if cfg!(windows) { ';' } else { ':' };
   let mut seen: std::collections::HashSet<String> =
@@ -1129,8 +1291,8 @@ fn merge_path_entries(current: &str, additional: &str) -> String {
 ///
 /// Needed because on Windows, an installer that registers a new directory
 /// via the registry (Scoop, `winget`) does not update an *already-running*
-/// process's inherited environment block -- only a process started after
-/// the change picks it up. Without this, a tool Scoop/`winget` just
+/// process's inherited environment block, nor that of any child it starts
+/// later. Without this, a tool Scoop/`winget` just
 /// installed mid-run can be completely unresolvable for the rest of this
 /// invocation: not a [`BINARY_CACHE`] staleness problem (already fixed by
 /// [`forget_binary`]) but a genuine "this process's `PATH` string does not
@@ -1184,11 +1346,17 @@ pub fn refresh_windows_path_from_registry() {
 /// deliberate -- making a `PATH` addition durable means editing files this
 /// tool doesn't own, and the per-tool `install_hint` already tells the user
 /// what to do about their own shell.
+///
+/// Only called from [`refresh_windows_path_from_registry`]'s
+/// `#[cfg(windows)]` block (Scoop/winget's registry-only PATH updates); see
+/// [`merge_path_entries`]'s doc comment for why this is left compiled (and
+/// therefore `#[allow(dead_code)]`, not deleted) on every other platform.
+#[cfg_attr(not(windows), allow(dead_code))]
 fn merge_into_process_path(additional: &str) {
   let current = std::env::var("PATH").unwrap_or_default();
   let merged = merge_path_entries(&current, additional);
   if merged != current {
-    // SAFETY: single-threaded call site (`install_missing_tools` runs its
+    // SAFETY: single-threaded call site (`install_missing_tools_framed` runs its
     // per-tool loop sequentially, not from a `rayon` fan-out like
     // `Runner::run`'s per-surface dispatch), and no other code in this
     // crate reads `PATH` concurrently with a call to this function.
@@ -1202,10 +1370,10 @@ fn merge_into_process_path(additional: &str) {
 /// values of `GOBIN` and `GOPATH`: `GOBIN` when it is set, otherwise the
 /// first `GOPATH` entry plus `bin` (Go's own documented default).
 ///
-/// Split out from [`refresh_go_install_path`] and kept pure so the
-/// precedence is unit-testable on a machine with no Go toolchain at all;
-/// the `go env` invocation that sources these two values is the only part
-/// left in the caller.
+/// Split out from [`go_install_bin_dir`] and kept pure so the precedence is
+/// unit-testable on a machine with no Go toolchain at all; the `go env`
+/// invocation that sources these two values is the only part left in the
+/// caller.
 #[must_use]
 fn go_bin_dir_from_env(gobin: &str, gopath: &str) -> Option<PathBuf> {
   let gobin = gobin.trim();
@@ -1220,34 +1388,32 @@ fn go_bin_dir_from_env(gobin: &str, gopath: &str) -> Option<PathBuf> {
   Some(PathBuf::from(first).join("bin"))
 }
 
-/// Adds `go install`'s output directory (`GOBIN`, else `$GOPATH/bin`) to
-/// this process's `PATH` if it isn't already on it.
+/// Asks the `go` toolchain directly for the directory `go install` writes
+/// binaries into (`GOBIN`, else `$GOPATH/bin`), or `None` if `go` isn't on
+/// `PATH` or the query fails.
 ///
-/// [`InstallMethod::GoInstall`] is the one installer in this module that
-/// routinely writes into a directory that is *not* already on `PATH`.
-/// Every other installer used here puts binaries next to (or under the same
-/// prefix as) a package manager the user must already be able to invoke:
-/// `npm -g`, `pipx`, `uv`, `brew`, `cargo install`, `rustup`. `$GOPATH/bin`
-/// has no such guarantee -- Go creates it on demand, and it is on `PATH`
-/// only if the user put it there. On a stock GitHub Actions Linux runner it
-/// is not, so `go install golang.org/x/tools/cmd/goimports@v0.49.0`
-/// succeeds and the very next lookup for `goimports` in the same invocation
-/// still finds nothing.
-///
-/// That is the same user-visible symptom as the [`BINARY_CACHE`] staleness
-/// [`forget_binary`] fixes, but a different cause -- here the binary
-/// genuinely is not reachable from this process's `PATH` -- and the same
-/// shape as the Scoop/`winget` case
-/// [`refresh_windows_path_from_registry`] handles on Windows. Both are
-/// dispatched from [`refresh_path_after_install`].
-pub fn refresh_go_install_path() {
+/// One of the directories [`KnownInstallDir`] enumerates -- see that type
+/// for the full per-[`InstallMethod`] audit of which installers write
+/// somewhere `PATH` may not cover. `$GOPATH/bin` is the case #293 was filed
+/// over: Go creates it on demand, and it is on `PATH` only if the user put
+/// it there. On a stock `GitHub` Actions Linux runner it is not, so
+/// `go install golang.org/x/tools/cmd/goimports@v0.49.0`
+/// succeeds and a lookup for `goimports` from `PATH` alone still finds
+/// nothing -- in this process *or a later one*, since nothing durable ever
+/// records that directory anywhere `PATH` gets rebuilt from. That's why this
+/// directory gets checked directly at lookup time via
+/// [`resolve_via_known_install_dir`] instead of being mutated into some
+/// process's `PATH`: mutating a
+/// process's own `PATH` can never help a *different, later* process, which
+/// is exactly the two-process `fml doctor --install` then `fml fmt`
+/// sequence #293 was filed over.
+#[must_use]
+fn go_install_bin_dir() -> Option<PathBuf> {
   let mut cmd = create_tool_command("go");
   cmd.args(["env", "GOBIN", "GOPATH"]);
-  let Ok(output) = cmd.output() else {
-    return;
-  };
+  let output = cmd.output().ok()?;
   if !output.status.success() {
-    return;
+    return None;
   }
 
   // `go env NAME...` prints one value per line, in the order requested,
@@ -1257,10 +1423,388 @@ pub fn refresh_go_install_path() {
   let mut lines = stdout.lines();
   let gobin = lines.next().unwrap_or_default();
   let gopath = lines.next().unwrap_or_default();
+  go_bin_dir_from_env(gobin, gopath)
+}
 
-  if let Some(bin_dir) = go_bin_dir_from_env(gobin, gopath) {
-    merge_into_process_path(&bin_dir.to_string_lossy());
+/// Pure half of the known-install-directory fallback: does `binary` exist as
+/// an executable file directly inside `dir`? Kept separate from
+/// [`resolve_via_known_install_dir`] (which sources its directories from
+/// [`KnownInstallDir::path`], one of which actually spawns `go env`) so the
+/// on-disk check is unit-testable against a fabricated temp directory, with
+/// no real toolchain of any kind required.
+#[must_use]
+fn resolve_installed_binary_in(
+  binary: &str,
+  dir: &std::path::Path,
+) -> Option<PathBuf> {
+  resolve_installed_binary_with(binary, dir, INSTALLED_BINARY_SUFFIXES)
+}
+
+/// File-name suffixes an installer gives a Windows binary, in probe order.
+///
+/// Scoop names a shim after its app's `bin`: a PE gets `<name>.exe`, while a
+/// `.jar`, `.ps1`, `.bat` or `.cmd` gets `<name>.cmd` (Scoop's ktlint is
+/// `ktlint.jar`, so only `shims\ktlint.cmd` exists). A `.cmd`/`.bat` hit is
+/// spawned through the batch-file path in [`create_tool_command`].
+const WINDOWS_INSTALLED_SUFFIXES: &[&str] = &[".exe", ".cmd", ".bat"];
+
+/// [`WINDOWS_INSTALLED_SUFFIXES`] on Windows; elsewhere the bare name.
+const INSTALLED_BINARY_SUFFIXES: &[&str] = if cfg!(windows) {
+  WINDOWS_INSTALLED_SUFFIXES
+} else {
+  &[""]
+};
+
+/// Returns the first `{binary}{suffix}` in `dir` that is an executable file,
+/// trying `suffixes` in order. Takes the suffixes so the Windows list is
+/// testable on every OS.
+#[must_use]
+fn resolve_installed_binary_with(
+  binary: &str,
+  dir: &std::path::Path,
+  suffixes: &[&str],
+) -> Option<PathBuf> {
+  suffixes.iter().find_map(|suffix| {
+    let candidate = dir.join(format!("{binary}{suffix}"));
+    (candidate.is_file() && is_executable_file(&candidate)).then_some(candidate)
+  })
+}
+
+/// Whether `path` is something the OS would actually agree to execute --
+/// the same bar `which::which` applies to a `PATH` hit, so the fallback in
+/// [`resolve_via_known_install_dir`] can't resolve a file `which` would
+/// have skipped.
+///
+/// This is load bearing now that [`create_tool_command`] *spawns* the
+/// resolved path: a mode-0644 leftover in `$GOBIN` (a half-written
+/// download, a stray shim) would otherwise pass the missing-tool guard and
+/// then fail to exec with `Permission denied` -- the same "found it, can't
+/// run it" shape #293 is about. On Windows executability is carried by the
+/// extension (already handled by `INSTALLED_BINARY_SUFFIXES`), not by a
+/// permission bit, so there is nothing further to check there.
+#[must_use]
+fn is_executable_file(path: &std::path::Path) -> bool {
+  #[cfg(unix)]
+  {
+    use std::os::unix::fs::PermissionsExt;
+    std::fs::metadata(path)
+      .is_ok_and(|meta| meta.permissions().mode() & 0o111 != 0)
   }
+  #[cfg(not(unix))]
+  {
+    let _ = path;
+    true
+  }
+}
+
+/// An install directory one of this crate's [`InstallMethod`]s writes
+/// binaries into that a plain `PATH` search can structurally fail to see --
+/// the set [`resolve_via_known_install_dir`] probes after `which` comes up
+/// empty.
+///
+/// # The audit, per `InstallMethod` variant
+///
+/// Every variant is accounted for in [`KnownInstallDir::for_method`]'s
+/// `match`, deliberately without a `_` arm, so a new install method cannot
+/// be added without deciding which side of this line it falls on. #293's
+/// first fix enumerated this informally in prose and got it wrong twice
+/// (`Apt` was omitted entirely; `Pipx`/`Uv` were claimed to install next to
+/// a package manager already on `PATH`), which is what #297 exists for.
+///
+/// **Needs an entry here:**
+///
+/// * [`InstallMethod::GoInstall`] -- `GOBIN`, else `$GOPATH/bin`. Created
+///   on demand by Go and on `PATH` only if the user put it there (#293).
+/// * [`InstallMethod::Pipx`] -- `$PIPX_BIN_DIR`, else `~/.local/bin`. That
+///   this directory routinely is not on `PATH` is exactly why
+///   `pipx ensurepath` exists as a command.
+/// * [`InstallMethod::Uv`] -- `$UV_TOOL_BIN_DIR`, else `$XDG_BIN_HOME`,
+///   else `~/.local/bin`; `uv tool update-shell` is uv's counterpart to
+///   `pipx ensurepath`, for the same reason.
+/// * [`InstallMethod::Pip`] / [`InstallMethod::Pip3`] -- the Python user
+///   scheme's script directory. `command()` does *not* pass `--user`, so
+///   these normally install into the prefix of the `pip` that ran (an
+///   active virtualenv's `bin`, or the system prefix), both on `PATH` by
+///   construction whenever that `pip` itself was invocable. The user scheme
+///   is still reachable without `--user` -- PEP 370 configuration, and
+///   distro-patched pips that fall back to it when the system prefix is not
+///   writable -- and probing it costs one `stat` on a directory this set
+///   already knows about, so it is covered rather than argued away.
+///   `PYTHONUSERBASE` is honored everywhere; the *default* base is only
+///   derivable on Linux and the other non-macOS Unixes, per
+///   [`PYTHON_USER_BASE_DEFAULT_IS_DERIVABLE`].
+/// * [`InstallMethod::Scoop`] / `WingetName` / `WingetId` -- Scoop's shims
+///   dir and winget's user- and machine-scope `Links` dirs. Both installers
+///   add their dir to the `PATH` stored in the registry, but a process
+///   inherits its parent's environment block, not the registry, so a
+///   terminal, editor or CI step that was already running never sees it
+///   (Issue #478: winget-installed `typstyle` was `[OK]` in `fml doctor`
+///   and `[MISS]` in the next `fml fmt`, Fresh-Install Regression
+///   windows-latest job 110755434272).
+///
+/// **Safe without one, and why:**
+///
+/// * [`InstallMethod::Apt`] -- `/usr/bin` (a `.deb`'s binaries land under
+///   the distribution's own prefix, which is what `apt-get` itself is
+///   invoked from). Audited explicitly because #293's prose enumeration
+///   left it out; it is genuinely safe, not merely unlisted.
+/// * [`InstallMethod::Npm`] / `Pnpm` / `Yarn` / `Bun` -- the node manager's
+///   own global prefix `bin`, next to the manager the user just invoked.
+/// * [`InstallMethod::Brew`] -- the brew prefix's `bin`, likewise, except
+///   for a keg-only formula, which brew installs without linking into that
+///   `bin`. Of this crate's brew formulae only `llvm` is keg-only (on
+///   macOS), so `Brew("llvm")` maps to its keg's `bin`: there `brew install
+///   llvm` exited 0 and `clang-tidy` stayed `[MISS]` (Issue #442,
+///   Fresh-Install Regression macos-latest job 110832111569).
+/// * [`InstallMethod::Cargo`] / `CargoBinstall` / `Rustup` -- `$CARGO_HOME/bin`
+///   (default `~/.cargo/bin`), which is where `cargo`/`rustup` themselves
+///   live, so resolving either of those implies the directory is on `PATH`.
+///
+/// Lookup skips the directories of an install method that does not
+/// [`InstallMethod::runs_on`] the current OS, so Scoop's and winget's are
+/// probed on Windows only.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum KnownInstallDir {
+  /// `go install`'s output directory -- see [`go_install_bin_dir`].
+  Go,
+  /// `pipx install`'s binary directory.
+  Pipx,
+  /// `uv tool install`'s binary directory.
+  UvTool,
+  /// The Python user scheme's script directory (`pip`'s user site).
+  PythonUser,
+  /// Scoop's shim directory: `$SCOOP\shims`, else `~\scoop\shims`.
+  ScoopShims,
+  /// winget's user-scope alias directory,
+  /// `%LOCALAPPDATA%\Microsoft\WinGet\Links`.
+  WingetUserLinks,
+  /// winget's machine-scope alias directory, `%ProgramFiles%\WinGet\Links`.
+  WingetMachineLinks,
+  /// The `bin` of Homebrew's keg-only `llvm`, `<prefix>/opt/llvm/bin`.
+  BrewLlvm,
+}
+
+impl KnownInstallDir {
+  /// Which directories, if any, this install method writes into that `PATH`
+  /// is not guaranteed to cover. See the type's doc comment for the audit
+  /// behind each arm; the `match` is exhaustive on purpose.
+  #[must_use]
+  fn for_method(method: &InstallMethod) -> &'static [Self] {
+    match method {
+      InstallMethod::GoInstall(_) => &[Self::Go],
+      InstallMethod::Pipx(_) => &[Self::Pipx],
+      InstallMethod::Uv(_) => &[Self::UvTool],
+      InstallMethod::Pip(_) | InstallMethod::Pip3(_) => &[Self::PythonUser],
+      InstallMethod::Scoop(_) => &[Self::ScoopShims],
+      InstallMethod::WingetName(_) | InstallMethod::WingetId(_) => {
+        &[Self::WingetUserLinks, Self::WingetMachineLinks]
+      }
+      InstallMethod::Brew("llvm") => &[Self::BrewLlvm],
+      InstallMethod::CargoBinstall(_)
+      | InstallMethod::Npm(_)
+      | InstallMethod::Pnpm(_)
+      | InstallMethod::Yarn(_)
+      | InstallMethod::Bun(_)
+      | InstallMethod::Apt(_)
+      | InstallMethod::Brew(_)
+      | InstallMethod::Cargo { .. }
+      | InstallMethod::Rustup(_) => &[],
+    }
+  }
+
+  /// Where this directory actually is on this machine, or `None` when it
+  /// cannot be determined (no home directory, or -- for [`Self::Go`] --
+  /// no usable `go` toolchain to ask).
+  ///
+  /// Only [`Self::Go`] spawns a process; the rest are pure environment
+  /// reads, which is why [`resolve_via_known_install_dir`] can afford to
+  /// consult them for every chain that lists the matching installer.
+  #[must_use]
+  fn path(self) -> Option<PathBuf> {
+    self.path_with(go_install_bin_dir, |var| std::env::var(var).ok())
+  }
+
+  /// [`Self::path`], with the `go install` bin directory and every
+  /// environment read injected, so the precedence rules below are
+  /// unit-testable without mutating this process's environment. Mutating it
+  /// would be both racy (the test binary is multi-threaded, which is why
+  /// `std::env::set_var` is `unsafe` in the 2024 edition) and, for `HOME`,
+  /// able to misdirect unrelated tests running alongside.
+  #[must_use]
+  fn path_with(
+    self,
+    go_bin_dir: impl FnOnce() -> Option<PathBuf>,
+    env: impl Fn(&str) -> Option<String>,
+  ) -> Option<PathBuf> {
+    match self {
+      Self::Go => go_bin_dir(),
+      Self::Pipx => {
+        non_empty_dir(&env, "PIPX_BIN_DIR").or_else(|| local_bin_dir(&env))
+      }
+      Self::UvTool => non_empty_dir(&env, "UV_TOOL_BIN_DIR")
+        .or_else(|| non_empty_dir(&env, "XDG_BIN_HOME"))
+        .or_else(|| local_bin_dir(&env)),
+      Self::PythonUser => {
+        // `PYTHONUSERBASE` overrides the base on every platform, and the
+        // scripts sit at `<base>/bin` (`<base>\Scripts` on Windows). The
+        // *default* base is another matter -- see
+        // `PYTHON_USER_BASE_DEFAULT_IS_DERIVABLE`.
+        if let Some(base) = non_empty_dir(&env, "PYTHONUSERBASE") {
+          return Some(base.join(USER_SCHEME_SCRIPT_DIR));
+        }
+        if PYTHON_USER_BASE_DEFAULT_IS_DERIVABLE {
+          local_bin_dir(&env)
+        } else {
+          None
+        }
+      }
+      Self::ScoopShims => non_empty_dir(&env, "SCOOP")
+        .or_else(|| Some(non_empty_dir(&env, "USERPROFILE")?.join("scoop")))
+        .map(|root| root.join("shims")),
+      Self::WingetUserLinks => Some(
+        non_empty_dir(&env, "LOCALAPPDATA")?
+          .join("Microsoft")
+          .join("WinGet")
+          .join("Links"),
+      ),
+      Self::BrewLlvm => Some(
+        non_empty_dir(&env, "HOMEBREW_PREFIX")
+          .unwrap_or_else(|| PathBuf::from(HOMEBREW_DEFAULT_PREFIX))
+          .join("opt")
+          .join("llvm")
+          .join("bin"),
+      ),
+      Self::WingetMachineLinks => Some(
+        non_empty_dir(&env, "ProgramFiles")?
+          .join("WinGet")
+          .join("Links"),
+      ),
+    }
+  }
+}
+
+/// Homebrew's install prefix when `HOMEBREW_PREFIX` is unset: the default
+/// its installer uses on this platform.
+///
+/// A constant rather than a `brew --prefix` spawn because a lookup miss for
+/// `clang-tidy` would pay for a Ruby start-up on every fml run; Homebrew
+/// supports only these default prefixes, and `brew shellenv` exports
+/// `HOMEBREW_PREFIX` for the rest.
+const HOMEBREW_DEFAULT_PREFIX: &str =
+  if cfg!(all(target_os = "macos", target_arch = "aarch64")) {
+    "/opt/homebrew"
+  } else if cfg!(target_os = "macos") {
+    "/usr/local"
+  } else {
+    "/home/linuxbrew/.linuxbrew"
+  };
+
+/// The leaf name of the Python user scheme's script directory: `bin` on
+/// Unix, `Scripts` on Windows.
+const USER_SCHEME_SCRIPT_DIR: &str =
+  if cfg!(windows) { "Scripts" } else { "bin" };
+
+/// Whether the Python user scheme's *default* base (the one used when
+/// `PYTHONUSERBASE` is unset) can be derived from the home directory alone.
+///
+/// True only on Linux and the other non-macOS Unixes, where `site.USER_BASE`
+/// is `~/.local`. It is **false** on:
+///
+/// * **Windows** -- the default base is `%APPDATA%\Python\PythonXY`, whose
+///   `XY` is the interpreter's version.
+/// * **macOS** -- framework builds of `CPython` (both python.org's installer
+///   and Homebrew's) put `site.USER_BASE` at `~/Library/Python/X.Y`, so
+///   scripts land in e.g. `~/Library/Python/3.13/bin`, *not* `~/.local/bin`.
+///
+/// In both cases the version component cannot be derived without asking an
+/// interpreter, so [`KnownInstallDir::path_with`] declines rather than
+/// guessing a directory that is wrong. The cost is a missed resolution, never
+/// a false hit: a `pip`-installed tool under a framework Python's user scheme
+/// on macOS still reports `[MISS]` the way it does today. Resolving it would
+/// mean globbing `~/Library/Python/*/bin`, which is a wider change than
+/// #297's audit -- deliberately not folded in here. `PYTHONUSERBASE` is still
+/// honored on every platform, and [`KnownInstallDir::Pipx`] /
+/// [`KnownInstallDir::UvTool`] are unaffected: pipx and uv use `~/.local/bin`
+/// on macOS as on Linux.
+const PYTHON_USER_BASE_DEFAULT_IS_DERIVABLE: bool =
+  !cfg!(windows) && !cfg!(target_os = "macos");
+
+/// The environment variable naming the user's home directory on this
+/// platform. Named once, so production lookups and their tests cannot
+/// disagree about which variable [`local_bin_dir`] actually reads.
+const HOME_VAR: &str = if cfg!(windows) { "USERPROFILE" } else { "HOME" };
+
+/// `$HOME/.local/bin` (`%USERPROFILE%\.local\bin` on Windows) -- the
+/// directory current `pipx` and `uv` both install tool binaries into, and
+/// the default script directory of Python's user scheme on Unix.
+#[must_use]
+fn local_bin_dir(env: &impl Fn(&str) -> Option<String>) -> Option<PathBuf> {
+  Some(non_empty_dir(env, HOME_VAR)?.join(".local").join("bin"))
+}
+
+/// Reads `var` through `env` as a path, treating unset and
+/// blank-or-whitespace alike as "not configured" -- an exported-but-empty
+/// `PIPX_BIN_DIR` must not turn into a probe of the filesystem root.
+#[must_use]
+fn non_empty_dir(
+  env: &impl Fn(&str) -> Option<String>,
+  var: &str,
+) -> Option<PathBuf> {
+  let value = env(var)?;
+  let trimmed = value.trim();
+  (!trimmed.is_empty()).then(|| PathBuf::from(trimmed))
+}
+
+/// The lookup-time fallback [`resolve_binary_path`] tries once a plain
+/// `PATH` search comes up empty: does `binary` exist in any of the
+/// [`KnownInstallDir`]s its own install chain could have put it in?
+///
+/// Driven off [`install_chain_for`] rather than probing every known
+/// directory for every miss, so a genuinely-missing `prettier` (npm family
+/// only) does no extra filesystem work at all and, in particular, never
+/// pays for [`KnownInstallDir::Go`]'s `go env` spawn. Directories are
+/// tried in chain order -- the same order [`InstallMethod`]s are attempted
+/// at install time -- and de-duplicated, since `uv`, `pipx` and pip's user
+/// scheme commonly resolve to the same `~/.local/bin`.
+#[must_use]
+fn resolve_via_known_install_dir(binary: &str) -> Option<PathBuf> {
+  resolve_via_known_install_dir_with(binary, KnownInstallDir::path)
+}
+
+/// [`resolve_via_known_install_dir`], with each [`KnownInstallDir`]'s
+/// location sourced from `dir_for` instead of the real environment, so
+/// tests can inject a fabricated directory without a Go toolchain, a home
+/// directory, or any mutation of real filesystem state.
+#[must_use]
+fn resolve_via_known_install_dir_with(
+  binary: &str,
+  dir_for: impl Fn(KnownInstallDir) -> Option<PathBuf>,
+) -> Option<PathBuf> {
+  let chain = install_chain_for(binary)?;
+
+  let mut probed: Vec<PathBuf> = Vec::new();
+  let mut kinds: Vec<KnownInstallDir> = Vec::new();
+  let kinds_in_chain_order = chain
+    .iter()
+    .filter(|method| method.runs_on(std::env::consts::OS))
+    .flat_map(KnownInstallDir::for_method);
+  for &kind in kinds_in_chain_order {
+    if kinds.contains(&kind) {
+      continue;
+    }
+    kinds.push(kind);
+    let Some(dir) = dir_for(kind) else {
+      continue;
+    };
+    if probed.contains(&dir) {
+      continue;
+    }
+    if let Some(found) = resolve_installed_binary_in(binary, &dir) {
+      return Some(found);
+    }
+    probed.push(dir);
+  }
+  None
 }
 
 /// Applies whatever `PATH` fix-up the installer `program` needs for a
@@ -1269,49 +1813,77 @@ pub fn refresh_go_install_path() {
 ///
 /// Called right after a successful install (alongside [`forget_binary`],
 /// which handles the separate in-process caching half of the same
-/// symptom). Keeping the per-installer knowledge here rather than at the
-/// call site means a new [`InstallMethod`] whose bin directory isn't on
-/// `PATH` has exactly one place to be taught about.
+/// symptom). This is *not* the place a new [`InstallMethod`] whose bin
+/// directory isn't on `PATH` gets taught about -- that is
+/// [`KnownInstallDir::for_method`], which fixes the cross-process case as
+/// well and whose `match` is exhaustive so the decision cannot be skipped.
+/// What is left here is only the one fix-up a *lookup* cannot perform: a
+/// `PATH` change another process already made durably, which this
+/// already-running process's inherited environment block never sees.
+///
+/// So `go install`, `pipx`, `uv` and `pip` are all absent from the match
+/// below: a same-process `PATH` mutation would fix nothing that
+/// [`resolve_via_known_install_dir`] doesn't already fix at lookup time,
+/// for this process *and* the next one. Scoop and winget keep their arm
+/// because it also puts their dirs on `PATH` for the tools this process
+/// spawns; later processes rely on the known-dir lookup (Issue #478).
+/// (An earlier version of this function did carry a
+/// `"go" => refresh_go_install_path()` arm; that function is deleted along
+/// with it, per #293's acceptance criteria that
+/// the old in-process fix-up not be left behind once lookup-time resolution
+/// supersedes it.)
 pub fn refresh_path_after_install(program: &str) {
   match program {
     // Scoop and winget register their PATH changes in the Windows
     // registry, which an already-running process's inherited environment
     // block never picks up on its own.
     "scoop" | "winget" => refresh_windows_path_from_registry(),
-    // `go install` writes into $GOBIN / $GOPATH/bin, which is frequently
-    // not on PATH at all.
-    "go" => refresh_go_install_path(),
     _ => {}
   }
 }
 
-/// Creates a `Command` with proper handling for Windows batch files (.cmd/.bat)
-/// such as `npm`, `pnpm`, `yarn`, `npx`, and globally installed node CLIs.
+/// Builds the `Command` every tool in this crate is spawned through.
+///
+/// **Spawns the path [`resolve_binary_path`] resolved, on every platform**,
+/// falling back to the bare name only when nothing resolved at all. That is
+/// the execution half of #293's fix and it has to match the detection half:
+/// `check_binary_exists`/`tool_missing_guard` decide a tool is present via
+/// `resolve_binary_path`, which consults every [`KnownInstallDir`] the
+/// binary's own install chain could have written to -- `go install`'s output
+/// directory (`GOBIN`, else `$GOPATH/bin`), pipx/uv/pip's `~/.local/bin`
+/// (#297), Scoop's `shims`, winget's `Links` and Homebrew's llvm keg `bin`
+/// -- in addition to `PATH`. A bare
+/// `Command::new(binary)` re-does a *`PATH`-only* search inside the OS's
+/// `execvp`, so a binary found only through that fallback would pass the
+/// missing-tool guard and then fail to exec -- "found it, can't run it",
+/// which is not what #293 asks for. This was previously `#[cfg(windows)]`
+/// only, which left every Unix spawn on the bare name.
+///
+/// Falling back to the bare name when resolution returns `None` keeps the
+/// old behaviour for the genuinely-missing case: the surface's own
+/// missing-binary guard normally reports that first, and where it doesn't,
+/// the OS's own "No such file or directory" for the plain name stays the
+/// error the user sees.
+///
+/// A resolved `.cmd`/`.bat` shim, the package managers' own `npm.cmd` and
+/// friends included, is spawned by its path: `std` runs it through
+/// `cmd.exe` and quotes its arguments for batch files, so `%VAR%` in an
+/// argument is not expanded (it is under a hand-built `cmd /C <shim>`).
+/// npm's `ktlint.cmd` is the exception: its jar is run with `java -jar`
+/// because the shim itself cannot launch (#402).
 #[must_use]
 pub fn create_tool_command(binary: &str) -> std::process::Command {
-  #[cfg(windows)]
-  {
-    if binary == "npm"
-      || binary == "pnpm"
-      || binary == "yarn"
-      || binary == "npx"
-    {
-      let mut cmd = std::process::Command::new("cmd");
-      cmd.arg("/C").arg(binary);
-      return cmd;
-    }
-    if let Some(path) = resolve_binary_path(binary) {
-      if let Some(ext) = path.extension().and_then(|e| e.to_str())
-        && (ext.eq_ignore_ascii_case("cmd") || ext.eq_ignore_ascii_case("bat"))
-      {
-        let mut cmd = std::process::Command::new("cmd");
-        cmd.arg("/C").arg(path);
-        return cmd;
-      }
-      return std::process::Command::new(path);
-    }
+  let Some(path) = resolve_binary_path(binary) else {
+    return std::process::Command::new(binary);
+  };
+
+  if let Some(jar) = npm_ktlint_jar(binary, &path) {
+    let mut cmd = create_tool_command("java");
+    cmd.arg("-jar").arg(jar);
+    return cmd;
   }
-  std::process::Command::new(binary)
+
+  std::process::Command::new(path)
 }
 
 /// How a caller of [`run_tool_command_classified`] /
@@ -1361,6 +1933,7 @@ pub fn classify_all_nonzero_as_error(_code: Option<i32>) -> ExitClass {
 /// that print a banner to stdout and their actual diagnostics to stderr. When
 /// only one stream is non-empty it is returned trimmed; when neither is,
 /// `fallback` is used verbatim.
+#[must_use]
 pub fn merge_tool_streams(
   stdout: &str,
   stderr: &str,
@@ -1407,11 +1980,21 @@ pub fn run_tool_command(
 ///
 /// On any non-zero exit, both captured streams are surfaced when both are
 /// non-empty (see [`merge_tool_streams`]); no non-empty stream is discarded.
+/// A batch shim that `cmd` could not launch is an
+/// [`SurfaceStatus::ExecutionError`] whatever `classify` says.
+///
+/// # Side Effects
+///
+/// On Windows, appends `BATCH_EXIT_SUFFIX` to a batch-file `cmd`.
 pub fn run_tool_command_classified(
   surface_name: &'static str,
   cmd: &mut std::process::Command,
   classify: impl Fn(Option<i32>) -> ExitClass,
 ) -> SurfaceResult {
+  #[cfg(windows)]
+  if is_batch_file(std::path::Path::new(cmd.get_program())) {
+    std::os::windows::process::CommandExt::raw_arg(cmd, BATCH_EXIT_SUFFIX);
+  }
   let start = Instant::now();
   match cmd.output() {
     Ok(output) => {
@@ -1426,6 +2009,19 @@ pub fn run_tool_command_classified(
 
       let stdout = String::from_utf8_lossy(&output.stdout);
       let stderr = String::from_utf8_lossy(&output.stderr);
+      if is_batch_launch_failure(cmd, output.status.code(), &stdout) {
+        return SurfaceResult {
+          surface_name,
+          status: SurfaceStatus::ExecutionError {
+            message: format!(
+              "Failed to execute {}: {}",
+              spawned_binary_name(cmd),
+              stderr.trim()
+            ),
+          },
+          duration,
+        };
+      }
       let message = merge_tool_streams(
         &stdout,
         &stderr,
@@ -1449,7 +2045,10 @@ pub fn run_tool_command_classified(
       SurfaceResult {
         surface_name,
         status: SurfaceStatus::ExecutionError {
-          message: format!("Failed to execute command: {err}"),
+          message: format!(
+            "Failed to execute {}: {err}",
+            spawned_binary_name(cmd)
+          ),
         },
         duration,
       }
@@ -1457,8 +2056,54 @@ pub fn run_tool_command_classified(
   }
 }
 
+/// Appended to a batch-file spawn's command line so `cmd.exe` exits with its
+/// `ERRORLEVEL`. Without it, `cmd` exits `1` when a shim cannot launch its
+/// target, the same code a tool reporting violations exits with.
+#[cfg(windows)]
+const BATCH_EXIT_SUFFIX: &str = "& exit";
+
+/// `cmd.exe`'s `ERRORLEVEL` for a command it could not launch: `3`, the
+/// path's directory does not exist (npm's `ktlint.cmd` running `"/bin/sh"`,
+/// #402), and `9009`, the program was not found. Display-language
+/// independent, unlike the messages `cmd` prints with them.
+const CMD_LAUNCH_FAILURE_CODES: [i32; 2] = [3, 9009];
+
+/// Returns whether a batch file's non-zero exit (see `BATCH_EXIT_SUFFIX`)
+/// is `cmd` failing to launch the shim's target rather than the tool's own
+/// verdict. Scoped to batch files and to empty stdout, so a tool that ran,
+/// printed findings and exited `3` keeps its classification.
+#[must_use]
+fn is_batch_launch_failure(
+  cmd: &std::process::Command,
+  code: Option<i32>,
+  stdout: &str,
+) -> bool {
+  is_batch_file(std::path::Path::new(cmd.get_program()))
+    && stdout.trim().is_empty()
+    && code.is_some_and(|code| CMD_LAUNCH_FAILURE_CODES.contains(&code))
+}
+
+/// Returns whether `path` names a Windows batch file (`.cmd`/`.bat`).
+#[must_use]
+fn is_batch_file(path: &std::path::Path) -> bool {
+  path.extension().is_some_and(|ext| {
+    ext.eq_ignore_ascii_case("cmd") || ext.eq_ignore_ascii_case("bat")
+  })
+}
+
+/// Names the tool `cmd` runs, as the bare binary name (`goimports`, not
+/// `/home/u/go/bin/goimports` or `ktlint.exe`), so a spawn failure is
+/// attributable to the tool `fml doctor --install` reports by that name.
+fn spawned_binary_name(cmd: &std::process::Command) -> String {
+  let program = cmd.get_program();
+  std::path::Path::new(program)
+    .file_stem()
+    .unwrap_or(program)
+    .to_string_lossy()
+    .into_owned()
+}
+
 #[cfg(test)]
-#[allow(missing_docs, clippy::missing_errors_doc, clippy::missing_panics_doc)]
 mod tests {
   use super::*;
   use crate::surfaces::ToolInfo;
@@ -1483,7 +2128,34 @@ mod tests {
     assert!(has_version_pin("ruff==0.16.4"));
     assert!(has_version_pin("golang.org/x/tools/cmd/goimports@v0.49.0"));
     assert!(!has_version_pin("prettier"));
-    assert!(!has_version_pin("@myriaddreamin/tinymist"));
+    assert!(!has_version_pin("@taplo/cli"));
+  }
+
+  #[test]
+  fn test_install_method_runs_on_its_platforms_only() {
+    let cases = [
+      (InstallMethod::Apt("x"), [true, false, false]),
+      (InstallMethod::Brew("x"), [true, true, false]),
+      (InstallMethod::Scoop("x"), [false, false, true]),
+      (InstallMethod::WingetName("x"), [false, false, true]),
+      (InstallMethod::WingetId("x"), [false, false, true]),
+      (InstallMethod::Npm("x"), [true, true, true]),
+      (InstallMethod::Pip("x"), [true, true, true]),
+      (
+        InstallMethod::Cargo {
+          package: "x",
+          locked: true,
+        },
+        [true, true, true],
+      ),
+      (InstallMethod::GoInstall("x"), [true, true, true]),
+    ];
+    for (method, expected) in cases {
+      for (os, want) in ["linux", "macos", "windows"].into_iter().zip(expected)
+      {
+        assert_eq!(method.runs_on(os), want, "{method:?} on {os}");
+      }
+    }
   }
 
   #[test]
@@ -1556,7 +2228,7 @@ mod tests {
         "go".to_string(),
         vec![
           "install".to_string(),
-          "github.com/golangci/golangci-lint/v2/cmd/golangci-lint@v2.13.1"
+          "github.com/golangci/golangci-lint/v2/cmd/golangci-lint@v2.13.2"
             .to_string(),
         ]
       )
@@ -1613,7 +2285,7 @@ mod tests {
   fn test_pinned_version_for_golangci_lint() {
     assert_eq!(
       pinned_version_for("golangci-lint"),
-      Some(Version::new(2, 13, 1))
+      Some(Version::new(2, 13, 2))
     );
   }
 
@@ -1669,7 +2341,6 @@ mod tests {
     assert_eq!(pinned_installer_for("prettier"), Some("npm"));
     assert_eq!(pinned_installer_for("ruff"), Some("uv"));
     assert_eq!(pinned_installer_for("typstyle"), Some("cargo-binstall"));
-    assert_eq!(pinned_installer_for("tinymist"), Some("cargo-binstall"));
     assert_eq!(pinned_installer_for("biome"), Some("npm"));
     assert_eq!(pinned_installer_for("markdownlint-cli2"), Some("npm"));
     assert_eq!(pinned_installer_for("yamllint"), Some("uv"));
@@ -1706,10 +2377,7 @@ mod tests {
     // A package spec with no `@`/`==` at all (e.g. the unpinned npm entries
     // #195 [pre-recreation] documents as deliberately left bare) must not be misparsed --
     // None, not a crash or a bogus version.
-    assert_eq!(
-      InstallMethod::Npm("@myriaddreamin/tinymist").pinned_version(),
-      None
-    );
+    assert_eq!(InstallMethod::Npm("@taplo/cli").pinned_version(), None);
   }
 
   #[test]
@@ -1843,7 +2511,7 @@ mod tests {
       let info = ToolInfo {
         binary: entry.binary,
         description: "test tool",
-        install_hint: "test hint",
+        install_hint: None,
         is_required_for_fmt: true,
         is_required_for_lint: true,
       };
@@ -1862,7 +2530,7 @@ mod tests {
     let info = ToolInfo {
       binary: "not-a-real-tool",
       description: "test tool",
-      install_hint: "test hint",
+      install_hint: None,
       is_required_for_fmt: false,
       is_required_for_lint: false,
     };
@@ -1975,6 +2643,233 @@ mod tests {
   }
 
   #[test]
+  fn test_create_tool_command_spawns_the_resolved_path_not_the_bare_name() {
+    // #293's execution half, asserted on *every* platform: whatever
+    // `resolve_binary_path` resolved is what gets spawned. Before this, the
+    // resolved path was consulted only under `#[cfg(windows)]`, so a Unix
+    // spawn re-did a PATH-only search inside `execvp` and could not reach a
+    // binary that resolved solely through the known-install-dir fallback.
+    //
+    // Driven through `set_binary_path_for_test` with a name no chain and no
+    // other test uses, so the seeded cache entry can't collide with a real
+    // lookup elsewhere in this test binary.
+    let fake = PathBuf::from("/nowhere/fml-spawn-path-probe/bin/probe-tool");
+    set_binary_path_for_test("fml-spawn-path-probe-tool", Some(fake.clone()));
+
+    let cmd = create_tool_command("fml-spawn-path-probe-tool");
+    assert_eq!(
+      std::path::Path::new(cmd.get_program()),
+      fake.as_path(),
+      "create_tool_command must spawn the path resolve_binary_path found, \
+       not the bare binary name -- a bare name is a PATH-only lookup and \
+       cannot see $GOBIN/$GOPATH/bin"
+    );
+
+    forget_binary("fml-spawn-path-probe-tool");
+  }
+
+  #[test]
+  fn test_create_tool_command_falls_back_to_the_bare_name_when_unresolved() {
+    // The other half of the contract: nothing resolved means the old
+    // behaviour is preserved exactly, so the OS's own "No such file or
+    // directory" for the plain name stays the error a user sees rather than
+    // this function inventing a path.
+    set_binary_path_for_test("fml-unresolvable-probe-tool", None);
+
+    let cmd = create_tool_command("fml-unresolvable-probe-tool");
+    assert_eq!(
+      cmd.get_program(),
+      std::ffi::OsStr::new("fml-unresolvable-probe-tool")
+    );
+
+    forget_binary("fml-unresolvable-probe-tool");
+  }
+
+  #[test]
+  fn test_create_tool_command_spawns_package_managers_like_any_shim() {
+    // #469: npm/pnpm/yarn/npx get no `cmd /C` wrapper; on Windows their
+    // `.cmd` shim resolves and gets `std`'s batch-file quoting.
+    for name in ["npm", "pnpm", "yarn", "npx"] {
+      let want = resolve_binary_path(name)
+        .map_or_else(|| name.into(), PathBuf::into_os_string);
+      assert_eq!(create_tool_command(name).get_program(), want, "{name}");
+    }
+  }
+
+  #[test]
+  fn test_create_tool_command_spawns_a_go_installed_binary_by_its_path() {
+    // Ties the two halves of #293 together end to end: a binary that is
+    // resolvable *only* through the known-install-dir fallback (not on PATH
+    // at all) must be spawned by the path that fallback produced.
+    //
+    // The GOBIN-equivalent is a tempdir, never the machine's real one, and
+    // the fallback is driven through `resolve_via_known_install_dir_with`
+    // so no `go env` spawn and no real Go toolchain is involved. Its result
+    // is seeded into BINARY_CACHE exactly as a real cold lookup would have
+    // memoized it, then evicted again.
+    let tmp = tempfile::tempdir().expect("tempdir");
+    let fixture = write_bin_fixture(tmp.path(), "goimports");
+    let dir = tmp.path().to_path_buf();
+
+    let resolved = resolve_via_known_install_dir_with("goimports", move |_| {
+      Some(dir.clone())
+    });
+    assert_eq!(
+      resolved.as_deref(),
+      Some(fixture.as_path()),
+      "precondition: the fallback must find the fixture in the fake GOBIN"
+    );
+
+    set_binary_path_for_test("goimports", resolved);
+    let cmd = create_tool_command("goimports");
+    let spawned = PathBuf::from(cmd.get_program());
+    forget_binary("goimports");
+
+    assert_eq!(
+      spawned, fixture,
+      "a go-installed binary found only via $GOBIN/$GOPATH/bin must be \
+       spawned by that path; spawning the bare name is what turned #293's \
+       `[MISS]` into `Failed to execute goimports: No such file or directory`"
+    );
+  }
+
+  #[test]
+  fn test_npm_ktlint_jar_finds_the_wrapper_jar_behind_ktlint_cmd() {
+    let tmp = tempfile::tempdir().expect("tempdir");
+    let shim = tmp.path().join("ktlint.cmd");
+    std::fs::write(&shim, b"@ECHO off\r\n").expect("write shim");
+    assert_eq!(
+      npm_ktlint_jar("ktlint", &shim),
+      None,
+      "no wrapper jar installed next to the shim"
+    );
+
+    let jar = tmp.path().join(NPM_KTLINT_JAR);
+    std::fs::create_dir_all(jar.parent().expect("jar dir")).expect("mkdir");
+    std::fs::write(&jar, b"#!/bin/sh\n").expect("write jar");
+    assert_eq!(npm_ktlint_jar("ktlint", &shim), Some(jar));
+    assert_eq!(npm_ktlint_jar("prettier", &shim), None);
+    assert_eq!(
+      npm_ktlint_jar("ktlint", &tmp.path().join("ktlint")),
+      None,
+      "only the Windows `.cmd` shim is bypassed; the Unix bin link runs"
+    );
+  }
+
+  /// Runs a stand-in `ktlint.cmd` (a shell script, so detection sees the
+  /// same batch-file program as on Windows) that prints `stdout`/`stderr`
+  /// and exits `code`. Every non-zero exit classifies as a violation, so an
+  /// `ExecutionError` can only come from launch-failure detection.
+  #[cfg(unix)]
+  fn run_stub_batch_shim(
+    stdout: &str,
+    stderr: &str,
+    code: i32,
+  ) -> SurfaceStatus {
+    let tmp = tempfile::tempdir().expect("tempdir");
+    let stub = write_bin_fixture(tmp.path(), "ktlint.cmd");
+    std::fs::write(
+      &stub,
+      format!(
+        "#!/bin/sh\nprintf '{stdout}'\nprintf '{stderr}' >&2\nexit {code}\n"
+      ),
+    )
+    .expect("write stub shim");
+    run_tool_command("kotlin", &mut std::process::Command::new(&stub)).status
+  }
+
+  #[cfg(unix)]
+  #[test]
+  fn test_batch_launch_failure_is_detected_by_exit_code_in_any_language() {
+    // #422: a German Windows prints this instead of "The system cannot find
+    // the path specified."; `cmd`'s ERRORLEVEL 3 is the same in both.
+    let status = run_stub_batch_shim(
+      "",
+      "Das System kann den angegebenen Pfad nicht finden.\\r\\n",
+      3,
+    );
+    match status {
+      SurfaceStatus::ExecutionError { message } => assert_eq!(
+        message,
+        "Failed to execute ktlint: Das System kann den angegebenen Pfad nicht \
+         finden."
+      ),
+      other => panic!("expected ExecutionError naming ktlint, got {other:?}"),
+    }
+  }
+
+  #[cfg(unix)]
+  #[test]
+  fn test_batch_exit_one_with_english_cmd_text_stays_a_violation() {
+    // Without cmd's launch-failure code, cmd's English message is not a
+    // signal: matching it would misread a tool's own exit 1.
+    let status = run_stub_batch_shim(
+      "",
+      "The system cannot find the path specified.\\r\\n",
+      1,
+    );
+    assert!(
+      matches!(status, SurfaceStatus::ViolationsFound { .. }),
+      "English text without exit 3/9009 must not be detected, got {status:?}"
+    );
+  }
+
+  #[cfg(unix)]
+  #[test]
+  fn test_batch_tool_verdict_with_findings_stays_a_violation() {
+    // The tool ran and printed findings: its exit 3 is its own verdict.
+    let status =
+      run_stub_batch_shim("Sample.kt:1:1: Unexpected blank line\\n", "", 3);
+    assert!(
+      matches!(status, SurfaceStatus::ViolationsFound { .. }),
+      "a shim'd tool's own findings must stay ViolationsFound, got {status:?}"
+    );
+  }
+
+  #[cfg(windows)]
+  #[test]
+  fn test_windows_shim_launch_failure_exit_codes() {
+    // Real cmd.exe: prints each observed exit code as `SHIM-SIGNAL` (run
+    // with --nocapture) so a CI log shows the signal detection relies on.
+    let tmp = tempfile::tempdir().expect("tempdir");
+    for (name, body, want) in [
+      ("dirgone", "@\"%~dp0\\gone\\tool.exe\" %*\r\n", 3),
+      ("notfound", "@fml-no-such-interp %*\r\n", 9009),
+      ("exit1", "@exit /b 1\r\n", 1),
+    ] {
+      let shim = tmp.path().join(format!("{name}.cmd"));
+      std::fs::write(&shim, body).expect("write shim");
+      let mut probe = std::process::Command::new(&shim);
+      std::os::windows::process::CommandExt::raw_arg(
+        &mut probe,
+        BATCH_EXIT_SUFFIX,
+      );
+      let code = probe.output().expect("spawn shim").status.code();
+      println!("SHIM-SIGNAL {name}: exit={code:?}");
+      assert_eq!(code, Some(want), "{name}");
+      let status =
+        run_tool_command("kotlin", &mut std::process::Command::new(&shim))
+          .status;
+      assert_eq!(
+        matches!(status, SurfaceStatus::ExecutionError { .. }),
+        want != 1,
+        "{name}: {status:?}"
+      );
+    }
+  }
+
+  #[test]
+  fn test_is_batch_launch_failure_needs_a_batch_file_and_cmd_code() {
+    let shim = std::process::Command::new("bin/ktlint.CMD");
+    assert!(is_batch_launch_failure(&shim, Some(9009), ""));
+    assert!(is_batch_launch_failure(&shim, Some(3), " \r\n"));
+    assert!(!is_batch_launch_failure(&shim, Some(1), ""));
+    assert!(!is_batch_launch_failure(&shim, None, ""));
+    let exe = std::process::Command::new("bin/ktlint.exe");
+    assert!(!is_batch_launch_failure(&exe, Some(9009), ""));
+  }
+
+  #[test]
   fn test_check_binary_exists_nonexistent_and_edge_case_inputs() {
     assert!(!check_binary_exists("__nonexistent_binary_xyz_987654321__"));
     assert!(!check_binary_exists(""));
@@ -2009,26 +2904,6 @@ mod tests {
   }
 
   #[test]
-  fn test_doctor_tool_missing_table_generation() {
-    use crate::commands::doctor::install_missing_tools;
-    use crate::surfaces::ToolInfo;
-
-    let missing_tool = ToolInfo {
-      binary: "__missing_dummy_binary_test__",
-      description: "Dummy Missing Tool Test",
-      install_hint: "Run npm install -g dummy",
-      is_required_for_fmt: true,
-      is_required_for_lint: true,
-    };
-
-    let ok = install_missing_tools(&[missing_tool]);
-    assert!(
-      !ok,
-      "Should return false when tool cannot be auto-installed"
-    );
-  }
-
-  #[test]
   fn test_has_cargo_binstall_is_pure_path_lookup() {
     // has_cargo_binstall must resolve purely via check_binary_exists
     // (which::which under the hood) for both "cargo" and "cargo-binstall" --
@@ -2046,7 +2921,7 @@ mod tests {
     let result = has_cargo_binstall();
 
     let cache = BINARY_CACHE.get().expect("cache should be initialized");
-    let guard = cache.lock().unwrap_or_else(|e| e.into_inner());
+    let guard = cache.lock().unwrap_or_else(PoisonError::into_inner);
 
     let cargo_on_path = guard.get("cargo").expect(
       "has_cargo_binstall must resolve `cargo` through check_binary_exists",
@@ -2083,7 +2958,7 @@ mod tests {
 
     // Inspect BINARY_CACHE directly to verify process-lifetime memoization
     let cache = BINARY_CACHE.get().expect("cache should be initialized");
-    let guard = cache.lock().unwrap_or_else(|e| e.into_inner());
+    let guard = cache.lock().unwrap_or_else(PoisonError::into_inner);
     assert_eq!(guard.get(non_existent), Some(&None));
     assert_eq!(
       guard.get(existing).map(Option::is_some),
@@ -2106,7 +2981,7 @@ mod tests {
     // still missing: a memoized `None`.
     {
       let cache = BINARY_CACHE.get_or_init(|| Mutex::new(HashMap::new()));
-      let mut guard = cache.lock().unwrap_or_else(|e| e.into_inner());
+      let mut guard = cache.lock().unwrap_or_else(PoisonError::into_inner);
       guard.insert(binary.to_string(), None);
     }
     assert!(
@@ -2120,7 +2995,7 @@ mod tests {
     // `None` behind would be exactly the bug this function exists to fix.
     {
       let cache = BINARY_CACHE.get().expect("cache should be initialized");
-      let guard = cache.lock().unwrap_or_else(|e| e.into_inner());
+      let guard = cache.lock().unwrap_or_else(PoisonError::into_inner);
       assert!(
         !guard.contains_key(binary),
         "forget_binary must remove the cache entry entirely"
@@ -2131,7 +3006,7 @@ mod tests {
     // not just leave it absent forever.
     let _ = check_binary_exists(binary);
     let cache = BINARY_CACHE.get().expect("cache should be initialized");
-    let guard = cache.lock().unwrap_or_else(|e| e.into_inner());
+    let guard = cache.lock().unwrap_or_else(PoisonError::into_inner);
     assert!(
       guard.contains_key(binary),
       "the lookup right after forget_binary must repopulate the cache"
@@ -2140,7 +3015,7 @@ mod tests {
 
   #[test]
   fn test_forget_binary_is_a_noop_for_a_binary_never_looked_up() {
-    // Must not panic when called for a binary `install_missing_tools` is
+    // Must not panic when called for a binary `install_missing_tools_framed` is
     // about to install but that was never actually looked up this process
     // (e.g. a tool added to `missing` via a path that skipped the usual
     // `lookup_tool_info` preflight probe).
@@ -2148,7 +3023,7 @@ mod tests {
   }
 
   // Coverage for the "at least one real prebuilt-binary installer per OS"
-  // gap this PR also fixes: typstyle/tinymist/taplo have no genuine native
+  // gap this PR also fixes: typstyle/taplo have no genuine native
   // package anywhere, so cargo-binstall (a real prebuilt binary, not a
   // source compile) is their only non-source-compile path on every OS,
   // Linux included.
@@ -2169,9 +3044,9 @@ mod tests {
   fn test_every_source_compile_only_cargo_tool_offers_cargo_binstall_first() {
     // If any of these ever loses its CargoBinstall step, the *only*
     // remaining install path on an OS without a matching Brew/Scoop/Winget
-    // entry (Linux, for all three) becomes compiling from source -- exactly
+    // entry (Linux, for both) becomes compiling from source -- exactly
     // the multi-minute typstyle build the bug report was filed over.
-    for binary in ["typstyle", "tinymist", "taplo"] {
+    for binary in ["typstyle", "taplo"] {
       let chain = install_chain_for(binary)
         .unwrap_or_else(|| panic!("{binary} must have a registered chain"));
       assert!(
@@ -2312,26 +3187,6 @@ mod tests {
   }
 
   #[test]
-  fn test_binstall_bootstrap_fixes_brew_pin_lag_for_tinymist() {
-    // tinymist has the identical chain shape to typstyle (pin-carrying
-    // `CargoBinstall` first, `Brew` as fallback) and a confirmed
-    // `expected_binary_version`, so the same #102 mechanism must cover it.
-    let chain =
-      install_chain_for("tinymist").expect("tinymist must have a chain");
-    let expected = pinned_version_for("tinymist");
-    let brew = chain
-      .iter()
-      .find(|m| matches!(m, InstallMethod::Brew(_)))
-      .copied();
-
-    assert!(binstall_bootstrap_would_fix_pin_lag(
-      chain,
-      expected.as_ref(),
-      brew.as_ref(),
-    ));
-  }
-
-  #[test]
   fn test_binstall_bootstrap_pin_lag_for_ruff_is_scoop_winget_only() {
     // ruff's chain is the asymmetric case: `Brew` sits *ahead* of the
     // pin-carrying `CargoBinstall` entry, but `Scoop`/`WingetName` sit
@@ -2371,8 +3226,8 @@ mod tests {
     );
   }
 
-  // merge_path_entries is the pure half of every post-install PATH refresh
-  // (refresh_windows_path_from_registry, refresh_go_install_path) -- the
+  // merge_path_entries is the pure half of the post-install PATH refresh
+  // Scoop/winget still need (refresh_windows_path_from_registry) -- the
   // registry/`go env` read plus the std::env::set_var side effect isn't
   // something a unit test should perform for real (it would mutate the test
   // process's actual PATH for every other test running in the same binary),
@@ -2469,10 +3324,11 @@ mod tests {
   }
 
   // go_bin_dir_from_env decides where `go install` just put a binary, which
-  // is what refresh_go_install_path adds to PATH. Getting the GOBIN/GOPATH
-  // precedence wrong means adding a directory that holds nothing and
-  // leaving `goimports` unresolvable right after installing it -- the exact
-  // failure the Fresh-Install Regression CI job exists to catch.
+  // is exactly the directory resolve_via_known_install_dir checks at lookup
+  // time. Getting the GOBIN/GOPATH precedence wrong means checking a
+  // directory that holds nothing and leaving `goimports` unresolvable even
+  // after installing it -- the exact failure the Fresh-Install Regression
+  // CI job exists to catch.
   #[test]
   fn test_go_bin_dir_prefers_gobin_when_set() {
     let dir = go_bin_dir_from_env("/custom/gobin", "/home/u/go");
@@ -2518,6 +3374,821 @@ mod tests {
     );
   }
 
+  /// Writes a stand-in for an installer-produced binary into `dir`,
+  /// executable on Unix so it clears the same bar `which::which` applies to
+  /// a `PATH` hit (see `is_executable_file`). Returns its full path.
+  fn write_bin_fixture(dir: &std::path::Path, binary: &str) -> PathBuf {
+    write_named_fixture(
+      dir,
+      &format!("{binary}{}", std::env::consts::EXE_SUFFIX),
+    )
+  }
+
+  /// Writes an executable stand-in named exactly `file_name` into `dir`,
+  /// with no platform suffix added. Returns its full path.
+  fn write_named_fixture(dir: &std::path::Path, file_name: &str) -> PathBuf {
+    let path = dir.join(file_name);
+    std::fs::write(&path, b"#!/bin/sh\n").expect("write fixture binary");
+    #[cfg(unix)]
+    {
+      use std::os::unix::fs::PermissionsExt;
+      std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o755))
+        .expect("chmod fixture binary");
+    }
+    path
+  }
+
+  // --- resolve_via_known_install_dir (#293) -------------------------------
+  //
+  // The lookup-time half of the fix: a binary `go install` put in
+  // `$GOBIN`/`$GOPATH/bin` must resolve even when that directory was never
+  // added to `PATH` at all -- the exact cross-process gap
+  // `refresh_go_install_path` (deleted by this change; it only ever
+  // mutated *this* process's `PATH`, which a later `fml` invocation never
+  // inherits) could not close. These tests exercise the real filesystem
+  // check (`resolve_installed_binary_in`) and the chain-membership gate
+  // (`resolve_via_known_install_dir_with`) against a fabricated temp
+  // directory, so no real Go toolchain or network access is required.
+
+  #[test]
+  fn test_resolve_installed_binary_in_finds_a_real_file() {
+    let tmp = tempfile::tempdir().expect("tempdir");
+    let fixture = write_bin_fixture(tmp.path(), "goimports");
+
+    let found = resolve_installed_binary_in("goimports", tmp.path());
+    assert_eq!(
+      found,
+      Some(fixture),
+      "must find the binary Go's own EXE_SUFFIX convention names it under"
+    );
+  }
+
+  #[test]
+  fn test_resolve_installed_binary_in_absent_is_none() {
+    let tmp = tempfile::tempdir().expect("tempdir");
+    assert_eq!(
+      resolve_installed_binary_in("goimports", tmp.path()),
+      None,
+      "an empty GOBIN-equivalent directory must not fabricate a path"
+    );
+  }
+
+  #[test]
+  #[cfg(unix)]
+  fn test_resolve_installed_binary_in_rejects_a_non_executable_file() {
+    // `which::which` requires the executable bit for a PATH hit, so the
+    // fallback must too -- otherwise a mode-0644 leftover in GOBIN would
+    // pass the missing-tool guard and then fail to exec, which is the
+    // failure shape #293 exists to remove, not reintroduce.
+    let tmp = tempfile::tempdir().expect("tempdir");
+    let path = tmp.path().join("goimports");
+    std::fs::write(&path, b"#!/bin/sh\n").expect("write fixture");
+
+    assert_eq!(
+      resolve_installed_binary_in("goimports", tmp.path()),
+      None,
+      "a non-executable file must not resolve as an installed binary"
+    );
+
+    // ...and the same file does resolve once it is actually executable, so
+    // this asserts the permission bit specifically, not merely that some
+    // unrelated condition rejected the path.
+    use std::os::unix::fs::PermissionsExt;
+    std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o755))
+      .expect("chmod fixture");
+    assert_eq!(
+      resolve_installed_binary_in("goimports", tmp.path()),
+      Some(path)
+    );
+  }
+
+  #[test]
+  fn test_resolve_installed_binary_in_rejects_a_directory_of_the_same_name() {
+    // A same-named subdirectory (not a file) must not be reported as the
+    // binary -- guards against a `.is_file()` check accidentally becoming
+    // an `.exists()` check on some future refactor.
+    let tmp = tempfile::tempdir().expect("tempdir");
+    std::fs::create_dir(tmp.path().join("goimports")).expect("mkdir");
+    assert_eq!(resolve_installed_binary_in("goimports", tmp.path()), None);
+  }
+
+  #[test]
+  fn test_resolve_installed_binary_with_windows_suffixes_finds_scoop_cmd() {
+    // Scoop's ktlint is `"bin": "ktlint.jar"`, so its only shim is
+    // `ktlint.cmd`; probing `.exe` alone reported it missing (#478).
+    let tmp = tempfile::tempdir().expect("tempdir");
+    let cmd = write_named_fixture(tmp.path(), "ktlint.cmd");
+    assert_eq!(
+      resolve_installed_binary_with(
+        "ktlint",
+        tmp.path(),
+        WINDOWS_INSTALLED_SUFFIXES
+      ),
+      Some(cmd),
+    );
+    let bat = write_named_fixture(tmp.path(), "other.bat");
+    assert_eq!(
+      resolve_installed_binary_with(
+        "other",
+        tmp.path(),
+        WINDOWS_INSTALLED_SUFFIXES
+      ),
+      Some(bat),
+    );
+  }
+
+  #[test]
+  fn test_resolve_installed_binary_with_windows_suffixes_prefers_exe() {
+    let tmp = tempfile::tempdir().expect("tempdir");
+    write_named_fixture(tmp.path(), "ktlint.cmd");
+    let exe = write_named_fixture(tmp.path(), "ktlint.exe");
+    assert_eq!(
+      resolve_installed_binary_with(
+        "ktlint",
+        tmp.path(),
+        WINDOWS_INSTALLED_SUFFIXES
+      ),
+      Some(exe),
+      "`.exe` is probed before `.cmd`"
+    );
+  }
+
+  #[test]
+  #[cfg(windows)]
+  fn test_resolve_installed_binary_in_finds_a_cmd_shim_on_windows() {
+    let tmp = tempfile::tempdir().expect("tempdir");
+    let cmd = write_named_fixture(tmp.path(), "ktlint.cmd");
+    assert_eq!(resolve_installed_binary_in("ktlint", tmp.path()), Some(cmd));
+  }
+
+  #[test]
+  fn test_resolve_via_known_install_dir_finds_go_installed_binary() {
+    let tmp = tempfile::tempdir().expect("tempdir");
+    let fixture = write_bin_fixture(tmp.path(), "goimports");
+    let dir = tmp.path().to_path_buf();
+
+    let found = resolve_via_known_install_dir_with("goimports", move |_| {
+      Some(dir.clone())
+    });
+    assert_eq!(found, Some(fixture));
+  }
+
+  #[test]
+  #[cfg(not(windows))]
+  fn test_resolve_via_known_install_dir_finds_keg_only_clang_tidy() {
+    let tmp = tempfile::tempdir().expect("tempdir");
+    let fixture = write_bin_fixture(tmp.path(), "clang-tidy");
+    let dir = tmp.path().to_path_buf();
+
+    let found = resolve_via_known_install_dir_with("clang-tidy", move |kind| {
+      (kind == KnownInstallDir::BrewLlvm).then(|| dir.clone())
+    });
+    assert_eq!(found, Some(fixture));
+  }
+
+  #[test]
+  fn test_resolve_via_known_install_dir_finds_golangci_lint_too() {
+    // golangci-lint's chain lists GoInstall as a fallback behind
+    // Brew/Scoop, not as its only entry -- the "does this chain contain a
+    // GoInstall entry anywhere" gate must still catch it, not just a
+    // single-entry chain like goimports's.
+    let tmp = tempfile::tempdir().expect("tempdir");
+    let fixture = write_bin_fixture(tmp.path(), "golangci-lint");
+    let dir = tmp.path().to_path_buf();
+
+    let found =
+      resolve_via_known_install_dir_with("golangci-lint", move |_| {
+        Some(dir.clone())
+      });
+    assert_eq!(found, Some(fixture));
+  }
+
+  #[test]
+  fn test_resolve_via_known_install_dir_skips_non_go_binaries() {
+    // A tool with no GoInstall entry anywhere in its chain (prettier: npm
+    // only) must never even ask for the Go bin directory -- proven here by
+    // handing it a closure that panics if called at all, not just by
+    // asserting the return value.
+    let found = resolve_via_known_install_dir_with("prettier", |_| {
+      panic!(
+        "must not query the Go bin directory for a binary with no \
+         GoInstall entry in its chain"
+      )
+    });
+    assert_eq!(found, None);
+  }
+
+  #[test]
+  fn test_resolve_via_known_install_dir_skips_unregistered_binaries() {
+    // A binary with no ALL_CHAINS row at all (install_chain_for returns
+    // None) must take the same short-circuit as a registered-but-non-Go
+    // chain, not panic on the `Option` unwrap.
+    let found =
+      resolve_via_known_install_dir_with("totally-unregistered-tool", |_| {
+        panic!("must not query the Go bin directory for an unregistered binary")
+      });
+    assert_eq!(found, None);
+  }
+
+  #[test]
+  fn test_resolve_via_known_install_dir_none_when_go_bin_dir_unknown() {
+    // `go` not on PATH, or `go env` failing -- go_install_bin_dir's
+    // contract is `None`, and the fallback must propagate that rather than
+    // panicking on a missing directory.
+    let found = resolve_via_known_install_dir_with("goimports", |_| None);
+    assert_eq!(found, None);
+  }
+
+  // --- the non-Go install methods (#297) ----------------------------------
+  //
+  // #297's acceptance criterion is that the guarantee must not be
+  // Go-specific by construction. Every test below fails if
+  // `KnownInstallDir::for_method`'s `Pipx`/`Uv`/`Pip`/`Pip3` arms go back to
+  // `None`, which is what the shipped code did before this change.
+
+  #[test]
+  fn test_resolve_via_known_install_dir_finds_a_pipx_or_uv_installed_binary() {
+    // `ruff`, `yamllint` and `clang-format` are the three tools whose chains
+    // run through `uv`/`pipx`/`pip` (`RUFF_CHAIN`, `YAMLLINT_CHAIN`,
+    // `CLANG_FORMAT_CHAIN`) -- all of which install into `~/.local/bin`, the
+    // directory `pipx ensurepath` and `uv tool update-shell` exist precisely
+    // because `PATH` routinely misses.
+    //
+    // The stand-in for `~/.local/bin` is a tempdir, never the machine's real
+    // one. The Go arm is wired to a panic so this cannot pass by way of
+    // `KnownInstallDir::Go` -- none of these three chains has a `GoInstall`
+    // entry, and if one ever did, resolving through it would not prove the
+    // Python-family directories are probed at all.
+    for binary in ["ruff", "yamllint", "clang-format"] {
+      let tmp = tempfile::tempdir().expect("tempdir");
+      let fixture = write_bin_fixture(tmp.path(), binary);
+      let dir = tmp.path().to_path_buf();
+
+      let resolved = resolve_via_known_install_dir_with(binary, |kind| {
+        assert_ne!(
+          kind,
+          KnownInstallDir::Go,
+          "{binary} has no GoInstall entry in its chain; resolving it \
+           through the Go bin directory would prove nothing about #297"
+        );
+        Some(dir.clone())
+      });
+
+      assert_eq!(
+        resolved.as_deref(),
+        Some(fixture.as_path()),
+        "a {binary} installed by pipx/uv/pip into a directory that is not on \
+         PATH must still resolve -- this is #293's `[OK]`-then-unusable \
+         shape reached through a non-Go install method"
+      );
+    }
+  }
+
+  #[test]
+  fn test_create_tool_command_spawns_a_local_bin_installed_binary_by_its_path()
+  {
+    // #297's first acceptance criterion in full: *spawned*, not merely
+    // resolved. PR #296's blocker 1 was a fix that resolved the binary while
+    // `create_tool_command` still spawned the bare name, converting a
+    // `[MISS]` into `Failed to execute <tool>` -- strictly worse. This is
+    // that end-to-end check for a pipx/uv-installed tool rather than a
+    // go-installed one.
+    //
+    // `yamllint` is used rather than `ruff`/`clang-format` because no other
+    // test in this binary resolves it, keeping the brief window in which the
+    // process-global cache holds the fixture path away from surfaces that
+    // actually spawn their tool.
+    let tmp = tempfile::tempdir().expect("tempdir");
+    let fixture = write_bin_fixture(tmp.path(), "yamllint");
+    let dir = tmp.path().to_path_buf();
+
+    let resolved =
+      resolve_via_known_install_dir_with("yamllint", |_| Some(dir.clone()));
+    assert_eq!(
+      resolved.as_deref(),
+      Some(fixture.as_path()),
+      "precondition: the fallback must find the fixture in the fake \
+       ~/.local/bin"
+    );
+
+    set_binary_path_for_test("yamllint", resolved);
+    let cmd = create_tool_command("yamllint");
+    let spawned = PathBuf::from(cmd.get_program());
+    forget_binary("yamllint");
+
+    assert_eq!(
+      spawned, fixture,
+      "a pipx/uv-installed binary found only via ~/.local/bin must be \
+       spawned by that path on every platform, not by the bare name"
+    );
+  }
+
+  /// Records which [`KnownInstallDir`]s a `resolve_via_known_install_dir_with`
+  /// call actually asked for, in order, so the loop's traversal is assertable
+  /// rather than inferred from its return value alone.
+  fn recording_dir_for(
+    answers: Vec<(KnownInstallDir, Option<PathBuf>)>,
+  ) -> (
+    impl Fn(KnownInstallDir) -> Option<PathBuf>,
+    std::sync::Arc<Mutex<Vec<KnownInstallDir>>>,
+  ) {
+    let asked = std::sync::Arc::new(Mutex::new(Vec::new()));
+    let log = std::sync::Arc::clone(&asked);
+    let dir_for = move |kind: KnownInstallDir| {
+      log
+        .lock()
+        .unwrap_or_else(PoisonError::into_inner)
+        .push(kind);
+      answers
+        .iter()
+        .find(|(k, _)| *k == kind)
+        .and_then(|(_, dir)| dir.clone())
+    };
+    (dir_for, asked)
+  }
+
+  #[test]
+  fn test_resolve_via_known_install_dir_probes_past_an_early_chain_miss() {
+    // The realistic case the loop exists for: `UV_TOOL_BIN_DIR` exported
+    // (so uv's directory is a real, empty directory) while the tool was
+    // actually pipx-installed into `~/.local/bin`. `RUFF_CHAIN`'s order is
+    // Uv, Pipx, Pip, Pip3, so the *first* directory probed misses -- and a
+    // fallback that stops there reports `[MISS]` for a tool that is sitting
+    // right there in the next one.
+    let uv_dir = tempfile::tempdir().expect("tempdir");
+    let pipx_dir = tempfile::tempdir().expect("tempdir");
+    let fixture = write_bin_fixture(pipx_dir.path(), "ruff");
+
+    let (dir_for, asked) = recording_dir_for(vec![
+      (KnownInstallDir::UvTool, Some(uv_dir.path().to_path_buf())),
+      (KnownInstallDir::Pipx, Some(pipx_dir.path().to_path_buf())),
+    ]);
+    let resolved = resolve_via_known_install_dir_with("ruff", dir_for);
+
+    assert_eq!(
+      resolved.as_deref(),
+      Some(fixture.as_path()),
+      "a miss in the first chain directory must not end the search -- the \
+       binary is in the second one"
+    );
+    assert_eq!(
+      *asked.lock().unwrap_or_else(PoisonError::into_inner),
+      vec![KnownInstallDir::UvTool, KnownInstallDir::Pipx],
+      "directories are tried in chain order, and the search stops at the hit"
+    );
+  }
+
+  #[test]
+  fn test_resolve_via_known_install_dir_asks_each_kind_once_in_chain_order() {
+    // `RUFF_CHAIN` is Uv, Pipx, Pip, Pip3 -- and `Pip`/`Pip3` both map to
+    // `KnownInstallDir::PythonUser`. The kind de-duplication is what keeps
+    // that from being asked for (and probed) twice. Every directory misses
+    // here, so the whole chain is walked.
+    let empty = tempfile::tempdir().expect("tempdir");
+    let (dir_for, asked) = recording_dir_for(vec![
+      (KnownInstallDir::UvTool, Some(empty.path().to_path_buf())),
+      (KnownInstallDir::Pipx, None),
+      (KnownInstallDir::PythonUser, None),
+    ]);
+
+    assert_eq!(
+      resolve_via_known_install_dir_with("ruff", dir_for),
+      None,
+      "no chain directory holds the binary, so the answer is a clean miss"
+    );
+    assert_eq!(
+      *asked.lock().unwrap_or_else(PoisonError::into_inner),
+      vec![
+        KnownInstallDir::UvTool,
+        KnownInstallDir::Pipx,
+        KnownInstallDir::PythonUser,
+      ],
+      "each distinct kind is asked exactly once, in chain order; a kind \
+       whose directory is unknown (None) must not end the search either"
+    );
+  }
+
+  #[test]
+  fn test_resolve_via_known_install_dir_probes_a_repeated_directory_once() {
+    // `Pipx` and `PythonUser` both resolve to `~/.local/bin` on a stock
+    // Linux box, so the path de-duplication saves a redundant `stat`.
+    // Ordinarily that is invisible; it is made observable here by creating
+    // the fixture *between* the two answers, from inside the closure. The
+    // second probe would find it -- so a `None` result is proof the second
+    // probe never happened.
+    let shared = tempfile::tempdir().expect("tempdir");
+    let dir = shared.path().to_path_buf();
+    let late_fixture = dir.clone();
+
+    let dir_for = move |kind: KnownInstallDir| match kind {
+      KnownInstallDir::Pipx => Some(dir.clone()),
+      KnownInstallDir::PythonUser => {
+        write_bin_fixture(&late_fixture, "ruff");
+        Some(late_fixture.clone())
+      }
+      _ => None,
+    };
+
+    assert_eq!(
+      resolve_via_known_install_dir_with("ruff", dir_for),
+      None,
+      "a directory already probed this call must not be probed again"
+    );
+  }
+
+  #[test]
+  fn test_apt_and_the_other_audited_methods_contribute_no_directory() {
+    // The `Apt` half of #297's acceptance criteria, as an assertion rather
+    // than prose: a `.deb`'s binaries land under the distribution's own
+    // prefix (`/usr/bin`) -- the prefix `apt-get` itself was invoked from --
+    // so there is nothing for the fallback to probe. #293's prose
+    // enumeration omitted `Apt` entirely, which is part of why it was wrong.
+    //
+    // `checkstyle`'s chain is `Brew`, `Apt`: both audited as safe and
+    // neither maps to a `KnownInstallDir`. The closure panics, so this fails
+    // loudly if either ever starts claiming a directory without that
+    // decision being made deliberately.
+    let found = resolve_via_known_install_dir_with("checkstyle", |kind| {
+      panic!(
+        "checkstyle installs only via brew/apt, both audited as writing \
+         somewhere already on PATH; neither may probe {kind:?}"
+      )
+    });
+    assert_eq!(found, None);
+  }
+
+  #[test]
+  fn test_known_install_dir_for_method_matches_the_documented_audit() {
+    // One representative of every `InstallMethod` variant, mapped to the
+    // conclusion recorded on `KnownInstallDir`. `for_method`'s `match` is
+    // exhaustive with no `_` arm, so a new variant breaks the build there;
+    // this table is what keeps an *existing* variant from being silently
+    // re-classified.
+    let cases: &[(InstallMethod, &[KnownInstallDir])] = &[
+      (InstallMethod::GoInstall("x@latest"), &[KnownInstallDir::Go]),
+      (InstallMethod::Pipx("x"), &[KnownInstallDir::Pipx]),
+      (InstallMethod::Uv("x"), &[KnownInstallDir::UvTool]),
+      (InstallMethod::Pip("x"), &[KnownInstallDir::PythonUser]),
+      (InstallMethod::Pip3("x"), &[KnownInstallDir::PythonUser]),
+      (InstallMethod::Scoop("x"), &[KnownInstallDir::ScoopShims]),
+      (
+        InstallMethod::WingetName("x"),
+        &[
+          KnownInstallDir::WingetUserLinks,
+          KnownInstallDir::WingetMachineLinks,
+        ],
+      ),
+      (
+        InstallMethod::WingetId("x"),
+        &[
+          KnownInstallDir::WingetUserLinks,
+          KnownInstallDir::WingetMachineLinks,
+        ],
+      ),
+      (InstallMethod::Brew("llvm"), &[KnownInstallDir::BrewLlvm]),
+      // Audited as safe -- see `KnownInstallDir`'s doc comment for each.
+      (InstallMethod::Apt("x"), &[]),
+      (InstallMethod::Brew("x"), &[]),
+      (InstallMethod::Npm("x"), &[]),
+      (InstallMethod::Pnpm("x"), &[]),
+      (InstallMethod::Yarn("x"), &[]),
+      (InstallMethod::Bun("x"), &[]),
+      (InstallMethod::CargoBinstall("x"), &[]),
+      (
+        InstallMethod::Cargo {
+          package: "x",
+          locked: true,
+        },
+        &[],
+      ),
+      (InstallMethod::Rustup("x"), &[]),
+    ];
+
+    for (method, expected) in cases {
+      assert_eq!(
+        KnownInstallDir::for_method(method),
+        *expected,
+        "{method:?} was re-classified without the audit on \
+         KnownInstallDir being updated to match"
+      );
+    }
+  }
+
+  // --- KnownInstallDir::path precedence (#297) ----------------------------
+  //
+  // Driven through `path_with`, never the real environment: the test binary
+  // is multi-threaded and `HOME` in particular is read by unrelated code, so
+  // `set_var` here would be both racy and contaminating.
+
+  /// Builds a `path_with` environment closure from an explicit table, so a
+  /// variable absent from `vars` reads as genuinely unset.
+  fn fake_env(
+    vars: &[(&'static str, &'static str)],
+  ) -> impl Fn(&str) -> Option<String> + use<> {
+    let vars = vars.to_vec();
+    move |var: &str| {
+      vars
+        .iter()
+        .find(|(name, _)| *name == var)
+        .map(|(_, value)| (*value).to_string())
+    }
+  }
+
+  fn no_go_bin_dir() -> Option<PathBuf> {
+    panic!("a non-Go KnownInstallDir must never ask for the Go bin directory")
+  }
+
+  #[test]
+  fn test_known_install_dir_path_prefers_pipx_bin_dir_over_local_bin() {
+    // `PIPX_BIN_DIR` is pipx's own override; honouring it is the difference
+    // between probing where pipx actually wrote and probing a default that
+    // the user has configured away from.
+    let dir = KnownInstallDir::Pipx.path_with(
+      no_go_bin_dir,
+      fake_env(&[("PIPX_BIN_DIR", "/opt/pipx/bin"), (HOME_VAR, "/home/u")]),
+    );
+    assert_eq!(dir, Some(PathBuf::from("/opt/pipx/bin")));
+  }
+
+  #[test]
+  fn test_known_install_dir_path_defaults_pipx_and_uv_to_local_bin() {
+    // The case #297 was filed over: with nothing configured, both managers
+    // install into `~/.local/bin` -- which is why `pipx ensurepath` and
+    // `uv tool update-shell` exist at all.
+    let expected = Some(PathBuf::from("/home/u").join(".local").join("bin"));
+    let env = fake_env(&[(HOME_VAR, "/home/u")]);
+
+    assert_eq!(
+      KnownInstallDir::Pipx.path_with(no_go_bin_dir, &env),
+      expected
+    );
+    assert_eq!(
+      KnownInstallDir::UvTool.path_with(no_go_bin_dir, &env),
+      expected
+    );
+    assert_eq!(
+      KnownInstallDir::PythonUser.path_with(no_go_bin_dir, &env),
+      if PYTHON_USER_BASE_DEFAULT_IS_DERIVABLE {
+        expected
+      } else {
+        None
+      },
+      "without PYTHONUSERBASE the user scheme's scripts are ~/.local/bin on \
+       Linux; on Windows (%APPDATA%\\Python\\PythonXY) and on macOS \
+       (~/Library/Python/X.Y, framework builds) the default base embeds an \
+       interpreter version this crate cannot derive, so it must decline \
+       rather than guess"
+    );
+  }
+
+  #[test]
+  fn test_known_install_dir_path_uv_precedence_is_uv_then_xdg_then_local() {
+    let all = fake_env(&[
+      ("UV_TOOL_BIN_DIR", "/uv/bin"),
+      ("XDG_BIN_HOME", "/xdg/bin"),
+      (HOME_VAR, "/home/u"),
+    ]);
+    assert_eq!(
+      KnownInstallDir::UvTool.path_with(no_go_bin_dir, all),
+      Some(PathBuf::from("/uv/bin"))
+    );
+
+    let xdg_only =
+      fake_env(&[("XDG_BIN_HOME", "/xdg/bin"), (HOME_VAR, "/home/u")]);
+    assert_eq!(
+      KnownInstallDir::UvTool.path_with(no_go_bin_dir, xdg_only),
+      Some(PathBuf::from("/xdg/bin"))
+    );
+  }
+
+  #[test]
+  fn test_known_install_dir_path_treats_a_blank_override_as_unset() {
+    // An exported-but-empty `PIPX_BIN_DIR` must not become a probe of the
+    // filesystem root -- `PathBuf::from("")` joined with a binary name is a
+    // relative path, resolved against whatever directory fml happens to run
+    // in.
+    let dir = KnownInstallDir::Pipx.path_with(
+      no_go_bin_dir,
+      fake_env(&[("PIPX_BIN_DIR", "   "), (HOME_VAR, "/home/u")]),
+    );
+    assert_eq!(
+      dir,
+      Some(PathBuf::from("/home/u").join(".local").join("bin"))
+    );
+  }
+
+  #[test]
+  fn test_known_install_dir_path_python_user_base_override() {
+    let dir = KnownInstallDir::PythonUser.path_with(
+      no_go_bin_dir,
+      fake_env(&[("PYTHONUSERBASE", "/py/user"), (HOME_VAR, "/home/u")]),
+    );
+    assert_eq!(
+      dir,
+      Some(PathBuf::from("/py/user").join(USER_SCHEME_SCRIPT_DIR))
+    );
+  }
+
+  #[test]
+  fn test_known_install_dir_path_is_none_without_a_home_directory() {
+    // No home and no override is "cannot determine", not a panic and not a
+    // relative path.
+    let env = fake_env(&[]);
+    for kind in [
+      KnownInstallDir::Pipx,
+      KnownInstallDir::UvTool,
+      KnownInstallDir::PythonUser,
+      KnownInstallDir::ScoopShims,
+      KnownInstallDir::WingetUserLinks,
+      KnownInstallDir::WingetMachineLinks,
+    ] {
+      assert_eq!(
+        kind.path_with(no_go_bin_dir, &env),
+        None,
+        "{kind:?} must decline rather than fabricate a path"
+      );
+    }
+  }
+
+  #[test]
+  fn test_known_install_dir_path_winget_links_user_and_machine_scope() {
+    let env = fake_env(&[
+      ("LOCALAPPDATA", r"C:\Users\u\AppData\Local"),
+      ("ProgramFiles", r"C:\Program Files"),
+    ]);
+    assert_eq!(
+      KnownInstallDir::WingetUserLinks.path_with(no_go_bin_dir, &env),
+      Some(
+        PathBuf::from(r"C:\Users\u\AppData\Local")
+          .join("Microsoft")
+          .join("WinGet")
+          .join("Links")
+      )
+    );
+    assert_eq!(
+      KnownInstallDir::WingetMachineLinks.path_with(no_go_bin_dir, &env),
+      Some(
+        PathBuf::from(r"C:\Program Files")
+          .join("WinGet")
+          .join("Links")
+      )
+    );
+  }
+
+  #[test]
+  fn test_known_install_dir_path_scoop_prefers_scoop_over_profile() {
+    let profile = fake_env(&[("USERPROFILE", r"C:\Users\u")]);
+    assert_eq!(
+      KnownInstallDir::ScoopShims.path_with(no_go_bin_dir, &profile),
+      Some(PathBuf::from(r"C:\Users\u").join("scoop").join("shims"))
+    );
+    let both =
+      fake_env(&[("SCOOP", r"D:\scoop"), ("USERPROFILE", r"C:\Users\u")]);
+    assert_eq!(
+      KnownInstallDir::ScoopShims.path_with(no_go_bin_dir, &both),
+      Some(PathBuf::from(r"D:\scoop").join("shims"))
+    );
+  }
+
+  #[test]
+  fn test_known_install_dir_path_brew_llvm_keg_bin() {
+    let keg_bin = |prefix: &str| {
+      Some(PathBuf::from(prefix).join("opt").join("llvm").join("bin"))
+    };
+    assert_eq!(
+      KnownInstallDir::BrewLlvm.path_with(
+        no_go_bin_dir,
+        fake_env(&[("HOMEBREW_PREFIX", "/custom/brew")])
+      ),
+      keg_bin("/custom/brew")
+    );
+    assert_eq!(
+      KnownInstallDir::BrewLlvm.path_with(no_go_bin_dir, fake_env(&[])),
+      keg_bin(HOMEBREW_DEFAULT_PREFIX)
+    );
+  }
+
+  #[test]
+  #[cfg(not(windows))]
+  fn test_resolve_via_known_install_dir_skips_windows_only_dirs() {
+    // yamllint's chain lists the Python installers, Scoop and WingetName;
+    // off Windows only the Python dirs may be asked for.
+    let found = resolve_via_known_install_dir_with("yamllint", |kind| {
+      assert!(
+        !matches!(
+          kind,
+          KnownInstallDir::ScoopShims
+            | KnownInstallDir::WingetUserLinks
+            | KnownInstallDir::WingetMachineLinks
+        ),
+        "{kind:?} is Windows only"
+      );
+      None
+    });
+    assert_eq!(found, None);
+  }
+
+  #[test]
+  fn test_known_install_dir_path_go_reads_no_environment() {
+    // Go's directory comes from `go env`, not from any variable this type
+    // reads; proven by an env closure that panics if consulted at all.
+    let dir = KnownInstallDir::Go.path_with(
+      || Some(PathBuf::from("/go/bin")),
+      |var| panic!("KnownInstallDir::Go must not read the environment: {var}"),
+    );
+    assert_eq!(dir, Some(PathBuf::from("/go/bin")));
+  }
+
+  #[test]
+  fn test_go_install_bin_dir_reports_gos_own_output_directory() {
+    // The one test that exercises the real `go env` wiring
+    // `resolve_binary_path`'s fallback uses in production. Deliberately
+    // read-only: it asks the toolchain where `go install` writes and checks
+    // the shape of the answer, and it never creates that directory, writes
+    // a fixture into it, or primes the process-global BINARY_CACHE.
+    //
+    // An earlier version of this test did all three -- it wrote a fake
+    // `goimports` into the developer's *real* GOBIN, which a SIGKILL
+    // mid-test would have left behind for a later real `fml fmt` to try to
+    // exec. It also claimed to use "a name `which` will never resolve"
+    // while actually using `goimports`, so on any machine with
+    // `$GOPATH/bin` on PATH the `which` lookup succeeded and the test
+    // passed without the fallback running at all -- it passed with the
+    // fallback deleted. The fallback's own behaviour is covered instead by
+    // the `resolve_via_known_install_dir_with` tests above and by
+    // `test_create_tool_command_spawns_a_go_installed_binary_by_its_path`,
+    // all of which drive a tempdir and fail if the fallback is removed. The
+    // genuinely-clean two-process end-to-end belongs to the
+    // `Fresh-Install Regression` CI job; it is not reproducible in-process.
+    if which::which("go").is_err() {
+      eprintln!(
+        "skipping test_go_install_bin_dir_reports_gos_own_output_directory: \
+         no `go` on this machine's PATH"
+      );
+      return;
+    }
+
+    let Some(dir) = go_install_bin_dir() else {
+      eprintln!(
+        "skipping test_go_install_bin_dir_reports_gos_own_output_directory: \
+         `go env` reported neither GOBIN nor a usable GOPATH"
+      );
+      return;
+    };
+
+    assert!(
+      dir.is_absolute(),
+      "a bin directory resolve_binary_path will later join a binary name \
+       onto must be absolute, not relative to whatever cwd fml runs in: \
+       {dir:?}"
+    );
+    assert!(
+      std::env::var("GOBIN").is_ok_and(|g| !g.trim().is_empty())
+        || dir.file_name() == Some(std::ffi::OsStr::new("bin")),
+      "with no GOBIN set, go install's output directory is $GOPATH/bin: \
+       {dir:?}"
+    );
+  }
+
+  #[test]
+  fn test_resolve_binary_path_does_not_hold_the_cache_lock_over_the_fallback() {
+    // Regression guard for the self-deadlock (#293 QA finding 2): the
+    // known-install-dir fallback spawns `go env` via `create_tool_command`,
+    // which resolves `go` through `resolve_binary_path` itself. With the
+    // cache guard still alive across the fallback, that re-lock of a
+    // non-reentrant `std::sync::Mutex` on the same thread is a documented
+    // panic-or-deadlock -- a hang on Windows' SRWLOCK.
+    //
+    // Driven through a real Go-chain binary that `which` cannot see, so the
+    // fallback (and therefore the re-entrant lookup) genuinely runs. Done on
+    // a worker thread with a receive timeout so a regression surfaces as a
+    // failed assertion instead of hanging the whole test binary forever.
+    let Some(missing) = ["golangci-lint", "goimports"]
+      .into_iter()
+      .find(|b| which::which(b).is_err())
+    else {
+      eprintln!(
+        "skipping the BINARY_CACHE re-entrancy test: every Go-chain binary \
+         is already on this machine's PATH, so the fallback never runs"
+      );
+      return;
+    };
+
+    let (tx, rx) = std::sync::mpsc::channel();
+    let worker = std::thread::spawn(move || {
+      let resolved = resolve_binary_path(missing);
+      // Sent after the call returns; a deadlocked lookup never gets here.
+      let _ = tx.send(resolved);
+    });
+
+    rx.recv_timeout(std::time::Duration::from_secs(60)).expect(
+      "resolve_binary_path deadlocked (or panicked) on the re-entrant \
+       lookup its own known-install-dir fallback performs -- the \
+       BINARY_CACHE guard must be dropped before the fallback runs",
+    );
+    worker.join().expect("lookup thread panicked");
+  }
+
   #[test]
   fn test_check_binary_exists_thread_safety() {
     let handles: Vec<_> = (0..10)
@@ -2537,7 +4208,7 @@ mod tests {
     }
 
     let cache = BINARY_CACHE.get().expect("cache should be initialized");
-    let guard = cache.lock().unwrap_or_else(|e| e.into_inner());
+    let guard = cache.lock().unwrap_or_else(PoisonError::into_inner);
     assert!(guard.contains_key("cargo"));
     for i in 0..10 {
       let binary_name = format!("thread_test_binary_{i}");
@@ -2568,6 +4239,10 @@ mod tests {
       other => panic!("Expected ToolMissing, got {other:?}"),
     }
 
+    // No override hint and no registered ALL_CHAINS row for this made-up
+    // binary: falls back to `install_hint_for`'s "no known install method"
+    // message rather than an empty string (Fixes #264 -- a guard given no
+    // explicit hint must never silently print nothing).
     let res_none =
       tool_missing_guard("test", "non_existent_tool_xyz_123", start, None);
     assert!(res_none.is_some());
@@ -2577,7 +4252,8 @@ mod tests {
         install_hint,
       } => {
         assert_eq!(binary, "non_existent_tool_xyz_123");
-        assert_eq!(install_hint, "");
+        assert_eq!(install_hint, install_hint_for("non_existent_tool_xyz_123"));
+        assert!(install_hint.contains("non_existent_tool_xyz_123"));
       }
       other => panic!("Expected ToolMissing, got {other:?}"),
     }
@@ -2736,6 +4412,27 @@ mod tests {
   }
 
   #[test]
+  fn test_run_tool_command_classified_spawn_failure_names_binary() {
+    // The `Fresh-Install Regression` guard attributes execution failures
+    // by `sed 's/.*Failed to execute \([^ :]*\).*/\1/p'`, matched against
+    // the bare names `doctor --install` reports. A resolved absolute path
+    // must therefore surface as its bare binary name.
+    let mut cmd =
+      std::process::Command::new("/nonexistent-fml-dir/not-a-real-tool");
+    let res =
+      run_tool_command_classified("t", &mut cmd, classify_all_nonzero_as_error);
+    match res.status {
+      SurfaceStatus::ExecutionError { message } => {
+        assert!(
+          message.starts_with("Failed to execute not-a-real-tool: "),
+          "{message}"
+        );
+      }
+      other => panic!("expected ExecutionError, got {other:?}"),
+    }
+  }
+
+  #[test]
   fn test_run_tool_command_classified_violation_exit() {
     let mut cmd = scripted_command("ONEISSUE", "", 1);
     let res = run_tool_command_classified(
@@ -2806,6 +4503,242 @@ mod tests {
         None,
         "must not flag {extra:?}"
       );
+    }
+  }
+
+  // --- install_hint_for / ToolInfo::effective_install_hint (#264) --------
+  //
+  // These are the regression guards for the bug #264 actually filed: printed
+  // install hints used to be hand-written prose restated 2-4 times per tool,
+  // and drifted away from `ALL_CHAINS` -- most visibly, every printed taplo
+  // hint kept leading with `cargo binstall` after `TAPLO_CHAIN` was
+  // deliberately reordered npm-first. `install_hint_for` derives the text
+  // from the chain directly, so this class of drift can no longer occur:
+  // there is nothing left to hand-edit out of sync.
+
+  #[test]
+  fn test_install_hint_for_taplo_leads_with_the_chain_first_entry() {
+    // This is the exact regression: the printed hint must lead with
+    // whatever `TAPLO_CHAIN`'s first entry actually is (npm), not a
+    // hand-written string that can silently disagree with it.
+    let hint = install_hint_for("taplo");
+    assert!(
+      hint.starts_with("Install via: npm install -g @taplo/cli"),
+      "taplo's hint must lead with the chain's first (npm) entry, got: {hint}"
+    );
+    // The demoted `cargo binstall` entry must still be mentioned somewhere
+    // -- it's still a valid fallback -- just not first.
+    assert!(hint.contains("cargo binstall"));
+    assert!(hint.contains("taplo-cli"));
+    let npm_pos = hint.find("npm install").unwrap();
+    let binstall_pos = hint.find("cargo binstall").unwrap();
+    assert!(
+      npm_pos < binstall_pos,
+      "npm must be mentioned before cargo binstall in: {hint}"
+    );
+  }
+
+  #[test]
+  fn test_install_hint_for_unregistered_binary_names_itself() {
+    let hint = install_hint_for("totally-unregistered-tool");
+    assert!(hint.contains("totally-unregistered-tool"));
+  }
+
+  #[test]
+  fn test_install_hint_for_single_entry_chain_has_no_or_clause() {
+    // rustfmt/clippy-driver's chains are a single `Rustup` entry each --
+    // rendering must not produce a dangling "(or )".
+    let hint = install_hint_for("rustfmt");
+    assert!(!hint.contains("(or"));
+    assert!(hint.contains("rustup component add rustfmt"));
+  }
+
+  #[test]
+  fn test_install_hint_for_apt_chain_is_env_independent() {
+    // `Apt`'s `command()` conditionally prepends `sudo` based on whether
+    // `sudo` is on this machine's PATH -- a printed hint must not inherit
+    // that nondeterminism (Fixes #264 follow-on: a hint has to read the
+    // same on every machine, not just the one running the test suite).
+    let hint = install_hint_for("clang-format");
+    assert!(hint.contains("sudo apt-get install -y clang-format"));
+  }
+
+  #[test]
+  fn test_every_surface_tool_info_binary_resolves_to_all_chains_or_overrides() {
+    // Acceptance criterion from #264: a new tool cannot ship "hintless". A
+    // `ToolInfo` either resolves to a real `ALL_CHAINS` row (and so gets a
+    // derived hint automatically), or it deliberately overrides
+    // `install_hint` itself (the only legitimate reason: it has no
+    // install-chain at all, e.g. `cargo`/`gofmt` ship with a toolchain).
+    for surface in crate::surfaces::all_surfaces() {
+      let resolved = crate::config::ResolvedLangConfig::new(surface.name());
+      for tool in surface.tool_info(&resolved) {
+        let has_chain = install_chain_for(tool.binary).is_some();
+        assert!(
+          has_chain || tool.install_hint.is_some(),
+          "{}'s tool '{}' has no ALL_CHAINS row and no install_hint \
+           override -- it would print install_hint_for's generic \
+           \"no known install method\" fallback. Register it in \
+           ALL_CHAINS, or give it an explicit override if it \
+           genuinely has none.",
+          surface.name(),
+          tool.binary,
+        );
+        // And the reverse never silently drifts either: whichever one
+        // applies must actually render non-empty text.
+        assert!(!tool.effective_install_hint().is_empty());
+      }
+    }
+  }
+
+  #[test]
+  fn test_every_all_chains_row_names_a_surface_binary() {
+    // Issue #295: `tinymist` sat in ALL_CHAINS with no surface. Paired by
+    // name, after alias canonicalisation, so a row that reuses another
+    // tool's chain constant is still an orphan.
+    let declared: Vec<&str> = crate::surfaces::all_surfaces()
+      .iter()
+      .flat_map(|surface| {
+        let resolved = crate::config::ResolvedLangConfig::new(surface.name());
+        surface
+          .tool_info(&resolved)
+          .into_iter()
+          .map(|tool| tool.binary)
+      })
+      .map(canonical_chain_binary)
+      .collect();
+    let orphans: Vec<&str> = ALL_CHAINS
+      .iter()
+      .map(|row| row.binary)
+      .filter(|binary| !declared.contains(binary))
+      .collect();
+    assert!(
+      orphans.is_empty(),
+      "ALL_CHAINS rows no surface's tool_info declares: {orphans:?} \
+       (wire the tool into a surface, or delete the row)"
+    );
+  }
+
+  #[test]
+  fn test_no_surface_hardcodes_a_chain_derived_install_command() {
+    // QA follow-up on #264: `ToolInfo.install_hint: None` and
+    // `tool_missing_guard`'s `None` made the *common* call sites derive
+    // automatically, but nothing stopped a bespoke call site --
+    // `tool_missing_result`, or a fresh `tool_missing_guard` call written
+    // without reaching for the derived hint -- from smuggling a
+    // hand-copied package-manager command straight back in. That is
+    // exactly what happened: `rust.rs`'s combined "cargo / rustfmt"
+    // missing-tool message still spelled out `"Run: rustup component add
+    // rustfmt"` by hand after `rustfmt`'s own `ToolInfo.install_hint` had
+    // already switched to `None`, and `cargo`'s/`gofmt`'s legitimate
+    // no-chain overrides existed as two textually-drifting copies each
+    // rather than one source. The coverage test above only walks
+    // `ToolInfo` rows, so it never saw either.
+    //
+    // This scans every surface source file's non-comment lines for the
+    // literal shell-command phrases `InstallMethod::describe()` renders.
+    // Any such phrase appearing outside this file (`tooling.rs`, where
+    // they're the source of truth) or outside a named override `const`'s
+    // own declaration means either a hand copy has reappeared, or a new
+    // override was added as a second copy of a string instead of one
+    // named `const` -- both are the #264 drift shape, and both should
+    // fail this test.
+    const CHAIN_COMMAND_PHRASES: &[&str] = &[
+      "npm install -g",
+      "pnpm add -g",
+      "yarn global add",
+      "bun add -g",
+      "uv tool install",
+      "pipx install",
+      "pip install",
+      "pip3 install",
+      "apt-get install",
+      "brew install",
+      "scoop install",
+      "winget install",
+      "cargo binstall",
+      "cargo install",
+      "rustup component add",
+      "go install",
+    ];
+
+    // Tools with no ALL_CHAINS row at all (`cargo`, `gofmt`) get a plain
+    // manual-bootstrap override; tools whose row exists but can't express
+    // a real fallback the chain has no way to carry (no Windows entry at
+    // all, or a docs/manual-download URL) get one too -- see
+    // `GOOGLE_JAVA_FORMAT_INSTALL_HINT`'s and `CHECKSTYLE_INSTALL_HINT`'s
+    // doc comments in java.rs. Either way, each is exactly one named
+    // `const`, referenced from every call site for that tool, so it can't
+    // re-drift into two disagreeing copies. Declaration lines for these
+    // are exempted below; any *other* occurrence of a chain-command phrase
+    // still fails the test.
+    const ALLOWED_OVERRIDE_CONSTANTS: &[&str] = &[
+      "CARGO_INSTALL_HINT",
+      "GOFMT_INSTALL_HINT",
+      "GOOGLE_JAVA_FORMAT_INSTALL_HINT",
+      "CHECKSTYLE_INSTALL_HINT",
+    ];
+
+    let surface_sources: &[(&str, &str)] = &[
+      ("cpp.rs", include_str!("cpp.rs")),
+      ("go.rs", include_str!("go.rs")),
+      ("java.rs", include_str!("java.rs")),
+      ("javascript.rs", include_str!("javascript.rs")),
+      ("json.rs", include_str!("json.rs")),
+      ("kotlin.rs", include_str!("kotlin.rs")),
+      ("markdown.rs", include_str!("markdown.rs")),
+      ("python.rs", include_str!("python.rs")),
+      ("rust.rs", include_str!("rust.rs")),
+      ("toml.rs", include_str!("toml.rs")),
+      ("typst.rs", include_str!("typst.rs")),
+      ("yaml.rs", include_str!("yaml.rs")),
+    ];
+
+    for (file, source) in surface_sources {
+      // Exempt an allowed override const's own declaration (which may
+      // wrap across multiple lines once rustfmt reflows a long string
+      // literal) from the phrase scan below entirely: track "inside a
+      // `const <ALLOWED_NAME>: ... = ...;` declaration" as a span, not a
+      // single line, so a wrapped literal's continuation lines are
+      // exempted too, not just the line the `const` keyword appears on.
+      let mut in_allowed_decl = false;
+      for (lineno, line) in source.lines().enumerate() {
+        let trimmed = line.trim_start();
+        if !in_allowed_decl
+          && ALLOWED_OVERRIDE_CONSTANTS
+            .iter()
+            .any(|name| trimmed.starts_with(&format!("const {name}:")))
+        {
+          in_allowed_decl = true;
+        }
+        if in_allowed_decl {
+          if trimmed.contains(';') {
+            in_allowed_decl = false;
+          }
+          continue;
+        }
+        // Full-line (doc) comments legitimately quote command text for
+        // human readers explaining *why* a constant exists (e.g. this
+        // file's own `CARGO_INSTALL_HINT` doc comment).
+        if trimmed.starts_with("//") {
+          continue;
+        }
+        for phrase in CHAIN_COMMAND_PHRASES {
+          assert!(
+            !trimmed.contains(phrase),
+            "{file}:{} hardcodes a chain-derived install command \
+             ({phrase:?}) outside `install_hint_for` and outside an \
+             allowed override const -- this is the #264 drift bug \
+             reappearing. A binary with a real ALL_CHAINS row and no \
+             documented fallback gap must derive its hint (pass `None`); \
+             a legitimate override must be exactly one named `const`, \
+             added to ALLOWED_OVERRIDE_CONSTANTS above, referenced from \
+             every call site, not a repeated string literal. Line: \
+             {trimmed:?}",
+            lineno + 1,
+          );
+        }
+      }
     }
   }
 }

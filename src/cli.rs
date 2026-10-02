@@ -50,9 +50,11 @@ pub enum Commands {
     #[arg(short = 'l', long = "lang", value_name = "LANG")]
     lang: Vec<String>,
 
-    /// Auto-install any missing tool dependencies first
-    #[arg(short = 'i', long)]
-    install: bool,
+    /// A missing required tool alone does not fail the run (still reported
+    /// in the table and the summary's "(allowed)" marker); a real violation
+    /// or execution error still exits non-zero
+    #[arg(long)]
+    allow_missing: bool,
 
     /// Optional paths or files to target
     #[arg(value_name = "PATH")]
@@ -61,15 +63,6 @@ pub enum Commands {
 
   /// Lint source files. Never writes -- use `fml fix` to apply fixes
   Lint {
-    /// Deprecated: use `fml fix`. Kept working for one minor release.
-    ///
-    /// Hidden from `--help` deliberately: it is on its way out, so help
-    /// advertises only the spelling we want adopted. It still parses, and
-    /// dispatches to the `fix` plan (lint fixes *and* format) after
-    /// printing the shared deprecation notice.
-    #[arg(long, hide = true)]
-    fix: bool,
-
     /// Rejected, not a no-op: `fml lint` never writes, so a mode flag on it
     /// would be meaningless clutter. Declared only so the error names the
     /// real reason instead of clap's misleading "to pass '--check' as a
@@ -89,9 +82,11 @@ pub enum Commands {
     #[arg(short = 'l', long = "lang", value_name = "LANG")]
     lang: Vec<String>,
 
-    /// Auto-install any missing tool dependencies first
-    #[arg(short = 'i', long)]
-    install: bool,
+    /// A missing required tool alone does not fail the run (still reported
+    /// in the table and the summary's "(allowed)" marker); a real violation
+    /// or execution error still exits non-zero
+    #[arg(long)]
+    allow_missing: bool,
 
     /// Optional paths or files to target
     #[arg(value_name = "PATH")]
@@ -116,9 +111,11 @@ pub enum Commands {
     #[arg(short = 'l', long = "lang", value_name = "LANG")]
     lang: Vec<String>,
 
-    /// Auto-install any missing tool dependencies first
-    #[arg(short = 'i', long)]
-    install: bool,
+    /// A missing required tool alone does not fail the run (still reported
+    /// in the table and the summary's "(allowed)" marker); a real violation
+    /// or execution error still exits non-zero
+    #[arg(long)]
+    allow_missing: bool,
 
     /// Optional paths or files to target
     #[arg(value_name = "PATH")]
@@ -147,20 +144,7 @@ pub enum Commands {
     install: bool,
   },
 
-  /// Deprecated: use `fml doctor --install`. Kept working for one minor release.
-  ///
-  /// Hidden from `--help` deliberately: it is on its way out, so help
-  /// advertises only the spelling we want adopted. It still parses, and
-  /// dispatches to `fml doctor --install` after printing the shared
-  /// deprecation notice.
-  #[command(hide = true)]
-  Install {
-    /// Install tools for all supported language surfaces
-    #[arg(short = 'a', long)]
-    all: bool,
-  },
-
-  /// Scaffold a new formality.toml or update the schema pin in an existing one
+  /// Scaffold a new formality.toml
   Init {
     /// Overwrite existing configuration file if it already exists
     #[arg(short = 'f', long)]
@@ -171,19 +155,14 @@ pub enum Commands {
     hidden: bool,
   },
 
-  /// Deprecated: use `fml doctor`. Kept working for one minor release.
+  /// Write the JSON Schema for formality.toml to stdout or a file
   ///
-  /// Hidden from `--help` deliberately: it is on its way out, so help
-  /// advertises only the spelling we want adopted. It still parses, and
-  /// dispatches to `fml doctor` after printing the shared deprecation notice.
-  #[command(name = "list-surfaces", alias = "surfaces", hide = true)]
-  ListSurfaces,
-
-  /// Deprecated: use `cargo test --test schema_drift` (or `UPDATE_SCHEMA=1 cargo test --test schema_drift`).
-  ///
-  /// Output the JSON Schema for formality.toml to stdout or file. Hidden from
-  /// `--help`; still parses for 1 minor release.
-  #[command(hide = true)]
+  /// Briefly deprecated in favour of `UPDATE_SCHEMA=1 cargo test --test
+  /// schema_drift`, un-deprecated in v0.3.0 (#255): that replacement needs
+  /// a Rust toolchain *and* a checkout of this repository, so anyone who
+  /// installed `fml` as a released binary could not run it. It also
+  /// generates the published schema asset in the release pipeline, which a
+  /// test cannot do.
   Schema {
     /// Optional file path to write the JSON schema to (defaults to stdout)
     #[arg(short = 'o', long, value_name = "FILE")]
@@ -195,7 +174,8 @@ pub enum Commands {
   /// A document formatter and diagnostics publisher: `textDocument/formatting`
   /// runs `fml fmt` on the requested file; `did_save` / `did_open` run
   /// `fml lint` (or a structured per-surface parser) to publish diagnostics;
-  /// `did_change_watched_files` invalidates the cached `formality.toml`.
+  /// `did_change_watched_files` reloads `formality.toml`, keeping the previous
+  /// config when the new one is invalid.
   ///
   /// This is not a replacement for your language server — it does not spawn,
   /// proxy, or route requests to rust-analyzer, pyright, clangd, or any other
@@ -206,25 +186,6 @@ pub enum Commands {
   ///
   /// Editors connect via stdio (the default transport for most editors).
   Lsp,
-
-  /// Deprecated: use `fml::ui::table` library API.
-  ///
-  /// Render an opinionated semantic terminal table from JSON specification.
-  /// Hidden from `--help`; still parses for 1 minor release.
-  #[command(hide = true)]
-  Table {
-    /// Table specification JSON string (reads from stdin if omitted)
-    #[arg(long)]
-    json: Option<String>,
-  },
-
-  /// Deprecated: use `fml init`. Kept working for one minor release.
-  #[command(hide = true)]
-  Migrate {
-    /// Which migration to run.
-    #[command(subcommand)]
-    command: MigrateCommands,
-  },
 }
 
 impl Cli {
@@ -241,15 +202,15 @@ impl Cli {
     cli
   }
 
-  /// Validates flag combinations that are parseable but meaningless.
+  /// Rejects `fml lint --check`, a flag combination that parses but means
+  /// nothing.
   ///
-  /// Currently one rule: `fml lint --check`. `--check` selects the
-  /// report-only mode, and `fml lint` is *always* report-only, so the flag
-  /// is clutter rather than a no-op and is rejected outright. It is
-  /// declared as a hidden arg purely so this can explain why; left
-  /// undeclared, clap answers with "unexpected argument '--check' found"
-  /// and a "to pass '--check' as a value, use '-- --check'" tip that points
-  /// the user somewhere actively wrong.
+  /// `--check` selects the report-only mode, and `fml lint` is *always*
+  /// report-only, so the flag is clutter rather than a no-op and is
+  /// rejected outright. It is declared as a hidden arg purely so this can
+  /// explain why; left undeclared, clap answers with "unexpected argument
+  /// '--check' found" and a "to pass '--check' as a value, use '-- --check'"
+  /// tip that points the user somewhere actively wrong.
   ///
   /// # Errors
   ///
@@ -276,34 +237,15 @@ impl Cli {
         ),
       ));
     }
+
     Ok(())
   }
 }
 
-/// Subcommands of `fml migrate`.
-#[derive(Subcommand, Debug)]
-#[command(hide = true)]
-pub enum MigrateCommands {
-  /// Rewrite the `#:schema` directive in formality.toml / .formality.toml to
-  /// point at the current release's schema URL, leaving the rest of the file
-  /// untouched
-  Schema,
-}
-
 #[cfg(test)]
-#[allow(missing_docs, clippy::missing_errors_doc, clippy::missing_panics_doc)]
 mod tests {
   use super::*;
   use clap::CommandFactory;
-
-  #[test]
-  fn test_list_surfaces_subcommand_and_alias() {
-    let cli = Cli::try_parse_from(["fml", "list-surfaces"]).unwrap();
-    assert!(matches!(cli.command, Commands::ListSurfaces));
-
-    let cli_alias = Cli::try_parse_from(["fml", "surfaces"]).unwrap();
-    assert!(matches!(cli_alias.command, Commands::ListSurfaces));
-  }
 
   #[test]
   fn test_lint_check_is_rejected_with_a_tailored_error() {
@@ -348,55 +290,12 @@ mod tests {
   }
 
   #[test]
-  fn test_deprecated_lint_fix_still_parses_but_is_hidden_from_help() {
-    let cli = Cli::try_parse_from(["fml", "lint", "--fix"]).unwrap();
-    assert!(matches!(cli.command, Commands::Lint { fix: true, .. }));
-    assert!(cli.validate().is_ok());
-
-    let mut cmd = Cli::command();
-    cmd.build();
-    let help = cmd
-      .find_subcommand_mut("lint")
-      .expect("lint subcommand")
-      .render_help()
-      .to_string();
-    assert!(
-      !help.contains("--fix"),
-      "a deprecated spelling should not be advertised in --help, got:
-{help}"
-    );
-    assert!(
-      !help.contains("--check"),
-      "`fml lint` has no mode flag to advertise, got:
-{help}"
-    );
-  }
-
-  #[test]
-  fn test_deprecated_migrate_still_parses_but_is_hidden_from_help() {
-    let cli = Cli::try_parse_from(["fml", "migrate", "schema"]).unwrap();
-    assert!(matches!(
-      cli.command,
-      Commands::Migrate {
-        command: MigrateCommands::Schema
-      }
-    ));
-    assert!(cli.validate().is_ok());
-
-    let mut cmd = Cli::command();
-    cmd.build();
-    let help = cmd.render_help().to_string();
-    assert!(
-      !help.contains("migrate"),
-      "a deprecated command should not be advertised in --help, got:
-{help}"
-    );
-  }
-
-  #[test]
-  fn test_deprecated_schema_and_table_still_parse_but_are_hidden_from_help() {
+  fn test_schema_parses_and_is_advertised_in_help() {
+    // Un-deprecated in v0.3.0 (#255): it is a supported command, so it
+    // must be visible in `--help` like any other.
     let cli = Cli::try_parse_from(["fml", "schema"]).unwrap();
     assert!(matches!(cli.command, Commands::Schema { output: None }));
+    assert!(cli.validate().is_ok());
 
     let cli =
       Cli::try_parse_from(["fml", "schema", "-o", "schema.json"]).unwrap();
@@ -407,89 +306,21 @@ mod tests {
       } if p == std::path::Path::new("schema.json")
     ));
 
-    let cli = Cli::try_parse_from(["fml", "table"]).unwrap();
-    assert!(matches!(cli.command, Commands::Table { json: None }));
-
-    let cli = Cli::try_parse_from(["fml", "table", "--json", "{}"]).unwrap();
-    assert!(matches!(
-      cli.command,
-      Commands::Table {
-        json: Some(ref s)
-      } if s == "{}"
-    ));
-
     let mut cmd = Cli::command();
     cmd.build();
-    let help = cmd.render_help().to_string();
-    assert!(
-      !help.lines().any(|l| l.trim_start().starts_with("schema ")),
-      "deprecated `schema` subcommand should not be advertised in --help, got:\n{help}"
-    );
-    assert!(
-      !help.lines().any(|l| l.trim_start().starts_with("table ")),
-      "deprecated `table` subcommand should not be advertised in --help, got:\n{help}"
-    );
-  }
-
-  #[test]
-  fn test_deprecated_install_and_surfaces_commands_parse_and_are_hidden_from_help()
-   {
-    let cli_install = Cli::try_parse_from(["fml", "install"]).unwrap();
-    assert!(matches!(
-      cli_install.command,
-      Commands::Install { all: false }
-    ));
-    assert!(cli_install.validate().is_ok());
-
-    let cli_install_all =
-      Cli::try_parse_from(["fml", "install", "-a"]).unwrap();
-    assert!(matches!(
-      cli_install_all.command,
-      Commands::Install { all: true }
-    ));
-    assert!(cli_install_all.validate().is_ok());
-
-    let cli_list_surfaces =
-      Cli::try_parse_from(["fml", "list-surfaces"]).unwrap();
-    assert!(matches!(cli_list_surfaces.command, Commands::ListSurfaces));
-    assert!(cli_list_surfaces.validate().is_ok());
-
-    let cli_surfaces = Cli::try_parse_from(["fml", "surfaces"]).unwrap();
-    assert!(matches!(cli_surfaces.command, Commands::ListSurfaces));
-    assert!(cli_surfaces.validate().is_ok());
-
-    let mut cmd = Cli::command();
-    cmd.build();
-    let help = cmd.render_help().to_string();
-
     let visible_subcommands: Vec<&str> = cmd
       .get_subcommands()
       .filter(|c| !c.is_hide_set())
-      .map(|c| c.get_name())
+      .map(clap::Command::get_name)
       .collect();
     assert!(
-      !visible_subcommands.contains(&"install"),
-      "deprecated `install` should be hidden from subcommand list"
+      visible_subcommands.contains(&"schema"),
+      "`schema` is supported and should be visible, got: {visible_subcommands:?}"
     );
+    let help = cmd.render_help().to_string();
     assert!(
-      !visible_subcommands.contains(&"list-surfaces"),
-      "deprecated `list-surfaces` should be hidden from subcommand list"
-    );
-    assert!(
-      !help.lines().any(|l| l.trim_start().starts_with("install ")),
-      "deprecated `install` should not appear in --help, got:\n{help}"
-    );
-    assert!(
-      !help
-        .lines()
-        .any(|l| l.trim_start().starts_with("list-surfaces ")),
-      "deprecated `list-surfaces` should not appear in --help, got:\n{help}"
-    );
-    assert!(
-      !help
-        .lines()
-        .any(|l| l.trim_start().starts_with("surfaces ")),
-      "deprecated alias `surfaces` should not appear in --help, got:\n{help}"
+      help.lines().any(|l| l.trim_start().starts_with("schema ")),
+      "supported `schema` subcommand should be advertised in --help, got:\n{help}"
     );
   }
 
@@ -522,11 +353,6 @@ mod tests {
         "`fml {name} --help` should use the shared --staged wording, got:
 {help}"
       );
-      assert!(
-        help.contains("Auto-install any missing tool dependencies first"),
-        "`fml {name} --help` should use the shared --install wording, got:
-{help}"
-      );
     }
 
     let lint_help = cmd
@@ -539,6 +365,14 @@ mod tests {
       "`fml lint --help` should use the shared --staged wording, got:
 {lint_help}"
     );
+  }
+
+  #[test]
+  fn test_fmt_lint_fix_validate() {
+    for argv in [["fml", "fmt"], ["fml", "lint"], ["fml", "fix"]] {
+      let cli = Cli::try_parse_from(argv).unwrap();
+      assert!(cli.validate().is_ok());
+    }
   }
 
   #[test]

@@ -2,9 +2,20 @@
 
 fml: polyglot format/lint/config orchestrator, 12 language surfaces.
 
-## Commands
+Process and Rust style come from the global directives and the `orchestrate` and
+`rust-guide` skills. This file records only what is specific to this repo. Check
+`docs/INDEX.md` before reading source; `docs/style-guide.md` holds the Rust
+deviations and repo-specific code rules.
 
-Before committing, run the full suite — it's what CI actually runs:
+## Toolchain
+
+`rust-toolchain.toml` pins stable `1.98.1`; CI pins the same version. This repo
+may use nightly for its own development tooling, but fml itself must build and
+run on stable, and must never require nightly from its users.
+
+## Gate
+
+The full gate, run before a PR is marked ready:
 
 ```bash
 cargo test
@@ -12,73 +23,92 @@ cargo clippy --all-targets -- -D warnings
 cargo run -q -- fmt
 ```
 
-While iterating, `cargo test --lib -q` is a faster inner loop, but it only runs
-the library's unit tests — it skips every file under `tests/` (9 integration
-test files as of this writing), so it is not sufficient before committing.
+- `cargo test --lib -q` is the fast inner loop. It skips every file under
+  `tests/`, so it is never the gate.
+- Always run the freshly built binary (`cargo run -q -- ...`), never a global
+  `fml` on `PATH`.
+- Schema drift: `cargo test --test schema_drift`; regenerate with
+  `UPDATE_SCHEMA=1 cargo test -j 2 --test schema_drift`.
+- The root carries only `formality.toml`, no generated native configs
+  (`.rustfmt.toml`, `.prettierrc`, ...), so `fml sync --check` is not run here.
 
-Activate the staged pre-commit hook:
+## Compatibility
 
-```bash
-git config core.hooksPath .githooks
-```
+Until fml's first official release, 1.0.0, nothing keeps backwards
+compatibility, CLI flags and the `formality.toml` schema included: no shims,
+deprecated aliases, tailored "removed in vX" errors, migration paths or
+compatibility URLs. Removing something removes it outright.
+
+## Pre-commit hook
+
+Activate with `git config core.hooksPath .githooks`. `.githooks/pre-commit`
+builds the binary, then runs `fml fmt --staged --allow-missing` and
+`fml lint --staged --allow-missing`.
+
+- `fmt --staged` can rewrite a file after it was staged, leaving the commit and
+  the working tree diverged. Run `git status` after every commit.
+- A commit blocked by its own dogfooding is the hook working; fix the file, do
+  not route around it.
+
+## CI and merging
+
+- `.github/workflows/pr-check.yml` runs `Library Tests` (clippy + full
+  `cargo test`), `Formality Dogfooding` (`fml fmt --check`, `fml lint`, schema
+  drift), and `Security Audit`.
+- `.github/workflows/install-regression.yml` runs `Fresh-Install Regression`
+  (3-OS matrix) only on PRs touching its `paths` list: install, lookup,
+  version-probe and spawn code. Code that can break installs belongs on that
+  list.
+- Branch protection on `main` requires `Library Tests` and
+  `Formality Dogfooding` plus resolved conversations. It requires zero approving
+  reviews.
+- Branch protection matches checks by job `name`. A worker cannot see branch
+  protection, so the lead checks any PR that renames a job, moves a check to
+  another workflow, or changes triggers against
+  `gh api repos/arvinduh/formality/branches/main/protection` before merging.
+- Merge with `gh pr merge --squash --delete-branch`.
+- No shared `CARGO_TARGET_DIR` is configured: each worktree builds its own
+  multi-GB `target/`, which goes away only with the worktree.
+
+## Smart Format
+
+`fml fmt` must leave files that pass trivial lint checks. Mechanical fixes
+(import sorting, structural markdownlint fixes) belong in
+`LanguageSurface::format()`; `fml lint` is semantic analysis only.
 
 ## Layout
 
-- `src/config` — formality.toml parsing, resolution, schema
+- `src/config` — `formality.toml` parsing, resolution, schema
 - `src/engine` — execution, diffing, update checks
-- `src/surfaces` — one file per language; see `docs/new-surface-guide.md` to add
-  one
+- `src/surfaces` — one file per language; `docs/new-surface-guide.md` adds one
 - `src/ui` — table rendering
 - `src/commands` — CLI subcommand handlers
 
-Root layout: `formality.toml` alone carries canonical config without generated
-native config files (`.rustfmt.toml`, `.prettierrc`, etc.). `fml sync --check`
-is not run against this repository's root.
+## Issues
 
-## Progressive 2-Tier Quality Gate
+Workflow state is derived from GitHub
+([ADR 0006](docs/adr/0006-derived-issue-state.md)): labels `triage`, `design`,
+`ready`, plus native blockers, assignees and draft PRs. Topical labels:
+`architecture`, `dx`, `documentation`, `rust`, `ci`, `compatibility`, `surface`,
+`bug`, `enhancement`.
 
-1. **Tier 1 (Local pre-commit)**: `.githooks/pre-commit` (activated via
-   `git config core.hooksPath .githooks`) builds the fresh binary and runs
-   `fml fmt --staged` and `fml lint --staged` before commits.
-2. **Tier 2 (Parallel PR checks)**: `.github/workflows/pr-check.yml` runs 3
-   independent parallel jobs:
-   - `Library Tests` (**required status check**):
-     `cargo clippy --all-targets -- -D warnings` and full unit/integration test
-     suite (`cargo test --verbose`).
-   - `Formality Dogfooding` (**required status check**): `fml fmt --check` and
-     `fml lint` against this repo, plus schema drift check
-     (`cargo test --test schema_drift`; regenerate via
-     `UPDATE_SCHEMA=1 cargo test -j 2 --test schema_drift`) and schema version
-     progression enforcement.
-   - `Security Audit`: `cargo audit` against Rust advisory database.
+- A parent issue carries no state label; its Done list names its sub-issues.
+- A blocker in another repository cannot always be linked natively: the issue
+  carries no `ready` label and a comment naming the blocker and how to tell it
+  cleared (#246).
 
-## Conventions
-
-- Commits: `type(scope): description (Fixes #issue)`, Conventional Commits
-  style.
-- Format fixes belong in `fml fmt` (mechanical); `fml lint` is semantic-only.
-- Always run the freshly built binary (`cargo run -q -- ...`), never a stale
-  global `fml` on PATH.
-
-## Always
-
-- Run `cargo test && cargo clippy --all-targets -- -D warnings` before any
-  commit — `cargo test --lib -q` is fine for a fast inner loop while iterating,
-  but it skips everything under `tests/` and is not sufficient before
-  committing.
-- Check `docs/INDEX.md` before reading source to understand structure or
-  conventions already documented there.
+Issue and PR numbers cited in code or docs written before 2026-08-26 predate the
+repo's recreation and point at unrelated issues; see
+`docs/INDEX.md#note-on-pre-recreation-issuepr-numbers`.
 
 ## Ask first
 
-- Anything touching branch protection or CI required-status-check names.
-- Version bumps (owned by dedicated tooling, not hand-edits).
+- Branch protection or required status check names.
+- Version bumps: hand edits in a dedicated `chore(release)` PR
+  (`docs/release.md`). `Cargo.toml` and `editors/vscode/package.json` move
+  together (`tests/version_lockstep.rs`). The `semver` crate in `Cargo.toml`
+  parses external tools' versions, not formality's own.
 
 ## Never
 
 - Commit directly to `main`.
-
-Default to dispatching worker subagents in isolated worktrees, not editing
-source directly — see `.agents/orchestrate.md` §8 for the narrow, enumerated
-exceptions. That file also covers worktrees, the QA gate, dispatch order, and
-design-phase/applied-feature rules.

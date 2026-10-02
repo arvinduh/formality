@@ -43,9 +43,9 @@ export const COMMAND_DESCRIPTORS: Record<string, CommandDescriptor> = {
     title: "Linting workspace...",
     showOutput: true,
   },
-  // `fml lint --fix` is deprecated (removed in v0.4.0) and now aliases to
-  // `fml fix` anyway. The command id stays `formality.lintFix` so existing
-  // keybindings keep working; only what it runs changed.
+  // `fml lint --fix` no longer exists; `fml fix` replaces it. The command id
+  // stays `formality.lintFix` so existing keybindings keep working; only what
+  // it runs changed.
   [COMMANDS.LINT_FIX]: {
     args: ["fix"],
     title: "Fixing workspace (lint fixes + format)...",

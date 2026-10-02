@@ -10,18 +10,23 @@ use crate::engine::Plan;
 use crate::errors::ExitStatus;
 
 /// Runs the `fml fix` command: the `[Lint, Format]` plan, writing by default
-/// and reporting only under `check`, optionally installing missing tools
-/// first.
+/// and reporting only under `check`. Provisioning missing tools is `fml
+/// doctor --install`'s job, not this command's (v0.3.0, #282).
 #[allow(clippy::too_many_arguments)]
+#[expect(
+  clippy::fn_params_excessive_bools,
+  reason = "CLI command entry point passes clap flag arguments directly"
+)]
+#[must_use]
 pub fn run_fix(
   root: &Path,
   config: &FormalityConfig,
   check: bool,
   staged: bool,
   changed: bool,
-  lang: Vec<String>,
-  install: bool,
+  lang: &[String],
   paths: Vec<PathBuf>,
+  allow_missing: bool,
 ) -> ExitStatus {
   dispatch_plan(
     root,
@@ -29,9 +34,7 @@ pub fn run_fix(
     staged,
     changed,
     lang,
-    install,
     paths,
-    &Plan::fix(check),
-    "fixes",
+    &Plan::fix(check, allow_missing),
   )
 }

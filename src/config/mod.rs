@@ -6,8 +6,8 @@
 /// Formatting and linting layout facet definitions.
 pub mod facets;
 /// X-macro table generating the repetitive per-language options wiring
-/// shared by `LangConfig`/`resolve_for_lang`/`default_tools_for_lang` —
-/// see its module docs for the design.
+/// shared by `LangConfig`/`resolve_for_lang` — see its module docs for the
+/// design.
 mod lang_table;
 /// Per-language strongly typed formatting options.
 pub mod options;
@@ -15,6 +15,8 @@ pub mod options;
 pub mod resolve;
 /// JSON Schema generator for formality.toml configuration validation.
 pub mod schema;
+/// Strict document parsing that locates a rejected key by path and line.
+mod strict;
 
 pub use facets::LayoutFacet;
 pub use options::{
@@ -23,11 +25,7 @@ pub use options::{
   TypstOptions, YamlOptions,
 };
 pub use resolve::{find_project_config, find_user_config};
-pub use schema::{
-  SCHEMA_VERSION, SchemaStatus, apply_schema_pin, check_schema_version_content,
-  check_schema_version_file, generate_schema, parse_schema_version,
-  print_schema_notice, rewrite_schema_line, schema_url, spawn_schema_check,
-};
+pub use schema::generate_schema;
 
 use lang_table::{impl_lang_accessors, impl_lang_merge, lang_options_table};
 use schemars::JsonSchema;
@@ -43,6 +41,7 @@ pub const CONFIG_FILE_CANDIDATES: &[&str] =
 
 /// Global default settings applicable across all language surfaces.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
 pub struct GlobalConfig {
   /// Explicit list of active language surface names to manage.
   #[serde(skip_serializing_if = "Option::is_none")]
@@ -177,12 +176,6 @@ where
   Debug, Clone, Default, PartialEq, Serialize, Deserialize, JsonSchema,
 )]
 pub struct LangConfig {
-  /// Custom formatter tool binary or command name override.
-  #[serde(skip_serializing_if = "Option::is_none")]
-  pub format_tool: Option<String>,
-  /// Custom linter tool binary or command name override.
-  #[serde(skip_serializing_if = "Option::is_none")]
-  pub lint_tool: Option<String>,
   /// Per-language indentation size override.
   #[serde(skip_serializing_if = "Option::is_none")]
   pub indent_size: Option<usize>,
@@ -262,12 +255,6 @@ pub struct LangConfig {
 impl LangConfig {
   /// Merges `other` configuration settings into `self`.
   pub fn merge(&mut self, other: LangConfig) {
-    if other.format_tool.is_some() {
-      self.format_tool = other.format_tool;
-    }
-    if other.lint_tool.is_some() {
-      self.lint_tool = other.lint_tool;
-    }
     if other.indent_size.is_some() {
       self.indent_size = other.indent_size;
     }
@@ -329,8 +316,8 @@ impl LangConfig {
       self.markdown.clone(),
       self.options.as_ref(),
       &self.extra,
-      options::MarkdownOptions::merge,
-      options::MarkdownOptions::is_empty,
+      MarkdownOptions::merge,
+      MarkdownOptions::is_empty,
     );
     if opts.is_none() {
       if let Some(ref pw) = self.prose_wrap {
@@ -355,6 +342,7 @@ impl LangConfig {
 #[derive(
   Debug, Clone, Default, PartialEq, Serialize, Deserialize, JsonSchema,
 )]
+#[serde(deny_unknown_fields)]
 pub struct FormalityConfig {
   /// Global defaults block (`[global]`).
   #[serde(skip_serializing_if = "Option::is_none")]
@@ -402,10 +390,6 @@ impl Default for ResolvedGlobalConfig {
 pub struct ResolvedLangConfig {
   /// Surface identifier name.
   pub name: String,
-  /// Selected formatting tool binary.
-  pub format_tool: Option<String>,
-  /// Selected linting tool binary.
-  pub lint_tool: Option<String>,
   /// Resolved indentation size.
   pub line_length: usize,
   /// Resolved line length.
@@ -452,6 +436,7 @@ pub struct ResolvedLangConfig {
   pub extra: BTreeMap<String, toml::Value>,
 }
 
+#[cfg(test)]
 impl ResolvedLangConfig {
   /// Creates a [`ResolvedLangConfig`] with default settings for the named surface.
   #[must_use]
@@ -477,6 +462,40 @@ pub enum ConfigError {
     /// Underlying TOML error.
     source: toml::de::Error,
   },
+  /// A key this `fml` does not accept: misspelled, removed, or added by a
+  /// newer `fml`.
+  UnknownKey {
+    /// File path of the config holding the key.
+    path: PathBuf,
+    /// Dotted key path, e.g. `lang.python.format_tool`.
+    key: String,
+    /// One-based line of the key.
+    line: usize,
+  },
+  /// A known key whose value has the wrong type or shape.
+  InvalidValue {
+    /// File path of the config holding the value.
+    path: PathBuf,
+    /// Dotted key path, e.g. `global.line_length`.
+    key: String,
+    /// One-based line of the value.
+    line: usize,
+    /// Why the value was rejected, e.g.
+    /// `invalid type: string "80", expected usize`.
+    reason: String,
+  },
+  /// A `[lang.<name>]` section spelled as a surface alias or with other
+  /// casing, which no reader would look up.
+  NonCanonicalLang {
+    /// File path of the config holding the section.
+    path: PathBuf,
+    /// The section name as written, e.g. `py`.
+    name: String,
+    /// The surface's canonical name, e.g. `python`.
+    canonical: &'static str,
+    /// One-based line of the section name.
+    line: usize,
+  },
 }
 
 impl std::fmt::Display for ConfigError {
@@ -498,6 +517,35 @@ impl std::fmt::Display for ConfigError {
           source
         )
       }
+      ConfigError::UnknownKey { path, key, line } => write!(
+        f,
+        "unknown key `{key}` in {}:{line}. It may need a newer fml (`fml \
+         --version`), or it is misspelled or was removed; `fml schema` lists \
+         the keys this fml accepts.",
+        path.display()
+      ),
+      ConfigError::InvalidValue {
+        path,
+        key,
+        line,
+        reason,
+      } => write!(
+        f,
+        "invalid value for `{key}` in {}:{line}: {reason}. Check `fml \
+         schema` for the type this fml expects.",
+        path.display()
+      ),
+      ConfigError::NonCanonicalLang {
+        path,
+        name,
+        canonical,
+        line,
+      } => write!(
+        f,
+        "section `[lang.{name}]` in {}:{line} is not a canonical surface \
+         name; rename it to `[lang.{canonical}]`.",
+        path.display()
+      ),
     }
   }
 }
@@ -505,5 +553,4 @@ impl std::fmt::Display for ConfigError {
 impl std::error::Error for ConfigError {}
 
 #[cfg(test)]
-#[allow(missing_docs, clippy::missing_errors_doc, clippy::missing_panics_doc)]
 mod tests;

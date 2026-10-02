@@ -6,11 +6,9 @@ use super::{
   DeclaresFacets, ExecutionContext, Facet, FacetSupport, LanguageSurface,
   NativeConfig, SurfaceResult, SurfaceStatus, ToolInfo,
   classify_all_nonzero_as_error, create_tool_command,
-  diff_check_via_tempcopy_classified, find_files_with_ext,
-  lint_fix_unsupported, run_tool_command_classified, sync_native_config,
-  tool_missing_guard,
+  diff_check_via_tempcopy_classified, lint_fix_unsupported,
+  run_tool_command_classified, sync_native_config, tool_missing_guard,
 };
-use std::path::Path;
 use std::time::Instant;
 
 /// Detects the failure google-java-format produces when the `java` on
@@ -49,9 +47,9 @@ fn java_version_line() -> Option<String> {
 /// it, keeping the original text underneath so nothing is hidden.
 ///
 /// Applied to the result of every `google-java-format` invocation:
-/// google-java-format 1.28 and newer require JDK 21+, and the JDK a
+/// google-java-format 1.29 and newer require JDK 21+, and the JDK a
 /// machine happens to have on `PATH` is entirely outside this tool's
-/// control -- a stock `ubuntu-latest` GitHub runner still defaults to JDK
+/// control -- a stock `ubuntu-latest` `GitHub` runner still defaults to JDK
 /// 17, which is exactly where this fires.
 #[must_use]
 fn explain_jvm_incompatibility(result: SurfaceResult) -> SurfaceResult {
@@ -64,7 +62,7 @@ fn explain_jvm_incompatibility(result: SurfaceResult) -> SurfaceResult {
     format!(
       "google-java-format could not run on the JVM on PATH{found}: it \
        failed to load a javac class that only exists in newer JDKs. \
-       google-java-format 1.28 and newer require JDK 21 or later. Install \
+       google-java-format 1.29 and newer require JDK 21 or later. Install \
        a newer JDK and make sure it is the `java` on PATH.\n\nOriginal \
        error:\n{message}"
     )
@@ -169,7 +167,10 @@ impl DeclaresFacets for JavaSurface {
   // IndentWidth and Standard both resolve to `Configurable`, but each carries
   // its own load-bearing rationale comment explaining *why* — merging the
   // arms via an or-pattern would bury one comment under the other's variant.
-  #[allow(clippy::match_same_arms)]
+  #[expect(
+    clippy::match_same_arms,
+    reason = "distinct facet variants carry distinct rationale comments"
+  )]
   fn facet_support(&self, facet: Facet) -> FacetSupport {
     match facet {
       // google-java-format never uses tabs.
@@ -201,6 +202,23 @@ impl DeclaresFacets for JavaSurface {
 
 /// Standard file extensions recognized for Java source files.
 pub const JAVA_EXTENSIONS: &[&str] = &["java"];
+
+/// Manual-fallback override for `google-java-format`. Unlike `cargo`/`gofmt`
+/// elsewhere, this tool *does* have a real `ALL_CHAINS` row
+/// (`GOOGLE_JAVA_FORMAT_CHAIN`: brew, then a pinned npm wrapper) -- but that
+/// chain has no Windows entry and no way to express "no package manager at
+/// all? download the jar yourself", which the old hand-written hint used to
+/// say and the derived, chain-only text can't. Kept as a named override
+/// (referenced from both `tool_info` and the `format()` guard, so it can't
+/// re-drift into two copies the way #264 found taplo's had) rather than
+/// letting that fallback information disappear outright.
+const GOOGLE_JAVA_FORMAT_INSTALL_HINT: &str = "Install via: brew install google-java-format (or npm install -g google-java-format); with neither available, download the all-deps jar from https://github.com/google/google-java-format/releases and place a 'google-java-format' wrapper on PATH";
+
+/// Manual-fallback override for `checkstyle`, for the same reason as
+/// [`GOOGLE_JAVA_FORMAT_INSTALL_HINT`] above: `CHECKSTYLE_CHAIN` (brew, apt)
+/// has no Windows entry and no way to express the jar-download fallback the
+/// old hand-written hint carried.
+const CHECKSTYLE_INSTALL_HINT: &str = "Install via: brew install checkstyle (or apt-get install checkstyle); with neither available, download the jar from https://checkstyle.org and place a 'checkstyle' wrapper on PATH";
 
 /// Builds argument vector for a `checkstyle -f plain` invocation whose
 /// output is safe to parse for the LSP server (`fml lsp`, Fixes #159 [pre-recreation],
@@ -256,12 +274,13 @@ impl LanguageSurface for JavaSurface {
     false
   }
 
-  fn detect(&self, root: &Path) -> bool {
-    root.join("pom.xml").is_file()
-      || root.join("build.gradle").is_file()
-      || root.join("build.gradle.kts").is_file()
-      || root.join("checkstyle.xml").is_file()
-      || !find_files_with_ext(root, JAVA_EXTENSIONS, &[], &[], &[]).is_empty()
+  fn marker_files(&self) -> &[&'static str] {
+    &[
+      "pom.xml",
+      "build.gradle",
+      "build.gradle.kts",
+      "checkstyle.xml",
+    ]
   }
 
   fn tool_info(
@@ -272,14 +291,14 @@ impl LanguageSurface for JavaSurface {
       ToolInfo {
         binary: "google-java-format",
         description: "Java code formatter with built-in import organizing",
-        install_hint: "Install via: brew install google-java-format (or download the all-deps jar from https://github.com/google/google-java-format/releases and place a 'google-java-format' wrapper on PATH)",
+        install_hint: Some(GOOGLE_JAVA_FORMAT_INSTALL_HINT),
         is_required_for_fmt: true,
         is_required_for_lint: false,
       },
       ToolInfo {
         binary: "checkstyle",
         description: "Java static analysis / style linter",
-        install_hint: "Install via: brew install checkstyle (or download from https://checkstyle.org and place a 'checkstyle' wrapper on PATH)",
+        install_hint: Some(CHECKSTYLE_INSTALL_HINT),
         is_required_for_fmt: false,
         is_required_for_lint: true,
       },
@@ -293,9 +312,7 @@ impl LanguageSurface for JavaSurface {
       self.name(),
       "google-java-format",
       start,
-      Some(
-        "brew install google-java-format / download the all-deps jar from https://github.com/google/google-java-format/releases",
-      ),
+      Some(GOOGLE_JAVA_FORMAT_INSTALL_HINT),
     ) {
       return res;
     }
@@ -376,7 +393,7 @@ impl LanguageSurface for JavaSurface {
       self.name(),
       "checkstyle",
       start,
-      Some("brew install checkstyle / download from https://checkstyle.org"),
+      Some(CHECKSTYLE_INSTALL_HINT),
     ) {
       return res;
     }
@@ -522,11 +539,11 @@ impl LanguageSurface for JavaSurface {
 }
 
 #[cfg(test)]
-#[allow(missing_docs, clippy::missing_errors_doc, clippy::missing_panics_doc)]
 mod tests {
   use super::*;
   use crate::config::ResolvedLangConfig;
   use crate::surfaces::{check_binary_exists, test_ctx};
+  use std::path::Path;
   use std::sync::Arc;
   use tempfile::TempDir;
 

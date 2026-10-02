@@ -158,26 +158,6 @@ fn test_check_gitignore_hygiene_no_file() {
 }
 
 #[test]
-fn test_doctor_schema_version_check_stale() {
-  let temp = tempdir().unwrap();
-  let config_file = temp.path().join("formality.toml");
-  std::fs::write(
-    &config_file,
-    "#:schema https://github.com/arvinduh/formality/releases/download/s0.9/formality.schema.json\n[global]\n",
-  )
-  .unwrap();
-
-  let status = crate::config::schema::check_schema_version_file(&config_file);
-  assert_eq!(
-    status,
-    crate::config::schema::SchemaStatus::Stale {
-      version: crate::config::schema::SchemaVersion { major: 0, minor: 9 },
-      expected: crate::config::SCHEMA_VERSION,
-    }
-  );
-}
-
-#[test]
 fn test_command_ran_successfully_true_on_zero_exit() {
   #[cfg(unix)]
   let output = std::process::Command::new("sh")
@@ -269,81 +249,6 @@ fn test_lookup_tool_info_clippy_live_probe() {
   assert_eq!(result.is_installed, clippy_functional);
 }
 
-/// Regression coverage for #5 and #11: `fml doctor --install`'s "already satisfied, skip"
-/// decision (`preflight_install`, and `fml doctor`'s auto-install path) must
-/// treat a `[STALE]` tool as needing reinstall *only* if the selected installer
-/// carries a matching inline pin. A stale tool with an unpinned selected installer
-/// (or mismatched pin) must NOT schedule a futile reinstall (#11).
-#[test]
-fn test_needs_install_true_for_missing_tool() {
-  assert!(needs_install(false, None, None));
-  assert!(needs_install(false, Some(&ToolStatus::NotFound), None));
-  assert!(needs_install(
-    false,
-    Some(&ToolStatus::NotFound),
-    Some(&Version::new(3, 9, 6))
-  ));
-}
-
-#[test]
-fn test_needs_install_true_for_stale_tool_with_matching_pin() {
-  let stale = ToolStatus::Stale {
-    current: Version::new(3, 8, 1),
-    pinned: Version::new(3, 9, 6),
-  };
-  let matching_pin = Version::new(3, 9, 6);
-  assert!(needs_install(true, Some(&stale), Some(&matching_pin)));
-}
-
-#[test]
-fn test_needs_install_false_for_stale_tool_with_unpinned_selected_installer() {
-  // Fixes #11: When the selected installer has no inline pin (e.g. `brew`),
-  // running `fml doctor --install` cannot produce the pinned version — reinstall is skipped.
-  let stale = ToolStatus::Stale {
-    current: Version::new(3, 8, 1),
-    pinned: Version::new(3, 9, 6),
-  };
-  assert!(!needs_install(true, Some(&stale), None));
-}
-
-#[test]
-fn test_needs_install_false_for_stale_tool_with_mismatched_selected_installer_pin()
- {
-  // If the available installer pins a different version than expected, reinstall is skipped.
-  let stale = ToolStatus::Stale {
-    current: Version::new(3, 8, 1),
-    pinned: Version::new(3, 9, 6),
-  };
-  let different_pin = Version::new(3, 8, 0);
-  assert!(!needs_install(true, Some(&stale), Some(&different_pin)));
-}
-
-#[test]
-fn test_needs_install_false_for_version_matched_ready_tool() {
-  let compatible = ToolStatus::Compatible {
-    current: Version::new(3, 9, 6),
-    minimum: Version::new(2, 0, 0),
-  };
-  let pin = Version::new(3, 9, 6);
-  assert!(!needs_install(true, Some(&compatible), Some(&pin)));
-  // Present with no MSTV/pin registered at all (status: None) -- still
-  // just READY, never reinstalled.
-  assert!(!needs_install(true, None, None));
-}
-
-#[test]
-fn test_needs_install_false_for_outdated_tool() {
-  // Below the MSTV floor is a real problem `fml doctor` already surfaces as
-  // `[WARN]`, but it is not what `fml doctor --install`'s missing/stale reinstall
-  // path is for -- unaffected by this change, same as before.
-  let outdated = ToolStatus::Outdated {
-    current: Version::new(1, 0, 0),
-    minimum: Version::new(1, 4, 0),
-  };
-  let pin = Version::new(1, 4, 0);
-  assert!(!needs_install(true, Some(&outdated), Some(&pin)));
-}
-
 #[test]
 fn test_stale_unpinnable_explanation() {
   let expl = stale_unpinnable_explanation(
@@ -357,46 +262,11 @@ fn test_stale_unpinnable_explanation() {
 }
 
 #[test]
-fn test_doctor_schema_version_check_uptodate() {
-  let temp = tempdir().unwrap();
-  let config_file = temp.path().join("formality.toml");
-  std::fs::write(
-    &config_file,
-    format!(
-      "#:schema https://github.com/arvinduh/formality/releases/download/s{}/formality.schema.json\n[global]\n",
-      crate::config::SCHEMA_VERSION
-    ),
-  )
-  .unwrap();
-
-  let status = crate::config::schema::check_schema_version_file(&config_file);
-  assert_eq!(
-    status,
-    crate::config::schema::SchemaStatus::UpToDate {
-      version: crate::config::SCHEMA_VERSION
-    }
-  );
-}
-
-#[test]
 fn test_pinned_version_for_golangci_lint() {
   assert_eq!(
-    crate::surfaces::pinned_version_for("golangci-lint"),
-    Some(Version::new(2, 13, 1))
+    pinned_version_for("golangci-lint"),
+    Some(Version::new(2, 13, 2))
   );
-}
-
-#[test]
-fn test_needs_install_false_for_unknown_version_tool() {
-  let unknown_with_raw =
-    ToolStatus::UnknownVersion("nightly-build".to_string());
-  let unknown_empty = ToolStatus::UnknownVersion(String::new());
-  let pin = Version::new(1, 0, 0);
-
-  assert!(!needs_install(true, Some(&unknown_with_raw), Some(&pin)));
-  assert!(!needs_install(true, Some(&unknown_with_raw), None));
-  assert!(!needs_install(true, Some(&unknown_empty), Some(&pin)));
-  assert!(!needs_install(true, Some(&unknown_empty), None));
 }
 
 #[test]
@@ -435,7 +305,7 @@ fn test_scan_tools_and_build_table_surfaces_unprobeable_status_not_ready() {
       vec![ToolInfo {
         binary: self.bin,
         description: "Mock Unprobeable Binary",
-        install_hint: "Cannot install",
+        install_hint: Some("Cannot install"),
         is_required_for_fmt: true,
         is_required_for_lint: true,
       }]
@@ -497,48 +367,24 @@ fn test_format_stale_tool_warning() {
   );
   assert_eq!(
     warning,
-    "tool 'prettier' is stale (v3.8.1 != pinned v3.9.6); run 'fml doctor --install' or pass '--install' to update"
+    "tool 'prettier' is stale (v3.8.1 != pinned v3.9.6); run 'fml doctor --install' to update"
   );
 }
 
 #[test]
-fn test_collect_stale_tool_warnings_filters_and_deduplicates() {
-  let stale_prettier = ToolStatus::Stale {
-    current: Version::new(3, 8, 1),
-    pinned: Version::new(3, 9, 6),
-  };
-  let stale_ruff = ToolStatus::Stale {
-    current: Version::new(0, 8, 0),
-    pinned: Version::new(0, 9, 0),
-  };
-  let compatible_rustfmt = ToolStatus::Compatible {
-    current: Version::new(1, 8, 0),
-    minimum: Version::new(1, 4, 0),
-  };
-  let outdated_taplo = ToolStatus::Outdated {
-    current: Version::new(0, 7, 0),
-    minimum: Version::new(0, 8, 0),
+fn test_install_missing_tools_framed_fails_for_tool_without_installer() {
+  let missing_tool = ToolInfo {
+    binary: "__missing_dummy_binary_test__",
+    description: "Dummy Missing Tool Test",
+    install_hint: Some("Run npm install -g dummy"),
+    is_required_for_fmt: true,
+    is_required_for_lint: true,
   };
 
-  let tools = vec![
-    ("prettier", Some(&stale_prettier)),
-    ("rustfmt", Some(&compatible_rustfmt)),
-    ("taplo", Some(&outdated_taplo)),
-    ("missing_tool", Some(&ToolStatus::NotFound)),
-    ("unregistered_tool", None),
-    ("prettier", Some(&stale_prettier)), // duplicate
-    ("ruff", Some(&stale_ruff)),
-  ];
-
-  let warnings = collect_stale_tool_warnings(tools);
-  assert_eq!(warnings.len(), 2);
-  assert_eq!(
-    warnings[0],
-    "tool 'prettier' is stale (v3.8.1 != pinned v3.9.6); run 'fml doctor --install' or pass '--install' to update"
-  );
-  assert_eq!(
-    warnings[1],
-    "tool 'ruff' is stale (v0.8.0 != pinned v0.9.0); run 'fml doctor --install' or pass '--install' to update"
+  let report = install_missing_tools_framed(&[missing_tool], &Frame::capped());
+  assert!(
+    !report.all_ok,
+    "Should report failure when tool cannot be auto-installed"
   );
 }
 
@@ -559,15 +405,6 @@ fn test_preflight_warn_stale_tools_with_surfaces() {
   preflight_warn_stale_tools(&surfaces, &config, true, false);
   preflight_warn_stale_tools(&surfaces, &config, false, true);
   preflight_warn_stale_tools(&surfaces, &config, true, true);
-}
-
-#[test]
-fn test_preflight_install_empty_surfaces() {
-  let config = FormalityConfig::default();
-  assert!(preflight_install(&[], &config, true, true));
-  assert!(preflight_install(&[], &config, true, false));
-  assert!(preflight_install(&[], &config, false, true));
-  assert!(preflight_install(&[], &config, false, false));
 }
 
 /// Builds a [`ToolTally`] in the shape a pre-install scan would leave it —
@@ -606,7 +443,7 @@ fn doctor_tool_info(binary: &'static str) -> ToolInfo {
   ToolInfo {
     binary,
     description: "",
-    install_hint: "",
+    install_hint: None,
     is_required_for_fmt: true,
     is_required_for_lint: false,
   }
@@ -872,6 +709,25 @@ fn test_classify_install_outcome_unpinned_absent_binary_is_not_ok() {
     "an installer exiting 0 without putting the binary on PATH must not be \
      reported as installed (#106)"
   );
+}
+
+/// A tool with no install step that can run on the OS (`gofmt` anywhere, it
+/// has no chain; `checkstyle` on Windows, its chain is `brew` + `apt`) must
+/// not read like a chain whose package managers are all missing.
+#[test]
+fn test_miss_headline_distinguishes_no_install_path_from_no_installer() {
+  let headline = |binary, os| strip_ansi_escapes(&miss_headline(binary, os));
+  let no_installer =
+    |binary| format!("No automatic package manager found for {binary}.");
+  let no_path =
+    |binary| format!("fml has no install path for {binary} on this OS.");
+  for os in ["linux", "macos", "windows"] {
+    assert_eq!(headline("gofmt", os), no_path("gofmt"), "{os}");
+    assert_eq!(headline("prettier", os), no_installer("prettier"), "{os}");
+  }
+  assert_eq!(headline("checkstyle", "linux"), no_installer("checkstyle"));
+  assert_eq!(headline("checkstyle", "macos"), no_installer("checkstyle"));
+  assert_eq!(headline("checkstyle", "windows"), no_path("checkstyle"));
 }
 
 /// `PATH` resolution is checked first and unconditionally: a tool that cannot

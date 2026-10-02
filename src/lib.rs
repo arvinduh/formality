@@ -1,7 +1,5 @@
 //! Formality (`fml`) is a unified CLI for formatting, linting, and syncing configurations across multiple language surfaces.
 
-#![warn(missing_docs, clippy::missing_errors_doc, clippy::missing_panics_doc)]
-
 /// Command-line argument parsing definitions.
 pub mod cli;
 /// CLI command implementations.
@@ -17,17 +15,15 @@ pub mod surfaces;
 /// Terminal UI components and layout rendering.
 pub mod ui;
 
-// `generate_schema` and `SCHEMA_VERSION` are re-exported at the crate root
-// because this crate's own integration tests (`tests/schema_drift.rs`,
-// `tests/integration_tests.rs`) reach them as `fml::generate_schema` /
-// `fml::SCHEMA_VERSION` — a real external use, not a compatibility shim.
+// `generate_schema` is re-exported at the crate root because this crate's
+// own integration tests (`tests/schema_drift.rs`) reach it as
+// `fml::generate_schema` — a real external use, not a compatibility shim.
 // Every other item in this crate is reached through its canonical,
 // structural module path (e.g. `crate::engine::update`,
 // `crate::ui::table`); see docs/style-guide.md §1.
-pub use config::SCHEMA_VERSION;
 pub use config::schema::generate_schema;
 
-use cli::{Cli, Commands, MigrateCommands};
+use cli::{Cli, Commands};
 use colored::Colorize;
 use config::FormalityConfig;
 use errors::{ExitStatus, FormalityError};
@@ -51,28 +47,31 @@ pub fn run_with_args(args: Cli) -> ExitStatus {
   // that was *mostly* uncolored but still carried bold/color runs around
   // every status token -- honoring neither mode, and defeating the point
   // of NO_COLOR for anything parsing the output.
-  if crate::ui::no_color_requested() {
+  if ui::no_color_requested() {
     colored::control::set_override(false);
-  } else if crate::ui::color_forced() {
+  } else if ui::color_forced() {
     colored::control::set_override(true);
   }
 
-  let root = args.root.clone().unwrap_or_else(|| {
-    std::env::current_dir().unwrap_or_else(|_| PathBuf::from("."))
-  });
-  let root = std::path::absolute(&root).unwrap_or_else(|_| {
-    std::env::current_dir().map_or_else(|_| root.clone(), |cwd| cwd.join(&root))
-  });
+  let root = resolve_root(args.root.clone());
 
   let project_config_path = config::find_project_config(&root);
 
   let update_notifier = engine::update::spawn_update_check();
-  let schema_notifier =
-    config::schema::spawn_schema_check(project_config_path.as_deref());
   let status = run_command_inner(args, &root, project_config_path.as_deref());
-  config::schema::print_schema_notice(schema_notifier);
   engine::update::print_update_notice(update_notifier);
   status
+}
+
+/// Resolves `--root` (or the current directory when it is absent) to an
+/// absolute path, so every command sees the same root however it was spelled.
+fn resolve_root(root: Option<PathBuf>) -> PathBuf {
+  let root = root.unwrap_or_else(|| {
+    std::env::current_dir().unwrap_or_else(|_| PathBuf::from("."))
+  });
+  std::path::absolute(&root).unwrap_or_else(|_| {
+    std::env::current_dir().map_or_else(|_| root.clone(), |cwd| cwd.join(&root))
+  })
 }
 
 // Dispatches all top-level CLI commands (fmt, lint, sync, fix, doctor, init, lsp, schema, etc.).
@@ -81,6 +80,13 @@ fn run_command_inner(
   root: &Path,
   project_config_path: Option<&Path>,
 ) -> ExitStatus {
+  // The server loads and reports its own config at `initialize`. Editors
+  // spawn it in the workspace root, so failing on that config here would
+  // kill it before it could tell the editor why.
+  if matches!(args.command, Commands::Lsp) {
+    return commands::lsp::run_lsp_server(Some(root));
+  }
+
   let (mut config, _config_path) =
     match FormalityConfig::load_layered_with_path(project_config_path) {
       Ok(res) => res,
@@ -103,46 +109,14 @@ fn run_command_inner(
   warn_unrecognized_lang_sections(&config);
 
   match args.command {
-    Commands::Schema { output } => {
-      crate::ui::deprecation::warn_deprecated_spelling(
-        "fml schema",
-        "cargo test --test schema_drift",
-        Some(
-          "or `UPDATE_SCHEMA=1 cargo test --test schema_drift` to regenerate",
-        ),
-      );
-      commands::schema::run_schema(output)
-    }
+    Commands::Schema { output } => commands::schema::run_schema(output),
 
     Commands::Doctor { all, install } => {
       commands::doctor::run_doctor(root, all, install, &config)
     }
 
-    Commands::Install { all } => {
-      crate::ui::deprecation::warn_deprecated_spelling(
-        "fml install",
-        "fml doctor --install",
-        None,
-      );
-      commands::doctor::run_doctor(root, all, true, &config)
-    }
-
     Commands::Init { force, hidden } => {
       commands::init::run_init(root, &config, force, hidden)
-    }
-
-    Commands::ListSurfaces => {
-      let spelling = if std::env::args().any(|a| a == "surfaces") {
-        "fml surfaces"
-      } else {
-        "fml list-surfaces"
-      };
-      crate::ui::deprecation::warn_deprecated_spelling(
-        spelling,
-        "fml doctor",
-        None,
-      );
-      commands::doctor::run_doctor(root, false, false, &config)
     }
 
     Commands::Fmt {
@@ -150,10 +124,17 @@ fn run_command_inner(
       staged,
       changed,
       lang,
-      install,
+      allow_missing,
       paths,
     } => commands::fmt::run_fmt(
-      root, &config, check, staged, changed, lang, install, paths,
+      root,
+      &config,
+      check,
+      staged,
+      changed,
+      &lang,
+      paths,
+      allow_missing,
     ),
 
     Commands::Fix {
@@ -161,79 +142,42 @@ fn run_command_inner(
       staged,
       changed,
       lang,
-      install,
+      allow_missing,
       paths,
     } => commands::fix::run_fix(
-      root, &config, check, staged, changed, lang, install, paths,
+      root,
+      &config,
+      check,
+      staged,
+      changed,
+      &lang,
+      paths,
+      allow_missing,
     ),
 
-    // `--fix` is the deprecated spelling of `fml fix` and dispatches to it
-    // outright, rather than to a lint-only writing form. That form no
-    // longer exists: a lint-fix pass without the format pass that follows
-    // it leaves the tree lint-fixed but unformatted, which is exactly the
-    // state `.agents/orchestrate.md` §5 says `fml` must never leave
-    // behind — and it was the sole source of the `fml fix` /
-    // `fml lint --fix` ambiguity. The notice says so, and the run banner
-    // reads `fml fix`, because that is genuinely what runs.
-    Commands::Lint {
-      fix: true,
-      staged,
-      changed,
-      lang,
-      install,
-      paths,
-      ..
-    } => {
-      crate::ui::deprecation::warn_deprecated_spelling(
-        "fml lint --fix",
-        "fml fix",
-        Some(
-          "it applies the same lint fixes and then reformats, which `fml lint --fix` never did",
-        ),
-      );
-      commands::fix::run_fix(
-        root, &config, false, staged, changed, lang, install, paths,
-      )
-    }
-
     Commands::Lint {
       staged,
       changed,
       lang,
-      install,
+      allow_missing,
       paths,
       ..
     } => commands::lint::run_lint(
-      root, &config, staged, changed, lang, install, paths,
+      root,
+      &config,
+      staged,
+      changed,
+      &lang,
+      paths,
+      allow_missing,
     ),
 
     Commands::Sync { check, lang } => {
-      commands::sync::run_sync(root, &config, check, lang)
+      commands::sync::run_sync(root, &config, check, &lang)
     }
 
     Commands::Lsp => {
-      commands::lsp::run_lsp_server(Some(root.to_path_buf()));
-      ExitStatus::Clean
-    }
-
-    Commands::Table { json } => {
-      crate::ui::deprecation::warn_deprecated_spelling(
-        "fml table",
-        "fml::ui::table",
-        None,
-      );
-      commands::table::run_table(json)
-    }
-
-    Commands::Migrate { command } => {
-      crate::ui::deprecation::warn_deprecated_spelling(
-        "fml migrate schema",
-        "fml init",
-        Some("it initializes or updates the schema pin in formality.toml"),
-      );
-      match command {
-        MigrateCommands::Schema => commands::migrate::run_migrate_schema(root),
-      }
+      unreachable!("`lsp` is dispatched before the config load")
     }
   }
 }
@@ -270,7 +214,6 @@ fn warn_unrecognized_lang_sections(config: &FormalityConfig) {
 }
 
 #[cfg(test)]
-#[allow(missing_docs, clippy::missing_errors_doc, clippy::missing_panics_doc)]
 mod tests {
   use super::*;
 
@@ -287,7 +230,7 @@ mod tests {
   // this test keeps that convention from silently drifting back.
   #[test]
   fn test_no_stray_test_files_outside_sanctioned_pattern() {
-    let manifest_dir = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+    let manifest_dir = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
     let src_dir = manifest_dir.join("src");
 
     let mut violations = Vec::new();
@@ -346,7 +289,7 @@ mod tests {
   // the rule's own named exemplar. See docs/style-guide.md §2.
   #[test]
   fn test_is_predicate_methods_carry_must_use() {
-    let manifest_dir = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+    let manifest_dir = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
     let src_dir = manifest_dir.join("src");
 
     // Strips a leading `pub`/`pub(...)` visibility modifier and any
@@ -462,9 +405,9 @@ mod tests {
     );
   }
 
-  // Tier-2 enforcement for the `//!` module-doc rule documented in
-  // docs/style-guide.md §3 ("Every file with meaningful crate-level content
-  // ... opens with a `//!` module-level doc comment"), promoted from tier 3
+  // Tier-2 enforcement for the rust-guide rule that every file opens with a
+  // `//!` module-level doc comment (docs/style-guide.md §3 records this test
+  // and its `tests.rs` exemption), promoted from tier 3
   // during #201's QA follow-up [pre-recreation]: a QA review of #201 [pre-recreation] found the rule was
   // ~80% unmet across the tree (41 of 50 files at the time) despite the PR
   // claiming a clean style-guide sweep, precisely because nothing mechanical
@@ -475,7 +418,7 @@ mod tests {
   // "meaningful crate-level content" in the production sense.
   #[test]
   fn test_files_carry_module_doc_comment() {
-    let manifest_dir = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+    let manifest_dir = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
     let src_dir = manifest_dir.join("src");
 
     let mut violations = Vec::new();
@@ -518,7 +461,7 @@ mod tests {
   // module is for").
   #[test]
   fn test_pub_mod_declarations_carry_doc_comments() {
-    let manifest_dir = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+    let manifest_dir = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
     let src_dir = manifest_dir.join("src");
 
     let mut violations = Vec::new();
@@ -585,87 +528,13 @@ mod tests {
     );
   }
 
-  // Tier-2 enforcement for the test-module allow-doc-lints rule documented in
-  // docs/style-guide.md §3 ("An inline `#[cfg(test)] mod tests` block, or a
-  // directory module's sibling `mod tests;` declaration ... carries
-  // `#[allow(missing_docs, clippy::missing_errors_doc, clippy::missing_panics_doc)]`
-  // directly under the `#[cfg(test)]` attribute").
-  #[test]
-  fn test_test_modules_carry_allow_doc_lints() {
-    let manifest_dir = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"));
-    let src_dir = manifest_dir.join("src");
-
-    let mut violations = Vec::new();
-    for entry in ignore::WalkBuilder::new(&src_dir)
-      .standard_filters(false)
-      .build()
-      .filter_map(Result::ok)
-      .filter(|e| e.file_type().is_some_and(|ft| ft.is_file()))
-      .filter(|e| e.path().extension().is_some_and(|ext| ext == "rs"))
-    {
-      let path = entry.path();
-      let Ok(content) = std::fs::read_to_string(path) else {
-        continue;
-      };
-      let lines: Vec<&str> = content.lines().collect();
-
-      for (i, line) in lines.iter().enumerate() {
-        let trimmed = line.trim_start();
-        let is_mod_tests = trimmed.starts_with("mod tests {")
-          || trimmed.starts_with("mod tests;")
-          || (trimmed.starts_with("pub mod tests") && trimmed.ends_with(';'));
-
-        if !is_mod_tests {
-          continue;
-        }
-
-        // Check attributes immediately above `mod tests`
-        let attrs: Vec<&str> = lines[..i]
-          .iter()
-          .rev()
-          .take_while(|prior| {
-            let t = prior.trim_start();
-            t.starts_with('#') || t.starts_with("///") || t.starts_with("//")
-          })
-          .map(|l| l.trim_start())
-          .collect();
-
-        let has_cfg_test = attrs.iter().any(|a| a.starts_with("#[cfg(test)]"));
-        if !has_cfg_test {
-          // If it's not a #[cfg(test)] module, skip
-          continue;
-        }
-
-        let has_allow_missing_docs = attrs.iter().any(|a| {
-          a.contains("missing_docs")
-            && a.contains("missing_errors_doc")
-            && a.contains("missing_panics_doc")
-        });
-
-        if !has_allow_missing_docs {
-          violations.push(format!(
-            "{}:{}: `mod tests` is missing `#[allow(missing_docs, clippy::missing_errors_doc, clippy::missing_panics_doc)]` — see docs/style-guide.md §3",
-            path.display(),
-            i + 1,
-          ));
-        }
-      }
-    }
-
-    assert!(
-      violations.is_empty(),
-      "test module `#[allow(...)]` doc lints violation(s) — see docs/style-guide.md §3:\n{}",
-      violations.join("\n")
-    );
-  }
-
   // Tier-2 enforcement for canonical module paths rule documented in
   // docs/style-guide.md §1 ("new internal code always spells out the canonical,
   // structural path (e.g. `crate::ui::table`, `crate::engine::version`) —
   // never a crate-root shortcut").
   #[test]
   fn test_internal_code_uses_canonical_module_paths() {
-    let manifest_dir = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+    let manifest_dir = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
     let src_dir = manifest_dir.join("src");
 
     let mut violations = Vec::new();
@@ -689,12 +558,10 @@ mod tests {
         if trimmed.starts_with("//") {
           continue;
         }
-        // Disallow shortcuts like `crate::generate_schema` or `crate::SCHEMA_VERSION`
-        if trimmed.contains("crate::generate_schema")
-          || trimmed.contains("crate::SCHEMA_VERSION")
-        {
+        // Disallow shortcuts like `crate::generate_schema`
+        if trimmed.contains("crate::generate_schema") {
           violations.push(format!(
-            "{}:{}: uses crate-root re-export shortcut instead of canonical path (use `crate::config::schema::generate_schema` / `crate::config::SCHEMA_VERSION`) — see docs/style-guide.md §1",
+            "{}:{}: uses crate-root re-export shortcut instead of canonical path (use `crate::config::schema::generate_schema`) — see docs/style-guide.md §1",
             path.display(),
             i + 1
           ));
@@ -718,7 +585,7 @@ mod tests {
   // unrelated issues.
   #[test]
   fn test_source_files_do_not_contain_bare_pre_recreation_issue_citations() {
-    let manifest_dir = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+    let manifest_dir = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
     let src_dir = manifest_dir.join("src");
 
     const PRE_RECREATION_NUMBERS: &[u32] = &[
@@ -780,22 +647,25 @@ mod tests {
                 // Sanctioned post-recreation references that legitimately share an old number:
                 let is_sanctioned_post_recreation = match num {
                   // Post-recreation #113 is markdownlint-cli2 exit code classification in markdown.rs
-                  113 => rel_path == "src/surfaces/markdown.rs",
                   // Post-recreation #120 is disabling MD033/no-inline-html by
                   // default in markdown.rs (this fix, not the pre-recreation
                   // issue of the same number)
-                  120 => rel_path == "src/surfaces/markdown.rs",
+                  113 | 120 => rel_path == "src/surfaces/markdown.rs",
+                  // Post-recreation #119 is `fml fix`'s remaining /
+                  // auto-fixable reporting, which lives entirely in the
+                  // runner (this fix, not the pre-recreation issue of the
+                  // same number)
+                  119 => rel_path.starts_with("src/engine/runner/"),
                   // Post-recreation #157 is path relativization in ui/paths.rs and surfaces/markdown.rs
                   157 => {
                     rel_path == "src/ui/paths.rs"
                       || rel_path == "src/surfaces/markdown.rs"
                   }
                   // Post-recreation #177 is version probing model in engine/version/
-                  177 => rel_path.starts_with("src/engine/version/"),
+                  // Post-recreation #195 is PR #195 version probing in engine/version/
+                  177 | 195 => rel_path.starts_with("src/engine/version/"),
                   // Post-recreation #191 is PR #191 review regression in ui/paths.rs
                   191 => rel_path == "src/ui/paths.rs",
-                  // Post-recreation #195 is PR #195 version probing in engine/version/
-                  195 => rel_path.starts_with("src/engine/version/"),
                   // Post-recreation #201 is go lint test runner flakiness fix in go.rs
                   201 => rel_path == "src/surfaces/go.rs",
                   // Post-recreation #151 is prettier-driven --check exit-code classification
@@ -837,12 +707,55 @@ mod tests {
 
   #[test]
   fn test_relative_root_resolves_to_absolute() {
-    let args = Cli {
-      config: None,
-      root: Some(std::path::PathBuf::from(".")),
-      command: Commands::ListSurfaces,
-    };
-    let status = run_with_args(args);
-    assert_eq!(status, ExitStatus::Clean);
+    // Asserts on `resolve_root` itself, not on a full command's exit status:
+    // a `Doctor` run is `Clean` only if every detected surface's tool
+    // resolves at that instant, so it failed whenever a concurrent
+    // `npm install -g` / `doctor --install` was relinking a shared tool
+    // binary (#291).
+    let cwd = std::env::current_dir().expect("current dir");
+    for (relative, expected) in [(".", cwd.clone()), ("src", cwd.join("src"))] {
+      let resolved = resolve_root(Some(PathBuf::from(relative)));
+      assert!(resolved.is_absolute(), "`{relative}` stayed relative");
+      assert_eq!(resolved, expected);
+    }
+  }
+
+  // Tier-2 enforcement for the `src/` half of docs/style-guide.md §6's
+  // exit-status rule (#291): unit tests reach the deciding private function,
+  // so never dispatch a full command. Scans `tests.rs` files and code after
+  // `mod tests {`; no runtime assertion can observe what a test calls.
+  #[test]
+  fn test_unit_tests_do_not_dispatch_full_commands() {
+    let needle = concat!("run_with", "_args(");
+    let mut violations = Vec::new();
+    for entry in ignore::WalkBuilder::new(
+      Path::new(env!("CARGO_MANIFEST_DIR")).join("src"),
+    )
+    .standard_filters(false)
+    .build()
+    .filter_map(Result::ok)
+    .filter(|e| e.path().extension().is_some_and(|ext| ext == "rs"))
+    {
+      let path = entry.path();
+      let content = std::fs::read_to_string(path).unwrap();
+      let start = if path.file_name().is_some_and(|n| n == "tests.rs") {
+        0
+      } else if let Some(idx) = content.find("mod tests {") {
+        content[..idx].matches('\n').count()
+      } else {
+        continue;
+      };
+      for (i, line) in content.lines().enumerate().skip(start) {
+        let code = line.split("//").next().unwrap_or_default();
+        if code.contains(needle) {
+          violations.push(format!("{}:{}", path.display(), i + 1));
+        }
+      }
+    }
+    assert!(
+      violations.is_empty(),
+      "unit test dispatches a full command — see docs/style-guide.md §6:\n{}",
+      violations.join("\n")
+    );
   }
 }

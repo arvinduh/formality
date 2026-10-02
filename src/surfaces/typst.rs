@@ -6,8 +6,7 @@ use super::tooling::no_native_config;
 use super::{
   DeclaresFacets, ExecutionContext, Facet, FacetSupport, LanguageSurface,
   SurfaceResult, ToolInfo, create_tool_command, diff_check_via_tempcopy,
-  find_files_with_ext, lint_fix_unsupported, run_tool_command,
-  tool_missing_guard,
+  lint_fix_unsupported, run_tool_command, tool_missing_guard,
 };
 use std::path::Path;
 use std::time::Instant;
@@ -76,10 +75,6 @@ impl LanguageSurface for TypstSurface {
     Box::new(*self)
   }
 
-  fn detect(&self, root: &Path) -> bool {
-    !find_files_with_ext(root, TYPST_EXTENSIONS, &[], &[], &[]).is_empty()
-  }
-
   fn tool_info(
     &self,
     _config: &crate::config::ResolvedLangConfig,
@@ -87,7 +82,7 @@ impl LanguageSurface for TypstSurface {
     vec![ToolInfo {
       binary: "typstyle",
       description: "Beautiful and reliable code formatter for Typst",
-      install_hint: "Install via: cargo binstall typstyle (or brew install typstyle / winget install typstyle / cargo install typstyle --locked)",
+      install_hint: None,
       is_required_for_fmt: true,
       is_required_for_lint: true,
     }]
@@ -96,14 +91,8 @@ impl LanguageSurface for TypstSurface {
   fn format(&self, ctx: &ExecutionContext) -> SurfaceResult {
     let start = Instant::now();
 
-    if let Some(res) = tool_missing_guard(
-      self.name(),
-      "typstyle",
-      start,
-      Some(
-        "cargo binstall typstyle / brew install typstyle / winget install typstyle / cargo install typstyle --locked",
-      ),
-    ) {
+    if let Some(res) = tool_missing_guard(self.name(), "typstyle", start, None)
+    {
       return res;
     }
 
@@ -175,7 +164,6 @@ impl LanguageSurface for TypstSurface {
 }
 
 #[cfg(test)]
-#[allow(missing_docs, clippy::missing_errors_doc, clippy::missing_panics_doc)]
 mod tests {
   use super::*;
   use crate::config::ResolvedLangConfig;

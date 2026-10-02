@@ -6,10 +6,9 @@ use super::tooling::no_native_config;
 use super::{
   DeclaresFacets, ExecutionContext, Facet, FacetSupport, LanguageSurface,
   SurfaceResult, ToolInfo, classify_exit_one_as_violation, create_tool_command,
-  diff_check_via_tempcopy_classified, find_files_with_ext, run_tool_command,
+  diff_check_via_tempcopy_classified, run_tool_command,
   run_tool_command_classified, tool_missing_guard,
 };
-use std::path::Path;
 use std::time::Instant;
 
 /// Kotlin language surface implementation.
@@ -132,10 +131,8 @@ impl LanguageSurface for KotlinSurface {
     Box::new(*self)
   }
 
-  fn detect(&self, root: &Path) -> bool {
-    root.join("build.gradle.kts").is_file()
-      || root.join("settings.gradle.kts").is_file()
-      || !find_files_with_ext(root, KOTLIN_EXTENSIONS, &[], &[], &[]).is_empty()
+  fn marker_files(&self) -> &[&'static str] {
+    &["build.gradle.kts", "settings.gradle.kts"]
   }
 
   fn supports_lint_fix(&self) -> bool {
@@ -149,7 +146,7 @@ impl LanguageSurface for KotlinSurface {
     vec![ToolInfo {
       binary: "ktlint",
       description: "Kotlin linter and formatter (Smart Format: style + import organization in one pass)",
-      install_hint: "Install via: brew install ktlint (or scoop install ktlint, see https://github.com/pinterest/ktlint for other options)",
+      install_hint: None,
       is_required_for_fmt: true,
       is_required_for_lint: true,
     }]
@@ -158,12 +155,7 @@ impl LanguageSurface for KotlinSurface {
   fn format(&self, ctx: &ExecutionContext) -> SurfaceResult {
     let start = Instant::now();
 
-    if let Some(res) = tool_missing_guard(
-      self.name(),
-      "ktlint",
-      start,
-      Some("brew install ktlint"),
-    ) {
+    if let Some(res) = tool_missing_guard(self.name(), "ktlint", start, None) {
       return res;
     }
 
@@ -227,12 +219,7 @@ impl LanguageSurface for KotlinSurface {
   fn lint(&self, ctx: &ExecutionContext, fix: bool) -> SurfaceResult {
     let start = Instant::now();
 
-    if let Some(res) = tool_missing_guard(
-      self.name(),
-      "ktlint",
-      start,
-      Some("brew install ktlint"),
-    ) {
+    if let Some(res) = tool_missing_guard(self.name(), "ktlint", start, None) {
       return res;
     }
 
@@ -272,14 +259,13 @@ impl LanguageSurface for KotlinSurface {
 }
 
 #[cfg(test)]
-#[allow(missing_docs, clippy::missing_errors_doc, clippy::missing_panics_doc)]
 mod tests {
   use super::*;
   use crate::config::ResolvedLangConfig;
   use crate::surfaces::{
     SurfaceStatus, check_binary_exists, forget_binary, test_ctx,
   };
-  use std::path::PathBuf;
+  use std::path::{Path, PathBuf};
   use std::sync::{Mutex, MutexGuard, PoisonError};
   use tempfile::TempDir;
 
@@ -542,8 +528,7 @@ mod tests {
       || !create_tool_command("ktlint")
         .arg("--version")
         .output()
-        .map(|o| o.status.success())
-        .unwrap_or(false)
+        .is_ok_and(|o| o.status.success())
     {
       return;
     }
@@ -648,5 +633,99 @@ mod tests {
       );
       assert!(!res.is_success());
     });
+  }
+
+  #[test]
+  fn test_ktlint_call_sites_never_bypass_create_tool_command() {
+    // Fixes #103: on Windows, npm's `ktlint.cmd` shim cannot be spawned by
+    // a bare `Command::new("ktlint")` -- CreateProcess does not perform the
+    // PATHEXT-style `.cmd`/`.bat` resolution that `cmd.exe` does, so the
+    // process fails to start at all ("The system cannot find the path
+    // specified."). `create_tool_command` (`surfaces::tooling`) resolves
+    // the binary's real extension and spawns any `.cmd`/`.bat` result by
+    // its resolved path, which `std` runs through `cmd.exe`. Every ktlint
+    // invocation site must go through that helper -- a bare
+    // `Command::new("ktlint")` creeping back in anywhere would silently
+    // reintroduce the Windows failure this issue reports, so pin it here
+    // rather than relying on catching it by eye in review.
+    //
+    // Scans every `.rs` file under `src/`, not a hardcoded list of the two
+    // files known to call ktlint today -- a call site added in a new file
+    // would otherwise go unguarded. Reuses the same `ignore::WalkBuilder`
+    // walk `test_no_stray_test_files_outside_sanctioned_pattern` (src/lib.rs)
+    // already establishes for this kind of whole-tree source-textual check.
+    let manifest_dir = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+    let src_dir = manifest_dir.join("src");
+    for entry in ignore::WalkBuilder::new(&src_dir)
+      .standard_filters(false)
+      .build()
+      .filter_map(Result::ok)
+      .filter(|e| e.file_type().is_some_and(|ft| ft.is_file()))
+    {
+      let path = entry.path();
+      if path.extension().and_then(|e| e.to_str()) != Some("rs") {
+        continue;
+      }
+      let content = std::fs::read_to_string(path).unwrap();
+      let prod_code = production_code_before_test_module(&content);
+      assert!(
+        !contains_bare_ktlint_spawn(prod_code),
+        "{} must spawn ktlint via create_tool_command, not a bare \
+         Command::new(\"ktlint\"...) -- see #103",
+        path.display()
+      );
+    }
+  }
+
+  /// Whether `code` spawns `ktlint` directly rather than through
+  /// `create_tool_command`, matching the literal binary name
+  /// `Command::new` would actually be given -- `"ktlint"` itself, or a
+  /// `.cmd`/`.bat`/`.exe`/etc. variant with an explicit extension (someone
+  /// "fixing" the Windows case by hardcoding the shim's extension instead
+  /// of going through the shared resolver would still hit the exact bug
+  /// this guards against).
+  ///
+  /// This is a textual scan, not a real Rust parser -- it does not follow
+  /// a variable binding (`let bin = "ktlint"; Command::new(bin)`). Closing
+  /// that gap would need actual syntax analysis (e.g. a `syn` dependency),
+  /// which is disproportionate for a regression guard on an already-fixed
+  /// bug; every call site as of #103 uses the binary name as a literal, so
+  /// literal matching is what is worth guarding today.
+  fn contains_bare_ktlint_spawn(code: &str) -> bool {
+    const PREFIX: &str = "Command::new(\"ktlint";
+    let mut rest = code;
+    while let Some(idx) = rest.find(PREFIX) {
+      let after_prefix = &rest[idx + PREFIX.len()..];
+      // The literal is exactly "ktlint" (the next byte closes the string)
+      // or continues with an extension separator like "ktlint.cmd" -- both
+      // name the real ktlint binary. Anything else (a longer, unrelated
+      // identifier that merely starts with "ktlint") is not a match, so
+      // advance past this occurrence and keep scanning instead of
+      // returning early.
+      if after_prefix.starts_with('"') || after_prefix.starts_with('.') {
+        return true;
+      }
+      rest = after_prefix;
+    }
+    false
+  }
+
+  /// Strips the inline `#[cfg(test)] mod tests { ... }` block this codebase
+  /// puts at the end of every module (Fixes #113 [pre-recreation]'s
+  /// convention, `test_no_stray_test_files_outside_sanctioned_pattern`),
+  /// leaving only production code -- so a source-textual guard test doesn't
+  /// trip on a test helper (e.g. `with_ktlint_stub`) that intentionally
+  /// spawns a plain shell command to fake out a real binary.
+  ///
+  /// Anchors on the `mod tests` declaration itself, not on the `#[cfg(test)]`
+  /// attribute text: splitting on the *first* `#[cfg(test)]` string is wrong
+  /// the moment a file has one earlier (e.g. on a single `#[cfg(test)]`-gated
+  /// helper function above the test module) -- that would truncate the scan
+  /// there and silently stop guarding everything below it. `mod tests` is
+  /// unambiguous and always marks the real module boundary.
+  fn production_code_before_test_module(content: &str) -> &str {
+    content
+      .find("mod tests")
+      .map_or(content, |idx| &content[..idx])
   }
 }

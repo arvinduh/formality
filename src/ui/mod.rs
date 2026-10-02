@@ -6,9 +6,6 @@ pub mod table;
 /// One shared relative-vs-absolute rendering for filesystem paths in output.
 pub mod paths;
 
-/// One shared renderer for deprecated-spelling notices.
-pub mod deprecation;
-
 /// Returns whether the environment explicitly asks for *no* color, per the
 /// `NO_COLOR` convention (<https://no-color.org>): the variable set to any
 /// non-empty value. Empty means "unset" there, so `NO_COLOR=` deliberately
@@ -24,7 +21,7 @@ pub fn no_color_requested() -> bool {
 }
 
 /// Returns whether the environment asks for color even though stdout may
-/// not be a TTY: `FORCE_COLOR`, `CLICOLOR_FORCE`, or running under GitHub
+/// not be a TTY: `FORCE_COLOR`, `CLICOLOR_FORCE`, or running under `GitHub`
 /// Actions (whose log viewer renders ANSI but whose steps are not TTYs).
 #[must_use]
 pub fn color_forced() -> bool {

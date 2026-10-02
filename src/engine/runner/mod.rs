@@ -11,7 +11,7 @@
 
 use crate::config::FormalityConfig;
 use crate::surfaces::{
-  ExecutionContext, LanguageSurface, SurfaceResult, SurfaceStatus,
+  ExecutionContext, LanguageSurface, Severity, SurfaceResult, SurfaceStatus,
 };
 use colored::Colorize;
 use rayon::prelude::*;
@@ -72,46 +72,60 @@ pub struct Plan {
   pub passes: Vec<Pass>,
   /// Whether those passes may write to disk.
   pub mode: Mode,
+  /// Whether a surface reporting [`SurfaceStatus::ToolMissing`] alone should
+  /// keep the run's exit code clean (#252 / #163). Only `fmt`, `lint`, and
+  /// `fix` expose this on the CLI (`--allow-missing`) — `sync` and `doctor`
+  /// don't, so [`Plan::sync`] always leaves it `false`. A real violation or
+  /// an [`SurfaceStatus::ExecutionError`] still exits non-zero regardless of
+  /// this flag; it only silences the "missing tool" precondition itself.
+  pub allow_missing: bool,
 }
 
 impl Plan {
-  /// `fml fmt` / `fml fmt --check`.
+  /// `fml fmt` / `fml fmt --check`, optionally with `--allow-missing`.
   #[must_use]
-  pub fn fmt(check: bool) -> Self {
+  pub fn fmt(check: bool, allow_missing: bool) -> Self {
     Self {
       passes: vec![Pass::Format],
       mode: mode_for(check),
+      allow_missing,
     }
   }
 
-  /// `fml lint`.
+  /// `fml lint`, optionally with `--allow-missing`.
   ///
   /// There is deliberately no writing form: `lint` never writes, which is
   /// why `fml lint --check` is a CLI error rather than a no-op, and why
   /// `fml lint --fix` was removed in favour of [`Plan::fix`].
   #[must_use]
-  pub fn lint() -> Self {
+  pub fn lint(allow_missing: bool) -> Self {
     Self {
       passes: vec![Pass::Lint],
       mode: Mode::Report,
+      allow_missing,
     }
   }
 
-  /// `fml fix` / `fml fix --check`.
+  /// `fml fix` / `fml fix --check`, optionally with `--allow-missing`.
   #[must_use]
-  pub fn fix(check: bool) -> Self {
+  pub fn fix(check: bool, allow_missing: bool) -> Self {
     Self {
       passes: vec![Pass::Lint, Pass::Format],
       mode: mode_for(check),
+      allow_missing,
     }
   }
 
   /// `fml sync` / `fml sync --check`.
+  ///
+  /// No `--allow-missing` form: `sync` never reads formatter/linter
+  /// binaries, so it has no `ToolMissing` precondition to opt out of.
   #[must_use]
   pub fn sync(check: bool) -> Self {
     Self {
       passes: vec![Pass::ConfigSync],
       mode: mode_for(check),
+      allow_missing: false,
     }
   }
 
@@ -147,19 +161,39 @@ use crate::errors::ExitStatus;
 pub struct Runner;
 
 impl Runner {
-  /// Executes `plan`'s passes across the target surfaces, aggregates the
-  /// per-surface results, and renders the status table and diagnostics.
-  #[allow(clippy::too_many_lines, clippy::needless_pass_by_value)]
+  /// Executes `plan` like [`Runner::run_into`], rendering to stdout as the
+  /// CLI's report.
   #[must_use]
   pub fn run(
-    surfaces: Vec<Box<dyn LanguageSurface>>,
+    surfaces: &[Box<dyn LanguageSurface>],
+    root: &Path,
+    paths: &[PathBuf],
+    plan: &Plan,
+    config: &FormalityConfig,
+  ) -> ExitStatus {
+    Self::run_into(&mut std::io::stdout(), surfaces, root, paths, plan, config)
+  }
+
+  /// Executes `plan`'s passes across the target surfaces, aggregates the
+  /// per-surface results, and renders the status table and diagnostics into
+  /// `out`.
+  ///
+  /// `out` is the caller's choice because stdout is not always free: under
+  /// `fml lsp` it is the JSON-RPC transport. A failed write to `out` is
+  /// ignored; the report is advisory and never changes the exit status.
+  #[allow(clippy::too_many_lines)]
+  #[must_use]
+  pub fn run_into(
+    out: &mut dyn std::io::Write,
+    surfaces: &[Box<dyn LanguageSurface>],
     root: &Path,
     paths: &[PathBuf],
     plan: &Plan,
     config: &FormalityConfig,
   ) -> ExitStatus {
     if surfaces.is_empty() {
-      println!("{}", "No matching language surfaces found.".yellow());
+      let _ =
+        writeln!(out, "{}", "No matching language surfaces found.".yellow());
       return ExitStatus::Clean;
     }
 
@@ -191,11 +225,40 @@ impl Runner {
     // One pass at a time, each fanned out across every surface in parallel.
     // A later pass sees what an earlier one wrote, which is the whole point
     // of `fix`'s ordering: lint fixes first, then format, so the tree is
-    // never left lint-fixed-but-unformatted (`.agents/orchestrate.md` §5).
+    // never left lint-fixed-but-unformatted (Smart Format, `AGENTS.md`).
     let mut pass_results: Vec<(Pass, Vec<SurfaceResult>)> = Vec::new();
     for &pass in &plan.passes {
-      let results = run_pass(pass, plan.mode, &surfaces, &shared);
+      let results = run_pass(pass, plan.mode, surfaces, &shared);
       pass_results.push((pass, results));
+    }
+
+    // Per-surface fix-pass evidence, gathered *before* the recheck below
+    // replaces a fix pass's own output with a check-only re-lint that no
+    // longer carries it (#119). `markdownlint-cli2` prints `Attempted: N
+    // fixes in M files` only when invoked with `--fix`, so without this the
+    // one signal that tool exposes would be discarded by the very recheck
+    // that makes its count trustworthy. Indexed by surface, matching the
+    // alignment every per-pass result vector already has with `surfaces`.
+    //
+    // Seeded from the invocation itself: markdownlint-cli2 prints its
+    // `Attempted:` line only when it attempted at least one fix, so a second
+    // `fml fix` over an unchanged tree would otherwise silently drop the
+    // `0 auto-fixable` the first one reported.
+    let lint_fix_ran = plan.mode.is_write() && plan.includes(Pass::Lint);
+    let mut fixer_evidence: Vec<violations::FixerEvidence> = surfaces
+      .iter()
+      .map(|s| {
+        violations::FixerEvidence::from_invocation(
+          lint_fix_ran && s.supports_lint_fix(),
+        )
+      })
+      .collect();
+    for (_, results) in &pass_results {
+      for (slot, res) in fixer_evidence.iter_mut().zip(results) {
+        if let SurfaceStatus::ViolationsFound { message, .. } = &res.status {
+          *slot = slot.merge(violations::FixerEvidence::from_message(message));
+        }
+      }
     }
 
     // Targeted re-lint (check-only) for surfaces whose lint pass reported
@@ -259,7 +322,7 @@ impl Runner {
       if let Some(prettier_res) = crate::surfaces::sync_shared_prettier_config(
         root,
         config,
-        &surfaces,
+        surfaces,
         plan.mode.is_report(),
       ) {
         results.push(prettier_res);
@@ -267,7 +330,7 @@ impl Runner {
       let editorconfig_res = crate::surfaces::editorconfig::sync_editorconfig(
         root,
         config,
-        &surfaces,
+        surfaces,
         plan.mode.is_report(),
       );
       results.push(editorconfig_res);
@@ -278,6 +341,11 @@ impl Runner {
     let mut violation_count = 0;
     let mut tool_missing_count = 0;
     let mut error_count = 0;
+    // The run-level remaining-violation figure, accumulated from the rows as
+    // they are built — never tallied independently (#119). Whatever the
+    // summary prints is by construction the sum of the numbers rendered
+    // above it, so the two can never drift.
+    let mut remaining = RemainingViolations::default();
 
     let mut runner_table = crate::ui::table::Table::new(vec![
       crate::ui::table::Column::new(crate::ui::table::Cell::text(""))
@@ -297,201 +365,42 @@ impl Runner {
         .max_width(80),
     );
 
-    for res in &results {
+    for (idx, res) in results.iter().enumerate() {
       let duration_str = format!("{:.2?}", res.duration);
+      // Rows appended after the per-surface fan-out (`fml sync`'s shared
+      // `.editorconfig` / `.prettierrc.json` passes) have no surface index
+      // and therefore no evidence — `unwrap_or_default` is the correct
+      // answer for them, not a fallback.
+      let tally = match &res.status {
+        SurfaceStatus::ViolationsFound { message, .. } => violations::tally(
+          message,
+          fixer_evidence.get(idx).copied().unwrap_or_default(),
+        ),
+        _ => None,
+      };
+      remaining.record(&res.status, tally);
+      let spec = row_spec(&res.status, plan, tally);
 
-      match &res.status {
-        SurfaceStatus::Passed => {
-          pass_count += 1;
-          runner_table.add_row(crate::ui::table::Row::new(vec![
-            crate::ui::table::Cell::styled(
-              "[PASS] ",
-              crate::ui::table::Style::Ok,
-            ),
-            crate::ui::table::Cell::styled(
-              res.surface_name,
-              crate::ui::table::Style::Strong,
-            ),
-            crate::ui::table::Cell::styled(
-              passed_detail(plan),
-              crate::ui::table::Style::Dim,
-            ),
-            crate::ui::table::Cell::styled(
-              duration_str,
-              crate::ui::table::Style::Dim,
-            )
-            .align(crate::ui::table::Align::Right),
-          ]));
-        }
-        SurfaceStatus::ConfigSynced { files } => {
-          pass_count += 1;
-          // Every file the surface wrote is named, not just the last one
-          // (#130) — a config created on disk but absent from this row is
-          // the worst failure available to a command whose whole job is
-          // writing config files.
-          let detail = synced_files_detail(files);
-          runner_table.add_row(crate::ui::table::Row::new(vec![
-            crate::ui::table::Cell::styled(
-              "[SYNC] ",
-              crate::ui::table::Style::Ok,
-            ),
-            crate::ui::table::Cell::styled(
-              res.surface_name,
-              crate::ui::table::Style::Strong,
-            ),
-            crate::ui::table::Cell::styled(
-              detail,
-              crate::ui::table::Style::Info,
-            ),
-            crate::ui::table::Cell::styled(
-              duration_str,
-              crate::ui::table::Style::Dim,
-            )
-            .align(crate::ui::table::Align::Right),
-          ]));
-        }
-        SurfaceStatus::ConfigDrifted { file, .. } => {
-          violation_count += 1;
-          if exit_code < 1 {
-            exit_code = 1;
-          }
-          runner_table.add_row(crate::ui::table::Row::new(vec![
-            crate::ui::table::Cell::styled(
-              "[DRIFT]",
-              crate::ui::table::Style::Warn,
-            ),
-            crate::ui::table::Cell::styled(
-              res.surface_name,
-              crate::ui::table::Style::Strong,
-            ),
-            crate::ui::table::Cell::styled(
-              format!("{file} out of sync"),
-              crate::ui::table::Style::Warn,
-            ),
-            crate::ui::table::Cell::styled(
-              duration_str,
-              crate::ui::table::Style::Dim,
-            )
-            .align(crate::ui::table::Align::Right),
-          ]));
-        }
-        SurfaceStatus::ManualConfig { file, .. } => {
-          violation_count += 1;
-          if exit_code < 1 {
-            exit_code = 1;
-          }
-          runner_table.add_row(crate::ui::table::Row::new(vec![
-            crate::ui::table::Cell::styled(
-              "[MANUAL]",
-              crate::ui::table::Style::Warn,
-            ),
-            crate::ui::table::Cell::styled(
-              res.surface_name,
-              crate::ui::table::Style::Strong,
-            ),
-            crate::ui::table::Cell::styled(
-              format!("{file} is manually managed"),
-              crate::ui::table::Style::Warn,
-            ),
-            crate::ui::table::Cell::styled(
-              duration_str,
-              crate::ui::table::Style::Dim,
-            )
-            .align(crate::ui::table::Align::Right),
-          ]));
-        }
-        SurfaceStatus::ViolationsFound { .. } => {
-          violation_count += 1;
-          if exit_code < 1 {
-            exit_code = 1;
-          }
-          runner_table.add_row(crate::ui::table::Row::new(vec![
-            crate::ui::table::Cell::styled(
-              "[FAIL] ",
-              crate::ui::table::Style::Error,
-            ),
-            crate::ui::table::Cell::styled(
-              res.surface_name,
-              crate::ui::table::Style::Strong,
-            ),
-            crate::ui::table::Cell::styled(
-              "Violations found",
-              crate::ui::table::Style::Error,
-            ),
-            crate::ui::table::Cell::styled(
-              duration_str,
-              crate::ui::table::Style::Dim,
-            )
-            .align(crate::ui::table::Align::Right),
-          ]));
-        }
-        SurfaceStatus::ToolMissing { binary, .. } => {
-          tool_missing_count += 1;
-          runner_table.add_row(crate::ui::table::Row::new(vec![
-            crate::ui::table::Cell::styled(
-              "[MISS] ",
-              crate::ui::table::Style::Warn,
-            ),
-            crate::ui::table::Cell::styled(
-              res.surface_name,
-              crate::ui::table::Style::Strong,
-            ),
-            crate::ui::table::Cell::styled(
-              format!("Missing binary: {binary}"),
-              crate::ui::table::Style::Warn,
-            ),
-            crate::ui::table::Cell::styled(
-              duration_str,
-              crate::ui::table::Style::Dim,
-            )
-            .align(crate::ui::table::Align::Right),
-          ]));
-        }
-        SurfaceStatus::ExecutionError { .. } => {
-          error_count += 1;
-          exit_code = 2;
-          runner_table.add_row(crate::ui::table::Row::new(vec![
-            crate::ui::table::Cell::styled(
-              "[ERR]  ",
-              crate::ui::table::Style::Error,
-            ),
-            crate::ui::table::Cell::styled(
-              res.surface_name,
-              crate::ui::table::Style::Strong,
-            ),
-            crate::ui::table::Cell::styled(
-              "Execution error",
-              crate::ui::table::Style::Error,
-            ),
-            crate::ui::table::Cell::styled(
-              duration_str,
-              crate::ui::table::Style::Dim,
-            )
-            .align(crate::ui::table::Align::Right),
-          ]));
-        }
-        SurfaceStatus::Skipped { reason } => {
-          runner_table.add_row(crate::ui::table::Row::new(vec![
-            crate::ui::table::Cell::styled(
-              "[SKIP] ",
-              crate::ui::table::Style::Dim,
-            ),
-            crate::ui::table::Cell::styled(
-              res.surface_name,
-              crate::ui::table::Style::Dim,
-            ),
-            crate::ui::table::Cell::styled(
-              reason.clone(),
-              crate::ui::table::Style::Dim,
-            ),
-            crate::ui::table::Cell::styled(
-              duration_str,
-              crate::ui::table::Style::Dim,
-            )
-            .align(crate::ui::table::Align::Right),
-          ]));
-        }
+      let severity = res.status.severity();
+      match severity {
+        Severity::Skipped => {}
+        Severity::Passed => pass_count += 1,
+        Severity::ToolMissing => tool_missing_count += 1,
+        Severity::Violation => violation_count += 1,
+        Severity::Error => error_count += 1,
       }
+      exit_code = exit_code.max(exit_floor(&severity, plan.allow_missing));
+
+      runner_table.add_row(crate::ui::table::Row::new(vec![
+        crate::ui::table::Cell::styled(spec.tag, spec.tag_style),
+        crate::ui::table::Cell::styled(res.surface_name, spec.name_style),
+        crate::ui::table::Cell::styled(spec.detail, spec.detail_style),
+        crate::ui::table::Cell::styled(
+          duration_str,
+          crate::ui::table::Style::Dim,
+        )
+        .align(crate::ui::table::Align::Right),
+      ]));
     }
 
     let palette = crate::ui::table::Palette::detect();
@@ -504,7 +413,8 @@ impl Runner {
       action_verb.bold(),
       format!("({})", header_count_label(results.len())).dimmed()
     );
-    println!("{}", frame.section(&title, &rendered_table, &palette));
+    let _ =
+      writeln!(out, "{}", frame.section(&title, &rendered_table, &palette));
 
     let diagnostics = collect_diagnostics(&results);
     if !diagnostics.is_empty() {
@@ -523,7 +433,8 @@ impl Runner {
           let _ = writeln!(body, "    {line}");
         }
       }
-      println!(
+      let _ = writeln!(
+        out,
         "{}",
         frame.section(
           &"Diagnostics & Suggestions:".bold().to_string(),
@@ -543,9 +454,10 @@ impl Runner {
     if tool_missing_count > 0 {
       parts.push(
         format!(
-          "{} missing tool{}",
+          "{} missing tool{}{}",
           tool_missing_count,
-          if tool_missing_count == 1 { "" } else { "s" }
+          if tool_missing_count == 1 { "" } else { "s" },
+          if plan.allow_missing { " (allowed)" } else { "" }
         )
         .yellow()
         .bold()
@@ -565,15 +477,250 @@ impl Runner {
       );
     }
 
-    let summary_text = if parts.is_empty() {
+    let mut summary_text = if parts.is_empty() {
       "0 surfaces".dimmed().to_string()
     } else {
       parts.join(", ")
     };
+    if let Some(clause) = remaining.clause() {
+      summary_text.push(' ');
+      summary_text.push_str(&clause.dimmed().to_string());
+    }
 
-    println!("  {} in {:.2?}\n", summary_text, start_time.elapsed());
+    let _ =
+      writeln!(out, "  {} in {:.2?}\n", summary_text, start_time.elapsed());
 
     ExitStatus::try_from(exit_code).unwrap_or(ExitStatus::Error)
+  }
+}
+
+/// The lowest exit code a row of `severity` forces on the run.
+///
+/// The results-row loop in [`Runner::run`] folds it in with
+/// `exit_code.max(..)`, so the worst row decides the exit code.
+fn exit_floor(severity: &Severity, allow_missing: bool) -> i32 {
+  match severity {
+    Severity::Skipped | Severity::Passed => 0,
+    // An unmet precondition, not an operational fault (#252) — the
+    // surface correctly determined it could not proceed. Exit 1
+    // (`ExitStatus::Violations`), the same as a real violation, so a
+    // missing tool never lets the process exit clean; 2 stays reserved
+    // for `Severity::Error`, which still wins if one occurs elsewhere.
+    //
+    // `--allow-missing` (#163) is the one opt-out: a machine missing an
+    // optional linter must not fail *every* commit that touches that
+    // surface. It only silences this severity's contribution to the
+    // exit code — a real violation elsewhere still sets it via its own
+    // floor, and the row stays visible either way (silence is the
+    // original bug, not the fix). The tally is untouched by this flag:
+    // a missing tool is still counted, just not floored into a nonzero
+    // exit.
+    Severity::ToolMissing if allow_missing => 0,
+    Severity::ToolMissing | Severity::Violation => 1,
+    Severity::Error => 2,
+  }
+}
+
+/// Everything one results-table row renders, decided once per
+/// [`SurfaceStatus`] instead of once per hand-built arm (#277).
+///
+/// This is display data only: the row's tally bucket and exit floor come
+/// from [`SurfaceStatus::severity`], not from here.
+struct RowSpec {
+  tag: &'static str,
+  tag_style: crate::ui::table::Style,
+  name_style: crate::ui::table::Style,
+  detail: String,
+  detail_style: crate::ui::table::Style,
+}
+
+/// Builds the row data for one surface's [`SurfaceStatus`] (#277).
+///
+/// `name_style` is `Strong` for every status except `Skipped`, which is
+/// rendered `Dim` (the surface name of a skipped row was never emphasized —
+/// that's the one place the eight original arms disagreed on a cell other
+/// than tag/detail/counter/exit-floor).
+fn row_spec(
+  status: &SurfaceStatus,
+  plan: &Plan,
+  tally: Option<violations::ViolationTally>,
+) -> RowSpec {
+  use crate::ui::table::Style;
+
+  match status {
+    SurfaceStatus::Passed => RowSpec {
+      tag: "[PASS] ",
+      tag_style: Style::Ok,
+      name_style: Style::Strong,
+      detail: passed_detail(plan).to_string(),
+      detail_style: Style::Dim,
+    },
+    SurfaceStatus::ConfigSynced { files } => RowSpec {
+      tag: "[SYNC] ",
+      tag_style: Style::Ok,
+      name_style: Style::Strong,
+      // Every file the surface wrote is named, not just the last one
+      // (#130) — a config created on disk but absent from this row is the
+      // worst failure available to a command whose whole job is writing
+      // config files.
+      detail: synced_files_detail(files),
+      detail_style: Style::Info,
+    },
+    SurfaceStatus::ConfigDrifted { file, .. } => RowSpec {
+      tag: "[DRIFT]",
+      tag_style: Style::Warn,
+      name_style: Style::Strong,
+      detail: format!("{file} out of sync"),
+      detail_style: Style::Warn,
+    },
+    SurfaceStatus::ManualConfig { file, .. } => RowSpec {
+      tag: "[MANUAL]",
+      tag_style: Style::Warn,
+      name_style: Style::Strong,
+      detail: format!("{file} is manually managed"),
+      detail_style: Style::Warn,
+    },
+    SurfaceStatus::ViolationsFound { .. } => RowSpec {
+      tag: "[FAIL] ",
+      tag_style: Style::Error,
+      name_style: Style::Strong,
+      detail: violations_detail(tally),
+      detail_style: Style::Error,
+    },
+    SurfaceStatus::ToolMissing { binary, .. } => RowSpec {
+      tag: "[MISS] ",
+      tag_style: Style::Warn,
+      name_style: Style::Strong,
+      detail: format!("Missing binary: {binary}"),
+      detail_style: Style::Warn,
+    },
+    SurfaceStatus::ExecutionError { .. } => RowSpec {
+      tag: "[ERR]  ",
+      tag_style: Style::Error,
+      name_style: Style::Strong,
+      detail: "Execution error".to_string(),
+      detail_style: Style::Error,
+    },
+    SurfaceStatus::Skipped { reason } => RowSpec {
+      tag: "[SKIP] ",
+      tag_style: Style::Dim,
+      name_style: Style::Dim,
+      detail: reason.clone(),
+      detail_style: Style::Dim,
+    },
+  }
+}
+
+/// Detail text for a `[FAIL]` row (#119).
+///
+/// A bare `Violations found` says nothing about whether `fml fix` gave up
+/// early or finished everything mechanically possible — the defect this
+/// issue is about. When the surface's tools said how much is left, the row
+/// says so; when they also said how much of it they could still fix, the row
+/// says that too.
+///
+/// The no-tally arm is not a degraded path to be grown out of: it is what
+/// every tool exposing no count keeps rendering, unchanged, rather than
+/// having `fml` guess a number on its behalf.
+fn violations_detail(tally: Option<violations::ViolationTally>) -> String {
+  let Some(t) = tally else {
+    return "Violations found".to_string();
+  };
+  let noun = violation_noun(t.remaining);
+  match t.auto_fixable {
+    None => format!("{} {noun}", t.remaining),
+    Some(k) => format!("{} {noun}, {k} auto-fixable", t.remaining),
+  }
+}
+
+/// `violation` / `violations`, agreeing with `count`.
+const fn violation_noun(count: usize) -> &'static str {
+  if count == 1 {
+    "violation"
+  } else {
+    "violations"
+  }
+}
+
+/// The run-level remaining-violation figure, folded together as the rows are
+/// built (#119).
+///
+/// Deliberately *not* an independent pass over `results`: the summary's
+/// number is the sum of the per-surface numbers the table already printed,
+/// so a reader can add the column up by eye and get the footer. A separate
+/// tally could disagree with the rows, and the footer is the one a reader
+/// cannot check.
+struct RemainingViolations {
+  /// Sum of every row's remaining count.
+  total: usize,
+  /// Sum of every row's auto-fixable count, or `None` once any counted row
+  /// withheld the claim — a partial figure would read as a complete one.
+  ///
+  /// Starts at `Some(0)`: with no rows folded in yet, nothing has withheld
+  /// anything. `Default` would give `None`, which would latch the clause
+  /// into its claim-free form for every run.
+  auto_fixable: Option<usize>,
+  /// Set when a `ViolationsFound` row produced no count at all, which makes
+  /// `total` an undercount and suppresses the whole clause.
+  incomplete: bool,
+}
+
+impl Default for RemainingViolations {
+  fn default() -> Self {
+    Self {
+      total: 0,
+      auto_fixable: Some(0),
+      incomplete: false,
+    }
+  }
+}
+
+impl RemainingViolations {
+  /// Folds one row in. `tally` is `None` both for statuses that are not
+  /// violations at all and for a `ViolationsFound` whose tools exposed no
+  /// count; only the latter makes the total incomplete.
+  fn record(
+    &mut self,
+    status: &SurfaceStatus,
+    tally: Option<violations::ViolationTally>,
+  ) {
+    match tally {
+      None => {
+        if matches!(status, SurfaceStatus::ViolationsFound { .. }) {
+          self.incomplete = true;
+        }
+      }
+      Some(t) => {
+        self.total += t.remaining;
+        self.auto_fixable = self
+          .auto_fixable
+          .zip(t.auto_fixable)
+          .map(|(acc, k)| acc + k);
+      }
+    }
+  }
+
+  /// The parenthesised clause appended to the run summary, or `None` when
+  /// there is nothing trustworthy to say.
+  ///
+  /// Suppressed entirely when any failing surface went uncounted: a total
+  /// that silently omits a surface is worse than no total, because nothing
+  /// in the line says it is partial.
+  fn clause(&self) -> Option<String> {
+    if self.incomplete || self.total == 0 {
+      return None;
+    }
+    let noun = violation_noun(self.total);
+    Some(match self.auto_fixable {
+      None => format!("({} {noun} remaining)", self.total),
+      Some(0) => format!(
+        "({} {noun} remaining, none auto-fixable — manual edits needed)",
+        self.total
+      ),
+      Some(k) => {
+        format!("({} {noun} remaining, {k} auto-fixable)", self.total)
+      }
+    })
   }
 }
 
@@ -733,9 +880,10 @@ fn apply_recheck(
 /// Folds two of a surface's per-pass results into one reported status.
 ///
 /// Applied left-to-right over a [`Plan`]'s passes, so for `fix` this merges
-/// the lint pass's result with the format pass's exactly as before the
-/// `Plan` refactor. Precedence runs errors → violations → config drift →
-/// missing tool → passed, and durations always sum.
+/// the lint pass's result with the format pass's. The status with the higher
+/// [`precedence`] wins and an exact tie keeps `first`, except that two
+/// execution errors, two violation reports or two skips merge their text.
+/// Durations always sum.
 fn combine_pass_results(
   first: SurfaceResult,
   second: SurfaceResult,
@@ -744,19 +892,12 @@ fn combine_pass_results(
   let duration = first.duration + second.duration;
 
   let status = match (first.status, second.status) {
-    // 1. Execution errors take highest precedence
     (
       SurfaceStatus::ExecutionError { message: m1 },
       SurfaceStatus::ExecutionError { message: m2 },
     ) => SurfaceStatus::ExecutionError {
       message: format!("{m1}\n{m2}"),
     },
-    (SurfaceStatus::ExecutionError { message }, _)
-    | (_, SurfaceStatus::ExecutionError { message }) => {
-      SurfaceStatus::ExecutionError { message }
-    }
-
-    // 2. Violations found (e.g. unfixable lint errors or formatting errors)
     (
       SurfaceStatus::ViolationsFound {
         message: m1,
@@ -778,62 +919,19 @@ fn combine_pass_results(
         diff: combined_diff,
       }
     }
-    (SurfaceStatus::ViolationsFound { message, diff }, _)
-    | (_, SurfaceStatus::ViolationsFound { message, diff }) => {
-      SurfaceStatus::ViolationsFound { message, diff }
-    }
-
-    // 3. Config drift or manual config
-    (SurfaceStatus::ConfigDrifted { file, diff }, _)
-    | (_, SurfaceStatus::ConfigDrifted { file, diff }) => {
-      SurfaceStatus::ConfigDrifted { file, diff }
-    }
-    (SurfaceStatus::ManualConfig { file, suggestion }, _)
-    | (_, SurfaceStatus::ManualConfig { file, suggestion }) => {
-      SurfaceStatus::ManualConfig { file, suggestion }
-    }
-
-    // 4. Missing tool binary (non-fatal warning; takes precedence over Passed/Skipped)
-    (
-      SurfaceStatus::ToolMissing {
-        binary,
-        install_hint,
-      },
-      _,
-    )
-    | (
-      _,
-      SurfaceStatus::ToolMissing {
-        binary,
-        install_hint,
-      },
-    ) => SurfaceStatus::ToolMissing {
-      binary,
-      install_hint,
-    },
-
-    // 5. Passed (both passed, or one passed and one was skipped)
-    (
-      SurfaceStatus::Passed | SurfaceStatus::Skipped { .. },
-      SurfaceStatus::Passed,
-    )
-    | (SurfaceStatus::Passed, SurfaceStatus::Skipped { .. }) => {
-      SurfaceStatus::Passed
-    }
-
-    // 6. ConfigSynced
-    (SurfaceStatus::ConfigSynced { files }, _)
-    | (_, SurfaceStatus::ConfigSynced { files }) => {
-      SurfaceStatus::ConfigSynced { files }
-    }
-
-    // 7. Both skipped
     (
       SurfaceStatus::Skipped { reason: r1 },
       SurfaceStatus::Skipped { reason: r2 },
     ) => SurfaceStatus::Skipped {
       reason: format!("{r1}; {r2}"),
     },
+    (first, second) => {
+      if precedence(&second) > precedence(&first) {
+        second
+      } else {
+        first
+      }
+    }
   };
 
   SurfaceResult {
@@ -841,6 +939,24 @@ fn combine_pass_results(
     status,
     duration,
   }
+}
+
+/// Ranks a status for [`combine_pass_results`]: by [`Severity`] first, then,
+/// between statuses of one severity, by which carries the more specific
+/// report (a tool's violations over config drift over a hand-written config;
+/// a config write over a bare pass).
+fn precedence(status: &SurfaceStatus) -> (Severity, u8) {
+  let within_severity = match status {
+    SurfaceStatus::ViolationsFound { .. } => 2,
+    SurfaceStatus::ConfigDrifted { .. }
+    | SurfaceStatus::ConfigSynced { .. } => 1,
+    SurfaceStatus::ManualConfig { .. }
+    | SurfaceStatus::Passed
+    | SurfaceStatus::Skipped { .. }
+    | SurfaceStatus::ToolMissing { .. }
+    | SurfaceStatus::ExecutionError { .. } => 0,
+  };
+  (status.severity(), within_severity)
 }
 
 /// Cleans and standardizes raw CLI tool diagnostics into uniform lines.
@@ -983,6 +1099,7 @@ fn collect_diagnostics(results: &[SurfaceResult]) -> Vec<(String, String)> {
   diagnostics
 }
 
+mod violations;
+
 #[cfg(test)]
-#[allow(missing_docs, clippy::missing_errors_doc, clippy::missing_panics_doc)]
 mod tests;

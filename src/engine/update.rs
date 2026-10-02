@@ -35,15 +35,17 @@ fn get_cache_path() -> PathBuf {
 // Outer Option represents cache validity (fresh vs expired); inner Option is the cached latest tag.
 #[allow(clippy::option_option)]
 fn read_cached_tag() -> Option<Option<String>> {
-  read_cached_tag_at(&get_cache_path())
+  let now = SystemTime::now().duration_since(UNIX_EPOCH).ok()?.as_secs();
+  read_cached_tag_at(&get_cache_path(), now)
 }
 
-/// Reads and validates the update-check cache at an explicit `path`. Takes
-/// the path explicitly (rather than calling [`get_cache_path`] itself) so
-/// tests can point it at a temp file instead of the real per-user cache
-/// directory.
+/// Reads and validates the update-check cache at an explicit `path` as of
+/// `now` (Unix seconds). Takes both explicitly (rather than calling
+/// [`get_cache_path`] and reading the clock itself) so tests can point it at
+/// a temp file and judge freshness against the same instant they stamped,
+/// with no second rollover between the two clock reads.
 #[allow(clippy::option_option)]
-fn read_cached_tag_at(path: &Path) -> Option<Option<String>> {
+fn read_cached_tag_at(path: &Path, now: u64) -> Option<Option<String>> {
   let data = std::fs::read_to_string(path).ok()?;
   let cache: UpdateCache = serde_json::from_str(&data).ok()?;
 
@@ -53,7 +55,6 @@ fn read_cached_tag_at(path: &Path) -> Option<Option<String>> {
     UPDATE_CHECK_INTERVAL_SECS
   };
 
-  let now = SystemTime::now().duration_since(UNIX_EPOCH).ok()?.as_secs();
   if now.saturating_sub(cache.last_checked_unix) < interval {
     Some(cache.latest_tag)
   } else {
@@ -75,7 +76,7 @@ fn write_cached_tag_at(path: &Path, tag: Option<&str>) {
     .map_or(0, |d| d.as_secs());
   let cache = UpdateCache {
     last_checked_unix: now,
-    latest_tag: tag.map(std::string::ToString::to_string),
+    latest_tag: tag.map(ToString::to_string),
     failed: false,
   };
   if let Ok(json) = serde_json::to_string(&cache) {
@@ -104,7 +105,7 @@ fn write_failed_check_at(path: &Path) {
   }
 }
 
-/// Processes a GitHub releases API response body: parses the latest release
+/// Processes a `GitHub` releases API response body: parses the latest release
 /// tag and caches the check timestamp regardless of whether that parse
 /// succeeds, so a persistently malformed/unexpected API response only
 /// triggers a network call once per [`UPDATE_CHECK_INTERVAL_SECS`] instead of
@@ -121,7 +122,7 @@ fn process_release_response_at(
   tag.filter(|t| is_newer_version(t, current_version))
 }
 
-/// Safely parse the `tag_name` field from GitHub release JSON response.
+/// Safely parse the `tag_name` field from `GitHub` release JSON response.
 #[must_use]
 pub fn parse_latest_tag_from_json(body: &str) -> Option<String> {
   let value: serde_json::Value = serde_json::from_str(body).ok()?;
@@ -132,7 +133,7 @@ pub fn parse_latest_tag_from_json(body: &str) -> Option<String> {
 /// Compares a release tag (e.g. "v0.2.0" or "0.2.0") with the current version.
 ///
 /// Both sides are scraped by [`Version::parse`] (the custom extraction layer —
-/// it tolerates the `v` prefix GitHub tags carry); the `>` that decides the
+/// it tolerates the `v` prefix `GitHub` tags carry); the `>` that decides the
 /// banner is `semver`-backed via [`Version`]'s `Ord`. An unparseable tag can
 /// never trip the banner: it yields `false`, not a spurious "update available".
 #[must_use]
@@ -245,12 +246,11 @@ pub fn print_update_notice(notifier: Option<UpdateNotifier>) {
 /// The OS-appropriate one-liner that re-runs the official installer in place.
 ///
 /// Points at the canonical cargo-dist installer **release assets**
-/// (`releases/latest/download/fml-installer.{sh,ps1}`), not the
-/// `raw.githubusercontent.com/.../main/install.*` shims — the dist installer
+/// (`releases/latest/download/fml-installer.{sh,ps1}`): the dist installer
 /// resolves OS/arch, fetches the matching prebuilt archive from the latest
 /// release, and drops the binary on `PATH` with no Rust toolchain involved.
 /// The shell installer (Linux & macOS) also verifies the download's checksum;
-/// the PowerShell installer (Windows) does not. Re-running it is a working
+/// the `PowerShell` installer (Windows) does not. Re-running it is a working
 /// in-place upgrade.
 ///
 /// Selected at **compile time** by the caller via `cfg!(windows)`: the binary
@@ -268,7 +268,6 @@ pub fn update_command(is_windows: bool) -> &'static str {
 }
 
 #[cfg(test)]
-#[allow(missing_docs, clippy::missing_errors_doc, clippy::missing_panics_doc)]
 mod tests {
   use super::*;
 
@@ -471,7 +470,7 @@ mod tests {
     std::fs::write(&cache_path, serde_json::to_string(&fresh_failure).unwrap())
       .unwrap();
     assert_eq!(
-      read_cached_tag_at(&cache_path),
+      read_cached_tag_at(&cache_path, now),
       Some(None),
       "a recent curl-level failure should be treated as a valid (empty) \
        cache entry, not force a fresh curl spawn"
@@ -487,7 +486,7 @@ mod tests {
     std::fs::write(&cache_path, serde_json::to_string(&stale_failure).unwrap())
       .unwrap();
     assert_eq!(
-      read_cached_tag_at(&cache_path),
+      read_cached_tag_at(&cache_path, now),
       None,
       "a failure older than the short backoff window must expire well \
        before the 24h success TTL would"
@@ -517,19 +516,14 @@ mod tests {
   #[test]
   fn test_update_command_points_at_the_dist_installer_release_asset() {
     // The notice must point at the cargo-dist installer assets attached to
-    // the latest release, never the `raw.githubusercontent.com/.../main`
-    // shims (which only exist for backwards compatibility) and never a
-    // versioned URL that would pin the upgrade to a stale release.
+    // the latest release, never a versioned URL that would pin the upgrade
+    // to a stale release.
     for cmd in [update_command(true), update_command(false)] {
       assert!(
         cmd.contains(
           "github.com/arvinduh/formality/releases/latest/download/fml-installer."
         ),
         "update command must fetch the latest dist installer asset: {cmd}"
-      );
-      assert!(
-        !cmd.contains("raw.githubusercontent.com"),
-        "update command must not use the raw.githubusercontent shim: {cmd}"
       );
     }
   }

@@ -23,6 +23,7 @@
       }
     }
   },
+  "additionalProperties": false,
   "$defs": {
     "CppOptions": {
       "description": "Typed formatting and linting options for C/C++.",
@@ -54,7 +55,8 @@
           "description": "C++ language standard version (e.g. `\"c++20\"`).",
           "type": ["string", "null"]
         }
-      }
+      },
+      "additionalProperties": false
     },
     "GlobalConfig": {
       "description": "Global default settings applicable across all language surfaces.",
@@ -124,7 +126,8 @@
           "description": "Whether to use tabs instead of spaces for indentation.",
           "type": ["boolean", "null"]
         }
-      }
+      },
+      "additionalProperties": false
     },
     "GoOptions": {
       "description": "Typed formatting and linting options for Go.",
@@ -141,7 +144,8 @@
           "description": "Prefix(es) passed to `goimports -local` so first-party imports are\ngrouped separately from third-party ones (e.g. \"example.com/myorg\").",
           "type": ["string", "null"]
         }
-      }
+      },
+      "additionalProperties": false
     },
     "JavaOptions": {
       "description": "Typed formatting and linting options for Java.",
@@ -151,7 +155,8 @@
           "description": "Formatting style used by google-java-format: \"google\" (default,\n2-space indent) or \"aosp\" (4-space indent).",
           "type": ["string", "null"]
         }
-      }
+      },
+      "additionalProperties": false
     },
     "JavaScriptOptions": {
       "description": "Typed formatting and linting options for JavaScript/TypeScript (Biome).",
@@ -173,15 +178,18 @@
           "description": "Trailing comma policy (`\"all\"`, `\"es5\"`, or `\"none\"`).",
           "type": ["string", "null"]
         }
-      }
+      },
+      "additionalProperties": false
     },
     "JsonOptions": {
       "description": "Typed formatting and linting options for JSON.",
-      "type": "object"
+      "type": "object",
+      "additionalProperties": false
     },
     "KotlinOptions": {
       "description": "Typed formatting and linting options for Kotlin.\n\nKotlin's tooling (ktlint) reads layout facets (indent size, line length,\netc.) exclusively from `.editorconfig` rather than a dedicated config\nfile, so this struct is intentionally empty for now — it exists to keep\nKotlin consistent with the rest of the fleet's per-language options\nwiring and as a home for future knobs (e.g. `ktlint_code_style`).",
-      "type": "object"
+      "type": "object",
+      "additionalProperties": false
     },
     "LangConfig": {
       "description": "Per-language configuration section (`[lang.<surface>]`).",
@@ -222,10 +230,6 @@
           "items": {
             "type": "string"
           }
-        },
-        "format_tool": {
-          "description": "Custom formatter tool binary or command name override.",
-          "type": ["string", "null"]
         },
         "go": {
           "description": "Go surface specific options.",
@@ -304,10 +308,6 @@
           "type": ["integer", "null"],
           "format": "uint",
           "minimum": 0
-        },
-        "lint_tool": {
-          "description": "Custom linter tool binary or command name override.",
-          "type": ["string", "null"]
         },
         "markdown": {
           "description": "Markdown surface specific options.",
@@ -409,7 +409,8 @@
           "description": "Whether to use tabs for indentation.",
           "type": ["boolean", "null"]
         }
-      }
+      },
+      "additionalProperties": false
     },
     "MarkdownOptions": {
       "description": "Typed formatting and linting options for Markdown.",
@@ -423,7 +424,8 @@
           "description": "Prose wrapping strategy string (`\"always\"`, `\"never\"`, or `\"preserve\"`).",
           "type": ["string", "null"]
         }
-      }
+      },
+      "additionalProperties": false
     },
     "PythonOptions": {
       "description": "Typed formatting and linting options for Python.",
@@ -444,7 +446,8 @@
           "description": "Python target version (e.g. `\"py310\"`).",
           "type": ["string", "null"]
         }
-      }
+      },
+      "additionalProperties": false
     },
     "RustOptions": {
       "description": "Typed formatting and linting options for Rust.",
@@ -454,7 +457,8 @@
           "description": "Rust edition (e.g. `\"2021\"`).",
           "type": ["string", "null"]
         }
-      }
+      },
+      "additionalProperties": false
     },
     "TomlOptions": {
       "description": "Typed formatting and linting options for TOML.",
@@ -472,11 +476,13 @@
           "description": "Whether to indent table contents.",
           "type": ["boolean", "null"]
         }
-      }
+      },
+      "additionalProperties": false
     },
     "TypstOptions": {
       "description": "Typed formatting and linting options for Typst.",
-      "type": "object"
+      "type": "object",
+      "additionalProperties": false
     },
     "YamlOptions": {
       "description": "Typed formatting and linting options for YAML.",
@@ -494,7 +500,8 @@
           "description": "Whether to enforce strict boolean truthy values.",
           "type": ["boolean", "null"]
         }
-      }
+      },
+      "additionalProperties": false
     }
   }
 }

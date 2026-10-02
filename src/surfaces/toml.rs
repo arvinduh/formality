@@ -4,12 +4,10 @@
 use super::{
   DeclaresFacets, ExecutionContext, Facet, FacetSupport, LanguageSurface,
   NativeConfig, SurfaceResult, ToolInfo, create_tool_command,
-  diff_check_via_tempcopy, find_files_with_ext, lint_fix_unsupported,
-  render_native_config, run_tool_command, sync_native_config,
-  tool_missing_guard,
+  diff_check_via_tempcopy, lint_fix_unsupported, render_native_config,
+  run_tool_command, sync_native_config, tool_missing_guard,
 };
 use serde::{Deserialize, Serialize};
-use std::path::Path;
 use std::time::Instant;
 
 // Directly mirrors Taplo's upstream native schema formatting flags.
@@ -163,10 +161,8 @@ impl LanguageSurface for TomlSurface {
     Box::new(*self)
   }
 
-  fn detect(&self, root: &Path) -> bool {
-    root.join("taplo.toml").is_file()
-      || root.join(".taplo.toml").is_file()
-      || !find_files_with_ext(root, TOML_EXTENSIONS, &[], &[], &[]).is_empty()
+  fn marker_files(&self) -> &[&'static str] {
+    &["taplo.toml", ".taplo.toml"]
   }
 
   fn tool_info(
@@ -176,7 +172,7 @@ impl LanguageSurface for TomlSurface {
     vec![ToolInfo {
       binary: "taplo",
       description: "TOML toolkit, formatter and linter",
-      install_hint: "Install via: cargo binstall taplo-cli (or npm install -g @taplo/cli / brew install taplo / cargo install taplo-cli --locked)",
+      install_hint: None,
       is_required_for_fmt: true,
       is_required_for_lint: true,
     }]
@@ -185,14 +181,7 @@ impl LanguageSurface for TomlSurface {
   fn format(&self, ctx: &ExecutionContext) -> SurfaceResult {
     let start = Instant::now();
 
-    if let Some(res) = tool_missing_guard(
-      self.name(),
-      "taplo",
-      start,
-      Some(
-        "cargo binstall taplo-cli / npm install -g @taplo/cli / brew install taplo / cargo install taplo-cli --locked",
-      ),
-    ) {
+    if let Some(res) = tool_missing_guard(self.name(), "taplo", start, None) {
       return res;
     }
 
@@ -243,14 +232,7 @@ impl LanguageSurface for TomlSurface {
       return lint_fix_unsupported(self.name(), start);
     }
 
-    if let Some(res) = tool_missing_guard(
-      self.name(),
-      "taplo",
-      start,
-      Some(
-        "cargo binstall taplo-cli / npm install -g @taplo/cli / brew install taplo / cargo install taplo-cli --locked",
-      ),
-    ) {
+    if let Some(res) = tool_missing_guard(self.name(), "taplo", start, None) {
       return res;
     }
 
@@ -284,7 +266,6 @@ impl LanguageSurface for TomlSurface {
 }
 
 #[cfg(test)]
-#[allow(missing_docs, clippy::missing_errors_doc, clippy::missing_panics_doc)]
 mod tests {
   use super::*;
   use crate::surfaces::{SurfaceStatus, check_binary_exists, test_ctx};
@@ -450,20 +431,18 @@ mod tests {
     let surface = TomlSurface;
     let mut ctx =
       test_ctx(temp.path(), crate::config::ResolvedLangConfig::new("toml"));
-    ctx.paths = Arc::new(vec![file_path.clone()]);
+    ctx.paths = Arc::new(vec![file_path]);
     ctx.check_only = true;
 
     let res = surface.format(&ctx);
-    assert!(!res.is_error(), "format returned error: {:?}", res.status);
-    assert!(
-      res.is_violation(),
-      "expected formatting violations for unformatted TOML, got {:?}",
-      res.status
-    );
-    if let SurfaceStatus::ViolationsFound { diff, .. } = res.status {
-      let diff_str = diff.expect("diff should be present");
-      assert!(diff_str.contains("key_0"));
-    }
+    let SurfaceStatus::ViolationsFound { diff, .. } = res.status else {
+      panic!(
+        "expected formatting violations for unformatted TOML, got {:?}",
+        res.status
+      );
+    };
+    let diff_str = diff.expect("diff should be present");
+    assert!(diff_str.contains("key_0"));
 
     // Check mode on already-formatted >128 KB file must also complete cleanly and return Passed.
     let formatted_path = temp.path().join("large_formatted.toml");

@@ -1,5 +1,5 @@
 //! Minimum Supported Tool Version (MSTV) registry: per-tool minimum
-//! versions, upgrade advice, and version-probing metadata.
+//! versions and version-probing metadata.
 
 use super::Version;
 
@@ -28,8 +28,6 @@ pub const MSTV_YAMLLINT: Version = Version::new(1, 20, 0);
 pub const MSTV_BIOME: Version = Version::new(1, 5, 0);
 /// MSTV for checkstyle.
 pub const MSTV_CHECKSTYLE: Version = Version::new(10, 0, 0);
-/// MSTV for ktfmt.
-pub const MSTV_KTFMT: Version = Version::new(0, 44, 0);
 /// MSTV for ktlint.
 pub const MSTV_KTLINT: Version = Version::new(1, 0, 0);
 /// MSTV for gofmt.
@@ -103,8 +101,8 @@ pub const DEFAULT_VERSION_PROBE: VersionProbe = VersionProbe::FirstOf(&[
   VersionProbe::OwnFlags(&["-v"]),
 ]);
 
-/// Minimum Supported Tool Version entry with metadata, version-probing
-/// strategy, and upgrade advice.
+/// Minimum Supported Tool Version entry with metadata and version-probing
+/// strategy.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ToolMstvEntry {
   /// Name of the binary executable.
@@ -113,8 +111,6 @@ pub struct ToolMstvEntry {
   pub min_version: Option<Version>,
   /// How this tool's version string is obtained.
   pub probe: VersionProbe,
-  /// Upgrade advice message shown when tool is outdated.
-  pub advice: &'static str,
 }
 
 /// Registry table of all declared Minimum Supported Tool Version entries.
@@ -122,8 +118,11 @@ pub const TOOL_MSTV_REGISTRY: &[ToolMstvEntry] = &[
   ToolMstvEntry {
     binary: "rustfmt",
     min_version: Some(MSTV_RUSTFMT),
+    // To upgrade an already-installed toolchain component past this floor,
+    // `rustup update` — not a fresh `rustup component add` — is the real
+    // move; the install chain (`ALL_CHAINS`, `src/surfaces/tooling.rs`)
+    // doesn't express that distinction.
     probe: DEFAULT_VERSION_PROBE,
-    advice: "Run 'rustup component add rustfmt' or 'rustup update'",
   },
   ToolMstvEntry {
     binary: "clippy",
@@ -131,6 +130,10 @@ pub const TOOL_MSTV_REGISTRY: &[ToolMstvEntry] = &[
     // Rustup ships no `clippy` binary: the component is reachable as the
     // `clippy-driver` shim, or through `cargo clippy`. Try both, in that
     // order.
+    //
+    // As with rustfmt above, `rustup update` — not a fresh `rustup
+    // component add` — is how an existing install is actually upgraded
+    // past this floor.
     probe: VersionProbe::FirstOf(&[
       VersionProbe::ViaBinary {
         bin: "clippy-driver",
@@ -143,79 +146,61 @@ pub const TOOL_MSTV_REGISTRY: &[ToolMstvEntry] = &[
         extractor: ProbeExtractor::FirstVersionishLine,
       },
     ]),
-    advice: "Run 'rustup component add clippy' or 'rustup update'",
   },
   ToolMstvEntry {
     binary: "ruff",
     min_version: Some(MSTV_RUFF),
     probe: DEFAULT_VERSION_PROBE,
-    advice: "Run 'pip install -U ruff' or 'brew install ruff'",
   },
   ToolMstvEntry {
     binary: "clang-format",
     min_version: Some(MSTV_CLANG_FORMAT),
     probe: DEFAULT_VERSION_PROBE,
-    advice: "Install clang-format >= 14 via system package manager or LLVM toolchain",
   },
   ToolMstvEntry {
     binary: "clang-tidy",
     min_version: Some(MSTV_CLANG_TIDY),
     probe: DEFAULT_VERSION_PROBE,
-    advice: "Install clang-tidy >= 14 via system package manager or LLVM toolchain",
   },
   ToolMstvEntry {
     binary: "prettier",
     min_version: Some(MSTV_PRETTIER),
     probe: DEFAULT_VERSION_PROBE,
-    advice: "Run 'npm install -g prettier' or 'brew install prettier'",
   },
   ToolMstvEntry {
     binary: "taplo",
     min_version: Some(MSTV_TAPLO),
     probe: DEFAULT_VERSION_PROBE,
-    advice: "Run 'cargo binstall taplo-cli' or 'brew install taplo' or 'cargo install --locked taplo-cli'",
   },
   ToolMstvEntry {
     binary: "markdownlint-cli2",
     min_version: Some(MSTV_MARKDOWNLINT_CLI2),
     probe: DEFAULT_VERSION_PROBE,
-    advice: "Run 'npm install -g markdownlint-cli2' or 'brew install markdownlint-cli2'",
   },
   ToolMstvEntry {
     binary: "typstyle",
     min_version: Some(MSTV_TYPSTYLE),
     probe: DEFAULT_VERSION_PROBE,
-    advice: "Run 'cargo install --locked typstyle' or 'brew install typstyle'",
   },
   ToolMstvEntry {
     binary: "yamllint",
     min_version: Some(MSTV_YAMLLINT),
     probe: DEFAULT_VERSION_PROBE,
-    advice: "Run 'pip install -U yamllint' or 'brew install yamllint'",
   },
   ToolMstvEntry {
     binary: "biome",
     min_version: Some(MSTV_BIOME),
     probe: DEFAULT_VERSION_PROBE,
-    advice: "Run 'npm install -g @biomejs/biome' or 'brew install biome'",
   },
   ToolMstvEntry {
     binary: "checkstyle",
     min_version: Some(MSTV_CHECKSTYLE),
     probe: DEFAULT_VERSION_PROBE,
-    advice: "Run 'brew install checkstyle' or update your checkstyle jar",
-  },
-  ToolMstvEntry {
-    binary: "ktfmt",
-    min_version: Some(MSTV_KTFMT),
-    probe: DEFAULT_VERSION_PROBE,
-    advice: "Run 'brew install ktfmt'",
   },
   ToolMstvEntry {
     binary: "ktlint",
     min_version: Some(MSTV_KTLINT),
     probe: DEFAULT_VERSION_PROBE,
-    advice: "Run 'brew install ktlint'",
   },
   ToolMstvEntry {
     binary: "gofmt",
@@ -224,12 +209,15 @@ pub const TOOL_MSTV_REGISTRY: &[ToolMstvEntry] = &[
     // carries that toolchain's version, which only `go version` reports
     // (Fixes #114). With `go` absent the probe yields nothing and the tool
     // reports `(version unprobeable)` — never scraped `gofmt` usage text.
+    //
+    // `gofmt` ships inside the Go toolchain rather than through a package
+    // manager of its own, so it has no `ALL_CHAINS` row: upgrading it means
+    // updating the Go toolchain itself, via https://go.dev/dl/.
     probe: VersionProbe::ViaBinary {
       bin: "go",
       args: &[ProbeArg::Literal("version")],
       extractor: ProbeExtractor::FirstVersionishLine,
     },
-    advice: "Update Go toolchain via https://go.dev/dl/",
   },
   ToolMstvEntry {
     binary: "goimports",
@@ -248,16 +236,16 @@ pub const TOOL_MSTV_REGISTRY: &[ToolMstvEntry] = &[
       ],
       extractor: ProbeExtractor::GoModuleVersion,
     },
-    advice: "Install via: go install golang.org/x/tools/cmd/goimports@latest",
   },
   ToolMstvEntry {
     // A bare `version` subcommand, not a flag: `golangci-lint --version` is
     // not recognised. This is the whole probe — no `-v` behind it, because
     // the entry is what runs.
+    //
+    // Release notes for upgrading an existing install: https://golangci-lint.run
     binary: "golangci-lint",
     min_version: Some(MSTV_GOLANGCI_LINT),
     probe: VersionProbe::OwnFlags(&["version"]),
-    advice: "Run 'brew install golangci-lint' or update via https://golangci-lint.run",
   },
 ];
 
@@ -271,10 +259,4 @@ pub fn get_tool_mstv_entry(binary: &str) -> Option<&'static ToolMstvEntry> {
   TOOL_MSTV_REGISTRY
     .iter()
     .find(|entry| entry.binary == lookup_bin)
-}
-
-/// Returns a slice of all declared [`ToolMstvEntry`] entries.
-#[must_use]
-pub fn all_mstv_entries() -> &'static [ToolMstvEntry] {
-  TOOL_MSTV_REGISTRY
 }

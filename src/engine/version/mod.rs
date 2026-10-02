@@ -17,11 +17,10 @@ pub mod mstv;
 
 pub use mstv::{
   DEFAULT_VERSION_PROBE, MSTV_BIOME, MSTV_CHECKSTYLE, MSTV_CLANG_FORMAT,
-  MSTV_CLANG_TIDY, MSTV_CLIPPY, MSTV_GOFMT, MSTV_GOLANGCI_LINT, MSTV_KTFMT,
-  MSTV_KTLINT, MSTV_MARKDOWNLINT_CLI2, MSTV_PRETTIER, MSTV_RUFF, MSTV_RUSTFMT,
-  MSTV_TAPLO, MSTV_TYPSTYLE, MSTV_YAMLLINT, ProbeArg, ProbeExtractor,
-  TOOL_MSTV_REGISTRY, ToolMstvEntry, VersionProbe, all_mstv_entries,
-  get_tool_mstv_entry,
+  MSTV_CLANG_TIDY, MSTV_CLIPPY, MSTV_GOFMT, MSTV_GOLANGCI_LINT, MSTV_KTLINT,
+  MSTV_MARKDOWNLINT_CLI2, MSTV_PRETTIER, MSTV_RUFF, MSTV_RUSTFMT, MSTV_TAPLO,
+  MSTV_TYPSTYLE, MSTV_YAMLLINT, ProbeArg, ProbeExtractor, TOOL_MSTV_REGISTRY,
+  ToolMstvEntry, VersionProbe, get_tool_mstv_entry,
 };
 
 use crate::surfaces::create_tool_command;
@@ -199,6 +198,7 @@ pub fn parse_go_version_m(output: &str) -> Option<String> {
 /// Renders a list of [`ProbeArg`]s into arguments for command execution.
 /// Resolves [`ProbeArg::ToolPath`] using the path to `binary` found on PATH.
 /// Returns `None` if [`ProbeArg::ToolPath`] is needed but the binary cannot be resolved.
+#[must_use]
 pub fn render_probe_args(
   binary: &str,
   args: &[ProbeArg],
@@ -396,10 +396,12 @@ impl Version {
     }
   }
 
-  /// Create a `Version` with prerelease metadata. The prerelease must be a
-  /// valid SemVer identifier (what the parse path always yields); one `semver`
-  /// rejects still constructs but makes [`Version::to_semver`] lossy, so
-  /// ordering stops matching structural equality — a `debug_assert` catches it.
+  /// Create a `Version` with prerelease metadata. The prerelease must be
+  /// a valid `SemVer` identifier (what the parse path always yields); one
+  /// `semver` rejects still constructs but makes [`Version::to_semver`] lossy,
+  /// so ordering stops matching structural equality — a `debug_assert`
+  /// catches it.
+  #[cfg(test)]
   pub fn with_prerelease(
     major: u64,
     minor: u64,
@@ -602,7 +604,7 @@ fn is_genuine_prerelease(pre: &str) -> bool {
   };
   let leading_alpha: String = first
     .chars()
-    .take_while(|c| c.is_ascii_alphabetic())
+    .take_while(char::is_ascii_alphabetic)
     .collect();
   if leading_alpha.is_empty() {
     return false;
@@ -619,7 +621,7 @@ impl Version {
   /// `"0"` fallback is unreachable in practice; if a caller hand-builds an
   /// invalid one anyway it sorts below the matching release (rule 9) but two
   /// such strings then compare `Equal` while `PartialEq` sees them distinct —
-  /// [`Version::with_prerelease`]'s `debug_assert` guards that.
+  /// the test-only `Version::with_prerelease`'s `debug_assert` guards that.
   fn to_semver(&self) -> semver::Version {
     let pre = match self.prerelease.as_deref() {
       None | Some("") => semver::Prerelease::EMPTY,
@@ -706,10 +708,10 @@ pub fn reported_raw_version_if_differing<'a>(
   raw_banner: Option<&'a str>,
 ) -> Option<&'a str> {
   let raw = raw_banner.and_then(Version::extract_raw)?;
-  if raw != current.to_string() {
-    Some(raw)
-  } else {
+  if raw == current.to_string() {
     None
+  } else {
+    Some(raw)
   }
 }
 
@@ -747,38 +749,6 @@ pub enum ToolStatus {
     /// Exact version `fml doctor --install` pins this tool to.
     pinned: Version,
   },
-}
-
-impl ToolStatus {
-  /// Returns `true` if tool status is [`ToolStatus::Compatible`].
-  #[must_use]
-  pub fn is_compatible(&self) -> bool {
-    matches!(self, ToolStatus::Compatible { .. })
-  }
-
-  /// Returns `true` if tool status is [`ToolStatus::Outdated`].
-  #[must_use]
-  pub fn is_outdated(&self) -> bool {
-    matches!(self, ToolStatus::Outdated { .. })
-  }
-
-  /// Returns `true` if tool status is [`ToolStatus::NotFound`].
-  #[must_use]
-  pub fn is_not_found(&self) -> bool {
-    matches!(self, ToolStatus::NotFound)
-  }
-
-  /// Returns `true` if tool status is [`ToolStatus::UnknownVersion`].
-  #[must_use]
-  pub fn is_unknown_version(&self) -> bool {
-    matches!(self, ToolStatus::UnknownVersion(_))
-  }
-
-  /// Returns `true` if tool status is [`ToolStatus::Stale`].
-  #[must_use]
-  pub fn is_stale(&self) -> bool {
-    matches!(self, ToolStatus::Stale { .. })
-  }
 }
 
 impl fmt::Display for ToolStatus {
@@ -864,5 +834,4 @@ pub fn evaluate_tool_status(
 }
 
 #[cfg(test)]
-#[allow(missing_docs, clippy::missing_errors_doc, clippy::missing_panics_doc)]
 mod tests;

@@ -46,6 +46,7 @@ macro_rules! impl_options_methods {
 #[derive(
   Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize, JsonSchema,
 )]
+#[serde(deny_unknown_fields)]
 pub struct RustOptions {
   /// Rust edition (e.g. `"2021"`).
   #[serde(skip_serializing_if = "Option::is_none")]
@@ -58,6 +59,7 @@ impl_options_methods!(RustOptions, edition);
 #[derive(
   Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize, JsonSchema,
 )]
+#[serde(deny_unknown_fields)]
 pub struct PythonOptions {
   /// Quote style for strings (`"single"` or `"double"`).
   #[serde(skip_serializing_if = "Option::is_none")]
@@ -76,6 +78,7 @@ impl_options_methods!(PythonOptions, quote_style, target_version, ignore_rules);
 #[derive(
   Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize, JsonSchema,
 )]
+#[serde(deny_unknown_fields)]
 pub struct CppOptions {
   /// C++ language standard version (e.g. `"c++20"`).
   #[serde(
@@ -135,6 +138,7 @@ impl_options_methods!(
 #[derive(
   Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize, JsonSchema,
 )]
+#[serde(deny_unknown_fields)]
 pub struct JavaOptions {
   /// Formatting style used by google-java-format: "google" (default,
   /// 2-space indent) or "aosp" (4-space indent).
@@ -148,6 +152,7 @@ impl_options_methods!(JavaOptions, style);
 #[derive(
   Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize, JsonSchema,
 )]
+#[serde(deny_unknown_fields)]
 pub struct JavaScriptOptions {
   /// Preferred string quote style (`"single"` or `"double"`).
   #[serde(skip_serializing_if = "Option::is_none")]
@@ -175,6 +180,7 @@ impl_options_methods!(
 #[derive(
   Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize, JsonSchema,
 )]
+#[serde(deny_unknown_fields)]
 pub struct GoOptions {
   /// Prefix(es) passed to `goimports -local` so first-party imports are
   /// grouped separately from third-party ones (e.g. "example.com/myorg").
@@ -192,6 +198,7 @@ impl_options_methods!(GoOptions, local_prefixes, linters);
 #[derive(
   Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize, JsonSchema,
 )]
+#[serde(deny_unknown_fields)]
 pub struct MarkdownOptions {
   /// Prose wrapping strategy string (`"always"`, `"never"`, or `"preserve"`).
   #[serde(skip_serializing_if = "Option::is_none")]
@@ -211,6 +218,7 @@ impl_options_methods!(MarkdownOptions, prose_wrap, no_inline_html);
 #[derive(
   Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize, JsonSchema,
 )]
+#[serde(deny_unknown_fields)]
 pub struct YamlOptions {
   /// Whether to indent sequence items under mapping keys.
   #[serde(skip_serializing_if = "Option::is_none")]
@@ -229,6 +237,7 @@ impl_options_methods!(YamlOptions, indent_sequence, document_start, truthy);
 #[derive(
   Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize, JsonSchema,
 )]
+#[serde(deny_unknown_fields)]
 pub struct JsonOptions {}
 
 impl_options_methods!(JsonOptions);
@@ -237,6 +246,7 @@ impl_options_methods!(JsonOptions);
 #[derive(
   Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize, JsonSchema,
 )]
+#[serde(deny_unknown_fields)]
 pub struct TomlOptions {
   /// Whether to align entries across lines.
   #[serde(skip_serializing_if = "Option::is_none")]
@@ -260,6 +270,7 @@ impl_options_methods!(
 #[derive(
   Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize, JsonSchema,
 )]
+#[serde(deny_unknown_fields)]
 pub struct TypstOptions {}
 
 impl_options_methods!(TypstOptions);
@@ -274,12 +285,12 @@ impl_options_methods!(TypstOptions);
 #[derive(
   Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize, JsonSchema,
 )]
+#[serde(deny_unknown_fields)]
 pub struct KotlinOptions {}
 
 impl_options_methods!(KotlinOptions);
 
 #[cfg(test)]
-#[allow(missing_docs, clippy::missing_errors_doc, clippy::missing_panics_doc)]
 mod tests {
   use super::*;
 

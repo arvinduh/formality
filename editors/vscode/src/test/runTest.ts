@@ -1,5 +1,6 @@
 import { runTests } from "@vscode/test-electron";
 import * as path from "path";
+import { readEngineVscodeFloor } from "./engineVersion";
 
 async function main() {
   try {
@@ -17,11 +18,18 @@ async function main() {
       "../../test/fixtures/workspace",
     );
 
-    // Download VS Code, unzip it and run the integration test
+    // Pin the integration run to the version declared in `engines.vscode`
+    // (Fixes #251) rather than letting @vscode/test-electron default to
+    // `stable`. Derived from package.json at test time so this can never
+    // silently drift from the manifest's floor — see engineVersion.ts.
+    const version = readEngineVscodeFloor();
+
+    // Download that VS Code version, unzip it and run the integration test
     await runTests({
       extensionDevelopmentPath,
       extensionTestsPath,
       launchArgs: [testWorkspace, "--disable-extensions"],
+      version,
     });
   } catch (err) {
     console.error("Failed to run tests:", err);

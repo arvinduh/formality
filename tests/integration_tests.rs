@@ -1,15 +1,19 @@
+//! End-to-end coverage for the CLI's subcommands (`init`, `sync`, `fmt`,
+//! `lint`, `doctor`, `schema`) and the surface registry, run against
+//! synthetic repositories and the fixtures under `tests/fixtures`.
+
 mod common;
 
 use common::{
-  fmt_cmd, init_cmd, init_git_repo, run_cli, run_cli_no_root, sync_cmd,
-  temp_repo,
+  BinaryOverride, fmt_cmd, init_cmd, init_git_repo, run_cli, run_cli_no_root,
+  sync_cmd, temp_repo,
 };
-use fml::cli::{Commands, MigrateCommands};
-use fml::config::SCHEMA_VERSION;
+use fml::cli::Commands;
+use fml::config::FormalityConfig;
 use fml::errors::ExitStatus;
 use fml::surfaces::{
-  SurfaceRegistry, all_surfaces, detect_surfaces, get_surface_by_name,
-  resolve_canonical_name,
+  SurfaceRegistry, all_surfaces, default_registry, detect_surfaces_smart,
+  get_surface_by_name,
 };
 use std::fs;
 use std::path::PathBuf;
@@ -20,9 +24,9 @@ fn test_surface_registry_and_aliases() {
   assert_eq!(surfaces.len(), 12);
 
   let registry = SurfaceRegistry::default();
-  assert_eq!(registry.len(), 12);
+  let names: Vec<&str> = registry.surfaces().iter().map(|s| s.name()).collect();
   assert_eq!(
-    registry.supported_languages(),
+    names,
     vec![
       "rust",
       "python",
@@ -84,7 +88,10 @@ fn test_surface_registry_and_aliases() {
     let surface = get_surface_by_name(query);
     assert!(surface.is_some(), "Lookup failed for query '{query}'");
     assert_eq!(surface.unwrap().name(), canonical);
-    assert_eq!(resolve_canonical_name(query), Some(canonical));
+    assert_eq!(
+      default_registry().resolve_canonical_name(query),
+      Some(canonical)
+    );
 
     let reg_surface = registry.get_surface_by_name(query);
     assert!(reg_surface.is_some());
@@ -92,71 +99,96 @@ fn test_surface_registry_and_aliases() {
   }
 
   assert!(get_surface_by_name("nonexistent").is_none());
-  assert!(resolve_canonical_name("nonexistent").is_none());
+  assert!(
+    default_registry()
+      .resolve_canonical_name("nonexistent")
+      .is_none()
+  );
 }
 
 #[test]
 fn test_surface_detection_in_fixtures() {
   let manifest_dir = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+  let config = FormalityConfig::with_defaults();
 
   // Rust fixture
-  let rust_detected =
-    detect_surfaces(&manifest_dir.join("tests/fixtures/rust_repo"));
+  let rust_detected = detect_surfaces_smart(
+    &manifest_dir.join("tests/fixtures/rust_repo"),
+    &config,
+  );
   let rust_names: Vec<&str> = rust_detected.iter().map(|s| s.name()).collect();
   assert!(rust_names.contains(&"rust"));
 
   // Python fixture
-  let py_detected =
-    detect_surfaces(&manifest_dir.join("tests/fixtures/python_repo"));
+  let py_detected = detect_surfaces_smart(
+    &manifest_dir.join("tests/fixtures/python_repo"),
+    &config,
+  );
   let py_names: Vec<&str> = py_detected.iter().map(|s| s.name()).collect();
   assert!(py_names.contains(&"python"));
 
   // C++ fixture
-  let cpp_detected =
-    detect_surfaces(&manifest_dir.join("tests/fixtures/cpp_repo"));
+  let cpp_detected = detect_surfaces_smart(
+    &manifest_dir.join("tests/fixtures/cpp_repo"),
+    &config,
+  );
   let cpp_names: Vec<&str> = cpp_detected.iter().map(|s| s.name()).collect();
   assert!(cpp_names.contains(&"cpp"));
 
   // Typst fixture
-  let typ_detected =
-    detect_surfaces(&manifest_dir.join("tests/fixtures/typst_repo"));
+  let typ_detected = detect_surfaces_smart(
+    &manifest_dir.join("tests/fixtures/typst_repo"),
+    &config,
+  );
   let typ_names: Vec<&str> = typ_detected.iter().map(|s| s.name()).collect();
   assert!(typ_names.contains(&"typst"));
 
   // Java fixture
-  let java_detected =
-    detect_surfaces(&manifest_dir.join("tests/fixtures/java_repo"));
+  let java_detected = detect_surfaces_smart(
+    &manifest_dir.join("tests/fixtures/java_repo"),
+    &config,
+  );
   let java_names: Vec<&str> = java_detected.iter().map(|s| s.name()).collect();
   assert!(java_names.contains(&"java"));
 
   // Go fixture
-  let go_detected =
-    detect_surfaces(&manifest_dir.join("tests/fixtures/go_repo"));
+  let go_detected = detect_surfaces_smart(
+    &manifest_dir.join("tests/fixtures/go_repo"),
+    &config,
+  );
   let go_names: Vec<&str> = go_detected.iter().map(|s| s.name()).collect();
   assert!(go_names.contains(&"go"));
 
   // Kotlin fixture
-  let kotlin_detected =
-    detect_surfaces(&manifest_dir.join("tests/fixtures/kotlin_repo"));
+  let kotlin_detected = detect_surfaces_smart(
+    &manifest_dir.join("tests/fixtures/kotlin_repo"),
+    &config,
+  );
   let kotlin_names: Vec<&str> =
     kotlin_detected.iter().map(|s| s.name()).collect();
   assert!(kotlin_names.contains(&"kotlin"));
 
   // JavaScript fixture
-  let js_detected =
-    detect_surfaces(&manifest_dir.join("tests/fixtures/javascript_repo"));
+  let js_detected = detect_surfaces_smart(
+    &manifest_dir.join("tests/fixtures/javascript_repo"),
+    &config,
+  );
   let js_names: Vec<&str> = js_detected.iter().map(|s| s.name()).collect();
   assert!(js_names.contains(&"javascript"));
 
   // TOML fixture
-  let toml_detected =
-    detect_surfaces(&manifest_dir.join("tests/fixtures/toml_repo"));
+  let toml_detected = detect_surfaces_smart(
+    &manifest_dir.join("tests/fixtures/toml_repo"),
+    &config,
+  );
   let toml_names: Vec<&str> = toml_detected.iter().map(|s| s.name()).collect();
   assert!(toml_names.contains(&"toml"));
 
   // Polyglot fixture
-  let poly_detected =
-    detect_surfaces(&manifest_dir.join("tests/fixtures/polyglot_repo"));
+  let poly_detected = detect_surfaces_smart(
+    &manifest_dir.join("tests/fixtures/polyglot_repo"),
+    &config,
+  );
   let poly_names: Vec<&str> = poly_detected.iter().map(|s| s.name()).collect();
   assert!(poly_names.contains(&"rust"));
   assert!(poly_names.contains(&"python"));
@@ -178,88 +210,20 @@ fn test_init_command() {
   assert!(config_file.is_file());
 
   let content = fs::read_to_string(&config_file).unwrap();
+  assert!(content.contains(
+    "#:schema https://github.com/arvinduh/formality/releases/latest/download/formality.schema.json"
+  ));
   assert!(content.contains("[global]"));
   // auto-detect mode: no hardcoded languages list
   assert!(!content.contains("languages ="));
   assert!(content.contains("indent_size = 2"));
 
-  // 2. Test --hidden creates .formality.toml with --force
+  // 2. Running init again without --force refuses to overwrite existing config
+  assert_eq!(run_cli(root, init_cmd(false, false)), 1);
+
+  // 3. Test --hidden creates .formality.toml with --force
   assert_eq!(run_cli(root, init_cmd(true, true)), 0);
   assert!(root.join(".formality.toml").is_file());
-}
-
-#[test]
-fn test_init_applies_schema_pin_when_config_exists_stale() {
-  let temp = temp_repo(&[(
-    "formality.toml",
-    "#:schema https://github.com/arvinduh/formality/releases/download/s0.9/formality.schema.json\n[global]\nindent_size = 4\n",
-  )]);
-  let root = temp.path();
-
-  // Run fml init without --force: updates schema pin in existing config
-  assert_eq!(run_cli(root, init_cmd(false, false)), 0);
-
-  let content = fs::read_to_string(root.join("formality.toml")).unwrap();
-  assert!(
-    content.contains(&format!("s{SCHEMA_VERSION}/formality.schema.json"))
-  );
-  assert!(content.contains("[global]\nindent_size = 4"));
-
-  // Idempotent: running a second time does not modify file and succeeds cleanly
-  assert_eq!(run_cli(root, init_cmd(false, false)), 0);
-  let content_second = fs::read_to_string(root.join("formality.toml")).unwrap();
-  assert_eq!(content, content_second);
-}
-
-#[test]
-fn test_init_inserts_schema_pin_when_config_missing_schema() {
-  let temp = temp_repo(&[("formality.toml", "[global]\nindent_size = 4\n")]);
-  let root = temp.path();
-
-  // Run fml init without --force: inserts schema pin at top of existing config
-  assert_eq!(run_cli(root, init_cmd(false, false)), 0);
-
-  let content = fs::read_to_string(root.join("formality.toml")).unwrap();
-  assert!(content.starts_with("#:schema "));
-  assert!(
-    content.contains(&format!("s{SCHEMA_VERSION}/formality.schema.json"))
-  );
-  assert!(content.contains("[global]\nindent_size = 4"));
-
-  // Idempotent: running a second time does not modify file and succeeds cleanly
-  assert_eq!(run_cli(root, init_cmd(false, false)), 0);
-  let content_second = fs::read_to_string(root.join("formality.toml")).unwrap();
-  assert_eq!(content, content_second);
-}
-
-#[test]
-fn test_deprecated_migrate_schema_prints_notice_and_succeeds() {
-  let temp = temp_repo(&[(
-    "formality.toml",
-    "#:schema https://github.com/arvinduh/formality/releases/download/s0.9/formality.schema.json\n[global]\nindent_size = 2\n",
-  )]);
-  let out = std::process::Command::new(env!("CARGO_BIN_EXE_fml"))
-    .args([
-      "migrate",
-      "schema",
-      "--root",
-      &temp.path().to_string_lossy(),
-    ])
-    .env("NO_COLOR", "1")
-    .output()
-    .expect("failed to run fml");
-
-  assert!(out.status.success());
-  let stderr = String::from_utf8_lossy(&out.stderr);
-  assert!(
-    stderr.contains("`fml migrate schema` is deprecated and will be removed in v0.4.0. Use `fml init` instead — it initializes or updates the schema pin in formality.toml"),
-    "stderr should contain deprecation notice, got:\n{stderr}"
-  );
-
-  let content = fs::read_to_string(temp.path().join("formality.toml")).unwrap();
-  assert!(
-    content.contains(&format!("s{SCHEMA_VERSION}/formality.schema.json"))
-  );
 }
 
 #[test]
@@ -333,53 +297,6 @@ fn test_sync_config_workflow() {
 }
 
 #[test]
-fn test_list_surfaces_command() {
-  let _code = run_cli_no_root(Commands::ListSurfaces);
-}
-
-#[test]
-fn test_deprecated_list_surfaces_and_install_commands_emit_deprecation_notice()
-{
-  use std::process::Command;
-
-  let out_list_surfaces = Command::new(env!("CARGO_BIN_EXE_fml"))
-    .arg("list-surfaces")
-    .output()
-    .expect("failed to run fml list-surfaces");
-  let stderr_list = String::from_utf8_lossy(&out_list_surfaces.stderr);
-  assert!(
-    stderr_list.contains(
-      "`fml list-surfaces` is deprecated and will be removed in v0.4.0. Use `fml doctor` instead."
-    ),
-    "expected deprecation warning in stderr, got: {stderr_list}"
-  );
-
-  let out_surfaces = Command::new(env!("CARGO_BIN_EXE_fml"))
-    .arg("surfaces")
-    .output()
-    .expect("failed to run fml surfaces");
-  let stderr_surfaces = String::from_utf8_lossy(&out_surfaces.stderr);
-  assert!(
-    stderr_surfaces.contains(
-      "`fml surfaces` is deprecated and will be removed in v0.4.0. Use `fml doctor` instead."
-    ),
-    "expected deprecation warning in stderr, got: {stderr_surfaces}"
-  );
-
-  let out_install = Command::new(env!("CARGO_BIN_EXE_fml"))
-    .arg("install")
-    .output()
-    .expect("failed to run fml install");
-  let stderr_install = String::from_utf8_lossy(&out_install.stderr);
-  assert!(
-    stderr_install.contains(
-      "`fml install` is deprecated and will be removed in v0.4.0. Use `fml doctor --install` instead."
-    ),
-    "expected deprecation warning in stderr, got: {stderr_install}"
-  );
-}
-
-#[test]
 fn test_doctor_command() {
   let _code = run_cli_no_root(Commands::Doctor {
     all: false,
@@ -430,66 +347,10 @@ fn test_schema_command() {
     0
   );
   assert!(
-    std::fs::read_to_string(temp.path())
+    fs::read_to_string(temp.path())
       .unwrap()
       .contains("FormalityConfig")
   );
-}
-
-#[test]
-fn test_migrate_schema_command() {
-  let temp = temp_repo(&[]);
-  let root = temp.path();
-
-  // 1. No config present -> error.
-  assert_eq!(
-    run_cli(
-      root,
-      Commands::Migrate {
-        command: MigrateCommands::Schema,
-      }
-    ),
-    2
-  );
-
-  // 2. Stale #:schema line gets rewritten to the current version.
-  fs::write(
-    root.join("formality.toml"),
-    "#:schema \
-     https://github.com/arvinduh/formality/releases/download/s0.9/formality.schema.json\n[global]\nindent_size \
-     = 2\n",
-  )
-  .unwrap();
-
-  assert_eq!(
-    run_cli(
-      root,
-      Commands::Migrate {
-        command: MigrateCommands::Schema,
-      }
-    ),
-    0
-  );
-
-  let content = fs::read_to_string(root.join("formality.toml")).unwrap();
-  assert!(
-    content
-      .contains(&format!("s{}/formality.schema.json", fml::SCHEMA_VERSION))
-  );
-  assert!(content.contains("[global]\nindent_size = 2\n"));
-
-  // 3. Already up to date -> no-op, file unchanged.
-  assert_eq!(
-    run_cli(
-      root,
-      Commands::Migrate {
-        command: MigrateCommands::Schema,
-      }
-    ),
-    0
-  );
-  let content_after = fs::read_to_string(root.join("formality.toml")).unwrap();
-  assert_eq!(content, content_after);
 }
 
 #[test]
@@ -533,7 +394,7 @@ fn test_targeted_file_and_dir_formatting() {
     staged: false,
     changed: false,
     lang: vec!["rust".to_string()],
-    install: false,
+    allow_missing: false,
     paths: vec![target_file],
   };
   assert_eq!(run_cli(root, fmt_single), 0);
@@ -544,7 +405,7 @@ fn test_targeted_file_and_dir_formatting() {
     staged: false,
     changed: false,
     lang: vec!["rust".to_string()],
-    install: false,
+    allow_missing: false,
     paths: vec![sub],
   };
   assert_eq!(run_cli(root, fmt_dir), 0);
@@ -559,13 +420,13 @@ fn test_ignore_languages_filtering() {
     [global]
     ignore_languages = ["markdown", "yaml", "json"]
   "#;
-  let config = fml::config::FormalityConfig::parse_str(
+  let config = FormalityConfig::parse_str(
     config_str,
     std::path::Path::new("formality.toml"),
   )
   .unwrap();
 
-  let detected = fml::surfaces::detect_surfaces_smart(&poly_root, &config);
+  let detected = detect_surfaces_smart(&poly_root, &config);
   let names: Vec<&str> = detected.iter().map(|s| s.name()).collect();
 
   assert!(names.contains(&"rust"));
@@ -581,10 +442,10 @@ fn test_autodetect_all_workspace_surfaces_by_default() {
   let poly_root = manifest_dir.join("tests/fixtures/polyglot_repo");
 
   // Default config without explicit languages list — auto-detect mode
-  let config = fml::config::FormalityConfig::with_defaults();
+  let config = FormalityConfig::with_defaults();
   assert_eq!(config.resolve_global().languages, None);
 
-  let detected = fml::surfaces::detect_surfaces_smart(&poly_root, &config);
+  let detected = detect_surfaces_smart(&poly_root, &config);
   let names: Vec<&str> = detected.iter().map(|s| s.name()).collect();
 
   assert!(names.contains(&"rust"));
@@ -671,21 +532,21 @@ fn test_fmt_rust_import_reordering_lifecycle() {
   assert_eq!(run_cli(root, fmt_cmd(true, &["rust"])), 0);
 }
 
+// `--install` was removed from `fmt`/`lint`/`fix` in v0.3.0 (#282): it is
+// `fml doctor`'s one concern now, so this test (previously
+// `test_fmt_fix_lint_doctor_install_flag_paths`) exercises only `doctor
+// --install` here. `fmt`/`lint`/`fix`'s hidden `install` field is covered by
+// `src/cli.rs`'s `test_install_removed_from_fmt_lint_fix_names_doctor_install`
+// (parses, but is rejected by `Cli::validate()` before it ever reaches
+// dispatch).
 #[test]
-fn test_fmt_fix_lint_doctor_install_flag_paths() {
+fn test_doctor_install_flag_paths() {
   let temp = temp_repo(&[
     (
       "Cargo.toml",
       "[package]\nname = \"install_flag_test\"\nversion = \"0.1.0\"\nedition \
        = \"2024\"\n",
     ),
-    // 2-space indent: matches formality's own default `indent_size` (no
-    // formality.toml present here, so the built-in default applies), not
-    // rustfmt's own 4-space default. Before #151, plain `fml fmt --check`
-    // silently checked against rustfmt's bare default instead of formality's
-    // resolved config, so a 4-space fixture passed by coincidence; now that
-    // the resolved config is actually applied inline, the fixture has to
-    // already match it for `--check` to report clean.
     (
       "src/main.rs",
       "fn main() {\n  println!(\"Hello, world!\");\n}\n",
@@ -693,7 +554,6 @@ fn test_fmt_fix_lint_doctor_install_flag_paths() {
   ]);
   let root = temp.path();
 
-  // Test doctor with install: true
   let doc_code = run_cli(
     root,
     Commands::Doctor {
@@ -702,40 +562,6 @@ fn test_fmt_fix_lint_doctor_install_flag_paths() {
     },
   );
   assert!(doc_code == 0 || doc_code == 2);
-
-  // Test fmt with install: true
-  let fmt_args = Commands::Fmt {
-    check: true,
-    staged: false,
-    changed: false,
-    lang: vec!["rust".to_string()],
-    install: true,
-    paths: vec![],
-  };
-  assert_eq!(run_cli(root, fmt_args), 0);
-
-  // Test fix with install: true
-  let fix_args = Commands::Fix {
-    check: false,
-    staged: false,
-    changed: false,
-    lang: vec!["rust".to_string()],
-    install: true,
-    paths: vec![],
-  };
-  assert_eq!(run_cli(root, fix_args), 0);
-
-  // Test lint with install: true
-  let lint_args = Commands::Lint {
-    check: false,
-    fix: false,
-    staged: false,
-    changed: false,
-    lang: vec!["rust".to_string()],
-    install: true,
-    paths: vec![],
-  };
-  assert_eq!(run_cli(root, lint_args), 0);
 }
 
 #[test]
@@ -776,7 +602,7 @@ fn test_fmt_staged_and_changed_with_explicit_paths_filtering() {
     staged: true,
     changed: false,
     lang: vec!["toml".to_string()],
-    install: false,
+    allow_missing: false,
     paths: vec![file_a.clone()],
   };
   assert_eq!(run_cli(root, fmt_args), 0);
@@ -792,7 +618,10 @@ fn test_fmt_staged_and_changed_with_explicit_paths_filtering() {
 }
 
 #[test]
-fn test_table_command_json_valid_and_invalid_syntax() {
+fn test_table_library_api_json_valid_and_invalid_syntax() {
+  // The `fml table` CLI command was removed in v0.3.0 (#255); this exercises
+  // its replacement, the `fml::ui::table` library API, directly.
+
   // 1. Valid table JSON payload
   let mut table = fml::ui::table::Table::new(vec![
     fml::ui::table::Column::new("Name"),
@@ -804,44 +633,13 @@ fn test_table_command_json_valid_and_invalid_syntax() {
   ]));
   let valid_table_json = serde_json::to_string(&table).unwrap();
 
-  assert_eq!(
-    run_cli_no_root(Commands::Table {
-      json: Some(valid_table_json),
-    }),
-    0
-  );
+  assert!(fml::ui::table::render_json(&valid_table_json).is_ok());
 
   // 2. Empty JSON or missing structure
-  assert_ne!(
-    run_cli_no_root(Commands::Table {
-      json: Some("[]".to_string()),
-    }),
-    0
-  );
+  assert!(fml::ui::table::render_json("[]").is_err());
 
   // 3. Invalid JSON syntax
-  assert_ne!(
-    run_cli_no_root(Commands::Table {
-      json: Some("{ not valid json }".to_string()),
-    }),
-    0
-  );
-}
-
-#[test]
-fn test_install_command_active_surfaces() {
-  let temp = temp_repo(&[
-    (
-      "Cargo.toml",
-      "[package]\nname = \"install_test\"\nversion = \"0.1.0\"\nedition = \
-       \"2024\"\n",
-    ),
-    ("src/main.rs", "fn main() {}\n"),
-  ]);
-  let root = temp.path();
-
-  // Install for active surfaces (rust is already installed or handled gracefully)
-  assert_eq!(run_cli(root, Commands::Install { all: false }), 0);
+  assert!(fml::ui::table::render_json("{ not valid json }").is_err());
 }
 
 #[test]
@@ -853,7 +651,8 @@ fn test_relative_root_preserves_ancestor_manifest_walks_and_display() {
     ),
     (
       "formality.toml",
-      "#:schema https://formality.dev/s1.1/formality.schema.json\n\
+      "#:schema https://github.com/arvinduh/formality/releases/latest/download/formality.schema.json\n\
+       [global]\n\
        languages = [\"rust\"]\n",
     ),
     (
@@ -936,15 +735,6 @@ fn test_relative_root_preserves_ancestor_manifest_walks_and_display() {
 
 #[test]
 fn test_missing_tool_exit_code_parity_staged_vs_unstaged() {
-  struct BinaryCacheResetGuard(&'static [&'static str]);
-  impl Drop for BinaryCacheResetGuard {
-    fn drop(&mut self) {
-      for binary in self.0 {
-        fml::surfaces::forget_binary(binary);
-      }
-    }
-  }
-
   let temp = temp_repo(&[("README.md", "# Test Project\n")]);
   let root = temp.path();
 
@@ -957,45 +747,41 @@ fn test_missing_tool_exit_code_parity_staged_vs_unstaged() {
     .current_dir(root)
     .output();
 
-  let _guard =
-    BinaryCacheResetGuard(&["markdownlint-cli2", "markdownlint", "prettier"]);
-
   // Simulate missing markdownlint tools
-  fml::surfaces::set_binary_path_for_test("markdownlint-cli2", None);
-  fml::surfaces::set_binary_path_for_test("markdownlint", None);
+  let mut cache = BinaryOverride::lock();
+  cache.hide("markdownlint-cli2");
+  cache.hide("markdownlint");
 
   // 1. Lint staged vs unstaged parity with missing tool
   let lint_staged = Commands::Lint {
-    fix: false,
     check: false,
     staged: true,
     changed: false,
     lang: vec!["markdown".to_string()],
-    install: false,
+    allow_missing: false,
     paths: vec![],
   };
   let lint_unstaged = Commands::Lint {
-    fix: false,
     check: false,
     staged: false,
     changed: false,
     lang: vec!["markdown".to_string()],
-    install: false,
+    allow_missing: false,
     paths: vec![],
   };
 
-  let lint_staged_status = run_cli(root, lint_staged);
-  let lint_unstaged_status = run_cli(root, lint_unstaged);
+  let lint_staged_status = cache.run_cli(root, lint_staged);
+  let lint_unstaged_status = cache.run_cli(root, lint_unstaged);
 
   assert_eq!(
     lint_staged_status,
-    ExitStatus::Clean,
-    "fml lint --staged must exit 0 on missing tool"
+    ExitStatus::Violations,
+    "fml lint --staged must not exit clean on missing tool (Fixes #252)"
   );
   assert_eq!(
     lint_unstaged_status,
-    ExitStatus::Clean,
-    "fml lint must exit 0 on missing tool"
+    ExitStatus::Violations,
+    "fml lint must not exit clean on missing tool (Fixes #252)"
   );
   assert_eq!(
     lint_staged_status, lint_unstaged_status,
@@ -1003,14 +789,14 @@ fn test_missing_tool_exit_code_parity_staged_vs_unstaged() {
   );
 
   // 2. Fmt staged vs unstaged parity with missing tool (prettier)
-  fml::surfaces::set_binary_path_for_test("prettier", None);
+  cache.hide("prettier");
 
   let fmt_staged = Commands::Fmt {
     check: false,
     staged: true,
     changed: false,
     lang: vec!["markdown".to_string()],
-    install: false,
+    allow_missing: false,
     paths: vec![],
   };
   let fmt_unstaged = Commands::Fmt {
@@ -1018,22 +804,22 @@ fn test_missing_tool_exit_code_parity_staged_vs_unstaged() {
     staged: false,
     changed: false,
     lang: vec!["markdown".to_string()],
-    install: false,
+    allow_missing: false,
     paths: vec![],
   };
 
-  let fmt_staged_status = run_cli(root, fmt_staged);
-  let fmt_unstaged_status = run_cli(root, fmt_unstaged);
+  let fmt_staged_status = cache.run_cli(root, fmt_staged);
+  let fmt_unstaged_status = cache.run_cli(root, fmt_unstaged);
 
   assert_eq!(
     fmt_staged_status,
-    ExitStatus::Clean,
-    "fml fmt --staged must exit 0 on missing tool"
+    ExitStatus::Violations,
+    "fml fmt --staged must not exit clean on missing tool (Fixes #252)"
   );
   assert_eq!(
     fmt_unstaged_status,
-    ExitStatus::Clean,
-    "fml fmt must exit 0 on missing tool"
+    ExitStatus::Violations,
+    "fml fmt must not exit clean on missing tool (Fixes #252)"
   );
   assert_eq!(
     fmt_staged_status, fmt_unstaged_status,
