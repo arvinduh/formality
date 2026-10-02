@@ -87,6 +87,10 @@ impl FormalityLsp {
   /// An invalid config is reported once (see [`Self::load_config`]) and the
   /// built-in defaults are cached in its place, so later requests reuse them
   /// instead of re-reporting the same error.
+  ///
+  /// The load branch only runs before `initialize`, which always fills the
+  /// cache. tower-lsp rejects requests and notifications that arrive before
+  /// `initialize`, so in practice only tests reach it.
   pub async fn get_or_load_config(
     &self,
     root: Option<&Path>,
