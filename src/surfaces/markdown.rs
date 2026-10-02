@@ -988,17 +988,21 @@ fn extract_html_block_ranges(src: &str) -> Vec<(usize, usize)> {
           let mut skip = std::mem::take(&mut ignore_next)
             || ignore_range
             || (tag == Tag::HtmlBlock && is_comment_only(block));
-          if tag == Tag::HtmlBlock
-            && let Some((directive, rest)) = leading_comment(block)
-            && directive.starts_with("prettier-ignore")
+          // Without blank lines a directive shares its neighbour's block, so
+          // every comment counts, not just a leading one; a block holding a
+          // directive is never formatted itself.
+          let mut rest = if tag == Tag::HtmlBlock { block } else { "" };
+          while let Some(open) = rest.find("<!--")
+            && let Some((directive, after)) = leading_comment(&rest[open..])
           {
             match directive {
-              "prettier-ignore" => ignore_next = rest.trim().is_empty(),
+              "prettier-ignore" => ignore_next = after.trim().is_empty(),
               "prettier-ignore-start" => ignore_range = true,
               "prettier-ignore-end" => ignore_range = false,
               _ => {}
             }
-            skip = true;
+            skip |= directive.starts_with("prettier-ignore");
+            rest = after;
           }
           if tag == Tag::HtmlBlock && !skip {
             next = Some(range.start);
@@ -2897,6 +2901,19 @@ README.md:7 error MD025/single-title/single-h1 Multiple top-level headings";
          <!-- prettier-ignore-end -->\n\n<p>c</p>\n"
       ),
       vec!["<p>c</p>\n"]
+    );
+    // With no blank lines the directives share the table's block; the end
+    // comment on its last line must still close the range.
+    assert_eq!(
+      blocks(
+        "<!-- prettier-ignore-start -->\n<table><td>a</td></table>\n\
+         <!-- prettier-ignore-end -->\n\n<p>c</p>\n"
+      ),
+      vec!["<p>c</p>\n"]
+    );
+    assert_eq!(
+      blocks("<p>a</p>\n<!-- prettier-ignore-start -->\n\n<p>b</p>\n"),
+      [""; 0]
     );
   }
 
