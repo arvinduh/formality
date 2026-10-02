@@ -1255,6 +1255,19 @@ fn test_extra_args_flat_list_names_table_form() {
 }
 
 #[test]
+fn test_extra_args_flat_list_in_unknown_section_is_a_type_error() {
+  // An unknown `[lang.<name>]` section has no tool keys to suggest, so a flat
+  // list there gets the plain type error any mistyped key in it gets.
+  let toml = "[lang.cobol]\nextra_args = [\"x\"]\n";
+  let err =
+    FormalityConfig::parse_str(toml, Path::new("formality.toml")).unwrap_err();
+  assert!(
+    matches!(err, ConfigError::InvalidValue { .. }),
+    "expected InvalidValue, got: {err}"
+  );
+}
+
+#[test]
 fn test_extra_args_unknown_tool_names_valid_keys() {
   let toml = "[lang.python.extra_args]\nruff-check = []\nruff = [\"-q\"]\n";
   let err =

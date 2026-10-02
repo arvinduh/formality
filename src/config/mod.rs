@@ -521,7 +521,8 @@ pub enum ConfigError {
     lang: String,
     /// One-based line of the `extra_args` key.
     line: usize,
-    /// The tool keys the surface accepts; empty for an unknown surface.
+    /// The tool keys the surface accepts; never empty, as every surface
+    /// declares at least one (`test_every_surface_declares_extra_args_tools`).
     tools: &'static [&'static str],
   },
   /// An `extra_args` key naming no tool its surface runs.
@@ -595,21 +596,16 @@ impl std::fmt::Display for ConfigError {
         lang,
         line,
         tools,
-      } => {
-        write!(
-          f,
-          "`lang.{lang}.extra_args` in {}:{line} is a list, but extra_args \
-           takes one list per tool: write it as a table, e.g. \
-           `[lang.{lang}.extra_args]` then `{} = [\"--flag\"]`.",
-          path.display(),
-          tools.first().unwrap_or(&"<tool>")
-        )?;
-        if tools.is_empty() {
-          Ok(())
-        } else {
-          write!(f, " Tools for `{lang}`: `{}`.", tools.join("`, `"))
-        }
-      }
+      } => write!(
+        f,
+        "`lang.{lang}.extra_args` in {}:{line} is a list, but extra_args \
+         takes one list per tool: write it as a table, e.g. \
+         `[lang.{lang}.extra_args]` then `{} = [\"--flag\"]`. Tools for \
+         `{lang}`: `{}`.",
+        path.display(),
+        tools[0],
+        tools.join("`, `")
+      ),
       ConfigError::UnknownTool {
         path,
         lang,

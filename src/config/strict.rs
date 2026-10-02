@@ -97,20 +97,22 @@ fn check_extra_args(
       continue;
     };
     let lang: &str = name.get_ref();
-    let tools = registry
-      .get_surface_by_name(lang)
-      .map(|s| s.extra_args_tools());
+    // An unknown section only gets the unrecognized-section warning,
+    // whatever it holds.
+    let Some(surface) = registry.get_surface_by_name(lang) else {
+      continue;
+    };
+    let tools = surface.extra_args_tools();
     match value.get_ref() {
       DeValue::Array(_) => {
         return Err(ConfigError::FlatExtraArgs {
           path: path.to_path_buf(),
           lang: lang.to_owned(),
           line: line_at(content, key.span().start),
-          tools: tools.unwrap_or_default(),
+          tools,
         });
       }
       DeValue::Table(by_tool) => {
-        let Some(tools) = tools else { continue };
         if let Some(tool) = by_tool
           .keys()
           .find(|tool| !tools.contains(&tool.get_ref().as_ref()))
