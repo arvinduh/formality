@@ -26,7 +26,7 @@
 use colored::Colorize;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
-use tower_lsp::jsonrpc::Result as LspResult;
+use tower_lsp::jsonrpc::{Request, Response, Result as LspResult};
 use tower_lsp::lsp_types::{
   Diagnostic, DiagnosticSeverity, DidChangeWatchedFilesParams,
   DidOpenTextDocumentParams, DidSaveTextDocumentParams,
@@ -35,9 +35,10 @@ use tower_lsp::lsp_types::{
   ServerInfo, TextDocumentIdentifier, TextDocumentSyncCapability,
   TextDocumentSyncKind, TextEdit,
 };
-use tower_lsp::{Client, LanguageServer, LspService, Server};
+use tower_lsp::{Client, ExitedError, LanguageServer, LspService, Server};
 
 use crate::config::FormalityConfig;
+use crate::errors::ExitStatus;
 
 /// Server identity reported in `initialize`'s `ServerInfo`.
 const SERVER_NAME: &str = "formality";
@@ -426,14 +427,84 @@ pub fn compute_formatting_edits(before: &str, after: &str) -> Vec<TextEdit> {
 // Entry point called from lib.rs / Commands::Lsp
 // ---------------------------------------------------------------------------
 
+/// Wraps the [`LspService`] to report the `exit` notification as it arrives.
+///
+/// tower-lsp handles `exit` in its own layer and `Server::serve` returns only
+/// at stdin EOF, so a client that keeps stdin open would otherwise keep the
+/// process alive. This wrapper sees every request first and fires `exited`.
+struct ExitSignal {
+  service: LspService<FormalityLsp>,
+  /// Fired once, on the first `exit`; dropped with `serve` at stdin EOF.
+  exited: Option<tokio::sync::oneshot::Sender<ExitStatus>>,
+  /// Set when a `shutdown` request is received, not when it is answered: an
+  /// `exit` read in the same poll cancels the pending `shutdown` handler.
+  shut_down: bool,
+}
+
+impl tower_service::Service<Request> for ExitSignal {
+  type Response = Option<Response>;
+  type Error = ExitedError;
+  type Future =
+    <LspService<FormalityLsp> as tower_service::Service<Request>>::Future;
+
+  fn poll_ready(
+    &mut self,
+    cx: &mut std::task::Context<'_>,
+  ) -> std::task::Poll<Result<(), ExitedError>> {
+    tower_service::Service::poll_ready(&mut self.service, cx)
+  }
+
+  fn call(&mut self, request: Request) -> Self::Future {
+    let is_exit = request.method() == "exit";
+    self.shut_down |= request.method() == "shutdown";
+    let response = tower_service::Service::call(&mut self.service, request);
+    if is_exit && let Some(exited) = self.exited.take() {
+      // The receiver lives until the process exits.
+      let _ = exited.send(exit_status(self.shut_down));
+    }
+    response
+  }
+}
+
+/// Maps the LSP spec's exit-code rule onto [`ExitStatus`].
+///
+/// The spec: "The server should exit with `success` code 0 if the shutdown
+/// request has been received before; otherwise with `error` code 1." Code 1
+/// is [`ExitStatus::Violations`]; here it means `exit` came without
+/// `shutdown`, not lint violations.
+fn exit_status(shut_down: bool) -> ExitStatus {
+  if shut_down {
+    ExitStatus::Clean
+  } else {
+    ExitStatus::Violations
+  }
+}
+
+/// Maps how the `serve` task ended, absent an `exit`, onto [`ExitStatus`].
+///
+/// `Ok` is stdin EOF, a normal stop. A [`tokio::task::JoinError`] is a
+/// handler panic (the panic hook has already printed it), which must not read
+/// as a clean exit to the client.
+fn serve_status(joined: &Result<(), tokio::task::JoinError>) -> ExitStatus {
+  match joined {
+    Ok(()) => ExitStatus::Clean,
+    Err(_) => ExitStatus::Error,
+  }
+}
+
 /// Start the formality LSP server on stdio.
 ///
-/// Blocks until the client disconnects. Intended to be called from `fml lsp`.
+/// Blocks until the client sends `exit` or closes stdin. Intended to be called
+/// from `fml lsp`.
+///
+/// Returns the exit status the LSP spec prescribes for `exit` (see
+/// [`exit_status`]), [`ExitStatus::Clean`] when stdin closes first, or
+/// [`ExitStatus::Error`] when a handler panics (see [`serve_status`]).
 ///
 /// # Panics
 ///
 /// Panics if the underlying Tokio runtime fails to initialize.
-pub fn run_lsp_server(root: Option<&Path>) {
+pub fn run_lsp_server(root: Option<&Path>) -> ExitStatus {
   // Print a startup banner to stderr (not stdout — that's the LSP channel).
   eprintln!(
     "{} LSP server starting (stdio transport, v{SERVER_VERSION})",
@@ -444,13 +515,29 @@ pub fn run_lsp_server(root: Option<&Path>) {
   }
 
   let rt = tokio::runtime::Runtime::new().expect("tokio runtime");
-  rt.block_on(async {
-    let stdin = tokio::io::stdin();
-    let stdout = tokio::io::stdout();
-
-    let (service, socket) = LspService::new(FormalityLsp::new);
-    Server::new(stdin, stdout, socket).serve(service).await;
-  });
+  let (service, socket) = LspService::new(FormalityLsp::new);
+  let (exited_tx, exited_rx) = tokio::sync::oneshot::channel();
+  let service = ExitSignal {
+    service,
+    exited: Some(exited_tx),
+    shut_down: false,
+  };
+  let server = Server::new(tokio::io::stdin(), tokio::io::stdout(), socket);
+  // `serve` owns the sender, so the receiver resolves on `exit` or, when
+  // `serve` returns at stdin EOF, on the dropped sender.
+  let serve = rt.spawn(server.serve(service));
+  let status = match rt.block_on(exited_rx) {
+    Ok(status) => status,
+    // `serve` dropped the sender, so it has already finished or unwound and
+    // this second wait returns at once. Never `resume_unwind` a panic here:
+    // dropping the runtime while unwinding would block on the stdin read.
+    Err(_) => serve_status(&rt.block_on(serve)),
+  };
+  // After `exit`, `serve` is still parked on a stdin read on Tokio's blocking
+  // pool, which dropping the runtime would wait for. Shutting down in the
+  // background abandons it; the process exit that follows ends the thread.
+  rt.shutdown_background();
+  status
 }
 
 #[cfg(test)]
@@ -985,6 +1072,21 @@ mod tests {
       !prod_code.contains("Command::new"),
       "src/commands/lsp.rs production code must not spawn child processes"
     );
+  }
+
+  #[test]
+  fn test_serve_status_normal_stop_is_clean() {
+    assert_eq!(serve_status(&Ok(())), ExitStatus::Clean);
+  }
+
+  #[test]
+  fn test_serve_status_handler_panic_is_error() {
+    let rt = tokio::runtime::Builder::new_current_thread()
+      .build()
+      .unwrap();
+    let joined = rt.block_on(rt.spawn(async { panic!("handler panic") }));
+    assert!(joined.as_ref().is_err_and(tokio::task::JoinError::is_panic));
+    assert_eq!(serve_status(&joined), ExitStatus::Error);
   }
 
   /// Drains the `window/showMessage` notifications the server has sent so far.
