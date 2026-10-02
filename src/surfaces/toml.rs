@@ -116,7 +116,7 @@ pub fn build_taplo_lsp_lint_args(
     "never".to_string(),
   ];
   for f in files {
-    args.push(f.to_string_lossy().to_string());
+    args.push(taplo_path_arg(&f.to_string_lossy(), cfg!(windows)));
   }
   args.extend(extra_args.iter().cloned());
   args
@@ -494,6 +494,18 @@ mod tests {
         "a.toml".to_string(),
       ]
     );
+  }
+
+  #[test]
+  fn test_build_taplo_lsp_lint_args_spells_path_as_taplo_pattern() {
+    let files = vec![std::path::PathBuf::from(r"C:\w\a[b]\c.toml")];
+    let args = build_taplo_lsp_lint_args(&files, &[]);
+    let expected = if cfg!(windows) {
+      "C:/w/a[[]b[]]/c.toml"
+    } else {
+      r"C:\w\a[[]b[]]\c.toml"
+    };
+    assert_eq!(args[3], expected);
   }
 
   #[test]
