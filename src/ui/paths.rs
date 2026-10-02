@@ -42,7 +42,7 @@ fn absolutize(p: &path::Path) -> path::PathBuf {
 /// slash, and all-backslash — each with a trailing `/` and a trailing `\`.
 /// Longest first so the most specific spelling wins.
 ///
-/// Deliberately does **not** route through [`absolutize`] / [`Path`] joins:
+/// Deliberately does **not** route through [`absolutize`] / [`path::Path`] joins:
 /// on Linux a `C:\…` or `C:/…` root has no `Path` root, so joining it onto the
 /// cwd would yield `/cwd/C:/…` and match nothing. `looks_absolute` classifies
 /// it host-independently instead; only a genuinely relative root is anchored to
@@ -108,11 +108,11 @@ fn is_path_char(c: char) -> bool {
 
 /// The byte position immediately after a complete, terminated ANSI escape
 /// sequence ending exactly at `end`, or `None` if no such sequence abuts
-/// `end`. Recognizes the three shapes [`strip_ansi_escapes`] does — CSI
+/// `end`. Recognizes the three shapes [`table::strip_ansi_escapes`] does — CSI
 /// (`\x1b[` params/intermediates `final`, final in `0x40..=0x7e`), OSC
 /// (`\x1b]` payload terminated by BEL `\x07` or ST `\x1b` + `\`), and a bare
 /// two-byte `ESC final` (`final` in `0x30..=0x7e`) — but, unlike
-/// [`strip_ansi_escapes`], never looks *through* an OSC payload: it either
+/// [`table::strip_ansi_escapes`], never looks *through* an OSC payload: it either
 /// recognizes a complete sequence terminating right at `end`, or treats the
 /// byte at `end - 1` as ordinary text. All recognized bytes (`ESC`, `[`,
 /// `]`, `\`, `BEL`, and the CSI/simple-ESC final-byte ranges) are ASCII, so
@@ -188,7 +188,7 @@ fn simple_esc_start(b: &[u8], end: usize) -> Option<usize> {
 /// The byte length of a complete, terminated ANSI escape sequence starting
 /// exactly at the beginning of `b`, or `None` if no such sequence begins at
 /// index 0. Recognizes the same three shapes [`escape_seq_start`] and
-/// [`strip_ansi_escapes`] do — CSI (`\x1b[` params/intermediates `final`,
+/// [`table::strip_ansi_escapes`] do — CSI (`\x1b[` params/intermediates `final`,
 /// final in `0x40..=0x7e`), OSC (`\x1b]` payload terminated by BEL `\x07` or
 /// ST `\x1b` + `\`), and a bare two-byte `ESC final` (`final` in
 /// `0x30..=0x7e`) or ESC intermediate (`0x20..=0x2f`* `final`).
@@ -344,7 +344,7 @@ fn strip_leading_prefix(line: &str, prefix: &str) -> Option<String> {
 /// as one (`m` is alphanumeric) if the escape sequence weren't recognized
 /// and skipped — that was #182: an eligible colored line silently left
 /// unrewritten. [`char_before_ansi`] deliberately does *not* strip ANSI
-/// from the whole prefix the way [`strip_ansi_escapes`] does, because that
+/// from the whole prefix the way [`table::strip_ansi_escapes`] does, because that
 /// would also discard OSC *payload* text (e.g. the `file://` URI inside an
 /// OSC-8 hyperlink) as if nothing preceded the match — corrupting the
 /// escape sequence itself rather than merely leaving the line unrewritten.

@@ -231,7 +231,7 @@ pub(super) fn wrap_spans(
 }
 
 /// Renders a cell to a (possibly multi-line) string already fitted to
-/// `inner_width`: token-boundary wrapping for [`Overflow::Wrap`], the existing
+/// `inner_width`: token-boundary wrapping for [`table::Overflow::Wrap`], the existing
 /// clip/truncate behavior otherwise.
 fn wrap_cell_content(
   cell: &table::Cell,
@@ -258,7 +258,7 @@ fn wrap_cell_content(
 }
 
 /// Resolves every column to one concrete outer width (content + padding) that
-/// respects the column's [`WidthPolicy`], never splits a token, and keeps the
+/// respects the column's [`table::WidthPolicy`], never splits a token, and keeps the
 /// total within `table_width` when the content allows it. This is the single
 /// place table geometry is decided — comfy-table is then told exact widths and
 /// only aligns/pads.
