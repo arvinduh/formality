@@ -23,22 +23,22 @@ pub mod ui;
 // `crate::ui::table`); see docs/style-guide.md §1.
 pub use config::schema::generate_schema;
 
-use cli::{Cli, Commands};
+use std::env;
+use std::path;
+
+use colored;
 use colored::Colorize;
-use config::FormalityConfig;
-use errors::{ExitStatus, FormalityError};
-use std::path::{Path, PathBuf};
 
 /// Parses CLI arguments from `std::env::args()` and executes the command.
 #[must_use]
-pub fn run() -> ExitStatus {
-  let args = Cli::parse_checked();
+pub fn run() -> errors::ExitStatus {
+  let args = cli::Cli::parse_checked();
   run_with_args(args)
 }
 
-/// Executes the CLI command specified by the provided [`Cli`] arguments.
+/// Executes the CLI command specified by the provided [`cli::Cli`] arguments.
 #[must_use]
-pub fn run_with_args(args: Cli) -> ExitStatus {
+pub fn run_with_args(args: cli::Cli) -> errors::ExitStatus {
   // NO_COLOR wins over every force-color signal, matching the precedence
   // `ui::table::Palette::detect` already applies to this crate's own escape
   // codes. Without the first branch the two disagreed under CI, where
@@ -65,43 +65,43 @@ pub fn run_with_args(args: Cli) -> ExitStatus {
 
 /// Resolves `--root` (or the current directory when it is absent) to an
 /// absolute path, so every command sees the same root however it was spelled.
-fn resolve_root(root: Option<PathBuf>) -> PathBuf {
+fn resolve_root(root: Option<path::PathBuf>) -> path::PathBuf {
   let root = root.unwrap_or_else(|| {
-    std::env::current_dir().unwrap_or_else(|_| PathBuf::from("."))
+    env::current_dir().unwrap_or_else(|_| path::PathBuf::from("."))
   });
-  std::path::absolute(&root).unwrap_or_else(|_| {
-    std::env::current_dir().map_or_else(|_| root.clone(), |cwd| cwd.join(&root))
+  path::absolute(&root).unwrap_or_else(|_| {
+    env::current_dir().map_or_else(|_| root.clone(), |cwd| cwd.join(&root))
   })
 }
 
 // Dispatches all top-level CLI commands (fmt, lint, sync, fix, doctor, init, lsp, schema, etc.).
 fn run_command_inner(
-  args: Cli,
-  root: &Path,
-  project_config_path: Option<&Path>,
-) -> ExitStatus {
+  args: cli::Cli,
+  root: &path::Path,
+  project_config_path: Option<&path::Path>,
+) -> errors::ExitStatus {
   // The server loads and reports its own config at `initialize`. Editors
   // spawn it in the workspace root, so failing on that config here would
   // kill it before it could tell the editor why.
-  if matches!(args.command, Commands::Lsp) {
+  if matches!(args.command, cli::Commands::Lsp) {
     return commands::lsp::run_lsp_server(Some(root));
   }
 
   let (mut config, _config_path) =
-    match FormalityConfig::load_layered_with_path(project_config_path) {
+    match config::FormalityConfig::load_layered_with_path(project_config_path) {
       Ok(res) => res,
       Err(e) => {
-        FormalityError::from(e).print_diagnostic();
-        return ExitStatus::Error;
+        errors::FormalityError::from(e).print_diagnostic();
+        return errors::ExitStatus::Error;
       }
     };
 
   if let Some(custom_cfg) = args.config {
-    match FormalityConfig::load_file(&custom_cfg) {
+    match config::FormalityConfig::load_file(&custom_cfg) {
       Ok(custom) => config.merge(custom),
       Err(e) => {
-        FormalityError::from(e).print_diagnostic();
-        return ExitStatus::Error;
+        errors::FormalityError::from(e).print_diagnostic();
+        return errors::ExitStatus::Error;
       }
     }
   }
@@ -109,17 +109,17 @@ fn run_command_inner(
   warn_unrecognized_lang_sections(&config);
 
   match args.command {
-    Commands::Schema { output } => commands::schema::run_schema(output),
+    cli::Commands::Schema { output } => commands::schema::run_schema(output),
 
-    Commands::Doctor { all, install } => {
+    cli::Commands::Doctor { all, install } => {
       commands::doctor::run_doctor(root, all, install, &config)
     }
 
-    Commands::Init { force, hidden } => {
+    cli::Commands::Init { force, hidden } => {
       commands::init::run_init(root, &config, force, hidden)
     }
 
-    Commands::Fmt {
+    cli::Commands::Fmt {
       check,
       staged,
       changed,
@@ -137,7 +137,7 @@ fn run_command_inner(
       allow_missing,
     ),
 
-    Commands::Fix {
+    cli::Commands::Fix {
       check,
       staged,
       changed,
@@ -155,7 +155,7 @@ fn run_command_inner(
       allow_missing,
     ),
 
-    Commands::Lint {
+    cli::Commands::Lint {
       staged,
       changed,
       lang,
@@ -172,11 +172,11 @@ fn run_command_inner(
       allow_missing,
     ),
 
-    Commands::Sync { check, lang } => {
+    cli::Commands::Sync { check, lang } => {
       commands::sync::run_sync(root, &config, check, &lang)
     }
 
-    Commands::Lsp => {
+    cli::Commands::Lsp => {
       unreachable!("`lsp` is dispatched before the config load")
     }
   }
@@ -194,7 +194,7 @@ fn run_command_inner(
 /// simply isn't detected/active in the current workspace (e.g.
 /// `[lang.rust]` in a Python-only repo) — that's a valid
 /// pre-configuration, not a mistake.
-fn warn_unrecognized_lang_sections(config: &FormalityConfig) {
+fn warn_unrecognized_lang_sections(config: &config::FormalityConfig) {
   let registry = surfaces::SurfaceRegistry::default();
   let unrecognized = config.unrecognized_lang_sections(&registry);
   if unrecognized.is_empty() {
@@ -230,7 +230,7 @@ mod tests {
   // this test keeps that convention from silently drifting back.
   #[test]
   fn test_no_stray_test_files_outside_sanctioned_pattern() {
-    let manifest_dir = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+    let manifest_dir = path::PathBuf::from(env!("CARGO_MANIFEST_DIR"));
     let src_dir = manifest_dir.join("src");
 
     let mut violations = Vec::new();
@@ -325,7 +325,7 @@ mod tests {
       rest.starts_with("fn is_")
     }
 
-    let manifest_dir = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+    let manifest_dir = path::PathBuf::from(env!("CARGO_MANIFEST_DIR"));
     let src_dir = manifest_dir.join("src");
 
     let mut violations = Vec::new();
@@ -418,7 +418,7 @@ mod tests {
   // "meaningful crate-level content" in the production sense.
   #[test]
   fn test_files_carry_module_doc_comment() {
-    let manifest_dir = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+    let manifest_dir = path::PathBuf::from(env!("CARGO_MANIFEST_DIR"));
     let src_dir = manifest_dir.join("src");
 
     let mut violations = Vec::new();
@@ -461,7 +461,7 @@ mod tests {
   // module is for").
   #[test]
   fn test_pub_mod_declarations_carry_doc_comments() {
-    let manifest_dir = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+    let manifest_dir = path::PathBuf::from(env!("CARGO_MANIFEST_DIR"));
     let src_dir = manifest_dir.join("src");
 
     let mut violations = Vec::new();
@@ -534,7 +534,7 @@ mod tests {
   // never a crate-root shortcut").
   #[test]
   fn test_internal_code_uses_canonical_module_paths() {
-    let manifest_dir = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+    let manifest_dir = path::PathBuf::from(env!("CARGO_MANIFEST_DIR"));
     let src_dir = manifest_dir.join("src");
 
     let mut violations = Vec::new();
@@ -590,7 +590,7 @@ mod tests {
       177, 191, 192, 194, 195, 201,
     ];
 
-    let manifest_dir = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+    let manifest_dir = path::PathBuf::from(env!("CARGO_MANIFEST_DIR"));
     let src_dir = manifest_dir.join("src");
 
     let mut violations = Vec::new();
@@ -712,9 +712,9 @@ mod tests {
     // resolves at that instant, so it failed whenever a concurrent
     // `npm install -g` / `doctor --install` was relinking a shared tool
     // binary (#291).
-    let cwd = std::env::current_dir().expect("current dir");
+    let cwd = env::current_dir().expect("current dir");
     for (relative, expected) in [(".", cwd.clone()), ("src", cwd.join("src"))] {
-      let resolved = resolve_root(Some(PathBuf::from(relative)));
+      let resolved = resolve_root(Some(path::PathBuf::from(relative)));
       assert!(resolved.is_absolute(), "`{relative}` stayed relative");
       assert_eq!(resolved, expected);
     }
@@ -729,7 +729,7 @@ mod tests {
     let needle = concat!("run_with", "_args(");
     let mut violations = Vec::new();
     for entry in ignore::WalkBuilder::new(
-      Path::new(env!("CARGO_MANIFEST_DIR")).join("src"),
+      path::Path::new(env!("CARGO_MANIFEST_DIR")).join("src"),
     )
     .standard_filters(false)
     .build()

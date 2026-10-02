@@ -5,12 +5,19 @@
 //! ([`FacetSupport`]) each surface uses to say whether it can honor a given
 //! facet value.
 
-use schemars::JsonSchema;
-use serde::{Deserialize, Serialize};
+use schemars;
+use serde;
 
 /// Common layout facets configuring formatting layout across tools.
 #[derive(
-  Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize, JsonSchema,
+  Debug,
+  Clone,
+  Default,
+  PartialEq,
+  Eq,
+  serde::Serialize,
+  serde::Deserialize,
+  schemars::JsonSchema,
 )]
 #[serde(deny_unknown_fields)]
 pub struct LayoutFacet {
@@ -89,7 +96,7 @@ pub trait DeclaresFacets {
 #[cfg(test)]
 mod tests {
   use super::*;
-  use crate::surfaces::all_surfaces;
+  use crate::surfaces;
 
   /// Golden-value coverage for every cell of the facet rosetta table in
   /// `docs/facet-rosetta.md`: all 12 language surfaces x all 9 canonical
@@ -109,7 +116,7 @@ mod tests {
     };
     use FacetSupport::{Configurable, Fixed, Unsupported};
 
-    let surfaces = all_surfaces();
+    let surfaces = surfaces::all_surfaces();
     let get = |name: &str| {
       surfaces
         .iter()
