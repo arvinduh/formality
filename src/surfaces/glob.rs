@@ -324,55 +324,95 @@ pub fn find_files_with_ext(
     &[]
   };
 
-  let raw_files = if targets.is_empty() {
-    walk_dir_ext(root, extensions)
+  let files = if targets.is_empty() {
+    walk_candidate_files(root, &[])
   } else {
-    let repo_gitignore = build_repo_gitignore(root, targets);
-    let mut out = Vec::new();
-    for p in targets {
-      let full_p = if p.is_absolute() {
-        p.clone()
-      } else {
-        root.join(p)
-      };
-      if is_standard_ignored(&full_p, root) || is_temp_file(&full_p) {
-        continue;
-      }
-      if let Some(ref gi) = repo_gitignore
-        && gi
-          .matched_path_or_any_parents(&full_p, full_p.is_dir())
-          .is_ignore()
-      {
-        continue;
-      }
-      if full_p.is_file()
-        && let Some(ext) = full_p.extension().and_then(|e| e.to_str())
-        && extensions
-          .iter()
-          .any(|&target| target.eq_ignore_ascii_case(ext))
-      {
-        out.push(full_p);
-      } else if full_p.is_dir() {
-        out.extend(walk_dir_ext(&full_p, extensions));
-      }
-    }
-    out
+    expand_targets(root, targets)
   };
+  let filter = FileFilter::new(root, extensions, exclude);
+  files
+    .into_iter()
+    .filter(|file| filter.matches(file))
+    .collect()
+}
 
-  if exclude.is_empty() {
-    raw_files
-  } else {
-    // Normalize each exclude pattern once up front instead of re-deriving
-    // `to_string_lossy()` / `replace('\\', "/")` allocations for every
-    // (file, pattern) pair: O(excludes) allocations, not O(files * excludes).
-    let normalized_exclude: Vec<NormalizedExclude<'_>> = exclude
+/// Expands explicit path `targets` into candidate files: a file target as
+/// is, whatever its extension, and a directory target walked once. Ignored
+/// and temporary targets are skipped. Independent of any surface, so one
+/// expansion serves every surface's [`FileFilter`].
+#[must_use]
+pub fn expand_targets(root: &Path, targets: &[PathBuf]) -> Vec<PathBuf> {
+  let repo_gitignore = build_repo_gitignore(root, targets);
+  let mut out = Vec::new();
+  for p in targets {
+    let full_p = if p.is_absolute() {
+      p.clone()
+    } else {
+      root.join(p)
+    };
+    if is_standard_ignored(&full_p, root) || is_temp_file(&full_p) {
+      continue;
+    }
+    if let Some(ref gi) = repo_gitignore
+      && gi
+        .matched_path_or_any_parents(&full_p, full_p.is_dir())
+        .is_ignore()
+    {
+      continue;
+    }
+    if full_p.is_file() {
+      out.push(full_p);
+    } else if full_p.is_dir() {
+      out.extend(walk_candidate_files(&full_p, &[]));
+    }
+  }
+  out
+}
+
+/// One surface's file selection: an extension it handles, and no `exclude`
+/// pattern matching.
+pub struct FileFilter<'a> {
+  root: &'a Path,
+  extensions: &'a [&'a str],
+  // Normalized once up front instead of re-deriving `to_string_lossy()` /
+  // `replace('\\', "/")` allocations for every (file, pattern) pair:
+  // O(excludes) allocations, not O(files * excludes).
+  exclude: Vec<NormalizedExclude<'a>>,
+}
+
+impl<'a> FileFilter<'a> {
+  /// Selects files under `root` with one of `extensions` (ASCII
+  /// case-insensitive) that no `exclude` pattern matches.
+  #[must_use]
+  pub fn new(
+    root: &'a Path,
+    extensions: &'a [&'a str],
+    exclude: &'a [PathBuf],
+  ) -> Self {
+    let exclude = exclude
       .iter()
       .map(|ex| NormalizedExclude::new(ex, root))
       .collect();
-    raw_files
-      .into_iter()
-      .filter(|file| !is_excluded_normalized(file, root, &normalized_exclude))
-      .collect()
+    Self {
+      root,
+      extensions,
+      exclude,
+    }
+  }
+
+  /// Whether `file` is selected.
+  #[must_use]
+  pub fn matches(&self, file: &Path) -> bool {
+    file
+      .extension()
+      .and_then(|e| e.to_str())
+      .is_some_and(|ext| {
+        self
+          .extensions
+          .iter()
+          .any(|&target| target.eq_ignore_ascii_case(ext))
+      })
+      && !is_excluded_normalized(file, self.root, &self.exclude)
   }
 }
 
@@ -538,22 +578,6 @@ fn glob_match_slices(pattern: &[u8], text: &[u8]) -> bool {
 #[must_use]
 pub fn find_manifest_upwards(start: &Path, filename: &str) -> bool {
   start.ancestors().any(|dir| dir.join(filename).is_file())
-}
-
-fn walk_dir_ext(dir: &Path, extensions: &[&str]) -> Vec<PathBuf> {
-  walk_candidate_files(dir, &[])
-    .into_iter()
-    .filter(|path| {
-      path
-        .extension()
-        .and_then(|e| e.to_str())
-        .is_some_and(|ext| {
-          extensions
-            .iter()
-            .any(|&target| target.eq_ignore_ascii_case(ext))
-        })
-    })
-    .collect()
 }
 
 #[cfg(test)]
