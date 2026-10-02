@@ -1895,11 +1895,21 @@ pub fn run_tool_command(
 ///
 /// On any non-zero exit, both captured streams are surfaced when both are
 /// non-empty (see [`merge_tool_streams`]); no non-empty stream is discarded.
+/// A batch shim that `cmd` could not launch is an
+/// [`SurfaceStatus::ExecutionError`] whatever `classify` says.
+///
+/// # Side Effects
+///
+/// On Windows, appends `BATCH_EXIT_SUFFIX` to a batch-file `cmd`.
 pub fn run_tool_command_classified(
   surface_name: &'static str,
   cmd: &mut std::process::Command,
   classify: impl Fn(Option<i32>) -> ExitClass,
 ) -> SurfaceResult {
+  #[cfg(windows)]
+  if is_batch_file(std::path::Path::new(cmd.get_program())) {
+    std::os::windows::process::CommandExt::raw_arg(cmd, BATCH_EXIT_SUFFIX);
+  }
   let start = Instant::now();
   match cmd.output() {
     Ok(output) => {
@@ -1914,7 +1924,7 @@ pub fn run_tool_command_classified(
 
       let stdout = String::from_utf8_lossy(&output.stdout);
       let stderr = String::from_utf8_lossy(&output.stderr);
-      if is_cmd_shim_launch_failure(cmd, &stdout, &stderr) {
+      if is_batch_launch_failure(cmd, output.status.code(), &stdout) {
         return SurfaceResult {
           surface_name,
           status: SurfaceStatus::ExecutionError {
@@ -1961,35 +1971,39 @@ pub fn run_tool_command_classified(
   }
 }
 
-/// `cmd.exe`'s own messages for a command line it could not launch: a
-/// program path whose directory does not exist, and a bare name found on
-/// neither `PATH` nor `PATHEXT`. A Windows npm shim whose interpreter is
-/// missing (npm's `ktlint.cmd` runs `"/bin/sh"`, #402) prints the first.
-const CMD_LAUNCH_FAILURES: &[&str] = &[
-  "The system cannot find the path specified.",
-  "is not recognized as an internal or external command",
-];
+/// Appended to a batch-file spawn's command line so `cmd.exe` exits with its
+/// `ERRORLEVEL`. Without it, `cmd` exits `1` when a shim cannot launch its
+/// target, the same code a tool reporting violations exits with.
+#[cfg(windows)]
+const BATCH_EXIT_SUFFIX: &str = "& exit";
 
-/// Returns whether a non-zero exit from a `cmd /C <shim>` wrapper (see
-/// [`create_tool_command`]) is `cmd` failing to launch the shim's target
-/// rather than the tool's own verdict.
-///
-/// `cmd` exits `1` in that case, which a tool's classifier would otherwise
-/// read as "violations found". Scoped to the wrapper, to empty stdout, and
-/// to stderr opening with one of [`CMD_LAUNCH_FAILURES`], so a tool that ran
-/// and printed findings is never reclassified.
+/// `cmd.exe`'s `ERRORLEVEL` for a command it could not launch: `3`, the
+/// path's directory does not exist (npm's `ktlint.cmd` running `"/bin/sh"`,
+/// #402), and `9009`, the program was not found. Display-language
+/// independent, unlike the messages `cmd` prints with them.
+const CMD_LAUNCH_FAILURE_CODES: [i32; 2] = [3, 9009];
+
+/// Returns whether a batch file's non-zero exit (see `BATCH_EXIT_SUFFIX`)
+/// is `cmd` failing to launch the shim's target rather than the tool's own
+/// verdict. Scoped to batch files and to empty stdout, so a tool that ran,
+/// printed findings and exited `3` keeps its classification.
 #[must_use]
-fn is_cmd_shim_launch_failure(
+fn is_batch_launch_failure(
   cmd: &std::process::Command,
+  code: Option<i32>,
   stdout: &str,
-  stderr: &str,
 ) -> bool {
-  let Some(first_line) = stderr.trim().lines().next() else {
-    return false;
-  };
-  is_cmd_wrapper(cmd)
+  is_batch_file(std::path::Path::new(cmd.get_program()))
     && stdout.trim().is_empty()
-    && CMD_LAUNCH_FAILURES.iter().any(|m| first_line.contains(m))
+    && code.is_some_and(|code| CMD_LAUNCH_FAILURE_CODES.contains(&code))
+}
+
+/// Returns whether `path` names a Windows batch file (`.cmd`/`.bat`).
+#[must_use]
+fn is_batch_file(path: &std::path::Path) -> bool {
+  path.extension().is_some_and(|ext| {
+    ext.eq_ignore_ascii_case("cmd") || ext.eq_ignore_ascii_case("bat")
+  })
 }
 
 /// Returns whether `cmd` is a `cmd /C <target>` wrapper built by
@@ -2639,40 +2653,43 @@ mod tests {
     );
   }
 
-  /// Runs a stand-in `cmd` (a shell script named `cmd`, so
-  /// [`is_cmd_wrapper`] sees the same program stem as on Windows) as
-  /// `cmd /C <dir>/ktlint.cmd`; the stand-in prints `stdout`/`stderr` and
-  /// exits `1`, as Windows `cmd` does when the shim's target cannot launch.
+  /// Runs a stand-in `ktlint.cmd` (a shell script, so detection sees the
+  /// same batch-file program as on Windows) that prints `stdout`/`stderr`
+  /// and exits `code`. Every non-zero exit classifies as a violation, so an
+  /// `ExecutionError` can only come from launch-failure detection.
   #[cfg(unix)]
-  fn run_stub_cmd_shim(stdout: &str, stderr: &str) -> SurfaceStatus {
+  fn run_stub_batch_shim(
+    stdout: &str,
+    stderr: &str,
+    code: i32,
+  ) -> SurfaceStatus {
     let tmp = tempfile::tempdir().expect("tempdir");
-    let stub = write_bin_fixture(tmp.path(), "cmd");
+    let stub = write_bin_fixture(tmp.path(), "ktlint.cmd");
     std::fs::write(
       &stub,
-      format!("#!/bin/sh\nprintf '{stdout}'\nprintf '{stderr}' >&2\nexit 1\n"),
+      format!(
+        "#!/bin/sh\nprintf '{stdout}'\nprintf '{stderr}' >&2\nexit {code}\n"
+      ),
     )
-    .expect("write stub cmd");
-    let mut cmd = std::process::Command::new(&stub);
-    cmd.arg("/C").arg(tmp.path().join("ktlint.cmd"));
-    run_tool_command_classified(
-      "kotlin",
-      &mut cmd,
-      classify_exit_one_as_violation,
-    )
-    .status
+    .expect("write stub shim");
+    run_tool_command("kotlin", &mut std::process::Command::new(&stub)).status
   }
 
   #[cfg(unix)]
   #[test]
-  fn test_cmd_shim_launch_failure_is_an_execution_error_naming_the_tool() {
-    // #402: npm's `ktlint.cmd` runs `"/bin/sh"`, which `cmd` cannot find;
-    // it exits 1, and kotlin's classifier read that as violations found.
-    let status =
-      run_stub_cmd_shim("", "The system cannot find the path specified.\\r\\n");
+  fn test_batch_launch_failure_is_detected_by_exit_code_in_any_language() {
+    // #422: a German Windows prints this instead of "The system cannot find
+    // the path specified."; `cmd`'s ERRORLEVEL 3 is the same in both.
+    let status = run_stub_batch_shim(
+      "",
+      "Das System kann den angegebenen Pfad nicht finden.\\r\\n",
+      3,
+    );
     match status {
       SurfaceStatus::ExecutionError { message } => assert_eq!(
         message,
-        "Failed to execute ktlint: The system cannot find the path specified."
+        "Failed to execute ktlint: Das System kann den angegebenen Pfad nicht \
+         finden."
       ),
       other => panic!("expected ExecutionError naming ktlint, got {other:?}"),
     }
@@ -2680,17 +2697,41 @@ mod tests {
 
   #[cfg(unix)]
   #[test]
-  fn test_cmd_shim_tool_verdict_stays_a_violation() {
-    // The tool ran and reported findings on stdout: its exit 1 is its
-    // verdict, even if it also echoed a cmd-like line on stderr.
-    let status = run_stub_cmd_shim(
-      "Sample.kt:1:1: Unexpected blank line\\n",
-      "The system cannot find the path specified.\\n",
+  fn test_batch_exit_one_with_english_cmd_text_stays_a_violation() {
+    // Without cmd's launch-failure code, cmd's English message is not a
+    // signal: matching it would misread a tool's own exit 1.
+    let status = run_stub_batch_shim(
+      "",
+      "The system cannot find the path specified.\\r\\n",
+      1,
     );
+    assert!(
+      matches!(status, SurfaceStatus::ViolationsFound { .. }),
+      "English text without exit 3/9009 must not be detected, got {status:?}"
+    );
+  }
+
+  #[cfg(unix)]
+  #[test]
+  fn test_batch_tool_verdict_with_findings_stays_a_violation() {
+    // The tool ran and printed findings: its exit 3 is its own verdict.
+    let status =
+      run_stub_batch_shim("Sample.kt:1:1: Unexpected blank line\\n", "", 3);
     assert!(
       matches!(status, SurfaceStatus::ViolationsFound { .. }),
       "a shim'd tool's own findings must stay ViolationsFound, got {status:?}"
     );
+  }
+
+  #[test]
+  fn test_is_batch_launch_failure_needs_a_batch_file_and_cmd_code() {
+    let shim = std::process::Command::new("bin/ktlint.CMD");
+    assert!(is_batch_launch_failure(&shim, Some(9009), ""));
+    assert!(is_batch_launch_failure(&shim, Some(3), " \r\n"));
+    assert!(!is_batch_launch_failure(&shim, Some(1), ""));
+    assert!(!is_batch_launch_failure(&shim, None, ""));
+    let exe = std::process::Command::new("bin/ktlint.exe");
+    assert!(!is_batch_launch_failure(&exe, Some(9009), ""));
   }
 
   #[test]
