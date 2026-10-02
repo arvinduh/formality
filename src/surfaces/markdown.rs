@@ -1578,7 +1578,12 @@ impl LanguageSurface for MarkdownSurface {
     {
       return escape_failed(self.name(), start, &e);
     }
-    res
+    // `res` timed prettier alone; report the whole pipeline, HTML pass
+    // and escapes included.
+    SurfaceResult {
+      duration: start.elapsed(),
+      ..res
+    }
   }
 
   fn lint(&self, ctx: &ExecutionContext, fix: bool) -> SurfaceResult {
