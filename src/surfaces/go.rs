@@ -522,7 +522,6 @@ impl LanguageSurface for GoSurface {
 }
 
 #[cfg(test)]
-#[allow(missing_docs, clippy::missing_errors_doc, clippy::missing_panics_doc)]
 pub(crate) mod tests {
   use super::*;
   use crate::config::{GoOptions, ResolvedLangConfig};

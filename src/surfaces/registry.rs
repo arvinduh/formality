@@ -192,7 +192,6 @@ pub fn get_surface_by_name(name: &str) -> Option<Box<dyn LanguageSurface>> {
 }
 
 #[cfg(test)]
-#[allow(missing_docs, clippy::missing_errors_doc, clippy::missing_panics_doc)]
 mod tests {
   use super::*;
 

@@ -268,7 +268,6 @@ pub fn update_command(is_windows: bool) -> &'static str {
 }
 
 #[cfg(test)]
-#[allow(missing_docs, clippy::missing_errors_doc, clippy::missing_panics_doc)]
 mod tests {
   use super::*;
 

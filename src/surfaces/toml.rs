@@ -270,7 +270,6 @@ impl LanguageSurface for TomlSurface {
 }
 
 #[cfg(test)]
-#[allow(missing_docs, clippy::missing_errors_doc, clippy::missing_panics_doc)]
 mod tests {
   use super::*;
   use crate::surfaces::{SurfaceStatus, check_binary_exists, test_ctx};
