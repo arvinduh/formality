@@ -343,7 +343,16 @@ fn test_scan_tools_and_build_table_surfaces_unprobeable_status_not_ready() {
     vec![Box::new(UnprobeableSurface { bin: binary_name })];
   let config = FormalityConfig::default();
 
-  let scan = scan_tools_and_build_table(Path::new("."), &surfaces, &config);
+  let present = std::cell::LazyCell::new(|| {
+    crate::surfaces::glob::PresentExtensions::from_paths(&[])
+  });
+  let scan = scan_tools_and_build_table(
+    Path::new("."),
+    &surfaces,
+    &HashSet::new(),
+    &present,
+    &config,
+  );
 
   assert!(scan.missing.is_empty());
   assert!(scan.installed.contains(binary_name));
@@ -959,7 +968,21 @@ fn test_doctor_table_shows_detected_vs_undetected_status_for_surfaces() {
 
   let config = FormalityConfig::default();
   let surfaces = all_surfaces();
-  let scan = scan_tools_and_build_table(temp.path(), &surfaces, &config);
+  let present = std::cell::LazyCell::new(|| {
+    crate::surfaces::glob::PresentExtensions::scan(temp.path())
+  });
+  let detected: HashSet<&'static str> = default_registry()
+    .detect_surfaces_in(temp.path(), &config, &present)
+    .iter()
+    .map(|s| s.name())
+    .collect();
+  let scan = scan_tools_and_build_table(
+    temp.path(),
+    &surfaces,
+    &detected,
+    &present,
+    &config,
+  );
 
   let rendered = strip_ansi_escapes(&render(&scan.table, &Palette::none()));
 
@@ -1148,4 +1171,15 @@ fn test_doctor_table_layout_budget_with_reported_distro_version() {
       len = line.chars().count()
     );
   }
+}
+
+#[test]
+fn test_run_doctor_walks_the_workspace_at_most_once() {
+  let temp = tempdir().unwrap();
+  std::fs::write(temp.path().join("main.rs"), "fn main() {}\n").unwrap();
+
+  let _ = run_doctor(temp.path(), false, false, &FormalityConfig::empty());
+
+  // Detection and the table's detected column share one walk.
+  assert_eq!(crate::surfaces::glob::walk_count::of(temp.path()), 1);
 }

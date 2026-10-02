@@ -25,8 +25,8 @@ use crate::engine::version::{
 };
 use crate::surfaces::{
   LanguageSurface, ToolInfo, all_surfaces, check_binary_exists,
-  create_tool_command, default_registry, detect_surfaces_smart,
-  install_chain_for, matches_name_or_alias, pinned_version_for,
+  create_tool_command, default_registry, install_chain_for,
+  matches_name_or_alias, pinned_version_for,
 };
 use crate::ui::paths::display_path;
 use crate::ui::table::{
@@ -567,18 +567,28 @@ pub fn run_doctor(
   install: bool,
   config: &FormalityConfig,
 ) -> ExitStatus {
-  let surfaces: Vec<Box<dyn LanguageSurface>> = if show_all {
-    all_surfaces()
-  } else {
-    let detected = detect_surfaces_smart(root, config);
-    if detected.is_empty() {
+  // One walk at most, shared by detection, the table's detected column
+  // and the unconfigured-languages note.
+  let present = std::cell::LazyCell::new(|| {
+    crate::surfaces::glob::PresentExtensions::scan(root)
+  });
+  let detected = default_registry().detect_surfaces_in(root, config, &present);
+  let detected_names: HashSet<&'static str> =
+    detected.iter().map(|s| s.name()).collect();
+  let surfaces: Vec<Box<dyn LanguageSurface>> =
+    if show_all || detected.is_empty() {
       all_surfaces()
     } else {
       detected
-    }
-  };
+    };
 
-  let scan = scan_tools_and_build_table(root, &surfaces, config);
+  let scan = scan_tools_and_build_table(
+    root,
+    &surfaces,
+    &detected_names,
+    &present,
+    config,
+  );
 
   let palette = Palette::detect();
   let rendered_table = render(&scan.table, &palette);
@@ -596,7 +606,7 @@ pub fn run_doctor(
   println!("{}", frame.section(&title, &rendered_table, &palette));
 
   // Check for unconfigured surfaces if explicit `languages` is set
-  print_unconfigured_languages(root, config, frame, &palette);
+  print_unconfigured_languages(root, config, &present, frame, &palette);
 
   // Virtual Environment status
   print_virtualenv_status(root, &surfaces, show_all, frame, &palette);
@@ -888,9 +898,17 @@ impl ToolTally {
   }
 }
 
+/// Builds the doctor table for `surfaces`. `detected_names` is the
+/// registry's detection result; only a surface outside the registry forces
+/// `present` for its own `detect`.
 fn scan_tools_and_build_table(
   root: &Path,
   surfaces: &[Box<dyn LanguageSurface>],
+  detected_names: &HashSet<&'static str>,
+  present: &std::cell::LazyCell<
+    crate::surfaces::glob::PresentExtensions,
+    impl FnOnce() -> crate::surfaces::glob::PresentExtensions,
+  >,
   config: &FormalityConfig,
 ) -> DoctorScanResult {
   let mut cache: HashMap<&'static str, ToolLookupResult> = HashMap::new();
@@ -906,15 +924,6 @@ fn scan_tools_and_build_table(
   let mut unknown_unique_tools = HashSet::new();
   let global = config.resolve_global();
 
-  let detected = detect_surfaces_smart(root, config);
-  let detected_names: HashSet<&str> =
-    detected.iter().map(|s| s.name()).collect();
-  // Only a surface outside the registry needs its own detect; walk for it
-  // at most once.
-  let present = std::cell::LazyCell::new(|| {
-    crate::surfaces::glob::PresentExtensions::scan(root)
-  });
-
   let mut doctor_table = Table::new(vec![
     Column::new(Cell::text("")).width(WidthPolicy::Fixed(10)),
     Column::new(Cell::text("")).width(WidthPolicy::Fixed(20)),
@@ -929,7 +938,7 @@ fn scan_tools_and_build_table(
       || (default_registry()
         .get_surface_by_name(surface.name())
         .is_none()
-        && surface.detect(root, &present));
+        && surface.detect(root, present));
     let detected_cell = if is_detected {
       Cell::styled("detected", Style::Ok)
     } else {
@@ -1082,6 +1091,10 @@ fn scan_tools_and_build_table(
 fn print_unconfigured_languages(
   root: &Path,
   config: &FormalityConfig,
+  present: &std::cell::LazyCell<
+    crate::surfaces::glob::PresentExtensions,
+    impl FnOnce() -> crate::surfaces::glob::PresentExtensions,
+  >,
   frame: Frame,
   palette: &Palette,
 ) {
@@ -1089,14 +1102,11 @@ fn print_unconfigured_languages(
     return;
   };
   let mut unconfigured = Vec::new();
-  let present = std::cell::LazyCell::new(|| {
-    crate::surfaces::glob::PresentExtensions::scan(root)
-  });
   for surface in all_surfaces() {
     if !explicit_langs
       .iter()
       .any(|l| matches_name_or_alias(surface.name(), surface.aliases(), l))
-      && surface.detect(root, &present)
+      && surface.detect(root, present)
     {
       unconfigured.push(surface.name());
     }
