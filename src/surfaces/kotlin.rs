@@ -410,11 +410,11 @@ mod tests {
   fn test_kotlin_surface_detect() {
     let surface = KotlinSurface;
     let temp = TempDir::new().unwrap();
-    assert!(!surface.detect(temp.path()));
+    assert!(!crate::surfaces::detect_in(&surface, temp.path()));
 
     let kt_file = temp.path().join("Main.kt");
     std::fs::write(&kt_file, "fun main() {}\n").unwrap();
-    assert!(surface.detect(temp.path()));
+    assert!(crate::surfaces::detect_in(&surface, temp.path()));
   }
 
   #[test]
@@ -422,7 +422,7 @@ mod tests {
     let surface = KotlinSurface;
     let temp = TempDir::new().unwrap();
     std::fs::write(temp.path().join("build.gradle.kts"), "").unwrap();
-    assert!(surface.detect(temp.path()));
+    assert!(crate::surfaces::detect_in(&surface, temp.path()));
   }
 
   #[test]

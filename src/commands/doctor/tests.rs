@@ -289,7 +289,11 @@ fn test_scan_tools_and_build_table_surfaces_unprobeable_status_not_ready() {
     fn name(&self) -> &'static str {
       "mock_unprobeable"
     }
-    fn detect(&self, _root: &Path) -> bool {
+    fn detect(
+      &self,
+      _: &Path,
+      _: &crate::surfaces::glob::PresentExtensions,
+    ) -> bool {
       true
     }
     fn tool_info(

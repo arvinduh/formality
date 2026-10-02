@@ -80,8 +80,29 @@ pub fn walk_candidate_files(
   root: &Path,
   global_excludes: &[PathBuf],
 ) -> Vec<PathBuf> {
-  let mut results = Vec::new();
-  let walker = ignore::WalkBuilder::new(root)
+  let results: Vec<PathBuf> = candidate_file_paths(root)
+    .map(ignore::DirEntry::into_path)
+    .collect();
+
+  if global_excludes.is_empty() {
+    results
+  } else {
+    let normalized_exclude: Vec<NormalizedExclude<'_>> = global_excludes
+      .iter()
+      .map(|ex| NormalizedExclude::new(ex, root))
+      .collect();
+    results
+      .into_iter()
+      .filter(|file| !is_excluded_normalized(file, root, &normalized_exclude))
+      .collect()
+  }
+}
+
+/// Yields every regular candidate file under `root`. This is the one place
+/// the candidate ignore rules live: gitignore, standard ignored dirs, temp
+/// files.
+fn candidate_file_paths(root: &Path) -> impl Iterator<Item = ignore::DirEntry> {
+  ignore::WalkBuilder::new(root)
     .hidden(false)
     .git_ignore(true)
     .git_global(true)
@@ -96,26 +117,50 @@ pub fn walk_candidate_files(
       }
       true
     })
-    .build();
+    .build()
+    .filter_map(Result::ok)
+    .filter(|entry| entry.path().is_file())
+}
 
-  for entry in walker.filter_map(Result::ok) {
-    let path = entry.path();
-    if path.is_file() {
-      results.push(path.to_path_buf());
+/// The set of file extensions present among a workspace's candidate files,
+/// compared ASCII-case-insensitively, as every surface's extension match is.
+///
+/// Built by one walk so that auto-detecting every surface costs one walk,
+/// not one per surface.
+pub struct PresentExtensions(std::collections::HashSet<String>);
+
+impl PresentExtensions {
+  /// Walks `root` once with [`walk_candidate_files`]' ignore rules and
+  /// records every UTF-8 file extension seen.
+  #[must_use]
+  pub fn scan(root: &Path) -> Self {
+    let mut seen = std::collections::HashSet::new();
+    for entry in candidate_file_paths(root) {
+      let Some(ext) = entry.path().extension().and_then(|e| e.to_str()) else {
+        continue;
+      };
+      let ext = ascii_lowercase(ext);
+      if !seen.contains(ext.as_ref()) {
+        seen.insert(ext.into_owned());
+      }
     }
+    Self(seen)
   }
 
-  if global_excludes.is_empty() {
-    results
+  /// Whether a candidate file with extension `ext` exists, ignoring ASCII
+  /// case.
+  #[must_use]
+  pub fn contains(&self, ext: &str) -> bool {
+    self.0.contains(ascii_lowercase(ext).as_ref())
+  }
+}
+
+/// Lowercases `s`, allocating only when it holds an ASCII uppercase letter.
+fn ascii_lowercase(s: &str) -> std::borrow::Cow<'_, str> {
+  if s.bytes().any(|b| b.is_ascii_uppercase()) {
+    std::borrow::Cow::Owned(s.to_ascii_lowercase())
   } else {
-    let normalized_exclude: Vec<NormalizedExclude<'_>> = global_excludes
-      .iter()
-      .map(|ex| NormalizedExclude::new(ex, root))
-      .collect();
-    results
-      .into_iter()
-      .filter(|file| !is_excluded_normalized(file, root, &normalized_exclude))
-      .collect()
+    std::borrow::Cow::Borrowed(s)
   }
 }
 
@@ -468,6 +513,23 @@ fn walk_dir_ext(dir: &Path, extensions: &[&str]) -> Vec<PathBuf> {
 mod tests {
   use super::*;
   use std::path::PathBuf;
+
+  #[test]
+  fn test_present_extensions_ignores_case_and_ignored_dirs() {
+    let temp = tempfile::TempDir::new().unwrap();
+    let root = temp.path();
+    std::fs::create_dir_all(root.join("a/b")).unwrap();
+    std::fs::write(root.join("a/b/Main.RS"), "").unwrap();
+    std::fs::create_dir_all(root.join("node_modules/x")).unwrap();
+    std::fs::write(root.join("node_modules/x/a.js"), "").unwrap();
+    std::fs::create_dir(root.join("dir.py")).unwrap();
+
+    let present = PresentExtensions::scan(root);
+    assert!(present.contains("rs"));
+    assert!(present.contains("Rs"));
+    assert!(!present.contains("js"));
+    assert!(!present.contains("py"));
+  }
 
   #[test]
   fn test_find_manifest_upwards_walks_parent_directories() {

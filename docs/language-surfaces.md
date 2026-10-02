@@ -361,12 +361,15 @@ per-tool split (it is a `formality.toml` shape change).
 
 ## Detection
 
-Each surface's `detect(&self, root: &Path) -> bool` decides whether it's
-"active" for a workspace when `languages` isn't set explicitly in
-`formality.toml` — generally: does at least one file with the surface's
-`file_extensions()` exist under `root` (excluding common ignore directories).
-`fml doctor` shows detection and tool status for active surfaces, and
-`fml doctor --all` shows both for every surface in the fleet.
+Each surface's `detect(&self, root: &Path, present: &PresentExtensions) -> bool`
+decides whether it's "active" for a workspace when `languages` isn't set
+explicitly in `formality.toml`: is one of its `marker_files()` a regular file at
+`root`, or does at least one candidate file with one of its `file_extensions()`
+exist under `root` (excluding common ignore directories). `present` is the set
+of extensions from one walk of `root`, shared by every surface, so
+auto-detection walks the tree once. `fml doctor` shows detection and tool status
+for active surfaces, and `fml doctor --all` shows both for every surface in the
+fleet.
 
 ## Adding a 13th surface
 

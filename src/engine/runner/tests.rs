@@ -850,9 +850,6 @@ impl LanguageSurface for MockMissingSurface {
   fn file_extensions(&self) -> &[&'static str] {
     &["mock"]
   }
-  fn detect(&self, _: &Path) -> bool {
-    true
-  }
   fn tool_info(
     &self,
     _: &crate::config::ResolvedLangConfig,
@@ -986,9 +983,6 @@ impl LanguageSurface for MockViolatingSurface {
   fn file_extensions(&self) -> &[&'static str] {
     &["mock2"]
   }
-  fn detect(&self, _: &Path) -> bool {
-    true
-  }
   fn tool_info(
     &self,
     _: &crate::config::ResolvedLangConfig,
@@ -1048,9 +1042,6 @@ impl LanguageSurface for MockErroringSurface {
   }
   fn file_extensions(&self) -> &[&'static str] {
     &["mock3"]
-  }
-  fn detect(&self, _: &Path) -> bool {
-    true
   }
   fn tool_info(
     &self,
