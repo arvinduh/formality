@@ -13,9 +13,13 @@ use super::{
   sync_native_config, tool_missing_guard, tool_missing_result,
 };
 use crate::config::ResolvedLangConfig;
+use pulldown_cmark::{Event, Options, Parser, Tag, TagEnd};
 use rayon::iter::{IntoParallelRefIterator, ParallelIterator};
 use serde::{Deserialize, Serialize};
+use std::fmt::Write as _;
+use std::io::Write as _;
 use std::path::{Path, PathBuf};
+use std::process::Stdio;
 use std::time::Instant;
 
 /// Comment field container for markdownlint config.
@@ -693,9 +697,9 @@ fn escape_continuation_hashes(
     .arg(config)
     .arg(stdin_arg)
     .current_dir(root)
-    .stdin(std::process::Stdio::piped())
-    .stdout(std::process::Stdio::piped())
-    .stderr(std::process::Stdio::piped())
+    .stdin(Stdio::piped())
+    .stdout(Stdio::piped())
+    .stderr(Stdio::piped())
     .spawn()?;
   // Both CLIs print at most a one-line banner before reading all of stdin,
   // so writing it in full before collecting the output cannot deadlock.
@@ -811,6 +815,459 @@ fn filter_markdownlint_noise(message: &str) -> String {
     kept.push(s);
   }
   kept.join("\n")
+}
+
+// --- Block-level embedded HTML formatting (Fixes #253) ---
+//
+// #120 shipped MD033/no-inline-html disabled by default because idioms like
+// a centered badge block (`<p align="center">` + `<img>`) or a `<details>`/
+// `<summary>` disclosure widget have no markdown equivalent. The owner's
+// condition for being comfortable with that: embedded HTML should still get
+// *formatted*, not left as a permanent escape hatch from `fml fmt`.
+//
+// Verified against prettier 3.9.6 (see the issue's decision comment and this
+// PR's body): prettier's own `--parser markdown` treats a block-level HTML
+// node as an opaque string — confirmed by feeding it
+// `<img src="a.png"     alt="badge">` inside a `<p align="center">` wrapper
+// and seeing the quadruple space survive byte-for-byte. There is no prettier
+// option that changes this (`--embedded-language-formatting` only concerns
+// code embedded in fenced blocks / template literals; `--html-whitespace-
+// sensitivity` only changes how the **html** parser itself treats
+// whitespace, it does not make the markdown parser reach for that parser in
+// the first place). So this is the extract-and-splice pass the issue asks
+// for, not a one-line config change.
+//
+// Deliberately **not** reached for inline HTML spans mid-paragraph (a
+// `<strong>`/`<a>`/`<code>` sitting inside a sentence) — the owner's
+// decision draws that line because whitespace around an inline element is
+// rendering-significant and nobody would notice a silent change until they
+// looked at the rendered page. `pulldown-cmark` already draws exactly this
+// distinction in its own event stream: a block-level HTML node arrives as
+// `Event::Start(Tag::HtmlBlock)` / `Event::End(TagEnd::HtmlBlock)`, while an
+// inline span arrives as `Event::InlineHtml` — the two are never conflated,
+// so only the former is ever collected below.
+
+/// HTML void elements (per the WHATWG HTML spec) that never need a matching
+/// closing tag. Used by [`scan_html_tags`] so `<img>`, `<br>`, etc. don't
+/// throw off tag-balance tracking across block-level HTML nodes.
+const VOID_ELEMENTS: &[&str] = &[
+  "area", "base", "br", "col", "embed", "hr", "img", "input", "link", "meta",
+  "param", "source", "track", "wbr",
+];
+
+/// One HTML tag found by [`scan_html_tags`], reduced to just what
+/// [`html_blocks_balanced`] needs to track: its (lowercased) name, whether it is
+/// a closing tag, and whether it self-closes (`<br/>`, or any void element).
+struct HtmlTagToken {
+  name: String,
+  closing: bool,
+  self_closing: bool,
+}
+
+/// Tokenizes the tags in a block-level HTML fragment for tag-balance
+/// tracking, returning `None` when the fragment can't be tokenized with
+/// confidence (an unterminated tag or comment) rather than guessing.
+///
+/// This is a small hand-rolled scanner, not a full HTML parser: it tracks
+/// quoted attribute values (so a stray `>` inside `alt="a > b"` doesn't end
+/// the tag early) and skips comments and `<!DOCTYPE>`/`<?...?>` declarations,
+/// but doesn't understand raw-text elements (`<script>`, `<style>`) or
+/// anything past what ordinary README idioms need. Given how narrow the
+/// scope is (badge wrappers, `<details>`/`<summary>`, `<div>` wrappers), that
+/// trade-off buys a lot of simplicity for very little real coverage lost —
+/// and [`html_blocks_balanced`] bails out (leaves the whole document's block
+/// HTML untouched) rather than guess when this returns `None`.
+fn scan_html_tags(s: &str) -> Option<Vec<HtmlTagToken>> {
+  let bytes = s.as_bytes();
+  let n = bytes.len();
+  let mut i = 0usize;
+  let mut tokens = Vec::new();
+  while i < n {
+    if bytes[i] != b'<' {
+      i += 1;
+      continue;
+    }
+    if s[i..].starts_with("<!--") {
+      let end_rel = s[i..].find("-->")?;
+      i += end_rel + 3;
+      continue;
+    }
+    if i + 1 < n && (bytes[i + 1] == b'!' || bytes[i + 1] == b'?') {
+      let end_rel = s[i..].find('>')?;
+      i += end_rel + 1;
+      continue;
+    }
+    let closing = i + 1 < n && bytes[i + 1] == b'/';
+    let name_start = if closing { i + 2 } else { i + 1 };
+    if name_start >= n || !bytes[name_start].is_ascii_alphabetic() {
+      // A bare `<` that isn't actually a tag start (stray comparison text,
+      // malformed input) -- not a tag, keep scanning.
+      i += 1;
+      continue;
+    }
+    let mut j = name_start;
+    while j < n && (bytes[j].is_ascii_alphanumeric() || bytes[j] == b'-') {
+      j += 1;
+    }
+    let name = s[name_start..j].to_ascii_lowercase();
+    let mut k = j;
+    let mut quote: Option<u8> = None;
+    let self_closing;
+    loop {
+      if k >= n {
+        return None;
+      }
+      let c = bytes[k];
+      if let Some(q) = quote {
+        if c == q {
+          quote = None;
+        }
+      } else if c == b'"' || c == b'\'' {
+        quote = Some(c);
+      } else if c == b'>' {
+        let mut p = k;
+        while p > j && (bytes[p - 1] as char).is_whitespace() {
+          p -= 1;
+        }
+        self_closing = p > j && bytes[p - 1] == b'/';
+        break;
+      }
+      k += 1;
+    }
+    tokens.push(HtmlTagToken {
+      name,
+      closing,
+      self_closing,
+    });
+    i = k + 1;
+  }
+  Some(tokens)
+}
+
+/// Parses `src` with the GFM extensions prettier's markdown parser honours.
+///
+/// These extensions don't change how HTML blocks are delimited (that's pure
+/// `CommonMark`), but they do change how *other* content parses, which
+/// matters for not mis-detecting a block boundary inside, say, a GFM table
+/// living next to embedded HTML.
+fn parse_markdown(src: &str) -> Parser<'_> {
+  let opts = Options::ENABLE_TABLES
+    | Options::ENABLE_STRIKETHROUGH
+    | Options::ENABLE_FOOTNOTES
+    | Options::ENABLE_TASKLISTS;
+  Parser::new_ext(src, opts)
+}
+
+/// Byte ranges of every block-level HTML node in `src`, in document order —
+/// exactly the [`Event::Start(Tag::HtmlBlock)`] spans `pulldown-cmark`
+/// emits, which already cover the *whole* node (start of the opening `<` to
+/// past the node's last byte), never an inline HTML span embedded in a
+/// paragraph.
+///
+/// Only top-level blocks count. A block nested in any container (blockquote,
+/// list item, footnote) carries that container's `> ` prefixes or indent on
+/// every line; prettier's html parser would read the prefixes as text and
+/// re-indent the lines out of the container, so such blocks stay as written.
+fn extract_html_block_ranges(src: &str) -> Vec<(usize, usize)> {
+  let mut spans = Vec::new();
+  let mut depth = 0usize;
+  // `<!-- prettier-ignore -->` shields the next top-level block, whatever
+  // its kind; `-start`/`-end` shield every block between them.
+  let (mut ignore_next, mut ignore_range) = (false, false);
+  for (event, range) in parse_markdown(src).into_offset_iter() {
+    match event {
+      Event::Start(tag) => {
+        if depth == 0 {
+          let block = &src[range.clone()];
+          // Comment-only blocks have nothing to tidy; skipping them saves a
+          // Node spawn per `markdownlint-disable` comment.
+          let mut skip = std::mem::take(&mut ignore_next)
+            || ignore_range
+            || (tag == Tag::HtmlBlock && is_comment_only(block));
+          // Without blank lines a directive shares its neighbour's block, so
+          // every comment counts, not just a leading one; a block holding a
+          // directive is never formatted itself.
+          let mut rest = if tag == Tag::HtmlBlock { block } else { "" };
+          while let Some(open) = rest.find("<!--")
+            && let Some((directive, after)) = leading_comment(&rest[open..])
+          {
+            match directive {
+              "prettier-ignore" => ignore_next = after.trim().is_empty(),
+              "prettier-ignore-start" => ignore_range = true,
+              "prettier-ignore-end" => ignore_range = false,
+              _ => {}
+            }
+            skip |= directive.starts_with("prettier-ignore");
+            rest = after;
+          }
+          if tag == Tag::HtmlBlock && !skip {
+            spans.push((range.start, range.end));
+          }
+        }
+        depth += 1;
+      }
+      Event::Rule if depth == 0 => ignore_next = false,
+      Event::End(_) => depth -= 1,
+      _ => {}
+    }
+  }
+  spans
+}
+
+/// Splits `block` into its leading HTML comment's trimmed text and the
+/// text after that comment, or `None` when `block` does not open with one.
+fn leading_comment(block: &str) -> Option<(&str, &str)> {
+  let rest = block.trim_start().strip_prefix("<!--")?;
+  let end = rest.find("-->")?;
+  Some((rest[..end].trim(), &rest[end + 3..]))
+}
+
+/// Reports whether `block` holds nothing but HTML comments and whitespace.
+#[must_use]
+fn is_comment_only(mut block: &str) -> bool {
+  while let Some((_, rest)) = leading_comment(block) {
+    block = rest;
+  }
+  block.trim().is_empty()
+}
+
+/// Reports whether `spans` (as returned by [`extract_html_block_ranges`])
+/// hold *tag-balanced* HTML when read in document order.
+///
+/// `CommonMark`'s HTML-block rule ends a block at the first blank line, so a
+/// `<details>`/`<summary>…</summary>` opener and its matching `</details>`
+/// closer — with ordinary markdown content in between (already normalized by
+/// the earlier `markdownlint --fix` + `prettier --parser markdown` passes) —
+/// arrive as two, non-adjacent spans. Prettier's **html** parser repairs
+/// invalid fragments rather than rejecting them (verified: handed just the
+/// opener, it silently *inserts* a closing `</details>` that doesn't belong
+/// there), so it must only ever see the spans together, as one balanced
+/// document.
+///
+/// A single tag stack runs across every span: an opening tag not in
+/// [`VOID_ELEMENTS`] pushes, a closing tag pops and must match. Returns
+/// `false` — meaning "leave every block HTML node in this document
+/// untouched" — the moment anything looks inconclusive: a closing tag with
+/// no matching open, an unterminated tag ([`scan_html_tags`] returning
+/// `None`), or tags left open at end of document. Round-trip safety matters
+/// more here than coverage: this never guesses.
+fn html_blocks_balanced(src: &str, spans: &[(usize, usize)]) -> bool {
+  let mut stack: Vec<String> = Vec::new();
+  for &(start, end) in spans {
+    let Some(tokens) = scan_html_tags(&src[start..end]) else {
+      return false;
+    };
+    for tok in tokens {
+      if tok.self_closing
+        || (!tok.closing && VOID_ELEMENTS.contains(&tok.name.as_str()))
+      {
+        continue;
+      }
+      if !tok.closing {
+        stack.push(tok.name);
+      } else if stack.pop().as_ref() != Some(&tok.name) {
+        // Genuinely malformed HTML, or a shape this scanner doesn't
+        // understand (a raw-text element, etc): bail for the whole
+        // document rather than mis-splice it.
+        return false;
+      }
+    }
+  }
+  stack.is_empty()
+}
+
+/// Runs prettier's **html** parser over a single, self-contained HTML
+/// fragment via `crate::surfaces::create_tool_command` — never a bare
+/// `std::process::Command::new` (#266, #103's whole class of Windows
+/// `.cmd`-shim bugs came from call sites that bypassed that helper).
+///
+/// `--html-whitespace-sensitivity=css` is set explicitly rather than left to
+/// prettier's own default (even though `css` happens to be that default) so
+/// the choice is visible and doesn't silently drift if that default ever
+/// changes. `css` treats whitespace around an element as significant or not
+/// based on that element's *actual* CSS `display` value — insignificant for
+/// a block-level `<div>`/`<details>`/`<p>` wrapper, still significant for an
+/// inline element (`<a>`, `<strong>`, `<em>`) that might live inside one.
+/// Verified against `<p align="center"><strong>Bold</strong><em>Italic</em></p>`:
+/// `css` (and `strict`) leave it untouched; `--html-whitespace-sensitivity=
+/// ignore` inserts a newline between the two, which browsers collapse
+/// adjacent-tag whitespace into a rendered space — turning `BoldItalic` into
+/// "Bold Italic" on the rendered page. `ignore` is exactly the setting this
+/// pass must not use.
+///
+/// `extra_args` also reach this call (after the fixed flags) — same
+/// convention `build_markdownlint_fix_argv` documents for the other two
+/// passes in this surface's pipeline, so a project's own `extra_args` don't
+/// silently apply to two of this surface's three tool invocations and not
+/// the third. It runs from `root` like those passes, so prettier resolves
+/// plugins and `.prettierignore` the same way for all three.
+fn run_prettier_html(
+  html: &str,
+  root: &Path,
+  inline_config: &[String],
+  extra_args: &[String],
+) -> Option<String> {
+  let mut cmd = create_tool_command("prettier");
+  cmd
+    .arg("--parser")
+    .arg("html")
+    .arg("--html-whitespace-sensitivity=css")
+    .args(inline_config)
+    .args(extra_args)
+    .current_dir(root)
+    .stdin(Stdio::piped())
+    .stdout(Stdio::piped())
+    .stderr(Stdio::piped());
+
+  let mut child = cmd.spawn().ok()?;
+  child.stdin.take()?.write_all(html.as_bytes()).ok()?;
+  let output = child.wait_with_output().ok()?;
+  if !output.status.success() {
+    return None;
+  }
+  String::from_utf8(output.stdout).ok()
+}
+
+/// Splits `formatted` (prettier html output for the batch
+/// [`format_block_html`] builds) back into one string per original span,
+/// cutting at the `<!--fml-html-gap-N-->` marker lines it inserted.
+///
+/// Returns `None` if a marker is missing or no longer alone on its line
+/// (prettier reflowed it into neighbouring inline content); the caller then
+/// leaves the file untouched rather than splicing a corrupted result.
+fn split_on_gap_placeholders(
+  formatted: &str,
+  gap_count: usize,
+) -> Option<Vec<&str>> {
+  let mut parts = Vec::with_capacity(gap_count + 1);
+  let mut remaining = formatted;
+  for gi in 0..gap_count {
+    let marker = format!("<!--fml-html-gap-{gi}-->");
+    let marker_pos = remaining.find(&marker)?;
+    let line_start = remaining[..marker_pos].rfind('\n').map_or(0, |p| p + 1);
+    let after_marker = marker_pos + marker.len();
+    let line_end = remaining[after_marker..]
+      .find('\n')
+      .map_or(remaining.len(), |p| after_marker + p + 1);
+    if !remaining[line_start..marker_pos].trim().is_empty()
+      || !remaining[after_marker..line_end].trim().is_empty()
+    {
+      return None;
+    }
+    parts.push(&remaining[..line_start]);
+    remaining = &remaining[line_end..];
+  }
+  parts.push(remaining);
+  Some(parts)
+}
+
+/// Formats every block-level HTML node in `src`, leaving everything else —
+/// every other byte, including inline HTML spans mid-paragraph — untouched.
+///
+/// Runs after the existing `markdownlint-cli2 --fix` + `prettier --parser
+/// markdown` passes, on their output, so the markdown content nested inside
+/// an HTML wrapper (e.g. a list inside `<details>`) is already in its final,
+/// normalized form by the time this runs — this pass only ever touches the
+/// HTML tags themselves. Idempotent by construction: re-running it against
+/// already-formatted output re-detects the same block spans and re-formats
+/// them to the same result, since prettier's own html formatting is
+/// idempotent and this pass never touches anything else.
+///
+/// Every span in the file is joined into one batch, a numbered
+/// `<!--fml-html-gap-N-->` marker line between neighbours, formatted with a
+/// single prettier spawn, then split back apart on those markers. The text
+/// between spans (already-formatted markdown, e.g. a `<details>` body) never
+/// reaches the html parser: fed to it, a list's line breaks would collapse
+/// into plain HTML text content. It is re-spliced verbatim instead, while an
+/// opener and its closer still sit in one balanced html document.
+///
+/// Falls back to leaving the whole file untouched whenever anything is
+/// inconclusive: unbalanced tags ([`html_blocks_balanced`]), prettier
+/// failing on the batch, a marker not surviving the round trip, or a result
+/// that parses as a different block structure. A hard failure here would
+/// make `fml fmt` fail on real-world HTML this pass doesn't understand yet;
+/// leaving it exactly as written is always a safe, silent no-op instead.
+fn format_block_html(
+  src: &str,
+  root: &Path,
+  inline_config: &[String],
+  extra_args: &[String],
+) -> String {
+  let spans = extract_html_block_ranges(src);
+  if spans.is_empty() || !html_blocks_balanced(src, &spans) {
+    return src.to_string();
+  }
+
+  let mut batch = String::new();
+  for (i, &(start, end)) in spans.iter().enumerate() {
+    if i > 0 {
+      let _ = writeln!(batch, "<!--fml-html-gap-{}-->", i - 1);
+    }
+    batch.push_str(&src[start..end]);
+    if !batch.ends_with('\n') {
+      batch.push('\n');
+    }
+  }
+  let Some(formatted) =
+    run_prettier_html(&batch, root, inline_config, extra_args)
+  else {
+    return src.to_string();
+  };
+  let Some(parts) = split_on_gap_placeholders(&formatted, spans.len() - 1)
+  else {
+    return src.to_string();
+  };
+
+  let mut out = String::with_capacity(src.len());
+  let mut cursor = 0usize;
+  for (&(start, end), part) in spans.iter().zip(parts) {
+    out.push_str(&src[cursor..start]);
+    out.push_str(part.trim_end_matches('\n'));
+    out.push('\n');
+    cursor = end;
+  }
+  out.push_str(&src[cursor..]);
+  // Prettier indents nested wrappers; after a blank line, four spaces turn
+  // a wrapper into an indented code block. Any splice that changes how the
+  // document parses is rejected wholesale.
+  if block_structure(&out) == block_structure(src) {
+    out
+  } else {
+    src.to_string()
+  }
+}
+
+/// The `Start`/`End` tag sequence `pulldown-cmark` sees in `src`: equal for
+/// two documents exactly when they nest the same blocks and inline spans
+/// the same way, whatever the text inside an HTML block says.
+fn block_structure(src: &str) -> Vec<(bool, TagEnd)> {
+  parse_markdown(src)
+    .filter_map(|event| match event {
+      Event::Start(tag) => Some((true, tag.to_end())),
+      Event::End(tag) => Some((false, tag)),
+      _ => None,
+    })
+    .collect()
+}
+
+/// Runs [`format_block_html`] against the file at `path` and writes the
+/// result back — but only when it actually changed, so a file with no block
+/// HTML at all (the overwhelming majority) never gets rewritten with an
+/// identical byte stream. Shared by both of [`MarkdownSurface::format`]'s
+/// branches (the `--check` temp-copy pass and the real in-place write pass),
+/// which differ only in *which* path they hand this.
+fn apply_block_html_pass(
+  path: &Path,
+  root: &Path,
+  inline_config: &[String],
+  extra_args: &[String],
+) -> std::io::Result<()> {
+  let content = std::fs::read_to_string(path)?;
+  let updated = format_block_html(&content, root, inline_config, extra_args);
+  if updated != content {
+    std::fs::write(path, updated)?;
+  }
+  Ok(())
 }
 
 /// Markdown language surface implementation.
@@ -993,11 +1450,30 @@ impl LanguageSurface for MarkdownSurface {
           cmd.args(&ctx.lang_config.extra_args);
           cmd.current_dir(ctx.root.as_path());
           let output = cmd.output()?;
+          if !output.status.success() {
+            return Ok(output);
+          }
+
+          // Fixes #253: format block-level HTML (badge wrappers,
+          // `<details>`/`<summary>` sections, `<div>` wrappers) that
+          // prettier's markdown parser leaves untouched. Runs after
+          // prettier's own markdown pass above so it only ever sees
+          // already-normalized nested markdown content. Any failure here
+          // (an IO error reading/writing the scratch copy — the html
+          // sub-pass itself never fails the run, see
+          // `format_block_html`'s doc comment) surfaces as an
+          // `ExecutionError` via the early return on `?`, exactly like a
+          // prettier spawn failure would.
+          apply_block_html_pass(
+            scratch,
+            ctx.root.as_path(),
+            &inline_config,
+            &ctx.lang_config.extra_args,
+          )?;
+
           // #314: the same post-prettier step as the write branch below, so
           // `--check` reports exactly the diff a real `fml fmt` writes.
-          if output.status.success()
-            && let (Some(bin), Some(cfg)) = (md_binary, hash_cfg_path)
-          {
+          if let (Some(bin), Some(cfg)) = (md_binary, hash_cfg_path) {
             escape_continuation_hashes(bin, cfg, scratch, ctx.root.as_path())?;
           }
           Ok(output)
@@ -1061,6 +1537,29 @@ impl LanguageSurface for MarkdownSurface {
       return res;
     }
 
+    // Fixes #253: same block-level HTML pass as the `--check` branch above,
+    // applied in place to the real files once prettier's own markdown pass
+    // has succeeded. See `apply_block_html_pass` and `format_block_html`.
+    for file in &files {
+      if let Err(e) = apply_block_html_pass(
+        file,
+        ctx.root.as_path(),
+        &inline_config,
+        &ctx.lang_config.extra_args,
+      ) {
+        return SurfaceResult {
+          surface_name: self.name(),
+          status: SurfaceStatus::ExecutionError {
+            message: format!(
+              "Failed to format embedded HTML in {}: {e}",
+              file.display()
+            ),
+          },
+          duration: start.elapsed(),
+        };
+      }
+    }
+
     // #314: prettier's wrap can leave a `#` at a line start, which the next
     // `markdownlint --fix` would turn into a heading.
     if let (Some(bin), Some(cfg)) = (md_binary, hash_cfg_path)
@@ -1068,7 +1567,12 @@ impl LanguageSurface for MarkdownSurface {
     {
       return escape_failed(self.name(), start, &e);
     }
-    res
+    // `res` timed prettier alone; report the whole pipeline, HTML pass
+    // and escapes included.
+    SurfaceResult {
+      duration: start.elapsed(),
+      ..res
+    }
   }
 
   fn lint(&self, ctx: &ExecutionContext, fix: bool) -> SurfaceResult {
@@ -2295,5 +2799,344 @@ README.md:7 error MD025/single-title/single-h1 Multiple top-level headings";
       "the failure must be markdownlint's, not prettier's, got: {message}"
     );
     assert!(!res.is_success());
+  }
+
+  // --- Fixes #253: block-level embedded HTML formatting ---
+
+  #[test]
+  fn test_extract_html_block_ranges_finds_block_not_inline() {
+    let src = "# T\n\n<p align=\"center\">\n  <img src=\"a.png\">\n</p>\n\n\
+    Prose with <strong>inline</strong> html.\n";
+    let spans = extract_html_block_ranges(src);
+    assert_eq!(spans.len(), 1, "only the block-level <p> should be found");
+    let (s, e) = spans[0];
+    assert!(src[s..e].starts_with("<p align=\"center\">"));
+    assert!(src[s..e].contains("</p>"));
+    assert!(
+      !src[s..e].contains("<strong>"),
+      "the block span must not swallow the later inline HTML"
+    );
+  }
+
+  #[test]
+  fn test_extract_html_block_ranges_skips_blocks_inside_containers() {
+    // Block HTML in a blockquote carries `> ` prefixes and in a list item
+    // carries the item's indent: prettier's html parser would mangle the
+    // former and dedent the latter out of the list.
+    for src in [
+      "> <div align=\"center\">\n> <img src=\"a.png\">\n> </div>\n",
+      "- item\n\n  <div align=\"center\">\n  <img src=\"a.png\">\n  </div>\n",
+      "Text[^1].\n\n[^1]: <div>\n    <img src=\"a.png\">\n    </div>\n",
+      // One-line blocks carry no prefix inside their span, so only the
+      // depth rule keeps prettier from growing them out of the container.
+      "> <p align=\"center\"><img src=\"a.png\"></p>\n",
+      "- item\n\n  <img src=\"a.png\"     alt=\"b\">\n",
+    ] {
+      assert_eq!(extract_html_block_ranges(src), vec![], "in: {src}");
+    }
+  }
+
+  #[test]
+  fn test_format_block_html_formats_crlf_files() {
+    if !check_binary_exists("prettier") {
+      return;
+    }
+    let src =
+      "<p align=\"center\">\r\n<img src=\"a.png\"     alt=\"b\">\r\n</p>\r\n";
+    let crlf = ["--end-of-line=crlf".to_string()];
+    assert_eq!(
+      format_block_html(src, Path::new("."), &crlf, &[]),
+      "<p align=\"center\">\r\n  <img src=\"a.png\" alt=\"b\" />\r\n</p>\r\n"
+    );
+  }
+
+  #[test]
+  fn test_block_structure_flags_list_exit_and_new_code_block() {
+    let list = "- item\n\n  <div>\n  <img src=\"a.png\">\n  </div>\n";
+    let dedented = "- item\n\n  <div>\n  <img src=\"a.png\" />\n</div>\n";
+    assert_ne!(block_structure(list), block_structure(dedented));
+    let nested =
+      "<div>\n\n<div>\n\n<div>\n\nText.\n\n</div>\n\n</div>\n\n</div>\n";
+    let indented = "<div>\n\n  <div>\n\n    <div>\n\nText.\n\n    </div>\n\n  </div>\n\n</div>\n";
+    assert_ne!(block_structure(nested), block_structure(indented));
+    let badge =
+      "<p align=\"center\">\n<img src=\"a.png\"     alt=\"b\">\n</p>\n";
+    let tidy =
+      "<p align=\"center\">\n  <img src=\"a.png\" alt=\"b\" />\n</p>\n";
+    assert_eq!(block_structure(badge), block_structure(tidy));
+  }
+
+  #[test]
+  fn test_format_block_html_leaves_nested_blank_line_wrappers_untouched() {
+    if !check_binary_exists("prettier") {
+      return;
+    }
+    // Prettier indents each nesting level; past three spaces after a blank
+    // line the wrapper would turn into an indented code block.
+    let src = "<div>\n\n<div>\n\n<div>\n\n<details>\n<summary>X</summary>\n\n\
+    Body.\n\n</details>\n\n</div>\n\n</div>\n\n</div>\n";
+    assert_eq!(format_block_html(src, Path::new("."), &[], &[]), src);
+  }
+
+  #[test]
+  fn test_extract_html_block_ranges_honours_prettier_ignore() {
+    let blocks = |src: &'static str| -> Vec<&'static str> {
+      let spans = extract_html_block_ranges(src);
+      spans.into_iter().map(|(s, e)| &src[s..e]).collect()
+    };
+    // The comment shields only the next block, even when that block is a
+    // paragraph, and a comment sharing a block with html shields that block.
+    assert_eq!(
+      blocks("<!-- prettier-ignore -->\n\n<p>\n<b>a</b>\n</p>\n\n<p>c</p>\n"),
+      vec!["<p>c</p>\n"]
+    );
+    assert_eq!(
+      blocks("<!-- prettier-ignore -->\n<p>\n<b>a</b>\n</p>\n"),
+      [""; 0]
+    );
+    assert_eq!(
+      blocks("<!-- prettier-ignore -->\n\nText.\n\n<p>c</p>\n"),
+      vec!["<p>c</p>\n"]
+    );
+    assert_eq!(
+      blocks(
+        "<!-- prettier-ignore-start -->\n\n<p>a</p>\n\n<div>b</div>\n\n\
+         <!-- prettier-ignore-end -->\n\n<p>c</p>\n"
+      ),
+      vec!["<p>c</p>\n"]
+    );
+    // With no blank lines the directives share the table's block; the end
+    // comment on its last line must still close the range.
+    assert_eq!(
+      blocks(
+        "<!-- prettier-ignore-start -->\n<table><td>a</td></table>\n\
+         <!-- prettier-ignore-end -->\n\n<p>c</p>\n"
+      ),
+      vec!["<p>c</p>\n"]
+    );
+    assert_eq!(
+      blocks("<p>a</p>\n<!-- prettier-ignore-start -->\n\n<p>b</p>\n"),
+      [""; 0]
+    );
+  }
+
+  #[test]
+  fn test_extract_html_block_ranges_skips_comment_only_blocks() {
+    // Nothing for prettier to tidy, and each would cost a Node spawn.
+    let src = "<!-- markdownlint-disable MD013 -->\n\n<p>c</p>\n\n\
+               <!-- a -->\n<!--\nb\n-->\n";
+    let spans = extract_html_block_ranges(src);
+    let blocks: Vec<&str> = spans.iter().map(|&(s, e)| &src[s..e]).collect();
+    assert_eq!(blocks, vec!["<p>c</p>\n"]);
+  }
+
+  #[test]
+  fn test_scan_html_tags_ignores_void_and_self_closing() {
+    let tokens = scan_html_tags("<div><img src=\"a.png\"><br/></div>").unwrap();
+    assert_eq!(tokens.len(), 4);
+    assert!(!tokens[0].closing && tokens[0].name == "div");
+    assert!(
+      !tokens[1].closing && tokens[1].name == "img" && !tokens[1].self_closing
+    );
+    assert!(
+      !tokens[2].closing && tokens[2].name == "br" && tokens[2].self_closing
+    );
+    assert!(tokens[3].closing && tokens[3].name == "div");
+  }
+
+  #[test]
+  fn test_scan_html_tags_ignores_comments_and_gt_in_attribute_values() {
+    // A `>` inside a quoted attribute value must not be mistaken for the
+    // tag's own closing `>`, and HTML comments must not be tokenized as tags.
+    let tokens =
+      scan_html_tags("<!-- <fake> --><div title=\"a > b\"></div>").unwrap();
+    assert_eq!(tokens.len(), 2);
+    assert_eq!(tokens[0].name, "div");
+    assert!(!tokens[0].closing);
+    assert_eq!(tokens[1].name, "div");
+    assert!(tokens[1].closing);
+  }
+
+  #[test]
+  fn test_html_blocks_balanced_pairs_details_split_by_blank_line() {
+    // CommonMark's HTML-block rule ends a block at the first blank line, so
+    // the `<details>`/`<summary>` opener and the `</details>` closer arrive
+    // as two separate spans with the interior markdown outside both.
+    let src =
+      "<details>\n<summary>More</summary>\n\nExtra text.\n\n</details>\n";
+    let spans = extract_html_block_ranges(src);
+    assert_eq!(spans.len(), 2, "opener and closer are separate HtmlBlocks");
+    assert!(html_blocks_balanced(src, &spans));
+    assert!(!html_blocks_balanced(src, &spans[..1]), "opener alone");
+  }
+
+  #[test]
+  fn test_html_blocks_balanced_rejects_mismatched_closing_tag() {
+    // A closing tag with nothing on the stack to match means "leave the
+    // whole document's block HTML untouched" rather than guess.
+    let src = "</div>\n\n<p align=\"center\">\n  <img src=\"a.png\">\n</p>\n";
+    let spans = extract_html_block_ranges(src);
+    assert!(!html_blocks_balanced(src, &spans));
+  }
+
+  #[test]
+  fn test_split_on_gap_placeholders_requires_marker_on_its_own_line() {
+    let ok = "<p>a</p>\n  <!--fml-html-gap-0-->\n<p>b</p>\n";
+    assert_eq!(
+      split_on_gap_placeholders(ok, 1),
+      Some(vec!["<p>a</p>\n", "<p>b</p>\n"])
+    );
+    let reflowed = "<b>a</b> <!--fml-html-gap-0-->\n<b>b</b>\n";
+    assert_eq!(split_on_gap_placeholders(reflowed, 1), None);
+  }
+
+  #[test]
+  fn test_format_block_html_normalizes_p_align_center_badge() {
+    if !check_binary_exists("prettier") {
+      return;
+    }
+    let src = "# Project\n\n<p align=\"center\">\n  <img src=\"a.png\"     alt=\"badge\">\n</p>\n";
+    let out = format_block_html(src, Path::new("."), &[], &[]);
+    assert!(
+      !out.contains("     alt"),
+      "the quadruple space in the <img> attributes must be collapsed, got: {out}"
+    );
+    assert!(out.contains("<p align=\"center\">"));
+  }
+
+  #[test]
+  fn test_format_block_html_normalizes_details_summary_section() {
+    if !check_binary_exists("prettier") {
+      return;
+    }
+    let src = "<details>\n<summary   class=\"foo\"     >More info</summary>\n\n\
+    Extra detail text.\n\n</details>\n";
+    // Formatted alone, the opener would gain a spurious `</details>`; only
+    // the balanced batch yields exactly one closer, at the end.
+    assert_eq!(
+      format_block_html(src, Path::new("."), &[], &[]),
+      "<details>\n  <summary class=\"foo\">More info</summary>\n\n\
+       Extra detail text.\n\n</details>\n"
+    );
+  }
+
+  #[test]
+  fn test_format_block_html_leaves_inline_html_byte_identical() {
+    if !check_binary_exists("prettier") {
+      return;
+    }
+    let src = "<p align=\"center\">\n  <img src=\"a.png\"     alt=\"badge\">\n</p>\n\n\
+    Some prose with an <strong>inline</strong>    span here.\n";
+    let out = format_block_html(src, Path::new("."), &[], &[]);
+    assert!(
+      out.contains("Some prose with an <strong>inline</strong>    span here."),
+      "an inline HTML span mid-paragraph, and its surrounding whitespace, \
+       must be byte-identical to the input, got: {out}"
+    );
+  }
+
+  #[test]
+  fn test_format_block_html_is_idempotent() {
+    if !check_binary_exists("prettier") {
+      return;
+    }
+    let src = "# Project\n\n<p align=\"center\">\n  <img src=\"a.png\"     alt=\"badge\">\n</p>\n\n\
+    Some prose with an <strong>inline</strong>    span here.\n\n\
+    <details>\n<summary   class=\"foo\"     >More info</summary>\n\n\
+    Extra detail text.\n\n</details>\n";
+    let once = format_block_html(src, Path::new("."), &[], &[]);
+    assert_eq!(
+      once,
+      "# Project\n\n<p align=\"center\">\n  <img src=\"a.png\" alt=\"badge\" />\n\
+       </p>\n\nSome prose with an <strong>inline</strong>    span here.\n\n\
+       <details>\n  <summary class=\"foo\">More info</summary>\n\n\
+       Extra detail text.\n\n</details>\n"
+    );
+    let twice = format_block_html(&once, Path::new("."), &[], &[]);
+    assert_eq!(once, twice, "a second pass must be a no-op");
+  }
+
+  #[test]
+  fn test_format_block_html_leaves_mismatched_document_untouched() {
+    // No prettier binary needed: html_blocks_balanced bails before any
+    // subprocess would be spawned.
+    let src = "</div>\n\n<p align=\"center\">\n  <img src=\"a.png\">\n</p>\n";
+    let out = format_block_html(src, Path::new("."), &[], &[]);
+    assert_eq!(out, src);
+  }
+
+  #[test]
+  fn test_markdown_format_normalizes_block_html_end_to_end() {
+    // Acceptance criteria for #253: a `<p align="center">` badge block and a
+    // `<details>` section are both normalized by a real `fml fmt` write pass,
+    // while an inline `<strong>` mid-paragraph stays byte-identical, and a
+    // second run is a no-op.
+    if !check_binary_exists("prettier") {
+      return;
+    }
+    let temp = TempDir::new().unwrap();
+    let readme = temp.path().join("README.md");
+    std::fs::write(
+      &readme,
+      "# Project\n\n<p align=\"center\">\n  <img src=\"a.png\"     alt=\"badge\">\n\
+       </p>\n\nSome <strong>inline</strong> prose.\n\n<details>\n\
+       <summary   class=\"x\">More info</summary>\n\nExtra detail text.\n\n\
+       </details>\n",
+    )
+    .unwrap();
+
+    let surface = MarkdownSurface;
+    let ctx = test_ctx(temp.path(), ResolvedLangConfig::new("markdown"));
+
+    let res = surface.format(&ctx);
+    assert!(
+      res.is_success(),
+      "expected format to pass, got: {:?}",
+      res.status
+    );
+
+    // Prettier's markdown pass alone leaves both tags as written.
+    let formatted = std::fs::read_to_string(&readme).unwrap();
+    assert_eq!(
+      formatted,
+      "# Project\n\n<p align=\"center\">\n  <img src=\"a.png\" alt=\"badge\" />\n\
+       </p>\n\nSome <strong>inline</strong> prose.\n\n<details>\n  \
+       <summary class=\"x\">More info</summary>\n\nExtra detail text.\n\n\
+       </details>\n"
+    );
+
+    // Second run must be a no-op.
+    let res2 = surface.format(&ctx);
+    assert!(res2.is_success());
+    let formatted_again = std::fs::read_to_string(&readme).unwrap();
+    assert_eq!(
+      formatted, formatted_again,
+      "a second `fml fmt` run must not change the file"
+    );
+  }
+
+  #[test]
+  fn test_markdown_format_check_only_reports_block_html_drift() {
+    if !check_binary_exists("prettier") {
+      return;
+    }
+    let temp = TempDir::new().unwrap();
+    std::fs::write(
+      temp.path().join("README.md"),
+      "<p align=\"center\">\n  <img src=\"a.png\"     alt=\"badge\">\n</p>\n",
+    )
+    .unwrap();
+
+    let surface = MarkdownSurface;
+    let mut ctx = test_ctx(temp.path(), ResolvedLangConfig::new("markdown"));
+    ctx.check_only = true;
+
+    let res = surface.format(&ctx);
+    assert!(
+      matches!(res.status, SurfaceStatus::ViolationsFound { .. }),
+      "the messy <img> attribute spacing must be reported as drift under \
+       --check, got: {:?}",
+      res.status
+    );
   }
 }
