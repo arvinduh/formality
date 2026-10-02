@@ -3446,6 +3446,19 @@ mod tests {
   }
 
   #[test]
+  #[cfg(not(windows))]
+  fn test_resolve_via_known_install_dir_finds_keg_only_clang_tidy() {
+    let tmp = tempfile::tempdir().expect("tempdir");
+    let fixture = write_bin_fixture(tmp.path(), "clang-tidy");
+    let dir = tmp.path().to_path_buf();
+
+    let found = resolve_via_known_install_dir_with("clang-tidy", move |kind| {
+      (kind == KnownInstallDir::BrewLlvm).then(|| dir.clone())
+    });
+    assert_eq!(found, Some(fixture));
+  }
+
+  #[test]
   fn test_resolve_via_known_install_dir_finds_golangci_lint_too() {
     // golangci-lint's chain lists GoInstall as a fallback behind
     // Brew/Scoop, not as its only entry -- the "does this chain contain a
@@ -3946,6 +3959,24 @@ mod tests {
     assert_eq!(
       KnownInstallDir::ScoopShims.path_with(no_go_bin_dir, &both),
       Some(PathBuf::from(r"D:\scoop").join("shims"))
+    );
+  }
+
+  #[test]
+  fn test_known_install_dir_path_brew_llvm_keg_bin() {
+    let keg_bin = |prefix: &str| {
+      Some(PathBuf::from(prefix).join("opt").join("llvm").join("bin"))
+    };
+    assert_eq!(
+      KnownInstallDir::BrewLlvm.path_with(
+        no_go_bin_dir,
+        fake_env(&[("HOMEBREW_PREFIX", "/custom/brew")])
+      ),
+      keg_bin("/custom/brew")
+    );
+    assert_eq!(
+      KnownInstallDir::BrewLlvm.path_with(no_go_bin_dir, fake_env(&[])),
+      keg_bin(HOMEBREW_DEFAULT_PREFIX)
     );
   }
 
