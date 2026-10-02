@@ -70,8 +70,6 @@ pub struct FormalityLsp {
   /// only by a successful reload after `formality.toml` /
   /// `.formality.toml` changes.
   config: Arc<tokio::sync::RwLock<Option<FormalityConfig>>>,
-  /// Set once a `shutdown` request has been handled; decides the exit code.
-  shut_down: std::sync::atomic::AtomicBool,
 }
 
 impl FormalityLsp {
@@ -82,7 +80,6 @@ impl FormalityLsp {
       client,
       root: tokio::sync::Mutex::new(None),
       config: Arc::new(tokio::sync::RwLock::new(None)),
-      shut_down: std::sync::atomic::AtomicBool::new(false),
     }
   }
 
@@ -218,9 +215,6 @@ impl LanguageServer for FormalityLsp {
   }
 
   async fn shutdown(&self) -> LspResult<()> {
-    self
-      .shut_down
-      .store(true, std::sync::atomic::Ordering::Release);
     Ok(())
   }
 
@@ -442,6 +436,9 @@ struct ExitSignal {
   service: LspService<FormalityLsp>,
   /// Fired once, on the first `exit`; dropped with `serve` at stdin EOF.
   exited: Option<tokio::sync::oneshot::Sender<ExitStatus>>,
+  /// Set when a `shutdown` request is received, not when it is answered: an
+  /// `exit` read in the same poll cancels the pending `shutdown` handler.
+  shut_down: bool,
 }
 
 impl tower_service::Service<Request> for ExitSignal {
@@ -459,15 +456,11 @@ impl tower_service::Service<Request> for ExitSignal {
 
   fn call(&mut self, request: Request) -> Self::Future {
     let is_exit = request.method() == "exit";
+    self.shut_down |= request.method() == "shutdown";
     let response = tower_service::Service::call(&mut self.service, request);
     if is_exit && let Some(exited) = self.exited.take() {
-      let shut_down = self
-        .service
-        .inner()
-        .shut_down
-        .load(std::sync::atomic::Ordering::Acquire);
       // The receiver lives until the process exits.
-      let _ = exited.send(exit_status(shut_down));
+      let _ = exited.send(exit_status(self.shut_down));
     }
     response
   }
@@ -527,6 +520,7 @@ pub fn run_lsp_server(root: Option<&Path>) -> ExitStatus {
   let service = ExitSignal {
     service,
     exited: Some(exited_tx),
+    shut_down: false,
   };
   let server = Server::new(tokio::io::stdin(), tokio::io::stdout(), socket);
   // `serve` owns the sender, so the receiver resolves on `exit` or, when

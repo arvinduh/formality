@@ -16,12 +16,26 @@ const RESPONSE_TIMEOUT: Duration = Duration::from_secs(30);
 /// How long the server gets to exit after `exit` before the test fails.
 const EXIT_TIMEOUT: Duration = Duration::from_secs(5);
 
-/// Writes one framed JSON-RPC message to the server.
-fn send(stdin: &mut impl Write, message: &serde_json::Value) {
-  let text = message.to_string();
+/// Writes framed JSON-RPC messages to the server in a single write.
+fn send(stdin: &mut impl Write, messages: &[serde_json::Value]) {
+  let mut framed = String::new();
+  for message in messages {
+    let text = message.to_string();
+    framed.push_str(&format!("Content-Length: {}\r\n\r\n{text}", text.len()));
+  }
   // A child that already exited closes the pipe; the asserts report it.
-  let _ = write!(stdin, "Content-Length: {}\r\n\r\n{text}", text.len());
+  let _ = stdin.write_all(framed.as_bytes());
   let _ = stdin.flush();
+}
+
+/// How the client sends `shutdown` before `exit`.
+enum Shutdown {
+  /// No `shutdown` at all.
+  Skip,
+  /// `shutdown`, then `exit` once the response arrives (spec-following).
+  Awaited,
+  /// `shutdown` and `exit` in one write, without awaiting the response.
+  SameWriteAsExit,
 }
 
 /// Reads Content-Length framed JSON-RPC messages from `stdout` into `tx`
@@ -86,7 +100,7 @@ fn await_response(rx: &mpsc::Receiver<serde_json::Value>, id: u64) {
 /// Runs the lifecycle, sends `exit` with stdin held open, and returns the
 /// child's exit code, or `None` if it was still running after
 /// [`EXIT_TIMEOUT`].
-fn exit_code_after_exit(send_shutdown: bool) -> Option<i32> {
+fn exit_code_after_exit(shutdown: &Shutdown) -> Option<i32> {
   let dir = tempfile::tempdir().expect("tempdir");
   let mut child = spawn_server(dir.path());
   let mut stdin = child.stdin.take().unwrap();
@@ -97,27 +111,32 @@ fn exit_code_after_exit(send_shutdown: bool) -> Option<i32> {
   let root_uri = tower_lsp::lsp_types::Url::from_file_path(dir.path()).unwrap();
   send(
     &mut stdin,
-    &serde_json::json!({
+    &[serde_json::json!({
       "jsonrpc": "2.0", "id": 1, "method": "initialize",
       "params": { "capabilities": {}, "rootUri": root_uri },
-    }),
+    })],
   );
   await_response(&rx, 1);
   send(
     &mut stdin,
-    &serde_json::json!({ "jsonrpc": "2.0", "method": "initialized", "params": {} }),
+    &[serde_json::json!({
+      "jsonrpc": "2.0", "method": "initialized", "params": {},
+    })],
   );
-  if send_shutdown {
-    send(
-      &mut stdin,
-      &serde_json::json!({ "jsonrpc": "2.0", "id": 2, "method": "shutdown" }),
-    );
-    await_response(&rx, 2);
+  let shutdown_request =
+    serde_json::json!({ "jsonrpc": "2.0", "id": 2, "method": "shutdown" });
+  let exit = serde_json::json!({ "jsonrpc": "2.0", "method": "exit" });
+  match shutdown {
+    Shutdown::Skip => send(&mut stdin, &[exit]),
+    Shutdown::Awaited => {
+      send(&mut stdin, &[shutdown_request]);
+      await_response(&rx, 2);
+      send(&mut stdin, &[exit]);
+    }
+    Shutdown::SameWriteAsExit => {
+      send(&mut stdin, &[shutdown_request, exit]);
+    }
   }
-  send(
-    &mut stdin,
-    &serde_json::json!({ "jsonrpc": "2.0", "method": "exit" }),
-  );
 
   // The forwarder drops its sender when stdout closes, which happens only
   // when the process exits; stdin stays open throughout.
@@ -140,10 +159,16 @@ fn exit_code_after_exit(send_shutdown: bool) -> Option<i32> {
 
 #[test]
 fn test_lsp_exits_with_zero_on_exit_after_shutdown() {
-  assert_eq!(exit_code_after_exit(true), Some(0));
+  assert_eq!(exit_code_after_exit(&Shutdown::Awaited), Some(0));
+}
+
+#[test]
+fn test_lsp_exits_with_zero_on_exit_in_same_write_as_shutdown() {
+  // The spec keys code 0 on `shutdown` being received, not answered.
+  assert_eq!(exit_code_after_exit(&Shutdown::SameWriteAsExit), Some(0));
 }
 
 #[test]
 fn test_lsp_exits_with_one_on_exit_without_shutdown() {
-  assert_eq!(exit_code_after_exit(false), Some(1));
+  assert_eq!(exit_code_after_exit(&Shutdown::Skip), Some(1));
 }
