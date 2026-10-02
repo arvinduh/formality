@@ -52,9 +52,9 @@
 //!   status exists, and `Library Tests` (pr-check.yml, ubuntu) asserts all
 //!   eight on every PR.
 //! - What does differ on Windows is how a status is reached: `.cmd`/`.bat`
-//!   shims spawned through `cmd /C` (#103) and `cmd`'s launch failures
-//!   classified as `ExecutionError` (#419). `surfaces::tooling`'s unit tests
-//!   cover the classification, and `Fresh-Install Regression
+//!   shims spawned by path through `cmd.exe` (#103) and `cmd`'s launch
+//!   failures classified as `ExecutionError` (#419). `surfaces::tooling`'s
+//!   unit tests cover the classification, and `Fresh-Install Regression
 //!   (windows-latest)` in install-regression.yml covers it end to end: real
 //!   `fml` against real installed tools, failing on a `[MISS]` or
 //!   `Failed to execute` row for a tool it just installed. Its `paths`
