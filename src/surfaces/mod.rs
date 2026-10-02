@@ -201,7 +201,7 @@ impl ExecutionContext {
 /// Runs `surface`'s detection on `root` alone, scanning `root` for it.
 #[cfg(test)]
 fn detect_in(surface: &dyn LanguageSurface, root: &Path) -> bool {
-  surface.detect(root, &glob::PresentExtensions::scan(root))
+  surface.detect(root, &glob::PresentExtensions::scan(root, &[]))
 }
 
 /// Builds a minimal `ExecutionContext` for testing language surfaces.

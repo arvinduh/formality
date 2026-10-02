@@ -195,12 +195,20 @@ impl LanguageServer for FormalityLsp {
       .await;
 
     // Detect active surfaces and log which ones formality will format and
-    // lint in this workspace.
+    // lint in this workspace, from the same `global.exclude`-filtered
+    // candidates `fml fmt` detects from.
     let root = self.root.lock().await.clone();
     let config = self.get_or_load_config(root.as_deref()).await;
 
     if let Some(ref root_path) = root {
-      let detected = crate::surfaces::detect_surfaces_smart(root_path, &config);
+      let present = std::cell::LazyCell::new(|| {
+        crate::surfaces::glob::PresentExtensions::scan(
+          root_path,
+          &config.resolve_global().exclude,
+        )
+      });
+      let detected = crate::surfaces::default_registry()
+        .detect_surfaces_in(root_path, &config, &present);
       let names: Vec<&str> = detected.iter().map(|s| s.name()).collect();
       if !names.is_empty() {
         self
