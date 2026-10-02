@@ -248,15 +248,14 @@ impl LanguageServer for FormalityLsp {
 
     let config = self.get_or_load_config(Some(&root)).await;
 
-    let status = crate::commands::fmt::run_fmt(
+    // stdout is the JSON-RPC transport, so the report goes to stderr.
+    let status = super::run_resolved(
+      &mut std::io::stderr(),
       &root,
       &config,
-      false,
-      false,
-      false,
       &[],
-      vec![path.clone()],
-      false,
+      std::slice::from_ref(&path),
+      &crate::engine::Plan::fmt(false, false),
     );
 
     if status.is_clean() {
@@ -306,14 +305,15 @@ impl LanguageServer for FormalityLsp {
       ) {
       diags
     } else {
-      let status = crate::commands::lint::run_lint(
+      // stderr is the server log the fallback diagnostic points at; stdout
+      // is the JSON-RPC transport.
+      let status = super::run_resolved(
+        &mut std::io::stderr(),
         &root,
         &config,
-        false,
-        false,
         &[],
-        vec![path.clone()],
-        false,
+        std::slice::from_ref(&path),
+        &crate::engine::Plan::lint(false),
       );
 
       if status.is_clean() {

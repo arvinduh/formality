@@ -161,9 +161,8 @@ use crate::errors::ExitStatus;
 pub struct Runner;
 
 impl Runner {
-  /// Executes `plan`'s passes across the target surfaces, aggregates the
-  /// per-surface results, and renders the status table and diagnostics.
-  #[allow(clippy::too_many_lines)]
+  /// Executes `plan` like [`Runner::run_into`], rendering to stdout as the
+  /// CLI's report.
   #[must_use]
   pub fn run(
     surfaces: &[Box<dyn LanguageSurface>],
@@ -172,8 +171,29 @@ impl Runner {
     plan: &Plan,
     config: &FormalityConfig,
   ) -> ExitStatus {
+    Self::run_into(&mut std::io::stdout(), surfaces, root, paths, plan, config)
+  }
+
+  /// Executes `plan`'s passes across the target surfaces, aggregates the
+  /// per-surface results, and renders the status table and diagnostics into
+  /// `out`.
+  ///
+  /// `out` is the caller's choice because stdout is not always free: under
+  /// `fml lsp` it is the JSON-RPC transport. A failed write to `out` is
+  /// ignored; the report is advisory and never changes the exit status.
+  #[allow(clippy::too_many_lines)]
+  #[must_use]
+  pub fn run_into(
+    out: &mut dyn std::io::Write,
+    surfaces: &[Box<dyn LanguageSurface>],
+    root: &Path,
+    paths: &[PathBuf],
+    plan: &Plan,
+    config: &FormalityConfig,
+  ) -> ExitStatus {
     if surfaces.is_empty() {
-      println!("{}", "No matching language surfaces found.".yellow());
+      let _ =
+        writeln!(out, "{}", "No matching language surfaces found.".yellow());
       return ExitStatus::Clean;
     }
 
@@ -393,7 +413,8 @@ impl Runner {
       action_verb.bold(),
       format!("({})", header_count_label(results.len())).dimmed()
     );
-    println!("{}", frame.section(&title, &rendered_table, &palette));
+    let _ =
+      writeln!(out, "{}", frame.section(&title, &rendered_table, &palette));
 
     let diagnostics = collect_diagnostics(&results);
     if !diagnostics.is_empty() {
@@ -412,7 +433,8 @@ impl Runner {
           let _ = writeln!(body, "    {line}");
         }
       }
-      println!(
+      let _ = writeln!(
+        out,
         "{}",
         frame.section(
           &"Diagnostics & Suggestions:".bold().to_string(),
@@ -465,7 +487,8 @@ impl Runner {
       summary_text.push_str(&clause.dimmed().to_string());
     }
 
-    println!("  {} in {:.2?}\n", summary_text, start_time.elapsed());
+    let _ =
+      writeln!(out, "  {} in {:.2?}\n", summary_text, start_time.elapsed());
 
     ExitStatus::try_from(exit_code).unwrap_or(ExitStatus::Error)
   }
