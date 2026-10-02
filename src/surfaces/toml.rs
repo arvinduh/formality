@@ -122,6 +122,31 @@ pub fn build_taplo_lsp_lint_args(
   args
 }
 
+/// Spells `path` as a taplo file argument that matches exactly that file.
+///
+/// taplo globs every file argument, so a path is a pattern: `[ ] { } ( ) * ?`
+/// are each wrapped in a one-character class, which both glob engines taplo
+/// ships with (Rust `glob` natively, `fast-glob` in the npm build) read as the
+/// literal. The npm build's `fast-glob` also reads `\` as an escape, so a
+/// Windows path matches nothing and taplo exits 0 having done nothing (Issue
+/// #501); `backslash_is_separator` (`cfg!(windows)` in production) turns `\`
+/// into `/`, which both engines accept as a Windows separator.
+fn taplo_path_arg(path: &str, backslash_is_separator: bool) -> String {
+  let mut arg = String::with_capacity(path.len());
+  for c in path.chars() {
+    match c {
+      '\\' if backslash_is_separator => arg.push('/'),
+      '[' | ']' | '{' | '}' | '(' | ')' | '*' | '?' => {
+        arg.push('[');
+        arg.push(c);
+        arg.push(']');
+      }
+      _ => arg.push(c),
+    }
+  }
+  arg
+}
+
 /// TOML language surface implementation.
 #[derive(Debug, Default, Clone, Copy)]
 pub struct TomlSurface;
@@ -201,7 +226,10 @@ impl LanguageSurface for TomlSurface {
         &files,
         |scratch| {
           let mut cmd = create_tool_command("taplo");
-          cmd.arg("format").args(&inline_config).arg(scratch);
+          cmd
+            .arg("format")
+            .args(&inline_config)
+            .arg(taplo_path_arg(&scratch.to_string_lossy(), cfg!(windows)));
           cmd.args(&ctx.lang_config.extra_args);
           cmd.current_dir(ctx.root.as_path());
           cmd.output()
@@ -216,7 +244,7 @@ impl LanguageSurface for TomlSurface {
     cmd.args(&inline_config);
 
     for f in &files {
-      cmd.arg(f);
+      cmd.arg(taplo_path_arg(&f.to_string_lossy(), cfg!(windows)));
     }
 
     cmd.args(&ctx.lang_config.extra_args);
