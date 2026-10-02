@@ -113,6 +113,22 @@ impl SurfaceRegistry {
     root: &Path,
     config: &FormalityConfig,
   ) -> Vec<Box<dyn LanguageSurface>> {
+    let present =
+      std::cell::LazyCell::new(|| glob::PresentExtensions::scan(root));
+    self.detect_surfaces_in(root, config, &present)
+  }
+
+  /// Detects like [`Self::detect_surfaces_smart`], reading extensions from
+  /// the caller's `present`, which is forced only when auto-detection runs
+  /// (no explicit `languages` list), so a caller that already walked the
+  /// tree, or shares one walk between several checks, walks no further.
+  #[must_use]
+  pub fn detect_surfaces_in<F: FnOnce() -> glob::PresentExtensions>(
+    &self,
+    root: &Path,
+    config: &FormalityConfig,
+    present: &std::cell::LazyCell<glob::PresentExtensions, F>,
+  ) -> Vec<Box<dyn LanguageSurface>> {
     let global = config.resolve_global();
 
     let is_ignored = |name: &str, aliases: &[&'static str]| -> bool {
@@ -143,7 +159,7 @@ impl SurfaceRegistry {
 
     // 2. Otherwise auto-detect all project surfaces minus ignore_languages,
     // every surface reading the same single walk of `root`.
-    let present = glob::PresentExtensions::scan(root);
+    let present: &glob::PresentExtensions = present;
     self
       .surfaces
       .iter()
@@ -151,7 +167,7 @@ impl SurfaceRegistry {
         if is_ignored(surface.name(), surface.aliases()) {
           return false;
         }
-        if !surface.detect(root, &present) {
+        if !surface.detect(root, present) {
           return false;
         }
         let resolved =
