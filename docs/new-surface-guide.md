@@ -118,7 +118,9 @@ Key implementation notes drawn from the existing fleet of surfaces:
   workspace root, or any non-ignored file under the root has one of
   `file_extensions()`. A surface with no manifest or config file (JSON, Typst)
   omits `marker_files()`. Override `detect()` only when detection genuinely
-  differs from that rule, and say why in a comment on the override.
+  differs from that rule, and say why in a comment on the override. An override
+  reads extensions from the `PresentExtensions` it is given (one walk shared by
+  every surface) and never walks the tree itself.
 - **Smart Format ordering (Rule #7)**: `format()` must leave files in a state
   that will not immediately fail a trivial structural lint check. If the tool
   ecosystem separates "mechanical fix" (import sorting, blank-line
