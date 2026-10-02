@@ -9,7 +9,19 @@ use fml::cli::{Cli, Commands};
 use fml::errors::ExitStatus;
 use std::fs;
 use std::path::Path;
+use std::sync::{PoisonError, RwLock};
 use tempfile::TempDir;
+
+/// Orders in-process fml runs against overrides of fml's process-wide binary
+/// cache, which every test thread in this binary shares.
+///
+/// [`run_cli`] and [`run_cli_no_root`] hold a read guard for the whole run; a
+/// test that overrides the cache holds the write guard from before its first
+/// override until after its last eviction. No run can therefore observe, or
+/// race a cold lookup against, an override it did not install. Read guards
+/// never poison, and every acquisition recovers a poisoned write guard, so a
+/// failing test cannot fail others through this lock.
+static BINARY_CACHE_LOCK: RwLock<()> = RwLock::new(());
 
 /// Creates a temporary directory populated with the given `(relative_path, content)` files.
 /// Parent directories are created automatically for any nested file paths.
@@ -28,6 +40,9 @@ pub fn temp_repo(files: &[(&str, &str)]) -> TempDir {
 
 /// Executes a CLI command targeted at the given root directory.
 pub fn run_cli(root: impl AsRef<Path>, command: Commands) -> ExitStatus {
+  let _shared = BINARY_CACHE_LOCK
+    .read()
+    .unwrap_or_else(PoisonError::into_inner);
   let args = Cli {
     config: None,
     root: Some(root.as_ref().to_path_buf()),
@@ -38,6 +53,9 @@ pub fn run_cli(root: impl AsRef<Path>, command: Commands) -> ExitStatus {
 
 /// Executes a CLI command without specifying a root directory (global / ambient mode).
 pub fn run_cli_no_root(command: Commands) -> ExitStatus {
+  let _shared = BINARY_CACHE_LOCK
+    .read()
+    .unwrap_or_else(PoisonError::into_inner);
   let args = Cli {
     config: None,
     root: None,
