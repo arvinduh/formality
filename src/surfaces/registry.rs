@@ -479,6 +479,78 @@ mod tests {
   }
 
   #[test]
+  fn test_detect_surfaces_smart_shares_one_scan_and_honours_overrides() {
+    /// Whether each `detect` call's scan saw a file an earlier call wrote.
+    static SEEN: std::sync::Mutex<Vec<bool>> =
+      std::sync::Mutex::new(Vec::new());
+
+    #[derive(Clone, Default)]
+    struct RecordingSurface;
+
+    impl crate::config::facets::DeclaresFacets for RecordingSurface {
+      fn facet_support(
+        &self,
+        _: crate::config::facets::Facet,
+      ) -> crate::config::facets::FacetSupport {
+        crate::config::facets::FacetSupport::Unsupported
+      }
+    }
+
+    impl LanguageSurface for RecordingSurface {
+      fn name(&self) -> &'static str {
+        "recording"
+      }
+      fn detect(&self, root: &Path, present: &glob::PresentExtensions) -> bool {
+        SEEN.lock().unwrap().push(present.contains("probe"));
+        std::fs::write(root.join("written.probe"), "").unwrap();
+        true
+      }
+      fn tool_info(
+        &self,
+        _: &crate::config::ResolvedLangConfig,
+      ) -> Vec<crate::surfaces::ToolInfo> {
+        unimplemented!()
+      }
+      fn format(
+        &self,
+        _: &crate::surfaces::ExecutionContext,
+      ) -> crate::surfaces::SurfaceResult {
+        unimplemented!()
+      }
+      fn lint(
+        &self,
+        _: &crate::surfaces::ExecutionContext,
+        _: bool,
+      ) -> crate::surfaces::SurfaceResult {
+        unimplemented!()
+      }
+      fn sync_config(
+        &self,
+        _: &crate::surfaces::ExecutionContext,
+        _: bool,
+      ) -> crate::surfaces::SurfaceResult {
+        unimplemented!()
+      }
+      fn clone_box(&self) -> Box<dyn LanguageSurface> {
+        Box::new(self.clone())
+      }
+    }
+
+    let mut reg = SurfaceRegistry::empty();
+    reg.register_surface::<RecordingSurface>();
+    reg.register_surface::<RecordingSurface>();
+    let temp = tempfile::TempDir::new().unwrap();
+    let detected =
+      reg.detect_surfaces_smart(temp.path(), &FormalityConfig::with_defaults());
+
+    // Both overrides ran and were honoured on an empty tree.
+    assert_eq!(detected.len(), 2);
+    // The second surface did not see the first one's file: both read one
+    // scan taken before either ran, so detection walked the tree once.
+    assert_eq!(*SEEN.lock().unwrap(), [false, false]);
+  }
+
+  #[test]
   fn test_surface_file_extensions() {
     for surface in all_surfaces() {
       let exts = surface.file_extensions();
