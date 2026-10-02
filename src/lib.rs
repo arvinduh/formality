@@ -716,27 +716,25 @@ mod tests {
                 // Sanctioned post-recreation references that legitimately share an old number:
                 let is_sanctioned_post_recreation = match num {
                   // Post-recreation #113 is markdownlint-cli2 exit code classification in markdown.rs
-                  113 => rel_path == "src/surfaces/markdown.rs",
+                  // Post-recreation #120 is disabling MD033/no-inline-html by
+                  // default in markdown.rs (this fix, not the pre-recreation
+                  // issue of the same number)
+                  113 | 120 => rel_path == "src/surfaces/markdown.rs",
                   // Post-recreation #119 is `fml fix`'s remaining /
                   // auto-fixable reporting, which lives entirely in the
                   // runner (this fix, not the pre-recreation issue of the
                   // same number)
                   119 => rel_path.starts_with("src/engine/runner/"),
-                  // Post-recreation #120 is disabling MD033/no-inline-html by
-                  // default in markdown.rs (this fix, not the pre-recreation
-                  // issue of the same number)
-                  120 => rel_path == "src/surfaces/markdown.rs",
                   // Post-recreation #157 is path relativization in ui/paths.rs and surfaces/markdown.rs
                   157 => {
                     rel_path == "src/ui/paths.rs"
                       || rel_path == "src/surfaces/markdown.rs"
                   }
                   // Post-recreation #177 is version probing model in engine/version/
-                  177 => rel_path.starts_with("src/engine/version/"),
+                  // Post-recreation #195 is PR #195 version probing in engine/version/
+                  177 | 195 => rel_path.starts_with("src/engine/version/"),
                   // Post-recreation #191 is PR #191 review regression in ui/paths.rs
                   191 => rel_path == "src/ui/paths.rs",
-                  // Post-recreation #195 is PR #195 version probing in engine/version/
-                  195 => rel_path.starts_with("src/engine/version/"),
                   // Post-recreation #201 is go lint test runner flakiness fix in go.rs
                   201 => rel_path == "src/surfaces/go.rs",
                   // Post-recreation #151 is prettier-driven --check exit-code classification
