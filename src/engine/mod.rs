@@ -11,7 +11,7 @@ pub mod update;
 pub mod version;
 
 pub use diff::render_diff;
-pub use runner::{Mode, Pass, Plan, Runner};
+pub use runner::{Mode, Pass, Plan, Runner, Scope};
 pub use update::{UpdateNotifier, print_update_notice, spawn_update_check};
 
 use std::path::PathBuf;

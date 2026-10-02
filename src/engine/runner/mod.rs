@@ -157,6 +157,37 @@ const fn mode_for(check: bool) -> Mode {
 
 use crate::errors::ExitStatus;
 
+/// The files one run acts on, resolved once by the command layer and shared
+/// by surface detection and every surface's file selection.
+pub enum Scope {
+  /// Explicit path arguments, or the files `--staged`/`--changed` selected;
+  /// each surface resolves its own files from them.
+  Paths(Arc<Vec<PathBuf>>),
+  /// The whole workspace: every candidate file, `global.exclude` applied,
+  /// from one walk.
+  Workspace(Arc<Vec<PathBuf>>),
+}
+
+impl Scope {
+  /// Scopes a run to `paths`, or, when there are none, to the workspace
+  /// under `root`, walking it once.
+  #[must_use]
+  pub fn resolve(
+    root: &Path,
+    paths: &[PathBuf],
+    global_exclude: &[PathBuf],
+  ) -> Self {
+    if paths.is_empty() {
+      Self::Workspace(Arc::new(crate::surfaces::walk_candidate_files(
+        root,
+        global_exclude,
+      )))
+    } else {
+      Self::Paths(Arc::new(paths.to_vec()))
+    }
+  }
+}
+
 /// Orchestrates parallel tool execution across language surfaces.
 pub struct Runner;
 
@@ -167,11 +198,11 @@ impl Runner {
   pub fn run(
     surfaces: &[Box<dyn LanguageSurface>],
     root: &Path,
-    paths: &[PathBuf],
+    scope: &Scope,
     plan: &Plan,
     config: &FormalityConfig,
   ) -> ExitStatus {
-    Self::run_into(&mut std::io::stdout(), surfaces, root, paths, plan, config)
+    Self::run_into(&mut std::io::stdout(), surfaces, root, scope, plan, config)
   }
 
   /// Executes `plan`'s passes across the target surfaces, aggregates the
@@ -187,7 +218,7 @@ impl Runner {
     out: &mut dyn std::io::Write,
     surfaces: &[Box<dyn LanguageSurface>],
     root: &Path,
-    paths: &[PathBuf],
+    scope: &Scope,
     plan: &Plan,
     config: &FormalityConfig,
   ) -> ExitStatus {
@@ -204,20 +235,16 @@ impl Runner {
     // candidate path list, the candidate files, or the global config on every
     // one of the (up to 12) surfaces per invocation.
     let global_config = Arc::new(config.resolve_global());
-    let shared_candidates: Option<Arc<Vec<PathBuf>>> = if paths.is_empty() {
-      Some(Arc::new(crate::surfaces::walk_candidate_files(
-        root,
-        &global_config.exclude,
-      )))
-    } else {
-      None
+    let (paths, candidate_files) = match scope {
+      Scope::Paths(paths) => (Arc::clone(paths), None),
+      Scope::Workspace(files) => (Arc::default(), Some(Arc::clone(files))),
     };
     let shared = SharedRun {
       config,
       root: Arc::new(root.to_path_buf()),
-      paths: Arc::new(paths.to_vec()),
+      paths,
       global_config,
-      candidate_files: shared_candidates,
+      candidate_files,
     };
 
     let action_verb = plan.verb();
