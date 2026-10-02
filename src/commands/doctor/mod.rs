@@ -65,7 +65,7 @@ fn install_missing_tools_framed(
   println!("{}", frame.dim_rule(&palette));
 
   // Bootstrap cargo-binstall once, up front, if any tool here would prefer
-  // it and it isn't on PATH yet. Tools like typstyle/tinymist have no real
+  // it and it isn't on PATH yet. Tools like typstyle have no real
   // native package on any OS -- cargo-binstall (a prebuilt binary, fetched
   // from the crate's GitHub releases) is their only non-source-compile
   // install path everywhere, including Linux. Without this, a chain would

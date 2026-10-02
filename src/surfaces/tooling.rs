@@ -389,24 +389,6 @@ const TYPSTYLE_CHAIN: &[InstallMethod] = &[
   },
 ];
 
-// `Npm("@myriaddreamin/tinymist")` used to live here but never corresponded
-// to a real published package (404 on npm; the whole `@myriaddreamin` scope
-// only publishes Typst.ts WASM bindings, not this CLI, and the unscoped
-// `tinymist` package is likewise a WASM analyzer module) -- confirmed by
-// direct registry lookup while fixing #195 [pre-recreation]. Dropped rather than pinned: no
-// npm distribution of this CLI exists to pin a version of. cargo-binstall
-// (first below) and the plain `cargo install` fallback already cover it.
-const TINYMIST_CHAIN: &[InstallMethod] = &[
-  InstallMethod::CargoBinstall("tinymist@0.15.2"),
-  InstallMethod::Brew("tinymist"),
-  InstallMethod::Scoop("tinymist"),
-  InstallMethod::WingetName("Myriad-Dreamin.tinymist"),
-  InstallMethod::Cargo {
-    package: "tinymist@0.15.2",
-    locked: true,
-  },
-];
-
 const RUFF_CHAIN: &[InstallMethod] = &[
   InstallMethod::Uv("ruff==0.16.4"),
   InstallMethod::Pipx("ruff==0.16.4"),
@@ -621,7 +603,7 @@ struct ToolChain {
 /// drifted apart from each other).
 ///
 /// `expected_binary_version` status per row, and why:
-/// - `Some(...)`: `typstyle`, `tinymist`, `ruff`, `prettier`, `biome`,
+/// - `Some(...)`: `typstyle`, `ruff`, `prettier`, `biome`,
 ///   `markdownlint-cli2`, `yamllint`, `golangci-lint` — each ships its own CLI directly
 ///   (not a repackaging of some other project's binary) and every
 ///   registry-resolved pin in its chain agrees on the same version, so the
@@ -662,11 +644,6 @@ const ALL_CHAINS: &[ToolChain] = &[
     binary: "typstyle",
     chain: TYPSTYLE_CHAIN,
     expected_binary_version: Some(Version::new(0, 15, 1)),
-  },
-  ToolChain {
-    binary: "tinymist",
-    chain: TINYMIST_CHAIN,
-    expected_binary_version: Some(Version::new(0, 15, 2)),
   },
   ToolChain {
     binary: "ruff",
@@ -1111,8 +1088,8 @@ fn run_cargo_binstall_bootstrap() -> bool {
 /// source compile) if `cargo` is present but `cargo-binstall` itself isn't
 /// yet on `PATH`.
 ///
-/// This exists so tools with no genuine native package anywhere (`typstyle`,
-/// `tinymist`; `taplo`/`ruff` as a fallback) get a real prebuilt-binary
+/// This exists so tools with no genuine native package anywhere (`typstyle`;
+/// `taplo`/`ruff` as a fallback) get a real prebuilt-binary
 /// install path on every OS instead of silently dropping straight to
 /// `cargo install --locked` source compilation just because `cargo-binstall`
 /// itself hadn't been bootstrapped yet. Side-effecting (spawns a network
@@ -1153,7 +1130,7 @@ pub fn ensure_cargo_binstall() -> bool {
 /// currently resolves to, when that installer can't itself pin to the tool's
 /// confirmed `expected_binary_version`.
 ///
-/// This is the `typstyle`/`tinymist` case: their chains list
+/// This is the `typstyle` case: its chain lists
 /// `CargoBinstall("<tool>@<pin>")` first, but on a machine where
 /// `cargo-binstall` isn't on `PATH` yet the first *available* method is
 /// `Brew`, whose core-tap bottle routinely trails the crates.io pin
@@ -2282,10 +2259,7 @@ mod tests {
     // A package spec with no `@`/`==` at all (e.g. the unpinned npm entries
     // #195 [pre-recreation] documents as deliberately left bare) must not be misparsed --
     // None, not a crash or a bogus version.
-    assert_eq!(
-      InstallMethod::Npm("@myriaddreamin/tinymist").pinned_version(),
-      None
-    );
+    assert_eq!(InstallMethod::Npm("@taplo/cli").pinned_version(), None);
   }
 
   #[test]
