@@ -191,9 +191,13 @@ pub struct LangConfig {
   /// Whether this language surface is enabled.
   #[serde(skip_serializing_if = "Option::is_none")]
   pub enabled: Option<bool>,
-  /// Additional command-line arguments to pass to the underlying tool.
+  /// Additional command-line arguments per tool, keyed by the tool that
+  /// receives them, e.g. `prettier = ["--prose-wrap", "always"]` under
+  /// `[lang.markdown.extra_args]`. Each list is appended after fml's own
+  /// flags for that tool only. Each surface accepts its own tool keys; see
+  /// docs/language-surfaces.md.
   #[serde(skip_serializing_if = "Option::is_none")]
-  pub extra_args: Option<Vec<String>>,
+  pub extra_args: Option<BTreeMap<String, Vec<String>>>,
   /// Explicit file pattern inclusions for this surface.
   #[serde(skip_serializing_if = "Option::is_none")]
   pub files: Option<Vec<PathBuf>>,
@@ -270,8 +274,9 @@ impl LangConfig {
     if other.enabled.is_some() {
       self.enabled = other.enabled;
     }
-    if other.extra_args.is_some() {
-      self.extra_args = other.extra_args;
+    // Per tool: a later layer replaces one tool's list and keeps the rest.
+    if let Some(other_args) = other.extra_args {
+      self.extra_args.get_or_insert_default().extend(other_args);
     }
     if other.files.is_some() {
       self.files = other.files;
@@ -402,8 +407,9 @@ pub struct ResolvedLangConfig {
   pub layout: LayoutFacet,
   /// Whether this language surface is active/enabled.
   pub enabled: bool,
-  /// Extra CLI arguments for tools.
-  pub extra_args: Vec<String>,
+  /// Extra CLI arguments keyed by the tool that receives them; read through
+  /// [`ResolvedLangConfig::tool_args`].
+  pub extra_args: BTreeMap<String, Vec<String>>,
   /// Targeted file path inclusions.
   pub files: Vec<PathBuf>,
   /// Excluded file paths.
@@ -442,6 +448,16 @@ impl ResolvedLangConfig {
   #[must_use]
   pub fn new(name: &str) -> Self {
     FormalityConfig::with_defaults().resolve_for_lang(name)
+  }
+}
+
+impl ResolvedLangConfig {
+  /// Returns the `extra_args` configured for `tool`, one of the keys the
+  /// surface declares in `LanguageSurface::extra_args_tools`; empty when
+  /// none are set.
+  #[must_use]
+  pub fn tool_args(&self, tool: &str) -> &[String] {
+    self.extra_args.get(tool).map_or(&[], Vec::as_slice)
   }
 }
 
@@ -496,6 +512,31 @@ pub enum ConfigError {
     /// One-based line of the section name.
     line: usize,
   },
+  /// `[lang.<name>] extra_args` written as one flat list instead of a table
+  /// keyed by tool.
+  FlatExtraArgs {
+    /// File path of the config holding the list.
+    path: PathBuf,
+    /// The section name, e.g. `markdown`.
+    lang: String,
+    /// One-based line of the `extra_args` key.
+    line: usize,
+    /// The tool keys the surface accepts; empty for an unknown surface.
+    tools: &'static [&'static str],
+  },
+  /// An `extra_args` key naming no tool its surface runs.
+  UnknownTool {
+    /// File path of the config holding the key.
+    path: PathBuf,
+    /// The section name, e.g. `markdown`.
+    lang: String,
+    /// The key as written, e.g. `prettierr`.
+    tool: String,
+    /// One-based line of the key.
+    line: usize,
+    /// The tool keys the surface accepts.
+    tools: &'static [&'static str],
+  },
 }
 
 impl std::fmt::Display for ConfigError {
@@ -545,6 +586,39 @@ impl std::fmt::Display for ConfigError {
         "section `[lang.{name}]` in {}:{line} is not a canonical surface \
          name; rename it to `[lang.{canonical}]`.",
         path.display()
+      ),
+      ConfigError::FlatExtraArgs {
+        path,
+        lang,
+        line,
+        tools,
+      } => {
+        write!(
+          f,
+          "`lang.{lang}.extra_args` in {}:{line} is a list, but extra_args \
+           takes one list per tool: write it as a table, e.g. \
+           `[lang.{lang}.extra_args]` then `{} = [\"--flag\"]`.",
+          path.display(),
+          tools.first().unwrap_or(&"<tool>")
+        )?;
+        if tools.is_empty() {
+          Ok(())
+        } else {
+          write!(f, " Tools for `{lang}`: `{}`.", tools.join("`, `"))
+        }
+      }
+      ConfigError::UnknownTool {
+        path,
+        lang,
+        tool,
+        line,
+        tools,
+      } => write!(
+        f,
+        "unknown key `lang.{lang}.extra_args.{tool}` in {}:{line}: `{lang}` \
+         runs no tool named `{tool}`; its extra_args keys are `{}`.",
+        path.display(),
+        tools.join("`, `")
       ),
     }
   }

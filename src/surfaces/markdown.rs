@@ -149,7 +149,7 @@ pub fn build_markdownlint_args(
 /// the in-place write pass, which differ only in *which* paths they hand the
 /// tool.
 ///
-/// It exists so the argv is derived from the [`ExecutionContext`] in exactly
+/// It exists so the argv is derived from the resolved config in exactly
 /// one place. Issue #150 was caused by the opposite arrangement: `lint()`
 /// went through [`build_markdownlint_args`] and forwarded
 /// `[lang.markdown] extra_args` for free, while *both* `format()` branches
@@ -158,43 +158,19 @@ pub fn build_markdownlint_args(
 /// under `fml fmt`. Patching the two hand-rolled copies would have fixed that
 /// instance and left in place the divergence that produced it.
 ///
-/// `ResolvedLangConfig::extra_args` is one flat per-surface list with no
-/// per-tool split, so the same list also reaches the `prettier --write` pass —
-/// the convention `PythonSurface::format()` already sets for its own two-pass
-/// pipeline (`ruff check --select I --fix`, then `ruff format`). Markdown is
-/// where that convention bites hardest, because its two tools are separate
-/// binaries with disjoint flag vocabularies. Reproduced against
-/// `markdownlint-cli2 v0.23.2 (markdownlint v0.41.1)`, what a one-tool-only
-/// flag actually does here is **not** a loud failure:
-///
-/// - A flag markdownlint-cli2 doesn't know is **consumed as a glob**, not
-///   rejected — `--fix --config c.json a.md --prose-wrap always` prints
-///   `Finding: a.md --prose-wrap always` and lints normally. A prettier-only
-///   `extra_args` entry is therefore silently swallowed here, which is also
-///   why routing `extra_args` into this pass does not regress projects that
-///   already carry prettier-only flags.
-/// - `--config` is a flag **both** tools accept, and `extra_args` lands after
-///   the injected temp config (markdownlint honours the *last* `--config`;
-///   see `test_build_markdownlint_args_extra_args_config_wins_last`). A
-///   prettier `--config` therefore silently *overrides* the resolved
-///   `formality.toml` markdownlint settings on the `fml fmt` path — MD013
-///   falls back to markdownlint's own default 80 rather than the configured
-///   value, exit 1, which `classify_exit_one_as_violation` treats as
-///   "violations remain, prettier still runs", so `fml fmt` still reports
-///   `[PASS]`. Silent misconfiguration, not an attributable error. `lint()`
-///   has always behaved this way; this makes `fmt` consistent with it rather
-///   than inventing the behaviour. Documented in
-///   `docs/language-surfaces.md`; the per-tool `extra_args` split that would
-///   actually fix it is new config surface, tracked in #210.
-/// - The loud `ExecutionError` case is only a flag markdownlint *recognises
-///   and rejects* — e.g. `--config` naming a path that does not exist, which
-///   exits 2 and is surfaced by the #113 guard.
+/// Only the `markdownlint-cli2` extra args are forwarded; the `prettier`
+/// ones go to [`build_prettier_fmt_args`] alone (#210).
 fn build_markdownlint_fix_argv(
   files: &[PathBuf],
   config_path: Option<&Path>,
-  ctx: &ExecutionContext,
+  lang: &ResolvedLangConfig,
 ) -> Vec<String> {
-  build_markdownlint_args(files, true, config_path, &ctx.lang_config.extra_args)
+  build_markdownlint_args(
+    files,
+    true,
+    config_path,
+    lang.tool_args(MARKDOWNLINT_CLI2),
+  )
 }
 
 /// Renders the resolved [`MarkdownlintConfig`] to a throwaway temp file and
@@ -237,17 +213,18 @@ pub(crate) fn write_markdownlint_temp_config(
   Ok(file)
 }
 
-/// Builds argument vector for prettier format invocation.
+/// Builds argument vector for prettier format invocation, ending with the
+/// `prettier` extra args.
 #[must_use]
 pub fn build_prettier_fmt_args(
   files: &[PathBuf],
-  extra_args: &[String],
+  lang: &ResolvedLangConfig,
 ) -> Vec<String> {
   let mut args = vec!["--write".to_string()];
   for f in files {
     args.push(f.to_string_lossy().to_string());
   }
-  args.extend(extra_args.iter().cloned());
+  args.extend(lang.tool_args(PRETTIER).iter().cloned());
   args
 }
 
@@ -972,7 +949,7 @@ impl LanguageSurface for MarkdownSurface {
             md_cmd.args(build_markdownlint_fix_argv(
               &[scratch.to_path_buf()],
               md_temp_cfg_path,
-              ctx,
+              &ctx.lang_config,
             ));
             md_cmd.current_dir(ctx.root.as_path());
 
@@ -1001,7 +978,7 @@ impl LanguageSurface for MarkdownSurface {
             .arg("markdown")
             .args(&inline_config)
             .arg(scratch);
-          cmd.args(&ctx.lang_config.extra_args);
+          cmd.args(ctx.lang_config.tool_args(PRETTIER));
           cmd.current_dir(ctx.root.as_path());
           let output = cmd.output()?;
           // #314: the same post-prettier step as the write branch below, so
@@ -1031,7 +1008,11 @@ impl LanguageSurface for MarkdownSurface {
       // Fixes #150: same builder as the `check_only` branch above, differing
       // only in the paths handed to the tool. See
       // `build_markdownlint_fix_argv`.
-      md_cmd.args(build_markdownlint_fix_argv(&files, md_temp_cfg_path, ctx));
+      md_cmd.args(build_markdownlint_fix_argv(
+        &files,
+        md_temp_cfg_path,
+        &ctx.lang_config,
+      ));
       md_cmd.current_dir(ctx.root.as_path());
 
       // Issue #113: this pass used to be `let _ = md_cmd.output()`-discarded,
@@ -1054,7 +1035,7 @@ impl LanguageSurface for MarkdownSurface {
     }
 
     let mut cmd = create_tool_command("prettier");
-    cmd.args(build_prettier_fmt_args(&files, &ctx.lang_config.extra_args));
+    cmd.args(build_prettier_fmt_args(&files, &ctx.lang_config));
     cmd.args(&inline_config);
     cmd.current_dir(ctx.root.as_path());
 
@@ -1138,7 +1119,7 @@ impl LanguageSurface for MarkdownSurface {
       &files,
       fix,
       Some(md_temp_cfg.path()),
-      &ctx.lang_config.extra_args,
+      ctx.lang_config.tool_args(MARKDOWNLINT_CLI2),
     ));
     cmd.current_dir(ctx.root.as_path());
 
@@ -1963,8 +1944,13 @@ README.md:7 error MD025/single-title/single-h1 Multiple top-level headings";
   #[test]
   fn test_build_prettier_fmt_args() {
     let files = vec![PathBuf::from("readme.md")];
-    let extra = vec!["--loglevel".to_string(), "warn".to_string()];
-    let args = build_prettier_fmt_args(&files, &extra);
+    let mut lang = ResolvedLangConfig::new("markdown");
+    lang.extra_args = [(
+      PRETTIER.to_string(),
+      vec!["--loglevel".to_string(), "warn".to_string()],
+    )]
+    .into();
+    let args = build_prettier_fmt_args(&files, &lang);
     assert_eq!(
       args,
       vec![
@@ -2164,14 +2150,13 @@ README.md:7 error MD025/single-title/single-h1 Multiple top-level headings";
     std::fs::write(temp.path().join("a.md"), "# hi\n").unwrap();
 
     let mut lang = ResolvedLangConfig::new("markdown");
-    lang.extra_args = vec![
-      "--config".to_string(),
-      temp
-        .path()
-        .join("nonexistent-prettier-config-fml155.json")
-        .to_string_lossy()
-        .into_owned(),
-    ];
+    let missing = temp
+      .path()
+      .join("nonexistent-prettier-config-fml155.json")
+      .to_string_lossy()
+      .into_owned();
+    lang.extra_args =
+      [(PRETTIER.to_string(), vec!["--config".to_string(), missing])].into();
     let ctx = test_ctx(temp.path(), lang);
 
     let surface = MarkdownSurface;
@@ -2185,32 +2170,28 @@ README.md:7 error MD025/single-title/single-h1 Multiple top-level headings";
   }
 
   #[test]
-  fn test_build_markdownlint_fix_argv_forwards_extra_args() {
-    // Fixes #150. Both of `format()`'s markdownlint-cli2 `--fix` passes now
-    // build their argv through `build_markdownlint_fix_argv`, so this is the
-    // single place the bug can reappear — and asserting on the argv makes the
-    // check deterministic and PATH-independent. Dropping the
-    // `&ctx.lang_config.extra_args` forwarding inside that builder fails this
-    // test; the previous end-to-end `ExecutionError`-variant assertions did
-    // not, because prettier receives `extra_args` too and fails on the same
-    // bad `--config` (see
-    // `test_markdown_write_reports_execution_error_on_prettier_failure`).
-    let temp = TempDir::new().unwrap();
+  fn test_markdown_extra_args_reach_only_their_tool() {
+    // Fixes #210. Each `[lang.markdown.extra_args]` list reaches its own
+    // tool's argv and never the other's: markdownlint-cli2 swallows an unknown
+    // flag as a glob and honours the last `--config`, so a leaked prettier
+    // flag would fail silently rather than loudly.
     let mut lang = ResolvedLangConfig::new("markdown");
-    lang.extra_args = vec![
-      "--no-globs".to_string(),
-      "--loglevel".to_string(),
-      "warn".to_string(),
-    ];
-    let ctx = test_ctx(temp.path(), lang);
+    lang.extra_args = [
+      (
+        MARKDOWNLINT_CLI2.to_string(),
+        vec!["--no-globs".to_string()],
+      ),
+      (
+        PRETTIER.to_string(),
+        vec!["--prose-wrap".to_string(), "always".to_string()],
+      ),
+    ]
+    .into();
 
     let files = vec![PathBuf::from("a.md"), PathBuf::from("b.md")];
     let injected = PathBuf::from("/tmp/.markdownlint-abc123.json");
-    let argv =
-      build_markdownlint_fix_argv(&files, Some(injected.as_path()), &ctx);
-
     assert_eq!(
-      argv,
+      build_markdownlint_fix_argv(&files, Some(injected.as_path()), &lang),
       vec![
         "--fix".to_string(),
         "--config".to_string(),
@@ -2218,8 +2199,16 @@ README.md:7 error MD025/single-title/single-h1 Multiple top-level headings";
         "a.md".to_string(),
         "b.md".to_string(),
         "--no-globs".to_string(),
-        "--loglevel".to_string(),
-        "warn".to_string(),
+      ]
+    );
+    assert_eq!(
+      build_prettier_fmt_args(&files, &lang),
+      vec![
+        "--write".to_string(),
+        "a.md".to_string(),
+        "b.md".to_string(),
+        "--prose-wrap".to_string(),
+        "always".to_string(),
       ]
     );
   }
@@ -2238,17 +2227,19 @@ README.md:7 error MD025/single-title/single-h1 Multiple top-level headings";
     // settings on the `fml fmt` path. Verified against markdownlint-cli2
     // v0.23.2; see `build_markdownlint_fix_argv` and
     // `docs/language-surfaces.md`.
-    let temp = TempDir::new().unwrap();
     let mut lang = ResolvedLangConfig::new("markdown");
-    lang.extra_args = vec!["--config".to_string(), "mine.json".to_string()];
-    let ctx = test_ctx(temp.path(), lang);
+    lang.extra_args = [(
+      MARKDOWNLINT_CLI2.to_string(),
+      vec!["--config".to_string(), "mine.json".to_string()],
+    )]
+    .into();
 
     let scratch = PathBuf::from("/tmp/scratch/a.md");
     let injected = PathBuf::from("/tmp/.markdownlint-abc123.json");
     let argv = build_markdownlint_fix_argv(
       std::slice::from_ref(&scratch),
       Some(injected.as_path()),
-      &ctx,
+      &lang,
     );
 
     assert_eq!(
@@ -2269,10 +2260,10 @@ README.md:7 error MD025/single-title/single-h1 Multiple top-level headings";
   #[test]
   fn test_markdown_write_extra_args_failure_is_attributed_to_markdownlint() {
     // Fixes #150, end to end, and deliberately *not* a bare
-    // `matches!(status, ExecutionError { .. })` assertion: prettier already
-    // received `extra_args` before this change and exits 2 on the very same
-    // nonexistent `--config`, so the variant alone still holds with the
-    // markdownlint forwarding removed. The *message* is what separates them —
+    // `matches!(status, ExecutionError { .. })` assertion: prettier exits 2
+    // on the very same nonexistent `--config`, so the variant alone would
+    // still hold had the list been routed to prettier instead (#210). The
+    // *message* is what separates them —
     // markdownlint-cli2 exits 2 on an unreadable `--config`, which
     // `classify_exit_one_as_violation` maps to `ExecutionError` and the write
     // branch returns early with, before prettier ever runs. Its text is
@@ -2284,14 +2275,16 @@ README.md:7 error MD025/single-title/single-h1 Multiple top-level headings";
     std::fs::write(temp.path().join("a.md"), "# hi\n").unwrap();
 
     let mut lang = ResolvedLangConfig::new("markdown");
-    lang.extra_args = vec![
-      "--config".to_string(),
-      temp
-        .path()
-        .join("nonexistent-markdownlint-config-fml150.json")
-        .to_string_lossy()
-        .into_owned(),
-    ];
+    let missing = temp
+      .path()
+      .join("nonexistent-markdownlint-config-fml150.json")
+      .to_string_lossy()
+      .into_owned();
+    lang.extra_args = [(
+      MARKDOWNLINT_CLI2.to_string(),
+      vec!["--config".to_string(), missing],
+    )]
+    .into();
     let ctx = test_ctx(temp.path(), lang);
 
     let res = MarkdownSurface.format(&ctx);

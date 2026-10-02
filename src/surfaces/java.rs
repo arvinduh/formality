@@ -341,7 +341,7 @@ impl LanguageSurface for JavaSurface {
             cmd.arg("--aosp");
           }
           cmd.arg("--replace").arg(scratch);
-          cmd.args(&ctx.lang_config.extra_args);
+          cmd.args(ctx.lang_config.tool_args("google-java-format"));
           cmd.current_dir(ctx.root.as_path());
           cmd.output()
         },
@@ -376,7 +376,7 @@ impl LanguageSurface for JavaSurface {
       cmd.arg(f);
     }
 
-    cmd.args(&ctx.lang_config.extra_args);
+    cmd.args(ctx.lang_config.tool_args("google-java-format"));
     cmd.current_dir(ctx.root.as_path());
 
     explain_jvm_incompatibility(run_tool_command_classified(
@@ -468,7 +468,7 @@ impl LanguageSurface for JavaSurface {
     for f in &files {
       cmd.arg(f);
     }
-    cmd.args(&ctx.lang_config.extra_args);
+    cmd.args(ctx.lang_config.tool_args("checkstyle"));
     cmd.current_dir(ctx.root.as_path());
 
     match cmd.output() {

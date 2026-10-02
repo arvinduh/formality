@@ -231,7 +231,7 @@ impl LanguageSurface for YamlSurface {
             .arg("yaml")
             .args(&inline_config)
             .arg(scratch);
-          cmd.args(&ctx.lang_config.extra_args);
+          cmd.args(ctx.lang_config.tool_args("prettier"));
           cmd.current_dir(ctx.root.as_path());
           cmd.output()
         },
@@ -249,7 +249,7 @@ impl LanguageSurface for YamlSurface {
       cmd.arg(f);
     }
 
-    cmd.args(&ctx.lang_config.extra_args);
+    cmd.args(ctx.lang_config.tool_args("prettier"));
     cmd.current_dir(ctx.root.as_path());
 
     // `prettier --write` exits `0` whether or not it reformats and only
@@ -300,7 +300,7 @@ impl LanguageSurface for YamlSurface {
       cmd.arg(".");
     }
 
-    cmd.args(&ctx.lang_config.extra_args);
+    cmd.args(ctx.lang_config.tool_args("yamllint"));
     cmd.current_dir(ctx.root.as_path());
 
     run_tool_command(self.name(), &mut cmd)

@@ -297,6 +297,7 @@ impl LanguageSurface for GoSurface {
         |scratch| {
           let mut gofmt_cmd = create_tool_command("gofmt");
           gofmt_cmd.arg("-s").arg("-w").arg(scratch);
+          gofmt_cmd.args(ctx.lang_config.tool_args("gofmt"));
           gofmt_cmd.current_dir(ctx.root.as_path());
           let gofmt_out = gofmt_cmd.output()?;
           if !gofmt_out.status.success() {
@@ -309,6 +310,7 @@ impl LanguageSurface for GoSurface {
             goimports_cmd.arg("-local").arg(prefix);
           }
           goimports_cmd.arg(scratch);
+          goimports_cmd.args(ctx.lang_config.tool_args("goimports"));
           goimports_cmd.current_dir(ctx.root.as_path());
           goimports_cmd.output()
         },
@@ -326,6 +328,7 @@ impl LanguageSurface for GoSurface {
     for f in &files {
       gofmt_cmd.arg(f);
     }
+    gofmt_cmd.args(ctx.lang_config.tool_args("gofmt"));
     gofmt_cmd.current_dir(ctx.root.as_path());
 
     match gofmt_cmd.output() {
@@ -371,7 +374,7 @@ impl LanguageSurface for GoSurface {
     for f in &files {
       goimports_cmd.arg(f);
     }
-    goimports_cmd.args(&ctx.lang_config.extra_args);
+    goimports_cmd.args(ctx.lang_config.tool_args("goimports"));
     goimports_cmd.current_dir(ctx.root.as_path());
 
     match goimports_cmd.output() {
@@ -477,7 +480,7 @@ impl LanguageSurface for GoSurface {
     cmd.args(build_golangci_lint_args(
       &files_to_pass,
       fix,
-      &ctx.lang_config.extra_args,
+      ctx.lang_config.tool_args("golangci-lint"),
     ));
     cmd.current_dir(ctx.root.as_path());
 
@@ -803,7 +806,8 @@ pub(crate) mod tests {
 
     let surface = GoSurface;
     let mut config = ResolvedLangConfig::new("go");
-    config.extra_args = vec!["-local".to_string()];
+    config.extra_args =
+      [("goimports".to_string(), vec!["-local".to_string()])].into();
     let ctx = test_ctx(temp.path(), config);
 
     let res = surface.format(&ctx);

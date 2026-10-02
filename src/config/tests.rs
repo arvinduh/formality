@@ -207,7 +207,7 @@ fn test_lang_config_extra_args_files_and_exclude() {
       indent_size = 2
 
       [lang.rust]
-      extra_args = ["--verbose", "--", "-D", "clippy::all"]
+      extra_args = { clippy-driver = ["--verbose", "--", "-D", "clippy::all"] }
       files = ["src/lib.rs", "src/main.rs"]
       exclude = ["tests/fixtures", "src/generated/**"]
     "#;
@@ -215,9 +215,10 @@ fn test_lang_config_extra_args_files_and_exclude() {
     FormalityConfig::parse_str(toml, Path::new("test.toml")).unwrap();
   let rust = parsed.resolve_for_lang("rust");
   assert_eq!(
-    rust.extra_args,
-    vec!["--verbose", "--", "-D", "clippy::all"]
+    rust.tool_args("clippy-driver"),
+    ["--verbose", "--", "-D", "clippy::all"]
   );
+  assert!(rust.tool_args("rustfmt").is_empty());
   assert_eq!(
     rust.files,
     vec![PathBuf::from("src/lib.rs"), PathBuf::from("src/main.rs")]
@@ -1196,4 +1197,72 @@ fn test_load_layered_with_path_none() {
   let (cfg, path) = FormalityConfig::load_layered_with_path(None).unwrap();
   assert_eq!(path, None);
   assert_eq!(cfg.resolve_global().indent_size, 2);
+}
+
+#[test]
+fn test_extra_args_table_routes_per_tool() {
+  let toml = "[lang.python.extra_args]\nruff-format = [\"--preview\"]\n";
+  let parsed =
+    FormalityConfig::parse_str(toml, Path::new("formality.toml")).unwrap();
+  let python = parsed.resolve_for_lang("python");
+  assert_eq!(python.tool_args("ruff-format"), ["--preview"]);
+  assert!(python.tool_args("ruff-check").is_empty());
+}
+
+#[test]
+fn test_extra_args_merge_replaces_per_tool() {
+  let mut base = LangConfig {
+    extra_args: Some(
+      [
+        ("prettier".to_string(), vec!["--a".to_string()]),
+        ("markdownlint-cli2".to_string(), vec!["--b".to_string()]),
+      ]
+      .into(),
+    ),
+    ..LangConfig::default()
+  };
+  base.merge(LangConfig {
+    extra_args: Some(
+      [("prettier".to_string(), vec!["--c".to_string()])].into(),
+    ),
+    ..LangConfig::default()
+  });
+  assert_eq!(
+    base.extra_args,
+    Some(
+      [
+        ("prettier".to_string(), vec!["--c".to_string()]),
+        ("markdownlint-cli2".to_string(), vec!["--b".to_string()]),
+      ]
+      .into()
+    )
+  );
+}
+
+#[test]
+fn test_extra_args_flat_list_names_table_form() {
+  let toml = "[lang.markdown]\nline_length = 100\n\
+              extra_args = [\"--prose-wrap\", \"always\"]\n";
+  let err =
+    FormalityConfig::parse_str(toml, Path::new("formality.toml")).unwrap_err();
+  assert_eq!(
+    err.to_string(),
+    "`lang.markdown.extra_args` in formality.toml:3 is a list, but \
+     extra_args takes one list per tool: write it as a table, e.g. \
+     `[lang.markdown.extra_args]` then `markdownlint-cli2 = [\"--flag\"]`. \
+     Tools for `markdown`: `markdownlint-cli2`, `prettier`."
+  );
+}
+
+#[test]
+fn test_extra_args_unknown_tool_names_valid_keys() {
+  let toml = "[lang.python.extra_args]\nruff-check = []\nruff = [\"-q\"]\n";
+  let err =
+    FormalityConfig::parse_str(toml, Path::new("formality.toml")).unwrap_err();
+  assert_eq!(
+    err.to_string(),
+    "unknown key `lang.python.extra_args.ruff` in formality.toml:3: \
+     `python` runs no tool named `ruff`; its extra_args keys are \
+     `ruff-check`, `ruff-format`."
+  );
 }
