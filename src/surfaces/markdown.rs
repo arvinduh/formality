@@ -1719,10 +1719,20 @@ README.md:7 error MD025/single-title/single-h1 Multiple top-level headings";
     assert!(!has_unspaced_hash_line("#\t tab\n##\n"));
     // Fenced lines are skipped (#524), unless a list item closed the fence (#514).
     assert!(!has_unspaced_hash_line("```sh\n#!/bin/sh\n```\n"));
+    assert!(!has_unspaced_hash_line("~~~sh\n#!/bin/sh\n~~~\n"));
+    assert!(!has_unspaced_hash_line(
+      "```sh\n#!/bin/sh\n```\n\n~~~sh\n#!/bin/sh\n~~~\n"
+    ));
     assert!(!has_unspaced_hash_line(
       "- a\n  ```sh\n  #!/bin/sh\n  ```\n"
     ));
     assert!(has_unspaced_hash_line("- a\n  ```\nfoo\n#x\n"));
+    assert!(has_unspaced_hash_line(
+      "```sh\n#!/bin/sh\n```\n#x\n~~~sh\n#!/bin/sh\n~~~\n"
+    ));
+    assert!(has_unspaced_hash_line(
+      "```sh\n#!/bin/sh\n```\n\n~~~sh\n#!/bin/sh\n~~~\n\n#x\n"
+    ));
   }
 
   #[test]
