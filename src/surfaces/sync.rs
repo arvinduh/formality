@@ -234,7 +234,10 @@ pub fn diff_check_via_tempcopy(
 /// scratch files do not pollute the workspace, and guarantees cleanup on all
 /// exit paths.
 // Implements temporary-file copy, in-place formatting execution, unified diff generation, and RAII cleanup across file sets.
-#[allow(clippy::too_many_lines)]
+#[expect(
+  clippy::too_many_lines,
+  reason = "implements tempcopy execution, unified diff generation, and RAII cleanup"
+)]
 pub fn diff_check_via_tempcopy_classified(
   files: &[PathBuf],
   run_in_place: impl Fn(&Path) -> std::io::Result<std::process::Output> + Sync,
