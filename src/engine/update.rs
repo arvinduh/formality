@@ -33,7 +33,10 @@ fn get_cache_path() -> PathBuf {
 }
 
 // Outer Option represents cache validity (fresh vs expired); inner Option is the cached latest tag.
-#[allow(clippy::option_option)]
+#[expect(
+  clippy::option_option,
+  reason = "outer Option represents cache validity; inner Option is the cached latest tag"
+)]
 fn read_cached_tag() -> Option<Option<String>> {
   let now = SystemTime::now().duration_since(UNIX_EPOCH).ok()?.as_secs();
   read_cached_tag_at(&get_cache_path(), now)
@@ -44,7 +47,10 @@ fn read_cached_tag() -> Option<Option<String>> {
 /// [`get_cache_path`] and reading the clock itself) so tests can point it at
 /// a temp file and judge freshness against the same instant they stamped,
 /// with no second rollover between the two clock reads.
-#[allow(clippy::option_option)]
+#[expect(
+  clippy::option_option,
+  reason = "outer Option represents cache validity; inner Option is the cached latest tag"
+)]
 fn read_cached_tag_at(path: &Path, now: u64) -> Option<Option<String>> {
   let data = std::fs::read_to_string(path).ok()?;
   let cache: UpdateCache = serde_json::from_str(&data).ok()?;

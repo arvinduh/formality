@@ -147,7 +147,10 @@ impl LanguageServer for FormalityLsp {
       .as_ref()
       .and_then(|u| u.to_file_path().ok())
       .or_else(|| {
-        #[allow(deprecated)]
+        #[expect(
+          deprecated,
+          reason = "fallback for LSP clients that still provide root_path instead of root_uri"
+        )]
         params.root_path.as_ref().map(PathBuf::from)
       });
 

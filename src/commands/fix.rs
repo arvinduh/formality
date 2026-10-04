@@ -12,7 +12,10 @@ use crate::errors::ExitStatus;
 /// Runs the `fml fix` command: the `[Lint, Format]` plan, writing by default
 /// and reporting only under `check`. Provisioning missing tools is `fml
 /// doctor --install`'s job, not this command's (v0.3.0, #282).
-#[allow(clippy::too_many_arguments)]
+#[expect(
+  clippy::too_many_arguments,
+  reason = "CLI command entry point passes clap flag arguments directly"
+)]
 #[expect(
   clippy::fn_params_excessive_bools,
   reason = "CLI command entry point passes clap flag arguments directly"
