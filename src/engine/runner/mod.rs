@@ -220,7 +220,10 @@ impl Runner {
   /// `out` is the caller's choice because stdout is not always free: under
   /// `fml lsp` it is the JSON-RPC transport. A failed write to `out` is
   /// ignored; the report is advisory and never changes the exit status.
-  #[allow(clippy::too_many_lines)]
+  #[expect(
+    clippy::too_many_lines,
+    reason = "coordinates multi-pass surface execution, result aggregation, and output rendering"
+  )]
   #[must_use]
   pub fn run_into(
     out: &mut dyn std::io::Write,

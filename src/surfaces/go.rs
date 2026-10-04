@@ -295,7 +295,10 @@ impl LanguageSurface for GoSurface {
   }
 
   // Orchestrates two-stage Go formatting (gofmt + goimports) with check and in-place modes.
-  #[allow(clippy::too_many_lines)]
+  #[expect(
+    clippy::too_many_lines,
+    reason = "orchestrates two-stage Go formatting with gofmt and goimports"
+  )]
   fn format(&self, ctx: &ExecutionContext) -> SurfaceResult {
     let start = Instant::now();
 

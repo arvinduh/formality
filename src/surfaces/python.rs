@@ -398,7 +398,10 @@ impl LanguageSurface for PythonSurface {
   }
 
   // Orchestrates Ruff formatting across check, diff, and in-place write modes with target path resolution.
-  #[allow(clippy::too_many_lines)]
+  #[expect(
+    clippy::too_many_lines,
+    reason = "orchestrates Ruff formatting across check, diff, and in-place write modes"
+  )]
   fn format(&self, ctx: &ExecutionContext) -> SurfaceResult {
     let start = Instant::now();
 

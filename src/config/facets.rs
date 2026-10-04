@@ -107,7 +107,10 @@ mod tests {
   /// explicitly against the documented table so a change to any surface's
   /// `facet_support` (or the table drifting out of sync with the code) shows
   /// up as a failing assertion instead of an untested edge.
-  #[allow(clippy::too_many_lines)]
+  #[expect(
+    clippy::too_many_lines,
+    reason = "exhaustive golden-vector table for all 12 surfaces across 9 facets"
+  )]
   #[test]
   fn test_surface_facet_declarations() {
     use Facet::{
