@@ -378,6 +378,10 @@ impl_options_methods!(KotlinOptions);
 mod tests {
   use super::*;
 
+  #[expect(
+    clippy::too_many_lines,
+    reason = "exhaustive test covering merge and is_empty across all option types"
+  )]
   #[test]
   fn test_options_merge_and_is_empty() {
     // 0 fields (JsonOptions, TypstOptions, KotlinOptions)

@@ -231,6 +231,11 @@ pub fn diff_check_via_tempcopy(
 /// [`std::env::temp_dir()`]. When `local` is true, each scratch copy is
 /// placed in a temporary `.fml-check-*` subdirectory adjacent to the target
 /// file. Guarantees cleanup on all exit paths.
+// Implements temporary-file copy, in-place formatting execution, unified diff generation, and RAII cleanup across file sets.
+#[expect(
+  clippy::too_many_lines,
+  reason = "implements tempcopy execution, unified diff generation, and RAII cleanup"
+)]
 fn diff_check_classified_impl(
   files: &[PathBuf],
   run_in_place: &(impl Fn(&Path) -> std::io::Result<std::process::Output> + Sync),

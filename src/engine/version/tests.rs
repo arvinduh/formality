@@ -156,6 +156,10 @@ fn test_version_extraction_from_tool_banners() {
   assert_eq!(Version::extract(golangci), Some(Version::new(1, 55, 2)));
 }
 
+#[expect(
+  clippy::too_many_lines,
+  reason = "table-driven test suite for distro revision vs prerelease heuristic"
+)]
 #[test]
 fn test_distro_revision_vs_genuine_prerelease() {
   // #149: table-driven coverage of the extraction-layer heuristic that

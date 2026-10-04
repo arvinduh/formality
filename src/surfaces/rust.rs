@@ -232,7 +232,6 @@ impl LanguageSurface for RustSurface {
   }
 
   // Dispatches rustfmt formatting with Cargo.toml discovery, check vs write modes, and error parsing.
-  #[allow(clippy::too_many_lines)]
   fn format(&self, ctx: &ExecutionContext) -> SurfaceResult {
     let start = Instant::now();
 

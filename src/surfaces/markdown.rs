@@ -961,7 +961,10 @@ impl LanguageSurface for MarkdownSurface {
   }
 
   // Orchestrates prettier markdown formatting across check and write modes with fallback tempcopy handling.
-  #[allow(clippy::too_many_lines)]
+  #[expect(
+    clippy::too_many_lines,
+    reason = "orchestrates prettier markdown formatting across check and write modes with tempcopy handling"
+  )]
   fn format(&self, ctx: &ExecutionContext) -> SurfaceResult {
     let start = Instant::now();
 

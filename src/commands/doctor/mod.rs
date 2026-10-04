@@ -45,6 +45,10 @@ use std::path::Path;
 /// Returns the whole per-tool outcome set rather than just a pass/fail bit,
 /// because `fml doctor --install`'s closing tally has to be reconciled
 /// against what this run actually did (#106).
+#[expect(
+  clippy::too_many_lines,
+  reason = "orchestrates tool installations, cache invalidation, and progress reporting"
+)]
 #[must_use]
 fn install_missing_tools_framed(
   missing: &[ToolInfo],
@@ -915,6 +919,10 @@ impl ToolTally {
 /// Builds the doctor table for `surfaces`. `detected_names` is the
 /// registry's detection result; only a surface outside the registry forces
 /// `present` for its own `detect`.
+#[expect(
+  clippy::too_many_lines,
+  reason = "scans toolchains across surfaces and builds diagnostic status table"
+)]
 fn scan_tools_and_build_table(
   root: &Path,
   surfaces: &[Box<dyn LanguageSurface>],

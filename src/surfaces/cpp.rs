@@ -479,6 +479,10 @@ impl LanguageSurface for CppSurface {
     )
   }
 
+  #[expect(
+    clippy::too_many_lines,
+    reason = "orchestrates clang-tidy execution across C and C++ files with std detection"
+  )]
   fn lint(&self, ctx: &ExecutionContext, fix: bool) -> SurfaceResult {
     let start = Instant::now();
 
