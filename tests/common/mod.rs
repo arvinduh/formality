@@ -3,7 +3,10 @@
 //! Provides reusable synthetic repository builders and CLI invocation helpers
 //! to reduce boilerplate across test binaries.
 
-#![allow(dead_code)]
+#![expect(
+  dead_code,
+  reason = "shared helpers are not all used by every integration test binary"
+)]
 
 pub mod lsp;
 

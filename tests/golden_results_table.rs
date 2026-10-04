@@ -232,7 +232,6 @@ fn rendered_rows(stdout: &str) -> Vec<RenderedRow> {
 
 /// Asserts one status's whole rendered row: tag, surface-name cell and
 /// detail, each with both its text and its style.
-#[allow(clippy::too_many_arguments)]
 fn assert_row(
   rows: &[RenderedRow],
   tag: &str,

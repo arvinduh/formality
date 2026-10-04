@@ -1260,7 +1260,13 @@ pub fn tool_would_benefit_from_cargo_binstall_bootstrap(binary: &str) -> bool {
 /// is what keeps its logic honest without needing an actual Windows
 /// machine to test it on.
 #[must_use]
-#[cfg_attr(not(windows), allow(dead_code))]
+#[cfg_attr(
+  not(windows),
+  allow(
+    dead_code,
+    reason = "compiled on non-Windows to keep logic honest without needing a Windows machine"
+  )
+)]
 fn merge_path_entries(current: &str, additional: &str) -> String {
   let separator = if cfg!(windows) { ';' } else { ':' };
   let mut seen: std::collections::HashSet<String> =
@@ -1356,8 +1362,14 @@ pub fn refresh_windows_path_from_registry() {
 /// Only called from [`refresh_windows_path_from_registry`]'s
 /// `#[cfg(windows)]` block (Scoop/winget's registry-only PATH updates); see
 /// [`merge_path_entries`]'s doc comment for why this is left compiled (and
-/// therefore `#[allow(dead_code)]`, not deleted) on every other platform.
-#[cfg_attr(not(windows), allow(dead_code))]
+/// therefore `#[expect(dead_code)]`, not deleted) on every other platform.
+#[cfg_attr(
+  not(windows),
+  expect(
+    dead_code,
+    reason = "compiled on non-Windows to keep logic honest without needing a Windows machine"
+  )
+)]
 fn merge_into_process_path(additional: &str) {
   let current = std::env::var("PATH").unwrap_or_default();
   let merged = merge_path_entries(&current, additional);

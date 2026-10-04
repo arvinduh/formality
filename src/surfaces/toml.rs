@@ -11,7 +11,10 @@ use serde::{Deserialize, Serialize};
 use std::time::Instant;
 
 // Directly mirrors Taplo's upstream native schema formatting flags.
-#[allow(clippy::struct_excessive_bools)]
+#[expect(
+  clippy::struct_excessive_bools,
+  reason = "directly mirrors Taplo's upstream native schema formatting flags"
+)]
 /// Formatting section for `taplo.toml`.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct TaploFormattingConfig {

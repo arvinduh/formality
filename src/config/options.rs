@@ -11,7 +11,6 @@ macro_rules! impl_options_methods {
   ($ty:ident) => {
     impl $ty {
       /// Merges `other` options into `self`.
-      #[allow(clippy::needless_pass_by_value)]
       pub fn merge(&mut self, _other: Self) {}
 
       /// Returns `true` if all fields are `None`.
@@ -24,7 +23,6 @@ macro_rules! impl_options_methods {
   ($ty:ident, $($field:ident),+ $(,)?) => {
     impl $ty {
       /// Merges `other` options into `self`.
-      #[allow(clippy::needless_pass_by_value)]
       pub fn merge(&mut self, other: Self) {
         $(
           if other.$field.is_some() {
