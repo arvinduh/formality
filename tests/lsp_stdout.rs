@@ -169,6 +169,8 @@ fn test_lsp_stdout_carries_only_json_rpc_frames() {
   let mut child = lsp::no_color(&mut lsp::command(root, &home))
     .env("PATH", &empty_path)
     .env("HOME", &home)
+    .env("USERPROFILE", &home)
+    .env("LOCALAPPDATA", &home)
     .env("XDG_DATA_HOME", &home)
     .env("XDG_CACHE_HOME", &home)
     .stderr(Stdio::piped())
