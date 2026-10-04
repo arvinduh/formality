@@ -351,16 +351,21 @@ fn is_unspaced_hash_line(line: &str) -> bool {
       .is_some_and(|c| c != ' ' && c != '\t' && c != '\r' && c != '\n')
 }
 
-/// Whether any line passes [`is_unspaced_hash_line`].
+/// Whether any line outside a fenced code block passes
+/// [`is_unspaced_hash_line`].
 ///
 /// A cheap filter in front of [`escape_continuation_hashes`]'s markdownlint
 /// spawn: a file with no such line cannot hold an escapable finding, so the
-/// common case costs a read and no process. Fenced lines count too (#514):
-/// a fence opened in a list item closes when the item ends, which only
-/// markdownlint and [`BlockScan`] track, so a shebang or `#include` in a code
-/// block costs one spawn.
+/// common case costs a read and no process. Fences are tracked through
+/// [`BlockScan`] so that a fence opened in a list item and closed by the
+/// item ending does not hide lines after it (#514), while genuinely fenced
+/// lines like a shebang or `#include` cost no spawn (#524).
 fn has_unspaced_hash_line(content: &str) -> bool {
-  content.lines().any(is_unspaced_hash_line)
+  let mut scan = BlockScan::default();
+  content.lines().any(|line| {
+    let _ = scan.opens_block(line);
+    !scan.in_fence() && is_unspaced_hash_line(line)
+  })
 }
 
 /// Splits `line` into its leading indent width in columns, advancing from
@@ -531,6 +536,11 @@ struct BlockScan {
 }
 
 impl BlockScan {
+  /// Whether the scan is currently inside an open code fence.
+  fn in_fence(&self) -> bool {
+    self.fence.is_some()
+  }
+
   /// Advances past `line`, returning whether an unspaced `#` line there
   /// would open a block of its own: a heading the author forgot to space,
   /// which markdownlint's MD018/MD020 fixers may space into `# Title`.
@@ -1696,7 +1706,7 @@ README.md:7 error MD025/single-title/single-h1 Multiple top-level headings";
   }
 
   #[test]
-  fn test_has_unspaced_hash_line_ignores_headings_only() {
+  fn test_has_unspaced_hash_line_ignores_headings_and_fenced_code() {
     // MD018's and MD020's own positives (`/^#+[^# \t]/`) must all pass the
     // prefilter, or a candidate never reaches markdownlint.
     for positive in ["#x", "##x", "#x#", "###299 ok.", "#299 for C#"] {
@@ -1707,10 +1717,22 @@ README.md:7 error MD025/single-title/single-h1 Multiple top-level headings";
     }
     assert!(!has_unspaced_hash_line("# T\n\n## Sub\n\n#\n\n# Title#\n"));
     assert!(!has_unspaced_hash_line("#\t tab\n##\n"));
-    // #514: the filter cannot tell a fenced line from one after a fence
-    // that its list item closed, so every fenced line counts.
-    assert!(has_unspaced_hash_line("```sh\n#!/bin/sh\n```\n"));
+    // Fenced lines are skipped (#524), unless a list item closed the fence (#514).
+    assert!(!has_unspaced_hash_line("```sh\n#!/bin/sh\n```\n"));
+    assert!(!has_unspaced_hash_line("~~~sh\n#!/bin/sh\n~~~\n"));
+    assert!(!has_unspaced_hash_line(
+      "```sh\n#!/bin/sh\n```\n\n~~~sh\n#!/bin/sh\n~~~\n"
+    ));
+    assert!(!has_unspaced_hash_line(
+      "- a\n  ```sh\n  #!/bin/sh\n  ```\n"
+    ));
     assert!(has_unspaced_hash_line("- a\n  ```\nfoo\n#x\n"));
+    assert!(has_unspaced_hash_line(
+      "```sh\n#!/bin/sh\n```\n#x\n~~~sh\n#!/bin/sh\n~~~\n"
+    ));
+    assert!(has_unspaced_hash_line(
+      "```sh\n#!/bin/sh\n```\n\n~~~sh\n#!/bin/sh\n~~~\n\n#x\n"
+    ));
   }
 
   #[test]
