@@ -263,7 +263,10 @@ fn wrap_cell_content(
 /// total within `table_width` when the content allows it. This is the single
 /// place table geometry is decided — comfy-table is then told exact widths and
 /// only aligns/pads.
-#[allow(clippy::too_many_lines)]
+#[expect(
+  clippy::too_many_lines,
+  reason = "column width constraint solving algorithm kept in one place"
+)]
 fn solve_column_widths(
   spec: &Table,
   table_width: usize,
@@ -431,7 +434,10 @@ fn to_comfy_align(align: table::Align) -> comfy_table::CellAlignment {
 
 /// Render a semantic Table specification into a formatted string using comfy-table.
 // Renders rich formatted tables with palette coloring, column width constraints, row spanning, and terminal clamping.
-#[allow(clippy::too_many_lines)]
+#[expect(
+  clippy::too_many_lines,
+  reason = "renders formatted tables with palette styling, column constraints, and row spanning"
+)]
 #[must_use]
 pub fn render(spec: &Table, palette: &table::Palette) -> String {
   let mut table = comfy_table::Table::new();
