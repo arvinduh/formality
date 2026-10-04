@@ -387,6 +387,10 @@ impl LanguageSurface for JavaSurface {
     ))
   }
 
+  #[expect(
+    clippy::too_many_lines,
+    reason = "orchestrates checkstyle execution with fallback temp config generation"
+  )]
   fn lint(&self, ctx: &ExecutionContext, fix: bool) -> SurfaceResult {
     let start = Instant::now();
 
