@@ -1253,7 +1253,7 @@ pub fn tool_would_benefit_from_cargo_binstall_bootstrap(binary: &str) -> bool {
 ///
 /// That one production caller is itself `#[cfg(windows)]`-gated, so on
 /// every other target this function has no production caller at all --
-/// `#[expect(dead_code)]` there is a deliberate cross-platform-code
+/// `#[allow(dead_code)]` there is a deliberate cross-platform-code
 /// allowance, not the unreachable-logic case dead-code scrutiny is aimed
 /// at: the code is live and necessary on Windows, and staying compiled
 /// (and directly unit-tested, see the tests below) on every other platform
@@ -1262,7 +1262,7 @@ pub fn tool_would_benefit_from_cargo_binstall_bootstrap(binary: &str) -> bool {
 #[must_use]
 #[cfg_attr(
   not(windows),
-  expect(
+  allow(
     dead_code,
     reason = "compiled on non-Windows to keep logic honest without needing a Windows machine"
   )
