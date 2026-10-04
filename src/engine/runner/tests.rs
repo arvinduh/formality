@@ -744,7 +744,7 @@ fn test_execution_context_candidate_files_filtering() {
     global_config: Arc::new(crate::config::ResolvedGlobalConfig::default()),
     lang_config,
     check_only: false,
-    candidate_files: Some(candidates),
+    candidate_files: candidates,
   };
 
   let matched = ctx.matched_files(&["rs"]);
@@ -787,10 +787,10 @@ fn test_execution_context_staged_files_filtering() {
     global_config: Arc::new(crate::config::ResolvedGlobalConfig::default()),
     lang_config,
     check_only: false,
-    candidate_files: Some(Arc::new(crate::surfaces::glob::expand_targets(
+    candidate_files: Arc::new(crate::surfaces::glob::expand_targets(
       root,
       &staged_paths,
-    ))),
+    )),
   };
 
   let matched = ctx.matched_files(&["rs"]);

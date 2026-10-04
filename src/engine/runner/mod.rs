@@ -247,10 +247,8 @@ impl Runner {
     // one of the (up to 12) surfaces per invocation.
     let global_config = Arc::new(config.resolve_global());
     let (paths, candidate_files) = match scope {
-      Scope::Paths { args, files } => {
-        (Arc::clone(args), Some(Arc::clone(files)))
-      }
-      Scope::Workspace(files) => (Arc::default(), Some(Arc::clone(files))),
+      Scope::Paths { args, files } => (Arc::clone(args), Arc::clone(files)),
+      Scope::Workspace(files) => (Arc::default(), Arc::clone(files)),
     };
     let shared = SharedRun {
       config,
@@ -869,7 +867,7 @@ struct SharedRun<'a> {
   root: Arc<PathBuf>,
   paths: Arc<Vec<PathBuf>>,
   global_config: Arc<crate::config::ResolvedGlobalConfig>,
-  candidate_files: Option<Arc<Vec<PathBuf>>>,
+  candidate_files: Arc<Vec<PathBuf>>,
 }
 
 impl SharedRun<'_> {
@@ -889,7 +887,7 @@ impl SharedRun<'_> {
       global_config: Arc::clone(&self.global_config),
       lang_config,
       check_only,
-      candidate_files: self.candidate_files.clone(),
+      candidate_files: Arc::clone(&self.candidate_files),
     }
   }
 }
