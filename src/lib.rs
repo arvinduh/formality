@@ -413,9 +413,8 @@ mod tests {
   // claiming a clean style-guide sweep, precisely because nothing mechanical
   // was checking it. Exempts `tests.rs` sibling files (the §1 directory-
   // module test-split exception) the same way an inline `#[cfg(test)] mod
-  // tests` block is exempt — both are test-only content carrying the
-  // `#[allow(missing_docs, ...)]` attribute from §3's second bullet, not
-  // "meaningful crate-level content" in the production sense.
+  // tests` block is exempt — both are test-only content, not "meaningful
+  // crate-level content" in the production sense.
   #[test]
   fn test_files_carry_module_doc_comment() {
     let manifest_dir = path::PathBuf::from(env!("CARGO_MANIFEST_DIR"));
