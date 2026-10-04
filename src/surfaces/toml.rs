@@ -300,8 +300,9 @@ impl LanguageSurface for TomlSurface {
 #[cfg(test)]
 mod tests {
   use super::*;
-  use crate::surfaces::{SurfaceStatus, check_binary_exists, test_ctx};
-  use std::sync::Arc;
+  use crate::surfaces::{
+    SurfaceStatus, check_binary_exists, test_ctx, test_ctx_with_paths,
+  };
   use tempfile::TempDir;
 
   #[test]
@@ -446,9 +447,11 @@ mod tests {
     let file = dir.join("f.toml");
     std::fs::write(&file, "[package]\n name =   \"x\"\n").unwrap();
 
-    let mut ctx =
-      test_ctx(temp.path(), crate::config::ResolvedLangConfig::new("toml"));
-    ctx.paths = Arc::new(vec![file.clone()]);
+    let ctx = test_ctx_with_paths(
+      temp.path(),
+      crate::config::ResolvedLangConfig::new("toml"),
+      vec![file.clone()],
+    );
     let res = TomlSurface.format(&ctx);
 
     assert!(
@@ -473,9 +476,11 @@ mod tests {
     let file = dir.join("f.toml");
     std::fs::write(&file, "a = [\n").unwrap();
 
-    let mut ctx =
-      test_ctx(temp.path(), crate::config::ResolvedLangConfig::new("toml"));
-    ctx.paths = Arc::new(vec![file]);
+    let ctx = test_ctx_with_paths(
+      temp.path(),
+      crate::config::ResolvedLangConfig::new("toml"),
+      vec![file],
+    );
     let res = TomlSurface.lint(&ctx, false);
 
     assert!(
@@ -550,9 +555,11 @@ mod tests {
     std::fs::write(&file_path, &large_content).unwrap();
 
     let surface = TomlSurface;
-    let mut ctx =
-      test_ctx(temp.path(), crate::config::ResolvedLangConfig::new("toml"));
-    ctx.paths = Arc::new(vec![file_path]);
+    let mut ctx = test_ctx_with_paths(
+      temp.path(),
+      crate::config::ResolvedLangConfig::new("toml"),
+      vec![file_path],
+    );
     ctx.check_only = true;
 
     let res = surface.format(&ctx);
@@ -575,9 +582,11 @@ mod tests {
     assert!(formatted_content.len() > 128 * 1024);
     std::fs::write(&formatted_path, &formatted_content).unwrap();
 
-    let mut ctx_formatted =
-      test_ctx(temp.path(), crate::config::ResolvedLangConfig::new("toml"));
-    ctx_formatted.paths = Arc::new(vec![formatted_path]);
+    let mut ctx_formatted = test_ctx_with_paths(
+      temp.path(),
+      crate::config::ResolvedLangConfig::new("toml"),
+      vec![formatted_path],
+    );
     ctx_formatted.check_only = true;
 
     let res_formatted = surface.format(&ctx_formatted);

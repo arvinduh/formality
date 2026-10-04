@@ -116,24 +116,14 @@ pub struct ExecutionContext {
   /// Whether to perform check-only mode without mutating files.
   pub check_only: bool,
   /// The run's candidate files, found once for every surface: the workspace
-  /// walk when `paths` is empty, otherwise `paths` expanded. `None` makes
-  /// [`Self::matched_files`] find the files itself.
-  pub candidate_files: Option<Arc<Vec<PathBuf>>>,
+  /// walk when `paths` is empty, otherwise `paths` expanded.
+  pub candidate_files: Arc<Vec<PathBuf>>,
 }
 
 impl ExecutionContext {
   /// Discovers target files for the surface matching extensions, honoring scoped paths, files, and excludes.
   #[must_use]
   pub fn matched_files(&self, extensions: &[&str]) -> Vec<PathBuf> {
-    let Some(candidates) = &self.candidate_files else {
-      return find_files_with_ext(
-        self.root.as_path(),
-        extensions,
-        &self.paths,
-        &self.lang_config.files,
-        &self.lang_config.exclude,
-      );
-    };
     if self.paths.is_empty() {
       let includes: Vec<String> = self
         .lang_config
@@ -142,7 +132,7 @@ impl ExecutionContext {
         .map(|p| p.to_string_lossy().into_owned())
         .collect();
       filter_candidates_with_ext(
-        candidates,
+        &self.candidate_files,
         extensions,
         &includes,
         &self.lang_config.exclude,
@@ -155,7 +145,8 @@ impl ExecutionContext {
         extensions,
         &self.lang_config.exclude,
       );
-      candidates
+      self
+        .candidate_files
         .iter()
         .filter(|file| filter.matches(file))
         .cloned()
@@ -212,13 +203,34 @@ pub fn test_ctx(
   root: impl AsRef<Path>,
   lang_config: ResolvedLangConfig,
 ) -> ExecutionContext {
+  let root_ref = root.as_ref();
   ExecutionContext {
-    root: Arc::new(root.as_ref().to_path_buf()),
+    root: Arc::new(root_ref.to_path_buf()),
     paths: Arc::new(Vec::new()),
     global_config: Arc::new(ResolvedGlobalConfig::default()),
     lang_config,
     check_only: false,
-    candidate_files: None,
+    candidate_files: Arc::new(walk_candidate_files(root_ref, &[])),
+  }
+}
+
+/// Builds a minimal `ExecutionContext` scoped to explicit `paths` for testing.
+#[cfg(test)]
+#[must_use]
+pub fn test_ctx_with_paths(
+  root: impl AsRef<Path>,
+  lang_config: ResolvedLangConfig,
+  paths: Vec<PathBuf>,
+) -> ExecutionContext {
+  let root_ref = root.as_ref();
+  let candidate_files = glob::expand_targets(root_ref, &paths);
+  ExecutionContext {
+    root: Arc::new(root_ref.to_path_buf()),
+    paths: Arc::new(paths),
+    global_config: Arc::new(ResolvedGlobalConfig::default()),
+    lang_config,
+    check_only: false,
+    candidate_files: Arc::new(candidate_files),
   }
 }
 
