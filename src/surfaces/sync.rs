@@ -224,26 +224,25 @@ pub fn diff_check_via_tempcopy(
   )
 }
 
-/// Like [`diff_check_via_tempcopy`], but lets the caller classify a non-zero
-/// formatter exit code as either a formatting result or a tool failure via
-/// `classify` (receives [`std::process::ExitStatus::code`], `None` on a
-/// signal). On a non-zero exit both captured streams are surfaced when both
-/// are non-empty — no non-empty stream is discarded.
+/// Internal implementation backing [`diff_check_via_tempcopy_classified`]
+/// and [`diff_check_via_local_tempcopy_classified`].
 ///
-/// Uses an isolated temporary directory under [`std::env::temp_dir()`] so that
-/// scratch files do not pollute the workspace, and guarantees cleanup on all
-/// exit paths.
+/// When `local` is false, scratch copies are placed under
+/// [`std::env::temp_dir()`]. When `local` is true, each scratch copy is
+/// placed in a temporary `.fml-check-*` subdirectory adjacent to the target
+/// file. Guarantees cleanup on all exit paths.
 // Implements temporary-file copy, in-place formatting execution, unified diff generation, and RAII cleanup across file sets.
 #[expect(
   clippy::too_many_lines,
   reason = "implements tempcopy execution, unified diff generation, and RAII cleanup"
 )]
-pub fn diff_check_via_tempcopy_classified(
+fn diff_check_classified_impl(
   files: &[PathBuf],
-  run_in_place: impl Fn(&Path) -> std::io::Result<std::process::Output> + Sync,
+  run_in_place: &(impl Fn(&Path) -> std::io::Result<std::process::Output> + Sync),
   surface_name: &'static str,
   start: Instant,
   classify: impl Fn(Option<i32>) -> ExitClass,
+  local: bool,
 ) -> SurfaceResult {
   if files.is_empty() {
     return SurfaceResult {
@@ -253,23 +252,26 @@ pub fn diff_check_via_tempcopy_classified(
     };
   }
 
-  let temp_dir = match tempfile::Builder::new()
-    .prefix("fml-check-")
-    .tempdir_in(std::env::temp_dir())
-  {
-    Ok(dir) => dir,
-    Err(e) => {
-      return SurfaceResult {
-        surface_name,
-        status: SurfaceStatus::ExecutionError {
-          message: format!("Failed to create temporary directory: {e}"),
-        },
-        duration: start.elapsed(),
-      };
+  let global_temp = if local {
+    None
+  } else {
+    match tempfile::Builder::new()
+      .prefix("fml-check-")
+      .tempdir_in(std::env::temp_dir())
+    {
+      Ok(dir) => Some(dir),
+      Err(e) => {
+        return SurfaceResult {
+          surface_name,
+          status: SurfaceStatus::ExecutionError {
+            message: format!("Failed to create temporary directory: {e}"),
+          },
+          duration: start.elapsed(),
+        };
+      }
     }
   };
 
-  let temp_path = temp_dir.path();
   let results: Vec<PerFileCheckResult> = files
     .par_iter()
     .enumerate()
@@ -289,15 +291,36 @@ pub fn diff_check_via_tempcopy_classified(
         .file_name()
         .and_then(|n| n.to_str())
         .unwrap_or("scratch");
-      let file_subfolder = temp_path.join(idx.to_string());
-      if let Err(e) = std::fs::create_dir_all(&file_subfolder) {
-        return PerFileCheckResult::ExecutionError(format!(
-          "Failed to create temp directory {}: {}",
-          file_subfolder.display(),
-          e
-        ));
-      }
-      let scratch = file_subfolder.join(file_name);
+      let (_local_guard, scratch) = if local {
+        let parent = original
+          .parent()
+          .filter(|p| !p.as_os_str().is_empty())
+          .unwrap_or_else(|| Path::new("."));
+        let dir = match tempfile::Builder::new()
+          .prefix(".fml-check-")
+          .tempdir_in(parent)
+        {
+          Ok(d) => d,
+          Err(e) => {
+            return PerFileCheckResult::ExecutionError(format!(
+              "Failed to create temp directory in {}: {e}",
+              parent.display()
+            ));
+          }
+        };
+        let p = dir.path().join(file_name);
+        (Some(dir), p)
+      } else {
+        let subfolder =
+          global_temp.as_ref().unwrap().path().join(idx.to_string());
+        if let Err(e) = std::fs::create_dir_all(&subfolder) {
+          return PerFileCheckResult::ExecutionError(format!(
+            "Failed to create temp directory {}: {e}",
+            subfolder.display()
+          ));
+        }
+        (None, subfolder.join(file_name))
+      };
 
       if let Err(e) = std::fs::write(&scratch, &original_content) {
         return PerFileCheckResult::ExecutionError(format!(
@@ -410,6 +433,58 @@ pub fn diff_check_via_tempcopy_classified(
       duration: start.elapsed(),
     }
   }
+}
+
+/// Like [`diff_check_via_tempcopy`], but lets the caller classify a non-zero
+/// formatter exit code as either a formatting result or a tool failure via
+/// `classify` (receives [`std::process::ExitStatus::code`], `None` on a
+/// signal). On a non-zero exit both captured streams are surfaced when both
+/// are non-empty — no non-empty stream is discarded.
+///
+/// Uses an isolated temporary directory under [`std::env::temp_dir()`] so that
+/// scratch files do not pollute the workspace, and guarantees cleanup on all
+/// exit paths.
+pub fn diff_check_via_tempcopy_classified(
+  files: &[PathBuf],
+  run_in_place: impl Fn(&Path) -> std::io::Result<std::process::Output> + Sync,
+  surface_name: &'static str,
+  start: Instant,
+  classify: impl Fn(Option<i32>) -> ExitClass,
+) -> SurfaceResult {
+  diff_check_classified_impl(
+    files,
+    &run_in_place,
+    surface_name,
+    start,
+    classify,
+    false,
+  )
+}
+
+/// Runs a diff-based format check by copying each file to a temporary
+/// subdirectory adjacent to the original file.
+///
+/// Unlike [`diff_check_via_tempcopy_classified`] (which places scratch files
+/// under [`std::env::temp_dir()`]), creating the scratch copy in a temporary
+/// subfolder within the file's own parent directory allows tools that discover
+/// configuration files by traversing upwards from the target file (such as
+/// `markdownlint-cli2`) to find the exact same on-disk configuration as the
+/// in-place write pass.
+pub fn diff_check_via_local_tempcopy_classified(
+  files: &[PathBuf],
+  run_in_place: impl Fn(&Path) -> std::io::Result<std::process::Output> + Sync,
+  surface_name: &'static str,
+  start: Instant,
+  classify: impl Fn(Option<i32>) -> ExitClass,
+) -> SurfaceResult {
+  diff_check_classified_impl(
+    files,
+    &run_in_place,
+    surface_name,
+    start,
+    classify,
+    true,
+  )
 }
 
 #[cfg(test)]
@@ -1178,6 +1253,35 @@ mod tests {
       }
       other => panic!("expected ViolationsFound, got {other:?}"),
     }
+  }
+
+  #[test]
+  fn test_diff_check_via_local_tempcopy_classified_places_scratch_in_parent() {
+    let temp = TempDir::new().unwrap();
+    let sub = temp.path().join("sub");
+    std::fs::create_dir_all(&sub).unwrap();
+    let file = sub.join("doc.md");
+    std::fs::write(&file, "before\n").unwrap();
+
+    let scratch_observed = std::sync::Mutex::new(PathBuf::new());
+    let res = diff_check_via_local_tempcopy_classified(
+      std::slice::from_ref(&file),
+      |scratch| {
+        *scratch_observed.lock().unwrap() = scratch.to_path_buf();
+        assert_eq!(scratch.file_name().unwrap(), "doc.md");
+        assert_eq!(scratch.parent().unwrap().parent().unwrap(), sub);
+        std::fs::write(scratch, "after\n").unwrap();
+        Ok(create_dummy_success_output())
+      },
+      "markdown",
+      Instant::now(),
+      |_| ExitClass::ViolationsFound,
+    );
+
+    assert!(matches!(res.status, SurfaceStatus::ViolationsFound { .. }));
+    let scratch_path = scratch_observed.into_inner().unwrap();
+    assert!(!scratch_path.exists());
+    assert_eq!(std::fs::read_dir(&sub).unwrap().count(), 1);
   }
 
   fn synced(name: &str, created: bool, ms: u64) -> SurfaceResult {

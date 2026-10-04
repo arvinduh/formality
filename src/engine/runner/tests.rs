@@ -783,11 +783,14 @@ fn test_execution_context_staged_files_filtering() {
 
   let ctx = ExecutionContext {
     root: Arc::new(root.to_path_buf()),
-    paths: staged_paths,
+    paths: Arc::clone(&staged_paths),
     global_config: Arc::new(crate::config::ResolvedGlobalConfig::default()),
     lang_config,
     check_only: false,
-    candidate_files: None,
+    candidate_files: Some(Arc::new(crate::surfaces::glob::expand_targets(
+      root,
+      &staged_paths,
+    ))),
   };
 
   let matched = ctx.matched_files(&["rs"]);
@@ -898,7 +901,7 @@ fn test_runner_missing_tool_exit_code_is_violations() {
   // fix is unconditional on mode.
   let root = PathBuf::from(".");
   let config = FormalityConfig::default();
-  let staged_paths = Scope::Paths(Arc::new(vec![PathBuf::from("test.mock")]));
+  let staged_paths = Scope::resolve(&root, &[PathBuf::from("test.mock")], &[]);
 
   // Lint unstaged & staged
   let unstaged_lint = Runner::run(

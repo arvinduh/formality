@@ -160,17 +160,22 @@ use crate::errors::ExitStatus;
 /// The files one run acts on, resolved once by the command layer and shared
 /// by surface detection and every surface's file selection.
 pub enum Scope {
-  /// Explicit path arguments, or the files `--staged`/`--changed` selected;
-  /// each surface resolves its own files from them.
-  Paths(Arc<Vec<PathBuf>>),
+  /// Explicit path arguments, or the files `--staged`/`--changed` selected.
+  Paths {
+    /// The arguments as given, which some tools are handed directly.
+    args: Arc<Vec<PathBuf>>,
+    /// `args` expanded once into candidate files; each surface filters
+    /// its own files from them.
+    files: Arc<Vec<PathBuf>>,
+  },
   /// The whole workspace: every candidate file, `global.exclude` applied,
   /// from one walk.
   Workspace(Arc<Vec<PathBuf>>),
 }
 
 impl Scope {
-  /// Scopes a run to `paths`, or, when there are none, to the workspace
-  /// under `root`, walking it once.
+  /// Scopes a run to `paths`, expanding each directory among them once, or,
+  /// when there are none, to the workspace under `root`, walking it once.
   #[must_use]
   pub fn resolve(
     root: &Path,
@@ -183,7 +188,10 @@ impl Scope {
         global_exclude,
       )))
     } else {
-      Self::Paths(Arc::new(paths.to_vec()))
+      Self::Paths {
+        args: Arc::new(paths.to_vec()),
+        files: Arc::new(crate::surfaces::glob::expand_targets(root, paths)),
+      }
     }
   }
 }
@@ -239,7 +247,9 @@ impl Runner {
     // one of the (up to 12) surfaces per invocation.
     let global_config = Arc::new(config.resolve_global());
     let (paths, candidate_files) = match scope {
-      Scope::Paths(paths) => (Arc::clone(paths), None),
+      Scope::Paths { args, files } => {
+        (Arc::clone(args), Some(Arc::clone(files)))
+      }
       Scope::Workspace(files) => (Arc::default(), Some(Arc::clone(files))),
     };
     let shared = SharedRun {
