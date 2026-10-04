@@ -128,7 +128,20 @@ machine-generated shape.
   content on stdin, so it never writes the file.
 - **Lint**: `markdownlint-cli2`.
 - **Managed config**: `.markdownlint.json`, plus the shared `.prettierrc.json`
-  (see below).
+  (see below). `MD010`/`no-hard-tabs` and `MD029`/`ol-prefix` are off in the
+  config fml generates (`fml fmt`/`fix`/`lint`/`lsp`, and the
+  `.markdownlint.json` that `fml sync` writes) (#479): their fixers change what
+  a list renders as. MD010 swaps a tab for one space, which moves a tab-indented
+  paragraph out of its list item, and MD029 renumbers `10.` to `1.`, dropping
+  the list's start number. prettier already turns those tabs into spaces and
+  renumbers the items after the first, both without changing the rendering.
+  `MD031`/`blanks-around-fences` and `MD032`/`blanks-around-lists` are off for
+  the same reason (#513): MD031 puts blank lines around a fence inside a list
+  item, which makes a tight list loose, and both write a bare `>` at column 0
+  into a quote nested in an item, which ends the list or adds an empty quote.
+  prettier already puts blank lines around a top-level fence or list. A
+  project's own `.markdownlint.*` replaces that config entirely, so it brings
+  these rules and their fixers back unless it also sets them to `false`.
 - **`[lang.markdown]` options**: `prose_wrap` (`"always"` / `"never"` /
   `"preserve"`); `no_inline_html` (bool, default `false`) — controls
   markdownlint's `MD033`/`no-inline-html` rule. Ships **disabled** by default:
@@ -140,9 +153,9 @@ machine-generated shape.
   configurable; `quote_style`, `trailing_comma`, `import_sort`, `edition`,
   `standard` unsupported.
 - **`supports_lint_fix`**: `true`.
-- **`extra_args` caveat**: one list reaches **two** binaries, and a `--config`
-  entry silently overrides `fml`'s own markdownlint settings — see
-  [Markdown: one list, two tools](#markdown-one-list-two-tools).
+- **`extra_args` keys**: `markdownlint-cli2` and `prettier`, each reaching only
+  its own tool; see
+  [`extra_args`: one list per tool](#extra_args-one-list-per-tool).
 
 ## YAML
 
@@ -186,8 +199,8 @@ machine-generated shape.
 ## Typst
 
 - **Format**: `typstyle`.
-- **Lint**: none dedicated — Typst diagnostics flow through the LSP (`tinymist`)
-  rather than a standalone `fml lint` linter today.
+- **Lint**: none dedicated — Typst diagnostics flow through `fml lsp`, which
+  runs `typst compile`, rather than a standalone `fml lint` linter today.
 - **Managed config**: none — `typstyle` is driven entirely by CLI flags (e.g.
   `--column`) rather than a persisted config file.
 - **`[lang.typst]` options**: none currently (reserved for future knobs).
@@ -274,9 +287,9 @@ two.
 
 ## `extra_args` and exit-code contracts
 
-`[lang.<name>] extra_args` is appended **after** `fml`'s own flags, so a
-user-supplied value wins. For nearly every flag that is the intent. A few flags
-are different: they change what a non-zero exit code _means_.
+Each `[lang.<name>.extra_args]` list is appended **after** `fml`'s own flags, so
+a user-supplied value wins. For nearly every flag that is the intent. A few
+flags are different: they change what a non-zero exit code _means_.
 
 Each surface decides whether a non-zero exit is "ran, found violations"
 (`[FAIL]`) or "could not run" (`[ERR]`, process exit 2) from the tool's
@@ -313,53 +326,87 @@ See [ADR 0005](adr/0005-extra-args-exit-code-contracts.md) for the full
 reasoning, including why re-deriving each classifier from the final argv (which
 _would_ have covered the python and java cases) was rejected.
 
-### Markdown: one list, two tools
+---
 
-`[lang.<name>] extra_args` is a single flat list per surface, forwarded verbatim
-to every tool invocation the pass makes. Markdown is the surface where that
-hurts most: `fml fmt` drives `markdownlint-cli2 --fix` and then
-`prettier --write` — two separate binaries with essentially disjoint flag
-vocabularies — and both receive the same list. (Before #150 the markdownlint
-pass silently dropped it during `fml fmt` while `fml lint` forwarded it, so the
-same config behaved differently between the two commands.)
+## `extra_args`: one list per tool
 
-This is **not** an exit-code-contract problem like the table above, and nothing
-here is guarded. Reproduced against
-`markdownlint-cli2 v0.23.2 (markdownlint v0.41.1)`:
+`[lang.<name>.extra_args]` is a table. Each key names one tool the surface runs,
+and its list is appended after `fml`'s own flags on that tool's invocations
+only. A tool without a key gets no extra arguments.
 
-- **A prettier-only flag is swallowed, not rejected.** markdownlint-cli2 treats
-  an unrecognized argument as a **glob**, so
-  `--fix --config c.json a.md --prose-wrap always` prints
-  `Finding: a.md --prose-wrap always` and lints `a.md` normally. Harmless, and
-  the reason routing `extra_args` into this pass did not break projects that
-  already carried prettier-only flags — but also not the loud, attributable
-  failure you might expect.
-- **`--config` is accepted by both tools, and yours wins.** `extra_args` is
-  appended after `fml`'s injected temp config, and markdownlint-cli2 honours the
-  **last** `--config` it sees. A `.prettierrc.json` in `extra_args` is therefore
-  parsed by markdownlint, which ignores its unknown keys and falls back to its
-  own defaults — `MD013` at 80 columns instead of the `line_length` your
-  `formality.toml` resolved. markdownlint exits 1, `fml fmt` classifies exit 1
-  as "violations remain, prettier still runs", and reports **`[PASS]`**. Your
-  resolved markdownlint settings were silently discarded.
-- **A flag markdownlint recognizes and rejects does fail loudly.** `--config`
-  naming a path that doesn't exist exits 2 and is surfaced as
-  `[ERR] Execution error`.
+```toml
+[lang.markdown.extra_args]
+prettier = ["--prose-wrap", "always"]
+markdownlint-cli2 = ["--no-globs"]
 
-`fml lint` has always behaved this way; #150 made `fml fmt` consistent with it
-rather than changing it. If you need a flag for exactly one of the two tools,
-there is no way to express that today —
-[#210](https://github.com/arvinduh/formality/issues/210) owns the design for a
-per-tool split (it is a `formality.toml` shape change).
+[lang.python.extra_args]
+ruff-check = ["--extend-select", "F"]
+ruff-format = ["--preview"]
+```
+
+Keys are the binary names `fml doctor` reports and the install chains use. The
+one exception is python, whose single `ruff` binary runs two passes, so its keys
+name the subcommand too.
+
+| Surface        | Keys                                                                                             |
+| -------------- | ------------------------------------------------------------------------------------------------ |
+| **rust**       | `rustfmt` (`fml fmt`, via `cargo fmt` or bare), `clippy-driver` (`fml lint`, via `cargo clippy`) |
+| **python**     | `ruff-check` (the `--select I --fix` import pass of `fml fmt`, and `fml lint`), `ruff-format`    |
+| **cpp**        | `clang-format`, `clang-tidy`                                                                     |
+| **java**       | `google-java-format`, `checkstyle`                                                               |
+| **go**         | `gofmt`, `goimports`, `golangci-lint`                                                            |
+| **markdown**   | `markdownlint-cli2` (also when the older `markdownlint` binary stands in), `prettier`            |
+| **yaml**       | `prettier`, `yamllint`                                                                           |
+| **json**       | `prettier`                                                                                       |
+| **toml**       | `taplo`                                                                                          |
+| **typst**      | `typstyle`                                                                                       |
+| **javascript** | `biome`                                                                                          |
+| **kotlin**     | `ktlint`                                                                                         |
+
+Any other key fails config loading, naming the keys the surface accepts:
+
+```text
+unknown key `lang.python.extra_args.ruff` in formality.toml:3: `python` runs no tool named `ruff`; its extra_args keys are `ruff-check`, `ruff-format`.
+```
+
+The flat list (`extra_args = [...]` directly under `[lang.<name>]`), which
+reached every tool a pass ran, is removed; it fails config loading, naming the
+table form:
+
+```text
+`lang.markdown.extra_args` in formality.toml:3 is a list, but extra_args takes one list per tool: write it as a table, e.g. `[lang.markdown.extra_args]` then `markdownlint-cli2 = ["--flag"]`. Tools for `markdown`: `markdownlint-cli2`, `prettier`.
+```
+
+One markdown hazard remains, now confined to its own key: a `--config` under
+`markdownlint-cli2` lands after the temp config `fml` injects, and
+markdownlint-cli2 honours the **last** `--config` it sees, so it replaces the
+markdownlint settings your `formality.toml` resolved. Reproduced against
+`markdownlint-cli2 v0.23.2 (markdownlint v0.41.1)`.
 
 ---
 
 ## Detection
 
-Each surface's `detect(&self, root: &Path) -> bool` decides whether it's
-"active" for a workspace when `languages` isn't set explicitly in
-`formality.toml` — generally: does at least one file with the surface's
-`file_extensions()` exist under `root` (excluding common ignore directories).
+Each surface's `detect(&self, root: &Path, present: &PresentExtensions) -> bool`
+decides whether it's "active" for a workspace when `languages` isn't set
+explicitly in `formality.toml`: is one of its `marker_files()` a regular file at
+`root`, or does at least one candidate file with one of its `file_extensions()`
+exist under `root` (excluding common ignore directories). `present` is the set
+of extensions from one walk of `root`, shared by every surface, so
+auto-detection walks the tree once.
+
+For `fml fmt`, `fml lint`, `fml fix` and `fml sync` with no path arguments,
+`present` comes from the runner's own candidate list, so the whole run walks the
+tree once. `fml doctor` and the LSP's active-surface log build the same list, so
+they report exactly the surfaces `fml fmt` runs. That list has `global.exclude`
+applied: an extension seen only in globally excluded files no longer activates
+its surface, since fml ignores excluded files everywhere. A marker file at the
+root (`Cargo.toml`, `pyproject.toml`, ...) still activates its surface even when
+`global.exclude` matches it, because markers are checked at the root, not in the
+candidate list. A surface's own `exclude` does not affect detection. `fml init`
+detects from a plain walk without `global.exclude`, since it usually runs before
+one exists.
+
 `fml doctor` shows detection and tool status for active surfaces, and
 `fml doctor --all` shows both for every surface in the fleet.
 

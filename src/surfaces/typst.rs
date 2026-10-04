@@ -6,8 +6,7 @@ use super::tooling::no_native_config;
 use super::{
   DeclaresFacets, ExecutionContext, Facet, FacetSupport, LanguageSurface,
   SurfaceResult, ToolInfo, create_tool_command, diff_check_via_tempcopy,
-  find_files_with_ext, lint_fix_unsupported, run_tool_command,
-  tool_missing_guard,
+  lint_fix_unsupported, run_tool_command, tool_missing_guard,
 };
 use std::path::Path;
 use std::time::Instant;
@@ -64,6 +63,10 @@ impl LanguageSurface for TypstSurface {
     "typst"
   }
 
+  fn extra_args_tools(&self) -> &'static [&'static str] {
+    &["typstyle"]
+  }
+
   fn aliases(&self) -> &[&'static str] {
     &["typ"]
   }
@@ -74,10 +77,6 @@ impl LanguageSurface for TypstSurface {
 
   fn clone_box(&self) -> Box<dyn LanguageSurface> {
     Box::new(*self)
-  }
-
-  fn detect(&self, root: &Path) -> bool {
-    !find_files_with_ext(root, TYPST_EXTENSIONS, &[], &[], &[]).is_empty()
   }
 
   fn tool_info(
@@ -116,7 +115,7 @@ impl LanguageSurface for TypstSurface {
             .arg(ctx.lang_config.line_length.to_string())
             .arg("-i")
             .arg(scratch);
-          cmd.args(&ctx.lang_config.extra_args);
+          cmd.args(ctx.lang_config.tool_args("typstyle"));
           cmd.current_dir(ctx.root.as_path());
           cmd.output()
         },
@@ -135,7 +134,7 @@ impl LanguageSurface for TypstSurface {
       cmd.arg(f);
     }
 
-    cmd.args(&ctx.lang_config.extra_args);
+    cmd.args(ctx.lang_config.tool_args("typstyle"));
     cmd.current_dir(ctx.root.as_path());
 
     run_tool_command(self.name(), &mut cmd)
@@ -207,10 +206,10 @@ mod tests {
   fn test_typst_surface_detect() {
     let surface = TypstSurface;
     let temp = TempDir::new().unwrap();
-    assert!(!surface.detect(temp.path()));
+    assert!(!crate::surfaces::detect_in(&surface, temp.path()));
 
     std::fs::write(temp.path().join("main.typ"), "= Title").unwrap();
-    assert!(surface.detect(temp.path()));
+    assert!(crate::surfaces::detect_in(&surface, temp.path()));
   }
 
   #[test]

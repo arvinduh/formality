@@ -6,11 +6,10 @@ use super::{
   DeclaresFacets, ExecutionContext, Facet, FacetSupport, LanguageSurface,
   NativeConfig, SurfaceResult, SurfaceStatus, ToolInfo,
   classify_all_nonzero_as_error, create_tool_command,
-  diff_check_via_tempcopy_classified, find_files_with_ext,
-  lint_fix_unsupported, run_tool_command_classified, sync_native_config,
-  tool_missing_guard,
+  diff_check_via_tempcopy_classified, lint_fix_unsupported,
+  run_tool_command_classified, sync_native_config, tool_missing_guard,
 };
-use std::path::Path;
+use std::io::Write;
 use std::time::Instant;
 
 /// Detects the failure google-java-format produces when the `java` on
@@ -260,6 +259,10 @@ impl LanguageSurface for JavaSurface {
     "java"
   }
 
+  fn extra_args_tools(&self) -> &'static [&'static str] {
+    &["google-java-format", "checkstyle"]
+  }
+
   fn aliases(&self) -> &[&'static str] {
     &["jav"]
   }
@@ -276,12 +279,13 @@ impl LanguageSurface for JavaSurface {
     false
   }
 
-  fn detect(&self, root: &Path) -> bool {
-    root.join("pom.xml").is_file()
-      || root.join("build.gradle").is_file()
-      || root.join("build.gradle.kts").is_file()
-      || root.join("checkstyle.xml").is_file()
-      || !find_files_with_ext(root, JAVA_EXTENSIONS, &[], &[], &[]).is_empty()
+  fn marker_files(&self) -> &[&'static str] {
+    &[
+      "pom.xml",
+      "build.gradle",
+      "build.gradle.kts",
+      "checkstyle.xml",
+    ]
   }
 
   fn tool_info(
@@ -338,7 +342,7 @@ impl LanguageSurface for JavaSurface {
             cmd.arg("--aosp");
           }
           cmd.arg("--replace").arg(scratch);
-          cmd.args(&ctx.lang_config.extra_args);
+          cmd.args(ctx.lang_config.tool_args("google-java-format"));
           cmd.current_dir(ctx.root.as_path());
           cmd.output()
         },
@@ -373,7 +377,7 @@ impl LanguageSurface for JavaSurface {
       cmd.arg(f);
     }
 
-    cmd.args(&ctx.lang_config.extra_args);
+    cmd.args(ctx.lang_config.tool_args("google-java-format"));
     cmd.current_dir(ctx.root.as_path());
 
     explain_jvm_incompatibility(run_tool_command_classified(
@@ -433,7 +437,6 @@ impl LanguageSurface for JavaSurface {
               };
             }
           };
-          use std::io::Write;
           if let Err(e) = temp_file.write_all(rendered.as_bytes()) {
             return SurfaceResult {
               surface_name: self.name(),
@@ -465,7 +468,7 @@ impl LanguageSurface for JavaSurface {
     for f in &files {
       cmd.arg(f);
     }
-    cmd.args(&ctx.lang_config.extra_args);
+    cmd.args(ctx.lang_config.tool_args("checkstyle"));
     cmd.current_dir(ctx.root.as_path());
 
     match cmd.output() {
@@ -544,6 +547,7 @@ mod tests {
   use super::*;
   use crate::config::ResolvedLangConfig;
   use crate::surfaces::{check_binary_exists, test_ctx};
+  use std::path::Path;
   use std::sync::Arc;
   use tempfile::TempDir;
 
@@ -602,10 +606,10 @@ mod tests {
   fn test_java_detect_by_build_files() {
     let temp = TempDir::new().unwrap();
     let surface = JavaSurface;
-    assert!(!surface.detect(temp.path()));
+    assert!(!crate::surfaces::detect_in(&surface, temp.path()));
 
     std::fs::write(temp.path().join("pom.xml"), "<project></project>").unwrap();
-    assert!(surface.detect(temp.path()));
+    assert!(crate::surfaces::detect_in(&surface, temp.path()));
   }
 
   #[test]
@@ -613,7 +617,7 @@ mod tests {
     let temp = TempDir::new().unwrap();
     let surface = JavaSurface;
     std::fs::write(temp.path().join("Main.java"), "class Main {}\n").unwrap();
-    assert!(surface.detect(temp.path()));
+    assert!(crate::surfaces::detect_in(&surface, temp.path()));
   }
 
   #[test]

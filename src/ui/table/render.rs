@@ -1,52 +1,58 @@
 //! Table rendering: the `Table` builder and the comfy-table-backed renderer.
 
-use super::wrap;
-use super::{
-  Align, Cell, Column, Layout, Overflow, Palette, Row, RowKind, Span, Style,
-  WidthPolicy,
-};
-use serde::{Deserialize, Serialize};
-use unicode_width::{UnicodeWidthChar, UnicodeWidthStr};
+use std::cmp;
+use std::io;
+
+use comfy_table;
+use crossterm;
+use serde;
+use serde_json;
+use unicode_width;
+
+use crate::ui::table;
+use crate::ui::table::wrap;
 
 /// The top-level table specification.
-#[derive(Serialize, Deserialize, Clone, PartialEq, Eq, Debug, Default)]
+#[derive(
+  serde::Serialize, serde::Deserialize, Clone, PartialEq, Eq, Debug, Default,
+)]
 pub struct Table {
   /// Column definitions.
-  pub columns: Vec<Column>,
+  pub columns: Vec<table::Column>,
   /// Row contents.
-  pub rows: Vec<Row>,
+  pub rows: Vec<table::Row>,
   /// Layout and width options.
   #[serde(default)]
-  pub layout: Layout,
+  pub layout: table::Layout,
 }
 
 impl Table {
   /// Creates a new [`Table`] with specified columns.
   #[must_use]
-  pub fn new(columns: Vec<Column>) -> Self {
+  pub fn new(columns: Vec<table::Column>) -> Self {
     Self {
       columns,
       rows: Vec::new(),
-      layout: Layout::default(),
+      layout: table::Layout::default(),
     }
   }
 
   /// Adds a row to the table in place.
-  pub fn add_row(&mut self, row: Row) -> &mut Self {
+  pub fn add_row(&mut self, row: table::Row) -> &mut Self {
     self.rows.push(row);
     self
   }
 
   /// Sets the layout policy for the table.
   #[must_use]
-  pub fn layout(mut self, layout: Layout) -> Self {
+  pub fn layout(mut self, layout: table::Layout) -> Self {
     self.layout = layout;
     self
   }
 
   /// Renders the table to a terminal string using the given color palette.
   #[must_use]
-  pub fn render(&self, palette: &Palette) -> String {
+  pub fn render(&self, palette: &table::Palette) -> String {
     render(self, palette)
   }
 }
@@ -55,7 +61,7 @@ fn take_prefix_by_width(text: &str, budget: usize) -> (String, usize) {
   let mut prefix = String::new();
   let mut width = 0;
   for ch in text.chars() {
-    let ch_w = UnicodeWidthChar::width(ch).unwrap_or(0);
+    let ch_w = unicode_width::UnicodeWidthChar::width(ch).unwrap_or(0);
     if width + ch_w > budget {
       break;
     }
@@ -66,14 +72,14 @@ fn take_prefix_by_width(text: &str, budget: usize) -> (String, usize) {
 }
 
 pub(super) fn truncate_spans(
-  spans: &[Span],
+  spans: &[table::Span],
   max_width: usize,
   suffix: &str,
-) -> Vec<Span> {
-  let suffix_width = suffix.width();
+) -> Vec<table::Span> {
+  let suffix_width = unicode_width::UnicodeWidthStr::width(suffix);
   if suffix_width >= max_width {
     let (truncated_suffix, _) = take_prefix_by_width(suffix, max_width);
-    return vec![Span::plain(truncated_suffix)];
+    return vec![table::Span::plain(truncated_suffix)];
   }
   let target_width = max_width - suffix_width;
   let mut current_width = 0;
@@ -90,18 +96,18 @@ pub(super) fn truncate_spans(
         target_width.saturating_sub(current_width),
       );
       if !partial.is_empty() {
-        result.push(Span::new(partial, span.style));
+        result.push(table::Span::new(partial, span.style));
       }
-      result.push(Span::plain(suffix));
+      result.push(table::Span::plain(suffix));
       return result;
     }
   }
 
-  result.push(Span::plain(suffix));
+  result.push(table::Span::plain(suffix));
   result
 }
 
-fn clip_spans(spans: &[Span], max_width: usize) -> Vec<Span> {
+fn clip_spans(spans: &[table::Span], max_width: usize) -> Vec<table::Span> {
   let mut current_width = 0;
   let mut result = Vec::new();
 
@@ -116,7 +122,7 @@ fn clip_spans(spans: &[Span], max_width: usize) -> Vec<Span> {
         max_width.saturating_sub(current_width),
       );
       if !partial.is_empty() {
-        result.push(Span::new(partial, span.style));
+        result.push(table::Span::new(partial, span.style));
       }
       return result;
     }
@@ -125,10 +131,10 @@ fn clip_spans(spans: &[Span], max_width: usize) -> Vec<Span> {
 }
 
 fn render_cell_to_string(
-  cell: &Cell,
-  col_overflow: &Overflow,
+  cell: &table::Cell,
+  col_overflow: &table::Overflow,
   max_width_opt: Option<usize>,
-  palette: &Palette,
+  palette: &table::Palette,
 ) -> String {
   let overflow = cell.overflow.as_ref().unwrap_or(col_overflow);
   let mut buf = String::new();
@@ -136,19 +142,19 @@ fn render_cell_to_string(
     && cell.display_width() > max_w
   {
     match overflow {
-      Overflow::Clip => {
+      table::Overflow::Clip => {
         for span in clip_spans(&cell.spans, max_w) {
           buf.push_str(&palette.apply(&span.text, span.style));
         }
         return buf;
       }
-      Overflow::Truncate { suffix } => {
+      table::Overflow::Truncate { suffix } => {
         for span in truncate_spans(&cell.spans, max_w, suffix) {
           buf.push_str(&palette.apply(&span.text, span.style));
         }
         return buf;
       }
-      Overflow::Wrap => {}
+      table::Overflow::Wrap => {}
     }
   }
 
@@ -161,9 +167,12 @@ fn render_cell_to_string(
 /// Wrap `spans` onto lines no wider than `width`, breaking only at spaces and
 /// after path separators / list punctuation so a token is never split across
 /// lines. Span styles are preserved on every fragment.
-pub(super) fn wrap_spans(spans: &[Span], width: usize) -> Vec<Vec<Span>> {
+pub(super) fn wrap_spans(
+  spans: &[table::Span],
+  width: usize,
+) -> Vec<Vec<table::Span>> {
   let width = width.max(1);
-  let mut lines: Vec<Vec<Span>> = vec![Vec::new()];
+  let mut lines: Vec<Vec<table::Span>> = vec![Vec::new()];
   let mut cur_w = 0usize;
 
   for span in spans {
@@ -172,7 +181,10 @@ pub(super) fn wrap_spans(spans: &[Span], width: usize) -> Vec<Vec<Span>> {
         if cur_w == 0 || cur_w + 1 > width {
           continue;
         }
-        lines.last_mut().unwrap().push(Span::new(" ", span.style));
+        lines
+          .last_mut()
+          .unwrap()
+          .push(table::Span::new(" ", span.style));
         cur_w += 1;
         continue;
       }
@@ -183,8 +195,11 @@ pub(super) fn wrap_spans(spans: &[Span], width: usize) -> Vec<Vec<Span>> {
           if cur_w > 0 {
             lines.push(Vec::new());
           }
-          cur_w = piece.as_str().width();
-          lines.last_mut().unwrap().push(Span::new(piece, span.style));
+          cur_w = unicode_width::UnicodeWidthStr::width(piece.as_str());
+          lines
+            .last_mut()
+            .unwrap()
+            .push(table::Span::new(piece, span.style));
         }
         continue;
       }
@@ -196,7 +211,7 @@ pub(super) fn wrap_spans(spans: &[Span], width: usize) -> Vec<Vec<Span>> {
       lines
         .last_mut()
         .unwrap()
-        .push(Span::new(unit.text, span.style));
+        .push(table::Span::new(unit.text, span.style));
       cur_w += tw;
     }
   }
@@ -217,17 +232,17 @@ pub(super) fn wrap_spans(spans: &[Span], width: usize) -> Vec<Vec<Span>> {
 }
 
 /// Renders a cell to a (possibly multi-line) string already fitted to
-/// `inner_width`: token-boundary wrapping for [`Overflow::Wrap`], the existing
+/// `inner_width`: token-boundary wrapping for [`table::Overflow::Wrap`], the existing
 /// clip/truncate behavior otherwise.
 fn wrap_cell_content(
-  cell: &Cell,
-  col_overflow: &Overflow,
+  cell: &table::Cell,
+  col_overflow: &table::Overflow,
   inner_width: usize,
-  palette: &Palette,
+  palette: &table::Palette,
 ) -> String {
   let overflow = cell.overflow.as_ref().unwrap_or(col_overflow);
   match overflow {
-    Overflow::Wrap => wrap_spans(&cell.spans, inner_width)
+    table::Overflow::Wrap => wrap_spans(&cell.spans, inner_width)
       .iter()
       .map(|line| {
         line
@@ -237,14 +252,14 @@ fn wrap_cell_content(
       })
       .collect::<Vec<_>>()
       .join("\n"),
-    Overflow::Clip | Overflow::Truncate { .. } => {
+    table::Overflow::Clip | table::Overflow::Truncate { .. } => {
       render_cell_to_string(cell, col_overflow, Some(inner_width), palette)
     }
   }
 }
 
 /// Resolves every column to one concrete outer width (content + padding) that
-/// respects the column's [`WidthPolicy`], never splits a token, and keeps the
+/// respects the column's [`table::WidthPolicy`], never splits a token, and keeps the
 /// total within `table_width` when the content allows it. This is the single
 /// place table geometry is decided — comfy-table is then told exact widths and
 /// only aligns/pads.
@@ -264,15 +279,17 @@ fn solve_column_widths(
   for (i, col) in spec.columns.iter().enumerate() {
     let header_text: String =
       col.header.spans.iter().map(|s| s.text.as_str()).collect();
-    natural[i] = natural[i].max(header_text.as_str().width());
+    natural[i] = natural[i]
+      .max(unicode_width::UnicodeWidthStr::width(header_text.as_str()));
     floor[i] = floor[i].max(wrap::token_display_width(&header_text).max(1));
     for row in &spec.rows {
-      if !matches!(row.kind, RowKind::Data) {
+      if !matches!(row.kind, table::RowKind::Data) {
         continue;
       }
       if let Some(cell) = row.cells.get(i) {
         let text: String = cell.spans.iter().map(|s| s.text.as_str()).collect();
-        natural[i] = natural[i].max(text.as_str().width());
+        natural[i] =
+          natural[i].max(unicode_width::UnicodeWidthStr::width(text.as_str()));
         floor[i] = floor[i].max(wrap::token_display_width(&text).max(1));
       }
     }
@@ -290,31 +307,31 @@ fn solve_column_widths(
   let mut soft_floor = floor.clone();
   for (i, col) in spec.columns.iter().enumerate() {
     match col.width {
-      WidthPolicy::Auto => {
+      table::WidthPolicy::Auto => {
         want[i] = natural[i].max(1);
         can_shrink[i] = true;
         can_grow[i] = true;
       }
-      WidthPolicy::Fixed(w) => {
+      table::WidthPolicy::Fixed(w) => {
         // "At least this wide": honor the request, and widen past it before
         // a token would have to split.
         want[i] = inner(w).max(floor[i]).max(1);
       }
-      WidthPolicy::Min(w) => {
+      table::WidthPolicy::Min(w) => {
         let lo = inner(w).max(floor[i]).max(1);
         want[i] = natural[i].max(lo);
         soft_floor[i] = lo;
         can_grow[i] = true;
         can_shrink[i] = want[i] > lo;
       }
-      WidthPolicy::Max(w) => {
+      table::WidthPolicy::Max(w) => {
         // Hard cap: never wider than `w`, even when a token must be split.
         let cap = inner(w).max(1);
         want[i] = natural[i].min(cap).max(1);
         soft_floor[i] = floor[i].min(cap).max(1);
         can_shrink[i] = want[i] > soft_floor[i];
       }
-      WidthPolicy::Range(a, b) => {
+      table::WidthPolicy::Range(a, b) => {
         // Clamp content into `[a, b]`; `b` is a hard cap, so this column is
         // never grown to fill spare table width past what its content needs.
         let lo = inner(a).max(1);
@@ -323,7 +340,7 @@ fn solve_column_widths(
         soft_floor[i] = floor[i].clamp(lo, hi);
         can_shrink[i] = want[i] > soft_floor[i];
       }
-      WidthPolicy::Pct(p) => {
+      table::WidthPolicy::Pct(p) => {
         // Hard cap at the requested fraction of the table.
         let cap = ((table_width * p as usize) / 100)
           .saturating_sub(padding_w)
@@ -337,7 +354,7 @@ fn solve_column_widths(
   let shrink = |want: &mut [usize], bound: &[usize], over: &mut usize| {
     let mut order: Vec<usize> =
       (0..n).filter(|&i| want[i] > bound[i]).collect();
-    order.sort_by_key(|&i| std::cmp::Reverse(want[i]));
+    order.sort_by_key(|&i| cmp::Reverse(want[i]));
     let mut progress = true;
     while *over > 0 && progress {
       progress = false;
@@ -404,11 +421,11 @@ fn solve_column_widths(
   want.iter().map(|w| w + padding_w).collect()
 }
 
-fn to_comfy_align(align: Align) -> comfy_table::CellAlignment {
+fn to_comfy_align(align: table::Align) -> comfy_table::CellAlignment {
   match align {
-    Align::Left => comfy_table::CellAlignment::Left,
-    Align::Center => comfy_table::CellAlignment::Center,
-    Align::Right => comfy_table::CellAlignment::Right,
+    table::Align::Left => comfy_table::CellAlignment::Left,
+    table::Align::Center => comfy_table::CellAlignment::Center,
+    table::Align::Right => comfy_table::CellAlignment::Right,
   }
 }
 
@@ -416,7 +433,7 @@ fn to_comfy_align(align: Align) -> comfy_table::CellAlignment {
 // Renders rich formatted tables with palette coloring, column width constraints, row spanning, and terminal clamping.
 #[allow(clippy::too_many_lines)]
 #[must_use]
-pub fn render(spec: &Table, palette: &Palette) -> String {
+pub fn render(spec: &Table, palette: &table::Palette) -> String {
   let mut table = comfy_table::Table::new();
   table.load_style(comfy_table::presets::NOTHING.header_separator(
     comfy_table::LineStyle::new('\u{2500}', '\u{2500}', '\u{2500}', '\u{2500}'),
@@ -484,13 +501,14 @@ pub fn render(spec: &Table, palette: &Palette) -> String {
   let mut row_iter = spec.rows.iter().peekable();
   while let Some(row) = row_iter.next() {
     match &row.kind {
-      RowKind::Data => {
+      table::RowKind::Data => {
         let mut comfy_row = comfy_table::Row::new();
         for i in 0..num_cols {
           let cell = row.cells.get(i);
           let col = spec.columns.get(i);
-          let col_overflow = col.map_or(&Overflow::Wrap, |c| &c.overflow);
-          let col_align = col.map_or(Align::Left, |c| c.align);
+          let col_overflow =
+            col.map_or(&table::Overflow::Wrap, |c| &c.overflow);
+          let col_align = col.map_or(table::Align::Left, |c| c.align);
 
           let (mut content, align) = if let Some(c) = cell {
             (
@@ -518,10 +536,10 @@ pub fn render(spec: &Table, palette: &Palette) -> String {
         table.add_row(comfy_row);
 
         // Comfortable density adds an empty spacer line after data rows
-        if spec.layout.density == super::Density::Comfortable
+        if spec.layout.density == table::Density::Comfortable
           && row_iter
             .peek()
-            .is_some_and(|next| matches!(next.kind, RowKind::Data))
+            .is_some_and(|next| matches!(next.kind, table::RowKind::Data))
         {
           let mut blank_row = comfy_table::Row::new();
           for _ in 0..num_cols {
@@ -530,24 +548,24 @@ pub fn render(spec: &Table, palette: &Palette) -> String {
           table.add_row(blank_row);
         }
       }
-      RowKind::Blank => {
+      table::RowKind::Blank => {
         let mut comfy_row = comfy_table::Row::new();
         for _ in 0..num_cols {
           comfy_row.add_cell(comfy_table::Cell::new(""));
         }
         table.add_row(comfy_row);
       }
-      RowKind::Rule => {
+      table::RowKind::Rule => {
         let mut comfy_row = comfy_table::Row::new();
         for _ in 0..num_cols {
           comfy_row.add_cell(comfy_table::Cell::new("\u{2500}"));
         }
         table.add_row(comfy_row);
       }
-      RowKind::Group(title) => {
+      table::RowKind::Group(title) => {
         let mut comfy_row = comfy_table::Row::new();
         let idx = group_titles.len();
-        group_titles.push(palette.apply(title, Style::Strong));
+        group_titles.push(palette.apply(title, table::Style::Strong));
         comfy_row.add_cell(comfy_table::Cell::new(format!("_G{idx}_")));
         for _ in 1..num_cols {
           comfy_row.add_cell(comfy_table::Cell::new(""));
@@ -587,7 +605,7 @@ pub fn render(spec: &Table, palette: &Palette) -> String {
       let t = s.trim();
       !t.is_empty() && !t.chars().all(|c| c == '\u{2500}' || c == ' ')
     })
-    .map(|s| UnicodeWidthStr::width(s.as_str()))
+    .map(|s| unicode_width::UnicodeWidthStr::width(s.as_str()))
     .max()
     .unwrap_or(0);
   let table_width = content_width.min(render_width);
@@ -747,7 +765,7 @@ pub fn max_line_display_width(s: &str) -> usize {
   s.lines()
     .map(|line| {
       let stripped = strip_ansi_escapes(line);
-      UnicodeWidthStr::width(stripped.as_str())
+      unicode_width::UnicodeWidthStr::width(stripped.as_str())
     })
     .max()
     .unwrap_or(0)
@@ -756,8 +774,7 @@ pub fn max_line_display_width(s: &str) -> usize {
 /// Detects the active terminal column width (clamped to [40, 160]), defaulting to 80 when stdout is not a TTY.
 #[must_use]
 pub fn detect_terminal_width() -> u16 {
-  use std::io::IsTerminal;
-  if std::io::stdout().is_terminal()
+  if io::IsTerminal::is_terminal(&io::stdout())
     && let Ok((w, _)) = crossterm::terminal::size()
     && w > 0
   {
@@ -796,6 +813,6 @@ pub fn separator_for_content(content: &str) -> String {
 /// Returns a [`serde_json::Error`] if parsing `spec_json` fails.
 pub fn render_json(spec_json: &str) -> Result<String, serde_json::Error> {
   let table: Table = serde_json::from_str(spec_json)?;
-  let palette = Palette::detect();
+  let palette = table::Palette::detect();
   Ok(render(&table, &palette))
 }

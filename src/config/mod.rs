@@ -27,11 +27,19 @@ pub use options::{
 pub use resolve::{find_project_config, find_user_config};
 pub use schema::generate_schema;
 
-use lang_table::{impl_lang_accessors, impl_lang_merge, lang_options_table};
-use schemars::JsonSchema;
-use serde::{Deserialize, Serialize};
-use std::collections::BTreeMap;
-use std::path::PathBuf;
+use std::collections;
+use std::path;
+
+use schemars;
+use serde;
+use toml;
+
+// Macros, imported by name: the X-macro's recursion and its `$callback`
+// ident resolve at the call site, so a module path cannot reach them.
+use crate::config::lang_table::impl_lang_accessors;
+use crate::config::lang_table::impl_lang_merge;
+use crate::config::lang_table::lang_options_table;
+use crate::surfaces::tooling;
 
 /// Default configuration filename (`formality.toml`).
 pub const DEFAULT_CONFIG_FILE_NAME: &str = "formality.toml";
@@ -40,7 +48,15 @@ pub const CONFIG_FILE_CANDIDATES: &[&str] =
   &["formality.toml", ".formality.toml"];
 
 /// Global default settings applicable across all language surfaces.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[derive(
+  Debug,
+  Clone,
+  PartialEq,
+  Eq,
+  serde::Serialize,
+  serde::Deserialize,
+  schemars::JsonSchema,
+)]
 #[serde(deny_unknown_fields)]
 pub struct GlobalConfig {
   /// Explicit list of active language surface names to manage.
@@ -75,7 +91,7 @@ pub struct GlobalConfig {
   pub layout: Option<LayoutFacet>,
   /// Global file path exclude patterns.
   #[serde(default, skip_serializing_if = "Vec::is_empty")]
-  pub exclude: Vec<PathBuf>,
+  pub exclude: Vec<path::PathBuf>,
 }
 
 impl Default for GlobalConfig {
@@ -142,12 +158,12 @@ impl GlobalConfig {
 fn extract_options<T>(
   initial: Option<T>,
   options: Option<&toml::Value>,
-  extra: &BTreeMap<String, toml::Value>,
+  extra: &collections::BTreeMap<String, toml::Value>,
   merge_fn: impl Fn(&mut T, T),
   is_empty_fn: impl Fn(&T) -> bool,
 ) -> Option<T>
 where
-  T: for<'de> Deserialize<'de> + Clone,
+  T: for<'de> serde::Deserialize<'de> + Clone,
 {
   let mut opts = initial;
   if let Some(o) = options
@@ -173,7 +189,13 @@ where
 }
 /// Per-language configuration section (`[lang.<surface>]`).
 #[derive(
-  Debug, Clone, Default, PartialEq, Serialize, Deserialize, JsonSchema,
+  Debug,
+  Clone,
+  Default,
+  PartialEq,
+  serde::Serialize,
+  serde::Deserialize,
+  schemars::JsonSchema,
 )]
 pub struct LangConfig {
   /// Per-language indentation size override.
@@ -191,15 +213,19 @@ pub struct LangConfig {
   /// Whether this language surface is enabled.
   #[serde(skip_serializing_if = "Option::is_none")]
   pub enabled: Option<bool>,
-  /// Additional command-line arguments to pass to the underlying tool.
+  /// Additional command-line arguments per tool, keyed by the tool that
+  /// receives them, e.g. `prettier = ["--prose-wrap", "always"]` under
+  /// `[lang.markdown.extra_args]`. Each list is appended after fml's own
+  /// flags for that tool only. Each surface accepts its own tool keys; see
+  /// docs/language-surfaces.md.
   #[serde(skip_serializing_if = "Option::is_none")]
-  pub extra_args: Option<Vec<String>>,
+  pub extra_args: Option<collections::BTreeMap<String, Vec<String>>>,
   /// Explicit file pattern inclusions for this surface.
   #[serde(skip_serializing_if = "Option::is_none")]
-  pub files: Option<Vec<PathBuf>>,
+  pub files: Option<Vec<path::PathBuf>>,
   /// Explicit file pattern exclusions for this surface.
   #[serde(skip_serializing_if = "Option::is_none")]
-  pub exclude: Option<Vec<PathBuf>>,
+  pub exclude: Option<Vec<path::PathBuf>>,
   /// Surface layout facet configuration.
   #[serde(skip_serializing_if = "Option::is_none")]
   pub layout: Option<LayoutFacet>,
@@ -247,9 +273,13 @@ pub struct LangConfig {
   #[schemars(skip)]
   pub options: Option<toml::Value>,
   /// Extra unrecognized fields parsed from TOML.
-  #[serde(default, flatten, skip_serializing_if = "BTreeMap::is_empty")]
+  #[serde(
+    default,
+    flatten,
+    skip_serializing_if = "collections::BTreeMap::is_empty"
+  )]
   #[schemars(skip)]
-  pub extra: BTreeMap<String, toml::Value>,
+  pub extra: collections::BTreeMap<String, toml::Value>,
 }
 
 impl LangConfig {
@@ -270,8 +300,9 @@ impl LangConfig {
     if other.enabled.is_some() {
       self.enabled = other.enabled;
     }
-    if other.extra_args.is_some() {
-      self.extra_args = other.extra_args;
+    // Per tool: a later layer replaces one tool's list and keeps the rest.
+    if let Some(other_args) = other.extra_args {
+      self.extra_args.get_or_insert_default().extend(other_args);
     }
     if other.files.is_some() {
       self.files = other.files;
@@ -340,7 +371,13 @@ impl LangConfig {
 
 /// Root formality configuration structure matching `formality.toml`.
 #[derive(
-  Debug, Clone, Default, PartialEq, Serialize, Deserialize, JsonSchema,
+  Debug,
+  Clone,
+  Default,
+  PartialEq,
+  serde::Serialize,
+  serde::Deserialize,
+  schemars::JsonSchema,
 )]
 #[serde(deny_unknown_fields)]
 pub struct FormalityConfig {
@@ -348,8 +385,8 @@ pub struct FormalityConfig {
   #[serde(skip_serializing_if = "Option::is_none")]
   pub global: Option<GlobalConfig>,
   /// Per-language surface configuration map (`[lang.<name>]`).
-  #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
-  pub lang: BTreeMap<String, LangConfig>,
+  #[serde(default, skip_serializing_if = "collections::BTreeMap::is_empty")]
+  pub lang: collections::BTreeMap<String, LangConfig>,
 }
 
 /// Fully resolved global configuration with all default fallbacks applied.
@@ -376,7 +413,7 @@ pub struct ResolvedGlobalConfig {
   /// Synthesized layout facet.
   pub layout: LayoutFacet,
   /// Resolved global exclude file paths.
-  pub exclude: Vec<PathBuf>,
+  pub exclude: Vec<path::PathBuf>,
 }
 
 impl Default for ResolvedGlobalConfig {
@@ -402,12 +439,13 @@ pub struct ResolvedLangConfig {
   pub layout: LayoutFacet,
   /// Whether this language surface is active/enabled.
   pub enabled: bool,
-  /// Extra CLI arguments for tools.
-  pub extra_args: Vec<String>,
+  /// Extra CLI arguments keyed by the tool that receives them; read through
+  /// [`ResolvedLangConfig::tool_args`].
+  pub extra_args: collections::BTreeMap<String, Vec<String>>,
   /// Targeted file path inclusions.
-  pub files: Vec<PathBuf>,
+  pub files: Vec<path::PathBuf>,
   /// Excluded file paths.
-  pub exclude: Vec<PathBuf>,
+  pub exclude: Vec<path::PathBuf>,
   /// Resolved Rust surface options.
   pub rust: Option<RustOptions>,
   /// Resolved Python surface options.
@@ -433,7 +471,7 @@ pub struct ResolvedLangConfig {
   /// Resolved Kotlin surface options.
   pub kotlin: Option<KotlinOptions>,
   /// Extra key-value options.
-  pub extra: BTreeMap<String, toml::Value>,
+  pub extra: collections::BTreeMap<String, toml::Value>,
 }
 
 #[cfg(test)]
@@ -445,20 +483,30 @@ impl ResolvedLangConfig {
   }
 }
 
+impl ResolvedLangConfig {
+  /// Returns the `extra_args` configured for `tool`, one of the keys the
+  /// surface declares in `LanguageSurface::extra_args_tools`; empty when
+  /// none are set.
+  #[must_use]
+  pub fn tool_args(&self, tool: &str) -> &[String] {
+    self.extra_args.get(tool).map_or(&[], Vec::as_slice)
+  }
+}
+
 /// Errors occurring during configuration loading, parsing, or validation.
 #[derive(Debug)]
 pub enum ConfigError {
   /// File system IO error while reading configuration file.
   Io {
     /// File path where IO error occurred.
-    path: PathBuf,
+    path: path::PathBuf,
     /// Underlying IO error.
     source: std::io::Error,
   },
   /// TOML deserialization or syntax error.
   Parse {
     /// File path where parse error occurred.
-    path: PathBuf,
+    path: path::PathBuf,
     /// Underlying TOML error.
     source: toml::de::Error,
   },
@@ -466,7 +514,7 @@ pub enum ConfigError {
   /// newer `fml`.
   UnknownKey {
     /// File path of the config holding the key.
-    path: PathBuf,
+    path: path::PathBuf,
     /// Dotted key path, e.g. `lang.python.format_tool`.
     key: String,
     /// One-based line of the key.
@@ -475,7 +523,7 @@ pub enum ConfigError {
   /// A known key whose value has the wrong type or shape.
   InvalidValue {
     /// File path of the config holding the value.
-    path: PathBuf,
+    path: path::PathBuf,
     /// Dotted key path, e.g. `global.line_length`.
     key: String,
     /// One-based line of the value.
@@ -488,13 +536,42 @@ pub enum ConfigError {
   /// casing, which no reader would look up.
   NonCanonicalLang {
     /// File path of the config holding the section.
-    path: PathBuf,
+    path: path::PathBuf,
     /// The section name as written, e.g. `py`.
     name: String,
     /// The surface's canonical name, e.g. `python`.
     canonical: &'static str,
     /// One-based line of the section name.
     line: usize,
+  },
+  /// `[lang.<name>] extra_args` written as one flat list instead of a table
+  /// keyed by tool.
+  FlatExtraArgs {
+    /// File path of the config holding the list.
+    path: path::PathBuf,
+    /// The section name, e.g. `markdown`.
+    lang: String,
+    /// One-based line of the `extra_args` key.
+    line: usize,
+    /// The tool keys the surface accepts; never empty, as every surface
+    /// declares at least one (`test_every_surface_declares_extra_args_tools`).
+    tools: &'static [&'static str],
+  },
+  /// An `extra_args` key naming no tool its surface runs.
+  UnknownTool {
+    /// File path of the config holding the key.
+    path: path::PathBuf,
+    /// The section name, e.g. `markdown`.
+    lang: String,
+    /// The key as written, e.g. `prettierr`.
+    tool: String,
+    /// One-based line of the key.
+    line: usize,
+    /// The tool keys the surface accepts. `Display` suggests the one `tool`
+    /// is a legacy alias of, e.g. `clippy-driver` for `clippy`, rather than
+    /// storing it: a stored field pushes the error past clippy's
+    /// `result_large_err` limit on Windows, where `PathBuf` is larger.
+    tools: &'static [&'static str],
   },
 }
 
@@ -546,6 +623,42 @@ impl std::fmt::Display for ConfigError {
          name; rename it to `[lang.{canonical}]`.",
         path.display()
       ),
+      ConfigError::FlatExtraArgs {
+        path,
+        lang,
+        line,
+        tools,
+      } => write!(
+        f,
+        "`lang.{lang}.extra_args` in {}:{line} is a list, but extra_args \
+         takes one list per tool: write it as a table, e.g. \
+         `[lang.{lang}.extra_args]` then `{} = [\"--flag\"]`. Tools for \
+         `{lang}`: `{}`.",
+        path.display(),
+        tools[0],
+        tools.join("`, `")
+      ),
+      ConfigError::UnknownTool {
+        path,
+        lang,
+        tool,
+        line,
+        tools,
+      } => {
+        write!(
+          f,
+          "unknown key `lang.{lang}.extra_args.{tool}` in {}:{line}: \
+           `{lang}` runs no tool named `{tool}`; its extra_args keys are \
+           `{}`.",
+          path.display(),
+          tools.join("`, `")
+        )?;
+        let canonical = tooling::canonical_chain_binary(tool);
+        match tools.iter().find(|key| **key == canonical) {
+          Some(key) => write!(f, " Did you mean `{key}`?"),
+          None => Ok(()),
+        }
+      }
     }
   }
 }

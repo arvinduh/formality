@@ -25,7 +25,7 @@ use crate::engine::version::{
 };
 use crate::surfaces::{
   LanguageSurface, ToolInfo, all_surfaces, check_binary_exists,
-  create_tool_command, default_registry, detect_surfaces_smart,
+  create_tool_command, default_registry, install_chain_for,
   matches_name_or_alias, pinned_version_for,
 };
 use crate::ui::paths::display_path;
@@ -48,7 +48,7 @@ use std::path::Path;
 #[must_use]
 fn install_missing_tools_framed(
   missing: &[ToolInfo],
-  frame: &Frame,
+  frame: Frame,
 ) -> InstallRunReport {
   if missing.is_empty() {
     return InstallRunReport {
@@ -65,7 +65,7 @@ fn install_missing_tools_framed(
   println!("{}", frame.dim_rule(&palette));
 
   // Bootstrap cargo-binstall once, up front, if any tool here would prefer
-  // it and it isn't on PATH yet. Tools like typstyle/tinymist have no real
+  // it and it isn't on PATH yet. Tools like typstyle have no real
   // native package on any OS -- cargo-binstall (a prebuilt binary, fetched
   // from the crate's GitHub releases) is their only non-source-compile
   // install path everywhere, including Linux. Without this, a chain would
@@ -290,9 +290,9 @@ fn install_missing_tools_framed(
     } else {
       let install_hint = tool.effective_install_hint();
       println!(
-        "\n  {} No automatic package manager found for {}.\n    Manual install: {}",
+        "\n  {} {}\n    Manual install: {}",
         "[MISS]".yellow().bold(),
-        tool.binary.bold(),
+        miss_headline(tool.binary, std::env::consts::OS),
         install_hint
       );
       all_ok = false;
@@ -365,6 +365,21 @@ enum InstallOutcome {
   NoInstaller,
 }
 
+/// Says why `binary` got no install command on `os` (a
+/// [`std::env::consts::OS`] value): no step of its install chain can run
+/// there (`gofmt` has no chain, it ships with Go; `checkstyle` has only
+/// `brew` and `apt` steps, so none on Windows), or some step can and its
+/// package manager is not on `PATH`.
+fn miss_headline(binary: &str, os: &str) -> String {
+  let has_path = install_chain_for(binary)
+    .is_some_and(|chain| chain.iter().any(|method| method.runs_on(os)));
+  if has_path {
+    format!("No automatic package manager found for {}.", binary.bold())
+  } else {
+    format!("fml has no install path for {} on this OS.", binary.bold())
+  }
+}
+
 /// Decide what a successful install *command* actually accomplished, from
 /// the two facts the install site has just established: whether the binary
 /// now resolves on `PATH`, and — for a pinned tool only — what version it
@@ -396,7 +411,7 @@ fn classify_install_outcome(
 /// the caller's `frame` so its rule matches the rest of the command's output:
 /// one row per tool this `install_missing_tools_framed` call attempted, its
 /// installer, and the outcome. A no-op if `rows` is empty.
-fn print_install_summary_table(rows: &[InstallSummaryRow], frame: &Frame) {
+fn print_install_summary_table(rows: &[InstallSummaryRow], frame: Frame) {
   if rows.is_empty() {
     return;
   }
@@ -544,6 +559,14 @@ pub struct ToolLookupResult {
 }
 use crate::errors::ExitStatus;
 
+#[cfg(test)]
+thread_local! {
+  /// The surfaces the last [`run_doctor`] on this thread detected, so a test
+  /// can check detection at its real call site.
+  static LAST_DETECTED: std::cell::RefCell<Vec<&'static str>> =
+    const { std::cell::RefCell::new(Vec::new()) };
+}
+
 /// Executes the `fml doctor` diagnostic command to scan tools, environment, and hygiene.
 #[must_use]
 pub fn run_doctor(
@@ -552,18 +575,34 @@ pub fn run_doctor(
   install: bool,
   config: &FormalityConfig,
 ) -> ExitStatus {
-  let surfaces: Vec<Box<dyn LanguageSurface>> = if show_all {
-    all_surfaces()
-  } else {
-    let detected = detect_surfaces_smart(root, config);
-    if detected.is_empty() {
+  // One walk at most, shared by detection, the table's detected column
+  // and the unconfigured-languages note. `global.exclude` applies, so the
+  // detected column agrees with what `fml fmt` runs.
+  let present = std::cell::LazyCell::new(|| {
+    crate::surfaces::glob::PresentExtensions::scan(
+      root,
+      &config.resolve_global().exclude,
+    )
+  });
+  let detected = default_registry().detect_surfaces_in(root, config, &present);
+  #[cfg(test)]
+  LAST_DETECTED.set(detected.iter().map(|s| s.name()).collect());
+  let detected_names: HashSet<&'static str> =
+    detected.iter().map(|s| s.name()).collect();
+  let surfaces: Vec<Box<dyn LanguageSurface>> =
+    if show_all || detected.is_empty() {
       all_surfaces()
     } else {
       detected
-    }
-  };
+    };
 
-  let scan = scan_tools_and_build_table(root, &surfaces, config);
+  let scan = scan_tools_and_build_table(
+    root,
+    &surfaces,
+    &detected_names,
+    &present,
+    config,
+  );
 
   let palette = Palette::detect();
   let rendered_table = render(&scan.table, &palette);
@@ -581,13 +620,13 @@ pub fn run_doctor(
   println!("{}", frame.section(&title, &rendered_table, &palette));
 
   // Check for unconfigured surfaces if explicit `languages` is set
-  print_unconfigured_languages(root, config, &frame, &palette);
+  print_unconfigured_languages(root, config, &present, frame, &palette);
 
   // Virtual Environment status
-  print_virtualenv_status(root, &surfaces, show_all, &frame, &palette);
+  print_virtualenv_status(root, &surfaces, show_all, frame, &palette);
 
   // .gitignore Cache Hygiene Check
-  print_gitignore_hygiene(root, &surfaces, &frame, &palette);
+  print_gitignore_hygiene(root, &surfaces, frame, &palette);
 
   // Auto-install mode. Genuinely `[MISS]`ing tools and `[STALE]` tools whose
   // selected installer carries a matching pin are reinstalled. If a stale tool's
@@ -613,11 +652,11 @@ pub fn run_doctor(
   }
 
   // Stale tools with unpinnable installers notice
-  print_stale_unpinnable_warnings(&unpinnable_stale_tools, &frame, &palette);
+  print_stale_unpinnable_warnings(&unpinnable_stale_tools, frame, &palette);
 
   // `fml sync` optionality notice — always prints, so its closing rule is the
   // divider above the summary line below.
-  print_sync_notice(&frame, &palette);
+  print_sync_notice(frame, &palette);
 
   // The closing tally is a value derived from the scan *and then* updated by
   // the install run below — never read back off `scan` again. Keeping it in
@@ -630,7 +669,7 @@ pub fn run_doctor(
 
   let mut install_failed = false;
   if install && !to_install.is_empty() {
-    let report = install_missing_tools_framed(&to_install, &frame);
+    let report = install_missing_tools_framed(&to_install, frame);
     install_failed = !report.all_ok;
     tally.apply_install_run(&report);
   }
@@ -873,9 +912,17 @@ impl ToolTally {
   }
 }
 
+/// Builds the doctor table for `surfaces`. `detected_names` is the
+/// registry's detection result; only a surface outside the registry forces
+/// `present` for its own `detect`.
 fn scan_tools_and_build_table(
   root: &Path,
   surfaces: &[Box<dyn LanguageSurface>],
+  detected_names: &HashSet<&'static str>,
+  present: &std::cell::LazyCell<
+    crate::surfaces::glob::PresentExtensions,
+    impl FnOnce() -> crate::surfaces::glob::PresentExtensions,
+  >,
   config: &FormalityConfig,
 ) -> DoctorScanResult {
   let mut cache: HashMap<&'static str, ToolLookupResult> = HashMap::new();
@@ -891,10 +938,6 @@ fn scan_tools_and_build_table(
   let mut unknown_unique_tools = HashSet::new();
   let global = config.resolve_global();
 
-  let detected = detect_surfaces_smart(root, config);
-  let detected_names: HashSet<&str> =
-    detected.iter().map(|s| s.name()).collect();
-
   let mut doctor_table = Table::new(vec![
     Column::new(Cell::text("")).width(WidthPolicy::Fixed(10)),
     Column::new(Cell::text("")).width(WidthPolicy::Fixed(20)),
@@ -909,7 +952,7 @@ fn scan_tools_and_build_table(
       || (default_registry()
         .get_surface_by_name(surface.name())
         .is_none()
-        && surface.detect(root));
+        && surface.detect(root, present));
     let detected_cell = if is_detected {
       Cell::styled("detected", Style::Ok)
     } else {
@@ -1062,7 +1105,11 @@ fn scan_tools_and_build_table(
 fn print_unconfigured_languages(
   root: &Path,
   config: &FormalityConfig,
-  frame: &Frame,
+  present: &std::cell::LazyCell<
+    crate::surfaces::glob::PresentExtensions,
+    impl FnOnce() -> crate::surfaces::glob::PresentExtensions,
+  >,
+  frame: Frame,
   palette: &Palette,
 ) {
   let Some(ref explicit_langs) = config.resolve_global().languages else {
@@ -1073,7 +1120,7 @@ fn print_unconfigured_languages(
     if !explicit_langs
       .iter()
       .any(|l| matches_name_or_alias(surface.name(), surface.aliases(), l))
-      && surface.detect(root)
+      && surface.detect(root, present)
     {
       unconfigured.push(surface.name());
     }
@@ -1114,7 +1161,7 @@ fn print_virtualenv_status(
   root: &Path,
   surfaces: &[Box<dyn LanguageSurface>],
   show_all: bool,
-  frame: &Frame,
+  frame: Frame,
   palette: &Palette,
 ) {
   let has_python = surfaces
@@ -1192,7 +1239,7 @@ fn print_virtualenv_status(
 fn print_gitignore_hygiene(
   root: &Path,
   surfaces: &[Box<dyn LanguageSurface>],
-  frame: &Frame,
+  frame: Frame,
   palette: &Palette,
 ) {
   let hygiene_report = check_gitignore_hygiene(root, surfaces);
@@ -1264,7 +1311,7 @@ pub fn stale_unpinnable_explanation(
 
 fn print_stale_unpinnable_warnings(
   unpinnable_stale: &[(ToolInfo, Version, Version)],
-  frame: &Frame,
+  frame: Frame,
   palette: &Palette,
 ) {
   if unpinnable_stale.is_empty() {
@@ -1302,7 +1349,7 @@ real file on disk rather than talking to `fml lsp`).";
 /// passed inline and the VS Code extension talks to `fml lsp` directly. This
 /// does not change `fml sync`'s behavior in any way — it still works exactly
 /// as before for editor integrations that read native config files directly.
-fn print_sync_notice(frame: &Frame, palette: &Palette) {
+fn print_sync_notice(frame: Frame, palette: &Palette) {
   let body = format!(
     "  {} {}\n    {SYNC_NOTICE_DETAIL}",
     "[INFO] ".cyan().bold(),

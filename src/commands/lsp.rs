@@ -11,8 +11,12 @@
 //!    `fml lint` (or a structured per-surface parser, see
 //!    `lsp_diagnostics.rs`) in-process against the changed file.
 //! 4. **Watches** `formality.toml` / `.formality.toml` via
-//!    `did_change_watched_files` and invalidates the cached configuration
+//!    `did_change_watched_files` and reloads the cached configuration
 //!    when the canonical config changes.
+//!
+//! An invalid config is never silently dropped: each failed load sends one
+//! `window/showMessage` error. At initialize the server then uses the
+//! built-in defaults; on a failed reload it keeps the previous config.
 //!
 //! This server is a formatting and diagnostics provider, meant to run
 //! *alongside* the user's existing language servers (rust-analyzer, pyright,
@@ -22,7 +26,7 @@
 use colored::Colorize;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
-use tower_lsp::jsonrpc::Result as LspResult;
+use tower_lsp::jsonrpc::{Request, Response, Result as LspResult};
 use tower_lsp::lsp_types::{
   Diagnostic, DiagnosticSeverity, DidChangeWatchedFilesParams,
   DidOpenTextDocumentParams, DidSaveTextDocumentParams,
@@ -31,9 +35,10 @@ use tower_lsp::lsp_types::{
   ServerInfo, TextDocumentIdentifier, TextDocumentSyncCapability,
   TextDocumentSyncKind, TextEdit,
 };
-use tower_lsp::{Client, LanguageServer, LspService, Server};
+use tower_lsp::{Client, ExitedError, LanguageServer, LspService, Server};
 
 use crate::config::FormalityConfig;
+use crate::errors::ExitStatus;
 
 /// Server identity reported in `initialize`'s `ServerInfo`.
 const SERVER_NAME: &str = "formality";
@@ -61,8 +66,9 @@ pub struct FormalityLsp {
   client: Client,
   /// Workspace root detected at `initialize` time.
   root: tokio::sync::Mutex<Option<PathBuf>>,
-  /// Cached formality configuration, loaded at initialize/initialized time
-  /// and invalidated when `formality.toml` / `.formality.toml` changes.
+  /// Cached formality configuration, loaded at initialize time and replaced
+  /// only by a successful reload after `formality.toml` /
+  /// `.formality.toml` changes.
   config: Arc<tokio::sync::RwLock<Option<FormalityConfig>>>,
 }
 
@@ -78,6 +84,14 @@ impl FormalityLsp {
   }
 
   /// Returns the cached configuration, or loads and caches it if not yet present.
+  ///
+  /// An invalid config is reported once (see [`Self::load_config`]) and the
+  /// built-in defaults are cached in its place, so later requests reuse them
+  /// instead of re-reporting the same error.
+  ///
+  /// The load branch only runs before `initialize`, which always fills the
+  /// cache. tower-lsp rejects requests and notifications that arrive before
+  /// `initialize`, so in practice only tests reach it.
   pub async fn get_or_load_config(
     &self,
     root: Option<&Path>,
@@ -89,15 +103,35 @@ impl FormalityLsp {
     if let Some(config) = lock.as_ref() {
       return config.clone();
     }
-    let loaded = FormalityConfig::load_layered(root)
-      .map_or_else(|_| FormalityConfig::with_defaults(), |(c, _)| c);
+    let loaded = self
+      .load_config(root, "using the built-in defaults")
+      .await
+      .unwrap_or_else(FormalityConfig::with_defaults);
     *lock = Some(loaded.clone());
     loaded
   }
 
-  /// Invalidates the cached configuration.
-  pub async fn invalidate_config(&self) {
-    *self.config.write().await = None;
+  /// Loads the layered config for `root`, reporting a failure to the client.
+  ///
+  /// `fallback` names what the server uses instead; it is part of the message.
+  ///
+  /// # Side Effects
+  ///
+  /// On failure, sends one `window/showMessage` (ERROR) carrying the
+  /// [`crate::config::ConfigError`] text and returns `None`.
+  async fn load_config(
+    &self,
+    root: Option<&Path>,
+    fallback: &str,
+  ) -> Option<FormalityConfig> {
+    match FormalityConfig::load_layered(root) {
+      Ok((config, _)) => Some(config),
+      Err(err) => {
+        let message = format!("[formality] invalid config, {fallback}: {err}");
+        self.client.show_message(MessageType::ERROR, message).await;
+        None
+      }
+    }
   }
 }
 
@@ -119,9 +153,12 @@ impl LanguageServer for FormalityLsp {
 
     *self.root.lock().await = root.clone();
 
-    // Cache resolved config at initialize time.
-    let config = FormalityConfig::load_layered(root.as_deref())
-      .map_or_else(|_| FormalityConfig::with_defaults(), |(c, _)| c);
+    // Cache resolved config at initialize time. An invalid config has no
+    // earlier valid one to fall back to, so the defaults stand in.
+    let config = self
+      .load_config(root.as_deref(), "using the built-in defaults")
+      .await
+      .unwrap_or_else(FormalityConfig::with_defaults);
     *self.config.write().await = Some(config);
 
     Ok(InitializeResult {
@@ -158,12 +195,20 @@ impl LanguageServer for FormalityLsp {
       .await;
 
     // Detect active surfaces and log which ones formality will format and
-    // lint in this workspace.
+    // lint in this workspace, from the same `global.exclude`-filtered
+    // candidates `fml fmt` detects from.
     let root = self.root.lock().await.clone();
     let config = self.get_or_load_config(root.as_deref()).await;
 
     if let Some(ref root_path) = root {
-      let detected = crate::surfaces::detect_surfaces_smart(root_path, &config);
+      let present = std::cell::LazyCell::new(|| {
+        crate::surfaces::glob::PresentExtensions::scan(
+          root_path,
+          &config.resolve_global().exclude,
+        )
+      });
+      let detected = crate::surfaces::default_registry()
+        .detect_surfaces_in(root_path, &config, &present);
       let names: Vec<&str> = detected.iter().map(|s| s.name()).collect();
       if !names.is_empty() {
         self
@@ -212,15 +257,14 @@ impl LanguageServer for FormalityLsp {
 
     let config = self.get_or_load_config(Some(&root)).await;
 
-    let status = crate::commands::fmt::run_fmt(
+    // stdout is the JSON-RPC transport, so the report goes to stderr.
+    let status = super::run_resolved(
+      &mut std::io::stderr(),
       &root,
       &config,
-      false,
-      false,
-      false,
       &[],
-      vec![path.clone()],
-      false,
+      std::slice::from_ref(&path),
+      &crate::engine::Plan::fmt(false, false),
     );
 
     if status.is_clean() {
@@ -270,14 +314,15 @@ impl LanguageServer for FormalityLsp {
       ) {
       diags
     } else {
-      let status = crate::commands::lint::run_lint(
+      // stderr is the server log the fallback diagnostic points at; stdout
+      // is the JSON-RPC transport.
+      let status = super::run_resolved(
+        &mut std::io::stderr(),
         &root,
         &config,
-        false,
-        false,
         &[],
-        vec![path.clone()],
-        false,
+        std::slice::from_ref(&path),
+        &crate::engine::Plan::lint(false),
       );
 
       if status.is_clean() {
@@ -320,20 +365,23 @@ impl LanguageServer for FormalityLsp {
       change
         .uri
         .to_file_path()
-        .ok()
-        .is_some_and(|p| is_formality_config_file(&p))
+        .is_ok_and(|p| is_formality_config_file(&p))
     });
 
     if has_config_change {
-      self.invalidate_config().await;
       let root = self.root.lock().await.clone();
-      let _ = self.get_or_load_config(root.as_deref()).await;
+      // A failed reload keeps the previous config; editing the file mid-way
+      // must not throw away a working setup.
+      let Some(config) = self
+        .load_config(root.as_deref(), "keeping the previous config")
+        .await
+      else {
+        return;
+      };
+      *self.config.write().await = Some(config);
       self
         .client
-        .log_message(
-          MessageType::INFO,
-          "[formality] configuration invalidated and reloaded",
-        )
+        .log_message(MessageType::INFO, "[formality] configuration reloaded")
         .await;
     }
   }
@@ -386,14 +434,84 @@ pub fn compute_formatting_edits(before: &str, after: &str) -> Vec<TextEdit> {
 // Entry point called from lib.rs / Commands::Lsp
 // ---------------------------------------------------------------------------
 
+/// Wraps the [`LspService`] to report the `exit` notification as it arrives.
+///
+/// tower-lsp handles `exit` in its own layer and `Server::serve` returns only
+/// at stdin EOF, so a client that keeps stdin open would otherwise keep the
+/// process alive. This wrapper sees every request first and fires `exited`.
+struct ExitSignal {
+  service: LspService<FormalityLsp>,
+  /// Fired once, on the first `exit`; dropped with `serve` at stdin EOF.
+  exited: Option<tokio::sync::oneshot::Sender<ExitStatus>>,
+  /// Set when a `shutdown` request is received, not when it is answered: an
+  /// `exit` read in the same poll cancels the pending `shutdown` handler.
+  shut_down: bool,
+}
+
+impl tower_service::Service<Request> for ExitSignal {
+  type Response = Option<Response>;
+  type Error = ExitedError;
+  type Future =
+    <LspService<FormalityLsp> as tower_service::Service<Request>>::Future;
+
+  fn poll_ready(
+    &mut self,
+    cx: &mut std::task::Context<'_>,
+  ) -> std::task::Poll<Result<(), ExitedError>> {
+    tower_service::Service::poll_ready(&mut self.service, cx)
+  }
+
+  fn call(&mut self, request: Request) -> Self::Future {
+    let is_exit = request.method() == "exit";
+    self.shut_down |= request.method() == "shutdown";
+    let response = tower_service::Service::call(&mut self.service, request);
+    if is_exit && let Some(exited) = self.exited.take() {
+      // The receiver lives until the process exits.
+      let _ = exited.send(exit_status(self.shut_down));
+    }
+    response
+  }
+}
+
+/// Maps the LSP spec's exit-code rule onto [`ExitStatus`].
+///
+/// The spec: "The server should exit with `success` code 0 if the shutdown
+/// request has been received before; otherwise with `error` code 1." Code 1
+/// is [`ExitStatus::Violations`]; here it means `exit` came without
+/// `shutdown`, not lint violations.
+fn exit_status(shut_down: bool) -> ExitStatus {
+  if shut_down {
+    ExitStatus::Clean
+  } else {
+    ExitStatus::Violations
+  }
+}
+
+/// Maps how the `serve` task ended, absent an `exit`, onto [`ExitStatus`].
+///
+/// `Ok` is stdin EOF, a normal stop. A [`tokio::task::JoinError`] is a
+/// handler panic (the panic hook has already printed it), which must not read
+/// as a clean exit to the client.
+fn serve_status(joined: &Result<(), tokio::task::JoinError>) -> ExitStatus {
+  match joined {
+    Ok(()) => ExitStatus::Clean,
+    Err(_) => ExitStatus::Error,
+  }
+}
+
 /// Start the formality LSP server on stdio.
 ///
-/// Blocks until the client disconnects. Intended to be called from `fml lsp`.
+/// Blocks until the client sends `exit` or closes stdin. Intended to be called
+/// from `fml lsp`.
+///
+/// Returns the exit status the LSP spec prescribes for `exit` (see
+/// [`exit_status`]), [`ExitStatus::Clean`] when stdin closes first, or
+/// [`ExitStatus::Error`] when a handler panics (see [`serve_status`]).
 ///
 /// # Panics
 ///
 /// Panics if the underlying Tokio runtime fails to initialize.
-pub fn run_lsp_server(root: Option<&Path>) {
+pub fn run_lsp_server(root: Option<&Path>) -> ExitStatus {
   // Print a startup banner to stderr (not stdout — that's the LSP channel).
   eprintln!(
     "{} LSP server starting (stdio transport, v{SERVER_VERSION})",
@@ -404,13 +522,29 @@ pub fn run_lsp_server(root: Option<&Path>) {
   }
 
   let rt = tokio::runtime::Runtime::new().expect("tokio runtime");
-  rt.block_on(async {
-    let stdin = tokio::io::stdin();
-    let stdout = tokio::io::stdout();
-
-    let (service, socket) = LspService::new(FormalityLsp::new);
-    Server::new(stdin, stdout, socket).serve(service).await;
-  });
+  let (service, socket) = LspService::new(FormalityLsp::new);
+  let (exited_tx, exited_rx) = tokio::sync::oneshot::channel();
+  let service = ExitSignal {
+    service,
+    exited: Some(exited_tx),
+    shut_down: false,
+  };
+  let server = Server::new(tokio::io::stdin(), tokio::io::stdout(), socket);
+  // `serve` owns the sender, so the receiver resolves on `exit` or, when
+  // `serve` returns at stdin EOF, on the dropped sender.
+  let serve = rt.spawn(server.serve(service));
+  let status = match rt.block_on(exited_rx) {
+    Ok(status) => status,
+    // `serve` dropped the sender, so it has already finished or unwound and
+    // this second wait returns at once. Never `resume_unwind` a panic here:
+    // dropping the runtime while unwinding would block on the stdin read.
+    Err(_) => serve_status(&rt.block_on(serve)),
+  };
+  // After `exit`, `serve` is still parked on a stdin read on Tokio's blocking
+  // pool, which dropping the runtime would wait for. Shutting down in the
+  // background abandons it; the process exit that follows ends the thread.
+  rt.shutdown_background();
+  status
 }
 
 #[cfg(test)]
@@ -945,5 +1079,109 @@ mod tests {
       !prod_code.contains("Command::new"),
       "src/commands/lsp.rs production code must not spawn child processes"
     );
+  }
+
+  #[test]
+  fn test_serve_status_normal_stop_is_clean() {
+    assert_eq!(serve_status(&Ok(())), ExitStatus::Clean);
+  }
+
+  #[test]
+  fn test_serve_status_handler_panic_is_error() {
+    let rt = tokio::runtime::Builder::new_current_thread()
+      .build()
+      .unwrap();
+    let joined = rt.block_on(rt.spawn(async { panic!("handler panic") }));
+    assert!(joined.as_ref().is_err_and(tokio::task::JoinError::is_panic));
+    assert_eq!(serve_status(&joined), ExitStatus::Error);
+  }
+
+  /// Drains the `window/showMessage` notifications the server has sent so far.
+  fn drain_show_messages(
+    socket: &mut tower_lsp::ClientSocket,
+  ) -> Vec<tower_lsp::lsp_types::ShowMessageParams> {
+    let mut shown = Vec::new();
+    while let Some(Some(request)) =
+      futures::FutureExt::now_or_never(futures::StreamExt::next(socket))
+    {
+      if request.method() == "window/showMessage" {
+        let params = request.params().unwrap().clone();
+        shown.push(serde_json::from_value(params).unwrap());
+      }
+    }
+    shown
+  }
+
+  #[tokio::test]
+  async fn test_lsp_invalid_config_at_initialize_reports_and_uses_defaults() {
+    let (service, mut socket) = LspService::new(FormalityLsp::new);
+    let server = service.inner();
+    let temp = tempfile::tempdir().unwrap();
+    let config_path = temp.path().join("formality.toml");
+    std::fs::write(&config_path, "[global]\nindent_size = 4\nbogus = 1\n")
+      .unwrap();
+    let expected = FormalityConfig::load_layered(Some(temp.path()))
+      .unwrap_err()
+      .to_string();
+
+    server
+      .initialize(InitializeParams {
+        root_uri: tower_lsp::lsp_types::Url::from_file_path(temp.path()).ok(),
+        ..Default::default()
+      })
+      .await
+      .unwrap();
+    // Requests reuse the cached defaults and must not re-report.
+    let cfg = server.get_or_load_config(Some(temp.path())).await;
+    server.get_or_load_config(Some(temp.path())).await;
+
+    let defaults = FormalityConfig::with_defaults();
+    let indent = |c: &FormalityConfig| c.global.as_ref()?.indent_size;
+    assert_ne!(indent(&cfg), Some(4));
+    assert_eq!(indent(&cfg), indent(&defaults));
+    let shown = drain_show_messages(&mut socket);
+    assert_eq!(shown.len(), 1, "{shown:?}");
+    assert_eq!(shown[0].typ, MessageType::ERROR);
+    assert!(shown[0].message.contains(&expected), "{}", shown[0].message);
+  }
+
+  #[tokio::test]
+  async fn test_lsp_invalid_config_on_reload_reports_and_keeps_previous() {
+    let (service, mut socket) = LspService::new(FormalityLsp::new);
+    let server = service.inner();
+    let temp = tempfile::tempdir().unwrap();
+    let config_path = temp.path().join("formality.toml");
+    std::fs::write(&config_path, "[global]\nindent_size = 4\n").unwrap();
+
+    server
+      .initialize(InitializeParams {
+        root_uri: tower_lsp::lsp_types::Url::from_file_path(temp.path()).ok(),
+        ..Default::default()
+      })
+      .await
+      .unwrap();
+    assert!(drain_show_messages(&mut socket).is_empty());
+
+    std::fs::write(&config_path, "[global]\nindent_size = 8\nbogus = 1\n")
+      .unwrap();
+    let expected = FormalityConfig::load_layered(Some(temp.path()))
+      .unwrap_err()
+      .to_string();
+    let uri = tower_lsp::lsp_types::Url::from_file_path(&config_path).unwrap();
+    server
+      .did_change_watched_files(DidChangeWatchedFilesParams {
+        changes: vec![tower_lsp::lsp_types::FileEvent {
+          uri,
+          typ: tower_lsp::lsp_types::FileChangeType::CHANGED,
+        }],
+      })
+      .await;
+    let cfg = server.get_or_load_config(Some(temp.path())).await;
+
+    assert_eq!(cfg.global.as_ref().and_then(|g| g.indent_size), Some(4));
+    let shown = drain_show_messages(&mut socket);
+    assert_eq!(shown.len(), 1, "{shown:?}");
+    assert_eq!(shown[0].typ, MessageType::ERROR);
+    assert!(shown[0].message.contains(&expected), "{}", shown[0].message);
   }
 }

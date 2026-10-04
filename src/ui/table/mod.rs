@@ -19,13 +19,25 @@ pub use render::{
   separator_for_content, separator_line, strip_ansi_escapes,
 };
 
-use serde::{Deserialize, Serialize};
-use std::io::IsTerminal;
-use unicode_width::UnicodeWidthStr;
+use std::env;
+use std::io;
+
+use serde;
+use unicode_width;
+
+use crate::ui;
 
 /// Semantic style definitions for terminal text rendering.
 #[derive(
-  Serialize, Deserialize, Copy, Clone, PartialEq, Eq, Debug, Default, Hash,
+  serde::Serialize,
+  serde::Deserialize,
+  Copy,
+  Clone,
+  PartialEq,
+  Eq,
+  Debug,
+  Default,
+  Hash,
 )]
 #[serde(rename_all = "snake_case")]
 pub enum Style {
@@ -51,7 +63,9 @@ pub enum Style {
 }
 
 /// A styled segment of text.
-#[derive(Serialize, Deserialize, Clone, PartialEq, Eq, Debug, Default)]
+#[derive(
+  serde::Serialize, serde::Deserialize, Clone, PartialEq, Eq, Debug, Default,
+)]
 pub struct Span {
   /// Text content string.
   pub text: String,
@@ -82,7 +96,7 @@ impl Span {
   /// Computes display character width of text.
   #[must_use]
   pub fn display_width(&self) -> usize {
-    self.text.as_str().width()
+    unicode_width::UnicodeWidthStr::width(self.text.as_str())
   }
 }
 
@@ -100,7 +114,14 @@ impl From<String> for Span {
 
 /// Text alignment within a column or cell.
 #[derive(
-  Serialize, Deserialize, Copy, Clone, PartialEq, Eq, Debug, Default,
+  serde::Serialize,
+  serde::Deserialize,
+  Copy,
+  Clone,
+  PartialEq,
+  Eq,
+  Debug,
+  Default,
 )]
 #[serde(rename_all = "snake_case")]
 pub enum Align {
@@ -114,7 +135,9 @@ pub enum Align {
 }
 
 /// Overflow handling policy when content exceeds column bounds.
-#[derive(Serialize, Deserialize, Clone, PartialEq, Eq, Debug, Default)]
+#[derive(
+  serde::Serialize, serde::Deserialize, Clone, PartialEq, Eq, Debug, Default,
+)]
 #[serde(rename_all = "snake_case")]
 pub enum Overflow {
   /// Wrap overflowing lines.
@@ -135,7 +158,9 @@ fn default_truncate_suffix() -> String {
 }
 
 /// A single cell inside a table row, composed of semantic spans.
-#[derive(Serialize, Deserialize, Clone, PartialEq, Eq, Debug, Default)]
+#[derive(
+  serde::Serialize, serde::Deserialize, Clone, PartialEq, Eq, Debug, Default,
+)]
 pub struct Cell {
   /// Spans comprising cell content.
   pub spans: Vec<Span>,
@@ -222,7 +247,14 @@ impl From<Span> for Cell {
 
 /// Color rendering mode for terminal palettes.
 #[derive(
-  Serialize, Deserialize, Copy, Clone, PartialEq, Eq, Debug, Default,
+  serde::Serialize,
+  serde::Deserialize,
+  Copy,
+  Clone,
+  PartialEq,
+  Eq,
+  Debug,
+  Default,
 )]
 #[serde(rename_all = "snake_case")]
 pub enum PaletteMode {
@@ -284,22 +316,22 @@ impl Palette {
   #[must_use]
   pub fn detect() -> Self {
     // 1. Respect NO_COLOR if set and non-empty
-    if crate::ui::no_color_requested() {
+    if ui::no_color_requested() {
       return Self::none();
     }
 
     // 2. Forced color overrides
-    let force_color = crate::ui::color_forced();
+    let force_color = ui::color_forced();
 
-    if !force_color && !std::io::stdout().is_terminal() {
+    if !force_color && !io::IsTerminal::is_terminal(&io::stdout()) {
       return Self::none();
     }
 
-    if std::env::var("TERM").is_ok_and(|term| term == "dumb" && !force_color) {
+    if env::var("TERM").is_ok_and(|term| term == "dumb" && !force_color) {
       return Self::none();
     }
 
-    if std::env::var("COLORTERM").is_ok_and(|ct| {
+    if env::var("COLORTERM").is_ok_and(|ct| {
       ct.eq_ignore_ascii_case("truecolor") || ct.eq_ignore_ascii_case("24bit")
     }) {
       return Self::truecolor();
@@ -355,7 +387,14 @@ impl Palette {
 
 /// Width policy for a table column.
 #[derive(
-  Serialize, Deserialize, Copy, Clone, PartialEq, Eq, Debug, Default,
+  serde::Serialize,
+  serde::Deserialize,
+  Copy,
+  Clone,
+  PartialEq,
+  Eq,
+  Debug,
+  Default,
 )]
 #[serde(rename_all = "snake_case")]
 pub enum WidthPolicy {
@@ -375,7 +414,9 @@ pub enum WidthPolicy {
 }
 
 /// Semantic kind of a table row.
-#[derive(Serialize, Deserialize, Clone, PartialEq, Eq, Debug, Default)]
+#[derive(
+  serde::Serialize, serde::Deserialize, Clone, PartialEq, Eq, Debug, Default,
+)]
 #[serde(rename_all = "snake_case")]
 pub enum RowKind {
   /// Standard data row.
@@ -390,7 +431,7 @@ pub enum RowKind {
 }
 
 /// Column configuration including header, alignment, width policy, and overflow rule.
-#[derive(Serialize, Deserialize, Clone, PartialEq, Eq, Debug)]
+#[derive(serde::Serialize, serde::Deserialize, Clone, PartialEq, Eq, Debug)]
 pub struct Column {
   /// Column header cell content.
   pub header: Cell,
@@ -439,7 +480,9 @@ impl Column {
 }
 
 /// A row in the table containing cells and rendering metadata.
-#[derive(Serialize, Deserialize, Clone, PartialEq, Eq, Debug, Default)]
+#[derive(
+  serde::Serialize, serde::Deserialize, Clone, PartialEq, Eq, Debug, Default,
+)]
 pub struct Row {
   /// Cells in row.
   pub cells: Vec<Cell>,
@@ -501,7 +544,14 @@ impl Row {
 
 /// Table density mode.
 #[derive(
-  Serialize, Deserialize, Copy, Clone, PartialEq, Eq, Debug, Default,
+  serde::Serialize,
+  serde::Deserialize,
+  Copy,
+  Clone,
+  PartialEq,
+  Eq,
+  Debug,
+  Default,
 )]
 #[serde(rename_all = "snake_case")]
 pub enum Density {
@@ -513,7 +563,7 @@ pub enum Density {
 }
 
 /// Geometry and layout settings for table rendering.
-#[derive(Serialize, Deserialize, Clone, PartialEq, Eq, Debug)]
+#[derive(serde::Serialize, serde::Deserialize, Clone, PartialEq, Eq, Debug)]
 pub struct Layout {
   /// Maximum overall table width in characters.
   #[serde(default = "default_max_width")]

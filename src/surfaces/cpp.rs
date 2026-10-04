@@ -6,9 +6,8 @@ use super::{
   DeclaresFacets, ExecutionContext, Facet, FacetSupport, LanguageSurface,
   NativeConfig, SurfaceResult, SurfaceStatus, ToolInfo,
   classify_all_nonzero_as_error, create_tool_command,
-  diff_check_via_tempcopy_classified, find_files_with_ext, merge_sync_results,
-  render_native_config, run_tool_command_classified, sync_native_config,
-  tool_missing_guard,
+  diff_check_via_tempcopy_classified, merge_sync_results, render_native_config,
+  run_tool_command_classified, sync_native_config, tool_missing_guard,
 };
 use serde::{Deserialize, Serialize};
 use std::collections::HashSet;
@@ -365,6 +364,10 @@ impl LanguageSurface for CppSurface {
     "cpp"
   }
 
+  fn extra_args_tools(&self) -> &'static [&'static str] {
+    &["clang-format", "clang-tidy"]
+  }
+
   fn aliases(&self) -> &[&'static str] {
     &["c", "c++", "cxx"]
   }
@@ -381,13 +384,14 @@ impl LanguageSurface for CppSurface {
     true
   }
 
-  fn detect(&self, root: &Path) -> bool {
-    root.join("CMakeLists.txt").is_file()
-      || root.join("Makefile").is_file()
-      || root.join("meson.build").is_file()
-      || root.join(".clang-format").is_file()
-      || root.join(".clang-tidy").is_file()
-      || !find_files_with_ext(root, CPP_EXTENSIONS, &[], &[], &[]).is_empty()
+  fn marker_files(&self) -> &[&'static str] {
+    &[
+      "CMakeLists.txt",
+      "Makefile",
+      "meson.build",
+      ".clang-format",
+      ".clang-tidy",
+    ]
   }
 
   fn tool_info(
@@ -439,7 +443,7 @@ impl LanguageSurface for CppSurface {
           let mut cmd = create_tool_command("clang-format");
           cmd.arg(format!("-style={inline_style}"));
           cmd.arg("-i").arg(scratch);
-          cmd.args(&ctx.lang_config.extra_args);
+          cmd.args(ctx.lang_config.tool_args("clang-format"));
           cmd.current_dir(ctx.root.as_path());
           cmd.output()
         },
@@ -465,7 +469,7 @@ impl LanguageSurface for CppSurface {
       cmd.arg(f);
     }
 
-    cmd.args(&ctx.lang_config.extra_args);
+    cmd.args(ctx.lang_config.tool_args("clang-format"));
     cmd.current_dir(ctx.root.as_path());
 
     run_tool_command_classified(
@@ -503,7 +507,7 @@ impl LanguageSurface for CppSurface {
         let lower = trimmed.to_ascii_lowercase();
         if lower.contains("++") {
           ("-std=c17".to_string(), flag)
-        } else if lower.starts_with("c") || lower.starts_with("gnu") {
+        } else if lower.starts_with('c') || lower.starts_with("gnu") {
           (flag, "-std=c++17".to_string())
         } else {
           ("-std=c17".to_string(), flag)
@@ -546,7 +550,7 @@ impl LanguageSurface for CppSurface {
         &flist,
         fix,
         &std_flag,
-        &ctx.lang_config.extra_args,
+        ctx.lang_config.tool_args("clang-tidy"),
       );
       cmd.args(&args);
       cmd.current_dir(ctx.root.as_path());
@@ -1082,7 +1086,11 @@ mod tests {
 
     let cfg = FormalityConfig::default();
     let mut lang = cfg.resolve_for_lang("cpp");
-    lang.extra_args = vec!["--this-flag-does-not-exist-fml151".to_string()];
+    lang.extra_args = [(
+      "clang-format".to_string(),
+      vec!["--this-flag-does-not-exist-fml151".to_string()],
+    )]
+    .into();
     let mut ctx = test_ctx(temp.path(), lang);
     ctx.global_config = Arc::new(cfg.resolve_global());
     ctx.check_only = true;
@@ -1112,7 +1120,11 @@ mod tests {
 
     let cfg = FormalityConfig::default();
     let mut lang = cfg.resolve_for_lang("cpp");
-    lang.extra_args = vec!["--this-flag-does-not-exist-fml151".to_string()];
+    lang.extra_args = [(
+      "clang-format".to_string(),
+      vec!["--this-flag-does-not-exist-fml151".to_string()],
+    )]
+    .into();
     let mut ctx = test_ctx(temp.path(), lang);
     ctx.global_config = Arc::new(cfg.resolve_global());
 

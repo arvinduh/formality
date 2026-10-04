@@ -2,11 +2,12 @@
 //! single source of truth for every `fml` subcommand's flags, parsed once in
 //! [`crate::run`] and dispatched from [`crate::run_command_inner`].
 
-use clap::{CommandFactory, Parser, Subcommand};
-use std::path::PathBuf;
+use std::path;
+
+use clap;
 
 /// Top-level command-line arguments parser for formality.
-#[derive(Parser, Debug)]
+#[derive(clap::Parser, Debug)]
 #[command(
   name = "formality",
   bin_name = "fml",
@@ -18,11 +19,11 @@ use std::path::PathBuf;
 pub struct Cli {
   /// Custom path to formality config (formality.toml / .formality.toml)
   #[arg(short = 'c', long, global = true, value_name = "FILE")]
-  pub config: Option<PathBuf>,
+  pub config: Option<path::PathBuf>,
 
   /// Target workspace root (defaults to current working directory)
   #[arg(short = 'w', long, global = true, value_name = "DIR")]
-  pub root: Option<PathBuf>,
+  pub root: Option<path::PathBuf>,
 
   /// The subcommand to execute.
   #[command(subcommand)]
@@ -30,7 +31,7 @@ pub struct Cli {
 }
 
 /// Available subcommands for formality CLI.
-#[derive(Subcommand, Debug)]
+#[derive(clap::Subcommand, Debug)]
 pub enum Commands {
   /// Format source files. Writes changes; --check reports without writing
   Fmt {
@@ -58,7 +59,7 @@ pub enum Commands {
 
     /// Optional paths or files to target
     #[arg(value_name = "PATH")]
-    paths: Vec<PathBuf>,
+    paths: Vec<path::PathBuf>,
   },
 
   /// Lint source files. Never writes -- use `fml fix` to apply fixes
@@ -90,7 +91,7 @@ pub enum Commands {
 
     /// Optional paths or files to target
     #[arg(value_name = "PATH")]
-    paths: Vec<PathBuf>,
+    paths: Vec<path::PathBuf>,
   },
 
   /// Apply lint fixes, then reformat. Writes changes; --check reports without writing
@@ -119,7 +120,7 @@ pub enum Commands {
 
     /// Optional paths or files to target
     #[arg(value_name = "PATH")]
-    paths: Vec<PathBuf>,
+    paths: Vec<path::PathBuf>,
   },
 
   /// Sync native tool configs (.rustfmt.toml, ruff.toml, .clang-format, etc.) from canonical globals
@@ -166,7 +167,7 @@ pub enum Commands {
   Schema {
     /// Optional file path to write the JSON schema to (defaults to stdout)
     #[arg(short = 'o', long, value_name = "FILE")]
-    output: Option<PathBuf>,
+    output: Option<path::PathBuf>,
   },
 
   /// Start formality as an LSP server (stdio transport)
@@ -174,7 +175,8 @@ pub enum Commands {
   /// A document formatter and diagnostics publisher: `textDocument/formatting`
   /// runs `fml fmt` on the requested file; `did_save` / `did_open` run
   /// `fml lint` (or a structured per-surface parser) to publish diagnostics;
-  /// `did_change_watched_files` invalidates the cached `formality.toml`.
+  /// `did_change_watched_files` reloads `formality.toml`, keeping the previous
+  /// config when the new one is invalid.
   ///
   /// This is not a replacement for your language server — it does not spawn,
   /// proxy, or route requests to rust-analyzer, pyright, clangd, or any other
@@ -191,10 +193,10 @@ impl Cli {
   /// Parses `std::env::args()` and rejects flag combinations clap's derive
   /// cannot express, exiting with clap's own error rendering.
   ///
-  /// Used by [`crate::run`] in place of a bare [`Parser::parse`].
+  /// Used by [`crate::run`] in place of a bare [`clap::Parser::parse`].
   #[must_use]
   pub fn parse_checked() -> Self {
-    let cli = Self::parse();
+    let cli = <Self as clap::Parser>::parse();
     if let Err(e) = cli.validate() {
       e.exit();
     }
@@ -222,7 +224,7 @@ impl Cli {
   /// updating this" assertion, not a runtime condition.
   pub fn validate(&self) -> Result<(), clap::Error> {
     if let Commands::Lint { check: true, .. } = &self.command {
-      let mut cmd = Self::command();
+      let mut cmd = <Self as clap::CommandFactory>::command();
       cmd.build();
       let lint = cmd
         .find_subcommand_mut("lint")
@@ -245,6 +247,7 @@ impl Cli {
 mod tests {
   use super::*;
   use clap::CommandFactory;
+  use clap::Parser;
 
   #[test]
   fn test_lint_check_is_rejected_with_a_tailored_error() {
@@ -302,7 +305,7 @@ mod tests {
       cli.command,
       Commands::Schema {
         output: Some(ref p)
-      } if p == std::path::Path::new("schema.json")
+      } if p == path::Path::new("schema.json")
     ));
 
     let mut cmd = Cli::command();

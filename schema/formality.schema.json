@@ -218,10 +218,13 @@
           }
         },
         "extra_args": {
-          "description": "Additional command-line arguments to pass to the underlying tool.",
-          "type": ["array", "null"],
-          "items": {
-            "type": "string"
+          "description": "Additional command-line arguments per tool, keyed by the tool that\nreceives them, e.g. `prettier = [\"--prose-wrap\", \"always\"]` under\n`[lang.markdown.extra_args]`. Each list is appended after fml's own\nflags for that tool only. Each surface accepts its own tool keys; see\ndocs/language-surfaces.md.",
+          "type": ["object", "null"],
+          "additionalProperties": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
           }
         },
         "files": {

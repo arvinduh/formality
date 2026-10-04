@@ -2,8 +2,8 @@
 //! registered [`LanguageSurface`] implementations.
 
 use super::{
-  LanguageSurface, cpp, go, java, javascript, json, kotlin, markdown, python,
-  rust, toml, typst, yaml,
+  LanguageSurface, cpp, glob, go, java, javascript, json, kotlin, markdown,
+  python, rust, toml, typst, yaml,
 };
 use crate::config::FormalityConfig;
 use std::path::Path;
@@ -113,6 +113,22 @@ impl SurfaceRegistry {
     root: &Path,
     config: &FormalityConfig,
   ) -> Vec<Box<dyn LanguageSurface>> {
+    let present =
+      std::cell::LazyCell::new(|| glob::PresentExtensions::scan(root, &[]));
+    self.detect_surfaces_in(root, config, &present)
+  }
+
+  /// Detects like [`Self::detect_surfaces_smart`], reading extensions from
+  /// the caller's `present`, which is forced only when auto-detection runs
+  /// (no explicit `languages` list), so a caller that already walked the
+  /// tree, or shares one walk between several checks, walks no further.
+  #[must_use]
+  pub fn detect_surfaces_in<F: FnOnce() -> glob::PresentExtensions>(
+    &self,
+    root: &Path,
+    config: &FormalityConfig,
+    present: &std::cell::LazyCell<glob::PresentExtensions, F>,
+  ) -> Vec<Box<dyn LanguageSurface>> {
     let global = config.resolve_global();
 
     let is_ignored = |name: &str, aliases: &[&'static str]| -> bool {
@@ -141,7 +157,9 @@ impl SurfaceRegistry {
       return selected;
     }
 
-    // 2. Otherwise auto-detect all project surfaces minus ignore_languages
+    // 2. Otherwise auto-detect all project surfaces minus ignore_languages,
+    // every surface reading the same single walk of `root`.
+    let present: &glob::PresentExtensions = present;
     self
       .surfaces
       .iter()
@@ -149,7 +167,7 @@ impl SurfaceRegistry {
         if is_ignored(surface.name(), surface.aliases()) {
           return false;
         }
-        if !surface.detect(root) {
+        if !surface.detect(root, present) {
           return false;
         }
         let resolved =
@@ -194,6 +212,20 @@ pub fn get_surface_by_name(name: &str) -> Option<Box<dyn LanguageSurface>> {
 #[cfg(test)]
 mod tests {
   use super::*;
+
+  /// The trait's default declares no keys, which makes every
+  /// `[lang.<name>.extra_args]` key a config error: a surface that forgets
+  /// to override it would silently become unconfigurable.
+  #[test]
+  fn test_every_surface_declares_extra_args_tools() {
+    for surface in all_surfaces() {
+      assert!(
+        !surface.extra_args_tools().is_empty(),
+        "{} declares no extra_args tools",
+        surface.name()
+      );
+    }
+  }
 
   #[test]
   fn test_all_fleet_surfaces_present() {
@@ -474,6 +506,78 @@ mod tests {
       !names.contains(&"toml"),
       "toml should be excluded by enabled = false even though Cargo.toml is present"
     );
+  }
+
+  #[test]
+  fn test_detect_surfaces_smart_shares_one_scan_and_honours_overrides() {
+    /// Whether each `detect` call's scan saw a file an earlier call wrote.
+    static SEEN: std::sync::Mutex<Vec<bool>> =
+      std::sync::Mutex::new(Vec::new());
+
+    #[derive(Clone, Default)]
+    struct RecordingSurface;
+
+    impl crate::config::facets::DeclaresFacets for RecordingSurface {
+      fn facet_support(
+        &self,
+        _: crate::config::facets::Facet,
+      ) -> crate::config::facets::FacetSupport {
+        crate::config::facets::FacetSupport::Unsupported
+      }
+    }
+
+    impl LanguageSurface for RecordingSurface {
+      fn name(&self) -> &'static str {
+        "recording"
+      }
+      fn detect(&self, root: &Path, present: &glob::PresentExtensions) -> bool {
+        SEEN.lock().unwrap().push(present.contains("probe"));
+        std::fs::write(root.join("written.probe"), "").unwrap();
+        true
+      }
+      fn tool_info(
+        &self,
+        _: &crate::config::ResolvedLangConfig,
+      ) -> Vec<crate::surfaces::ToolInfo> {
+        unimplemented!()
+      }
+      fn format(
+        &self,
+        _: &crate::surfaces::ExecutionContext,
+      ) -> crate::surfaces::SurfaceResult {
+        unimplemented!()
+      }
+      fn lint(
+        &self,
+        _: &crate::surfaces::ExecutionContext,
+        _: bool,
+      ) -> crate::surfaces::SurfaceResult {
+        unimplemented!()
+      }
+      fn sync_config(
+        &self,
+        _: &crate::surfaces::ExecutionContext,
+        _: bool,
+      ) -> crate::surfaces::SurfaceResult {
+        unimplemented!()
+      }
+      fn clone_box(&self) -> Box<dyn LanguageSurface> {
+        Box::new(self.clone())
+      }
+    }
+
+    let mut reg = SurfaceRegistry::empty();
+    reg.register_surface::<RecordingSurface>();
+    reg.register_surface::<RecordingSurface>();
+    let temp = tempfile::TempDir::new().unwrap();
+    let detected =
+      reg.detect_surfaces_smart(temp.path(), &FormalityConfig::with_defaults());
+
+    // Both overrides ran and were honoured on an empty tree.
+    assert_eq!(detected.len(), 2);
+    // The second surface did not see the first one's file: both read one
+    // scan taken before either ran, so detection walked the tree once.
+    assert_eq!(*SEEN.lock().unwrap(), [false, false]);
   }
 
   #[test]

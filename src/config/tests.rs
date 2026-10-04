@@ -1,6 +1,6 @@
 use super::*;
 use std::fs;
-use std::path::Path;
+use std::path;
 
 #[test]
 fn test_default_resolution() {
@@ -24,7 +24,7 @@ fn test_default_resolution() {
 
 #[test]
 fn test_resolve_for_lang_with_global_equivalence() {
-  let toml = r#"
+  let toml = r"
     [global]
     indent_size = 4
     line_length = 100
@@ -35,8 +35,9 @@ fn test_resolve_for_lang_with_global_equivalence() {
 
     [lang.python]
     line_length = 88
-  "#;
-  let cfg = FormalityConfig::parse_str(toml, Path::new("test.toml")).unwrap();
+  ";
+  let cfg =
+    FormalityConfig::parse_str(toml, path::Path::new("test.toml")).unwrap();
   let global = cfg.resolve_global();
 
   for lang in &[
@@ -158,7 +159,7 @@ fn test_languages_list_parsing() {
       indent_size = 4
     "#;
   let parsed =
-    FormalityConfig::parse_str(toml, Path::new("test.toml")).unwrap();
+    FormalityConfig::parse_str(toml, path::Path::new("test.toml")).unwrap();
   let global = parsed.resolve_global();
   assert_eq!(
     global.languages,
@@ -183,7 +184,8 @@ fn test_merge_and_override() {
         "#;
 
   let parsed =
-    FormalityConfig::parse_str(override_toml, Path::new("test.toml")).unwrap();
+    FormalityConfig::parse_str(override_toml, path::Path::new("test.toml"))
+      .unwrap();
   base.merge(parsed);
 
   let global = base.resolve_global();
@@ -207,26 +209,30 @@ fn test_lang_config_extra_args_files_and_exclude() {
       indent_size = 2
 
       [lang.rust]
-      extra_args = ["--verbose", "--", "-D", "clippy::all"]
+      extra_args = { clippy-driver = ["--verbose", "--", "-D", "clippy::all"] }
       files = ["src/lib.rs", "src/main.rs"]
       exclude = ["tests/fixtures", "src/generated/**"]
     "#;
   let parsed =
-    FormalityConfig::parse_str(toml, Path::new("test.toml")).unwrap();
+    FormalityConfig::parse_str(toml, path::Path::new("test.toml")).unwrap();
   let rust = parsed.resolve_for_lang("rust");
   assert_eq!(
-    rust.extra_args,
-    vec!["--verbose", "--", "-D", "clippy::all"]
+    rust.tool_args("clippy-driver"),
+    ["--verbose", "--", "-D", "clippy::all"]
   );
+  assert!(rust.tool_args("rustfmt").is_empty());
   assert_eq!(
     rust.files,
-    vec![PathBuf::from("src/lib.rs"), PathBuf::from("src/main.rs")]
+    vec![
+      path::PathBuf::from("src/lib.rs"),
+      path::PathBuf::from("src/main.rs")
+    ]
   );
   assert_eq!(
     rust.exclude,
     vec![
-      PathBuf::from("tests/fixtures"),
-      PathBuf::from("src/generated/**")
+      path::PathBuf::from("tests/fixtures"),
+      path::PathBuf::from("src/generated/**")
     ]
   );
 }
@@ -250,7 +256,7 @@ fn test_layout_facet_direct_and_inheritance() {
       prose_wrap = "always"
     "#;
   let parsed =
-    FormalityConfig::parse_str(toml, Path::new("test.toml")).unwrap();
+    FormalityConfig::parse_str(toml, path::Path::new("test.toml")).unwrap();
   let global = parsed.resolve_global();
   assert_eq!(global.indent_size, 2);
   assert_eq!(global.line_length, 80);
@@ -314,7 +320,7 @@ fn test_typed_options_deserialization_from_toml() {
       [lang.typst]
     "#;
   let parsed =
-    FormalityConfig::parse_str(toml, Path::new("test.toml")).unwrap();
+    FormalityConfig::parse_str(toml, path::Path::new("test.toml")).unwrap();
 
   let rust = parsed.resolve_for_lang("rust");
   assert_eq!(
@@ -410,7 +416,7 @@ fn test_typed_options_subtable_deserialization() {
       indent_tables = false
     "#;
   let parsed =
-    FormalityConfig::parse_str(toml, Path::new("test.toml")).unwrap();
+    FormalityConfig::parse_str(toml, path::Path::new("test.toml")).unwrap();
 
   let rust = parsed.resolve_for_lang("rust");
   assert_eq!(
@@ -485,7 +491,8 @@ fn test_typed_options_merging_semantics() {
       indent_entries = true
     "#;
   base.merge(
-    FormalityConfig::parse_str(base_toml, Path::new("base.toml")).unwrap(),
+    FormalityConfig::parse_str(base_toml, path::Path::new("base.toml"))
+      .unwrap(),
   );
 
   let override_toml = r#"
@@ -502,7 +509,7 @@ fn test_typed_options_merging_semantics() {
       indent_tables = true
     "#;
   base.merge(
-    FormalityConfig::parse_str(override_toml, Path::new("override.toml"))
+    FormalityConfig::parse_str(override_toml, path::Path::new("override.toml"))
       .unwrap(),
   );
 
@@ -580,7 +587,8 @@ fn test_serialization_deserialization_roundtrip() {
 
   let serialized = toml::to_string(&config).unwrap();
   let deserialized: FormalityConfig =
-    FormalityConfig::parse_str(&serialized, Path::new("test.toml")).unwrap();
+    FormalityConfig::parse_str(&serialized, path::Path::new("test.toml"))
+      .unwrap();
 
   assert_eq!(config, deserialized);
 }
@@ -693,7 +701,7 @@ fn test_toml_options_alignment_and_indentation() {
       indent_tables = false
     ";
   let parsed =
-    FormalityConfig::parse_str(toml, Path::new("test.toml")).unwrap();
+    FormalityConfig::parse_str(toml, path::Path::new("test.toml")).unwrap();
   let toml_lang = parsed.resolve_for_lang("toml");
   assert_eq!(
     toml_lang.toml,
@@ -714,7 +722,7 @@ fn test_yaml_options_document_start_and_truthy_rules() {
       truthy = true
     ";
   let parsed =
-    FormalityConfig::parse_str(toml, Path::new("test.toml")).unwrap();
+    FormalityConfig::parse_str(toml, path::Path::new("test.toml")).unwrap();
   let yaml = parsed.resolve_for_lang("yaml");
   assert_eq!(
     yaml.yaml,
@@ -743,7 +751,8 @@ fn test_generate_sample_omits_languages() {
   assert!(sample.contains("trim_trailing_whitespace = true"));
 
   let parsed =
-    FormalityConfig::parse_str(&sample, Path::new("formality.toml")).unwrap();
+    FormalityConfig::parse_str(&sample, path::Path::new("formality.toml"))
+      .unwrap();
   let global = parsed.resolve_global();
   assert_eq!(global.languages, None);
   assert_eq!(global.indent_size, 2);
@@ -762,7 +771,8 @@ fn test_generate_init_template_omits_languages() {
   assert!(template.contains("[global]"));
 
   let parsed =
-    FormalityConfig::parse_str(&template, Path::new("formality.toml")).unwrap();
+    FormalityConfig::parse_str(&template, path::Path::new("formality.toml"))
+      .unwrap();
   let global = parsed.resolve_global();
   assert_eq!(global.languages, None);
 }
@@ -789,7 +799,8 @@ fn test_generate_init_template_emits_commented_lang_stubs_for_detected() {
   // Stubs are commented out, so the template still parses to an empty `lang`
   // map — they must not silently activate any override.
   let parsed =
-    FormalityConfig::parse_str(&template, Path::new("formality.toml")).unwrap();
+    FormalityConfig::parse_str(&template, path::Path::new("formality.toml"))
+      .unwrap();
   assert!(parsed.lang.is_empty());
 }
 
@@ -814,8 +825,8 @@ fn test_unrecognized_lang_sections_flags_typo_but_not_valid_undetected() {
     [lang.pythonn]
     indent_size = 4
   ";
-  let cfg =
-    FormalityConfig::parse_str(toml, Path::new("formality.toml")).unwrap();
+  let cfg = FormalityConfig::parse_str(toml, path::Path::new("formality.toml"))
+    .unwrap();
   assert_eq!(
     cfg.unrecognized_lang_sections(&registry),
     vec!["pythonn"],
@@ -829,8 +840,8 @@ fn test_unrecognized_lang_sections_flags_typo_but_not_valid_undetected() {
     [lang.rust]
     indent_size = 4
   ";
-  let cfg =
-    FormalityConfig::parse_str(toml, Path::new("formality.toml")).unwrap();
+  let cfg = FormalityConfig::parse_str(toml, path::Path::new("formality.toml"))
+    .unwrap();
   assert!(
     cfg.unrecognized_lang_sections(&registry).is_empty(),
     "a valid but undetected surface name should not be flagged"
@@ -839,7 +850,7 @@ fn test_unrecognized_lang_sections_flags_typo_but_not_valid_undetected() {
 
 #[test]
 fn test_load_file_missing_path_yields_io_error() {
-  let missing = Path::new("this/path/definitely/does/not/exist.toml");
+  let missing = path::Path::new("this/path/definitely/does/not/exist.toml");
   let err = FormalityConfig::load_file(missing).unwrap_err();
   assert!(matches!(err, ConfigError::Io { .. }));
   let msg = err.to_string();
@@ -851,8 +862,9 @@ fn test_load_file_missing_path_yields_io_error() {
 fn test_parse_str_malformed_toml_yields_parse_error() {
   // Missing closing bracket / invalid TOML syntax.
   let bad_toml = "[global\nindent_size = 2";
-  let err = FormalityConfig::parse_str(bad_toml, Path::new("formality.toml"))
-    .unwrap_err();
+  let err =
+    FormalityConfig::parse_str(bad_toml, path::Path::new("formality.toml"))
+      .unwrap_err();
   assert!(matches!(err, ConfigError::Parse { .. }));
   let msg = err.to_string();
   assert!(msg.contains("Failed to parse config file at"));
@@ -872,7 +884,7 @@ fn test_java_aosp_style_defaults_indent_width_to_four() {
       style = "aosp"
     "#;
   let parsed =
-    FormalityConfig::parse_str(toml, Path::new("test.toml")).unwrap();
+    FormalityConfig::parse_str(toml, path::Path::new("test.toml")).unwrap();
   let java = parsed.resolve_for_lang("java");
   assert_eq!(java.indent_size, 4);
 
@@ -882,7 +894,8 @@ fn test_java_aosp_style_defaults_indent_width_to_four() {
       style = "google"
     "#;
   let parsed_google =
-    FormalityConfig::parse_str(toml_google, Path::new("test.toml")).unwrap();
+    FormalityConfig::parse_str(toml_google, path::Path::new("test.toml"))
+      .unwrap();
   let java_google = parsed_google.resolve_for_lang("java");
   assert_eq!(java_google.indent_size, 2);
 
@@ -897,7 +910,8 @@ fn test_java_aosp_style_defaults_indent_width_to_four() {
       indent_size = 8
     "#;
   let parsed_explicit =
-    FormalityConfig::parse_str(toml_explicit, Path::new("test.toml")).unwrap();
+    FormalityConfig::parse_str(toml_explicit, path::Path::new("test.toml"))
+      .unwrap();
   let java_explicit = parsed_explicit.resolve_for_lang("java");
   assert_eq!(java_explicit.indent_size, 8);
 }
@@ -905,8 +919,8 @@ fn test_java_aosp_style_defaults_indent_width_to_four() {
 #[test]
 fn test_parse_str_rejects_non_canonical_lang_sections() {
   let toml = "[global]\nline_length = 100\n\n[lang.py]\nindent_size = 4\n";
-  let err =
-    FormalityConfig::parse_str(toml, Path::new("formality.toml")).unwrap_err();
+  let err = FormalityConfig::parse_str(toml, path::Path::new("formality.toml"))
+    .unwrap_err();
   assert_eq!(
     err.to_string(),
     "section `[lang.py]` in formality.toml:4 is not a canonical surface \
@@ -914,8 +928,8 @@ fn test_parse_str_rejects_non_canonical_lang_sections() {
   );
 
   let toml = "[lang.RUST]\nindent_size = 4\n";
-  let err =
-    FormalityConfig::parse_str(toml, Path::new("formality.toml")).unwrap_err();
+  let err = FormalityConfig::parse_str(toml, path::Path::new("formality.toml"))
+    .unwrap_err();
   assert!(
     matches!(
       &err,
@@ -927,8 +941,8 @@ fn test_parse_str_rejects_non_canonical_lang_sections() {
 
   // The canonical spelling still loads, and its keys are applied.
   let toml = "[lang.python]\nindent_size = 3\n";
-  let cfg =
-    FormalityConfig::parse_str(toml, Path::new("formality.toml")).unwrap();
+  let cfg = FormalityConfig::parse_str(toml, path::Path::new("formality.toml"))
+    .unwrap();
   assert_eq!(cfg.resolve_for_lang("python").indent_size, 3);
 }
 
@@ -942,8 +956,8 @@ fn test_unrecognized_lang_sections_reports_every_unknown_name() {
     [lang.jaav]
     indent_size = 4
   ";
-  let cfg =
-    FormalityConfig::parse_str(toml, Path::new("formality.toml")).unwrap();
+  let cfg = FormalityConfig::parse_str(toml, path::Path::new("formality.toml"))
+    .unwrap();
   let mut unrecognized = cfg.unrecognized_lang_sections(&registry);
   unrecognized.sort_unstable();
   assert_eq!(unrecognized, vec!["jaav", "pythonn"]);
@@ -1008,7 +1022,7 @@ fn test_corrupted_config_fuzzing_random_and_malformed_inputs() {
   ];
 
   for input in malformed_inputs {
-    let res = FormalityConfig::parse_str(input, Path::new("fuzz.toml"));
+    let res = FormalityConfig::parse_str(input, path::Path::new("fuzz.toml"));
     if input.trim().is_empty() {
       assert!(res.is_ok(), "Empty input should parse to empty config");
     } else if let Err(err) = res {
@@ -1040,8 +1054,8 @@ fn test_layered_config_with_corrupted_project_file() {
 #[test]
 fn test_parse_str_unknown_key_names_key_path_line_and_fix() {
   let toml = "[global]\nline_length = 80\nmax_width = 100\n";
-  let err =
-    FormalityConfig::parse_str(toml, Path::new("formality.toml")).unwrap_err();
+  let err = FormalityConfig::parse_str(toml, path::Path::new("formality.toml"))
+    .unwrap_err();
   assert_eq!(
     err.to_string(),
     "unknown key `global.max_width` in formality.toml:3. It may need a \
@@ -1051,8 +1065,9 @@ fn test_parse_str_unknown_key_names_key_path_line_and_fix() {
 
   let nested = "[lang.python.python]\nquote_style = \"double\"\n\
                 ignore_rulez = [\"E501\"]\n";
-  let err = FormalityConfig::parse_str(nested, Path::new("formality.toml"))
-    .unwrap_err();
+  let err =
+    FormalityConfig::parse_str(nested, path::Path::new("formality.toml"))
+      .unwrap_err();
   assert!(
     matches!(
       &err,
@@ -1068,8 +1083,8 @@ fn test_parse_str_unknown_root_key_is_unknown() {
   // A `[global]` key written at the root; `deny_unknown_fields` on
   // `FormalityConfig` is what reports it.
   let toml = "languages = [\"rust\"]\n";
-  let err =
-    FormalityConfig::parse_str(toml, Path::new("formality.toml")).unwrap_err();
+  let err = FormalityConfig::parse_str(toml, path::Path::new("formality.toml"))
+    .unwrap_err();
   assert_eq!(
     err.to_string(),
     "unknown key `languages` in formality.toml:1. It may need a newer fml \
@@ -1084,8 +1099,8 @@ fn test_parse_str_removed_flat_lang_key_is_unknown() {
   // to swallow it without a word.
   let toml = "[lang.python]\nquote_style = \"double\"\nformat_tool = \
               \"black\"\n";
-  let err =
-    FormalityConfig::parse_str(toml, Path::new("formality.toml")).unwrap_err();
+  let err = FormalityConfig::parse_str(toml, path::Path::new("formality.toml"))
+    .unwrap_err();
   assert_eq!(
     err.to_string(),
     "unknown key `lang.python.format_tool` in formality.toml:3. It may need \
@@ -1098,8 +1113,8 @@ fn test_parse_str_removed_flat_lang_key_is_unknown() {
 fn test_parse_str_flat_lang_keys_follow_their_own_surface() {
   // A key valid for one surface is unknown under another.
   let toml = "[lang.rust]\nedition = \"2024\"\nquote_style = \"double\"\n";
-  let err =
-    FormalityConfig::parse_str(toml, Path::new("formality.toml")).unwrap_err();
+  let err = FormalityConfig::parse_str(toml, path::Path::new("formality.toml"))
+    .unwrap_err();
   assert!(
     matches!(
       &err,
@@ -1110,8 +1125,8 @@ fn test_parse_str_flat_lang_keys_follow_their_own_surface() {
   );
 
   let toml = "[lang.python]\ntarget_version = 310\n";
-  let err =
-    FormalityConfig::parse_str(toml, Path::new("formality.toml")).unwrap_err();
+  let err = FormalityConfig::parse_str(toml, path::Path::new("formality.toml"))
+    .unwrap_err();
   assert!(
     matches!(
       &err,
@@ -1123,8 +1138,8 @@ fn test_parse_str_flat_lang_keys_follow_their_own_surface() {
 
   let toml = "[lang.go.options]\nlocal_prefixes = \"example.com\"\n\
               shadow = true\n";
-  let err =
-    FormalityConfig::parse_str(toml, Path::new("formality.toml")).unwrap_err();
+  let err = FormalityConfig::parse_str(toml, path::Path::new("formality.toml"))
+    .unwrap_err();
   assert!(
     matches!(
       &err,
@@ -1138,8 +1153,8 @@ fn test_parse_str_flat_lang_keys_follow_their_own_surface() {
 #[test]
 fn test_parse_str_non_table_lang_options_is_invalid_value() {
   let toml = "[lang.python]\nquote_style = \"double\"\noptions = \"oops\"\n";
-  let err =
-    FormalityConfig::parse_str(toml, Path::new("formality.toml")).unwrap_err();
+  let err = FormalityConfig::parse_str(toml, path::Path::new("formality.toml"))
+    .unwrap_err();
   assert_eq!(
     err.to_string(),
     "invalid value for `lang.python.options` in formality.toml:3: \
@@ -1152,8 +1167,8 @@ fn test_parse_str_non_table_lang_options_is_invalid_value() {
 fn test_parse_str_wrong_type_names_nested_key_path_and_line() {
   let toml = "[global]\nline_length = 80\n\n[lang.rust.layout]\n\
                 indent_size = \"four\"\n";
-  let err =
-    FormalityConfig::parse_str(toml, Path::new("formality.toml")).unwrap_err();
+  let err = FormalityConfig::parse_str(toml, path::Path::new("formality.toml"))
+    .unwrap_err();
   assert_eq!(
     err.to_string(),
     "invalid value for `lang.rust.layout.indent_size` in formality.toml:5: \
@@ -1196,4 +1211,111 @@ fn test_load_layered_with_path_none() {
   let (cfg, path) = FormalityConfig::load_layered_with_path(None).unwrap();
   assert_eq!(path, None);
   assert_eq!(cfg.resolve_global().indent_size, 2);
+}
+
+#[test]
+fn test_extra_args_table_routes_per_tool() {
+  let toml = "[lang.python.extra_args]\nruff-format = [\"--preview\"]\n";
+  let parsed =
+    FormalityConfig::parse_str(toml, path::Path::new("formality.toml"))
+      .unwrap();
+  let python = parsed.resolve_for_lang("python");
+  assert_eq!(python.tool_args("ruff-format"), ["--preview"]);
+  assert!(python.tool_args("ruff-check").is_empty());
+}
+
+#[test]
+fn test_extra_args_merge_replaces_per_tool() {
+  let mut base = LangConfig {
+    extra_args: Some(
+      [
+        ("prettier".to_string(), vec!["--a".to_string()]),
+        ("markdownlint-cli2".to_string(), vec!["--b".to_string()]),
+      ]
+      .into(),
+    ),
+    ..LangConfig::default()
+  };
+  base.merge(LangConfig {
+    extra_args: Some(
+      [("prettier".to_string(), vec!["--c".to_string()])].into(),
+    ),
+    ..LangConfig::default()
+  });
+  assert_eq!(
+    base.extra_args,
+    Some(
+      [
+        ("prettier".to_string(), vec!["--c".to_string()]),
+        ("markdownlint-cli2".to_string(), vec!["--b".to_string()]),
+      ]
+      .into()
+    )
+  );
+}
+
+#[test]
+fn test_extra_args_flat_list_names_table_form() {
+  let toml = "[lang.markdown]\nline_length = 100\n\
+              extra_args = [\"--prose-wrap\", \"always\"]\n";
+  let err = FormalityConfig::parse_str(toml, path::Path::new("formality.toml"))
+    .unwrap_err();
+  assert_eq!(
+    err.to_string(),
+    "`lang.markdown.extra_args` in formality.toml:3 is a list, but \
+     extra_args takes one list per tool: write it as a table, e.g. \
+     `[lang.markdown.extra_args]` then `markdownlint-cli2 = [\"--flag\"]`. \
+     Tools for `markdown`: `markdownlint-cli2`, `prettier`."
+  );
+}
+
+#[test]
+fn test_extra_args_flat_list_in_unknown_section_is_a_type_error() {
+  // An unknown `[lang.<name>]` section has no tool keys to suggest, so a flat
+  // list there gets the plain type error any mistyped key in it gets.
+  let toml = "[lang.cobol]\nextra_args = [\"x\"]\n";
+  let err = FormalityConfig::parse_str(toml, path::Path::new("formality.toml"))
+    .unwrap_err();
+  assert!(
+    matches!(err, ConfigError::InvalidValue { .. }),
+    "expected InvalidValue, got: {err}"
+  );
+}
+
+#[test]
+fn test_extra_args_unknown_tool_names_valid_keys() {
+  let toml = "[lang.python.extra_args]\nruff-check = []\nruff = [\"-q\"]\n";
+  let err = FormalityConfig::parse_str(toml, path::Path::new("formality.toml"))
+    .unwrap_err();
+  assert_eq!(
+    err.to_string(),
+    "unknown key `lang.python.extra_args.ruff` in formality.toml:3: \
+     `python` runs no tool named `ruff`; its extra_args keys are \
+     `ruff-check`, `ruff-format`."
+  );
+}
+
+#[test]
+fn test_extra_args_unknown_tool_suggests_canonical_binary() {
+  // Users type the familiar tool name; the key is the binary fml spawns.
+  let toml = "[lang.rust.extra_args]\nclippy = [\"-Wclippy::pedantic\"]\n";
+  let err = FormalityConfig::parse_str(toml, path::Path::new("formality.toml"))
+    .unwrap_err();
+  assert_eq!(
+    err.to_string(),
+    "unknown key `lang.rust.extra_args.clippy` in formality.toml:2: `rust` \
+     runs no tool named `clippy`; its extra_args keys are `rustfmt`, \
+     `clippy-driver`. Did you mean `clippy-driver`?"
+  );
+
+  let toml = "[lang.markdown.extra_args]\nmarkdownlint = [\"--fix\"]\n";
+  let err = FormalityConfig::parse_str(toml, path::Path::new("formality.toml"))
+    .unwrap_err();
+  assert_eq!(
+    err.to_string(),
+    "unknown key `lang.markdown.extra_args.markdownlint` in \
+     formality.toml:2: `markdown` runs no tool named `markdownlint`; its \
+     extra_args keys are `markdownlint-cli2`, `prettier`. Did you mean \
+     `markdownlint-cli2`?"
+  );
 }

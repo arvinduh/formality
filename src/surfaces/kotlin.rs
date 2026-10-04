@@ -6,10 +6,9 @@ use super::tooling::no_native_config;
 use super::{
   DeclaresFacets, ExecutionContext, Facet, FacetSupport, LanguageSurface,
   SurfaceResult, ToolInfo, classify_exit_one_as_violation, create_tool_command,
-  diff_check_via_tempcopy_classified, find_files_with_ext, run_tool_command,
+  diff_check_via_tempcopy_classified, run_tool_command,
   run_tool_command_classified, tool_missing_guard,
 };
-use std::path::Path;
 use std::time::Instant;
 
 /// Kotlin language surface implementation.
@@ -120,6 +119,10 @@ impl LanguageSurface for KotlinSurface {
     "kotlin"
   }
 
+  fn extra_args_tools(&self) -> &'static [&'static str] {
+    &["ktlint"]
+  }
+
   fn aliases(&self) -> &[&'static str] {
     &["kt"]
   }
@@ -132,10 +135,8 @@ impl LanguageSurface for KotlinSurface {
     Box::new(*self)
   }
 
-  fn detect(&self, root: &Path) -> bool {
-    root.join("build.gradle.kts").is_file()
-      || root.join("settings.gradle.kts").is_file()
-      || !find_files_with_ext(root, KOTLIN_EXTENSIONS, &[], &[], &[]).is_empty()
+  fn marker_files(&self) -> &[&'static str] {
+    &["build.gradle.kts", "settings.gradle.kts"]
   }
 
   fn supports_lint_fix(&self) -> bool {
@@ -173,7 +174,7 @@ impl LanguageSurface for KotlinSurface {
         |scratch| {
           let mut cmd = create_tool_command("ktlint");
           cmd.arg("-F").arg(scratch);
-          cmd.args(&ctx.lang_config.extra_args);
+          cmd.args(ctx.lang_config.tool_args("ktlint"));
           cmd.current_dir(ctx.root.as_path());
           cmd.output()
         },
@@ -208,7 +209,7 @@ impl LanguageSurface for KotlinSurface {
     let mut cmd = create_tool_command("ktlint");
     cmd.args(build_ktlint_format_args(
       &files_to_pass,
-      &ctx.lang_config.extra_args,
+      ctx.lang_config.tool_args("ktlint"),
     ));
     cmd.current_dir(ctx.root.as_path());
 
@@ -237,7 +238,7 @@ impl LanguageSurface for KotlinSurface {
     cmd.args(build_ktlint_lint_args(
       &files_to_pass,
       fix,
-      &ctx.lang_config.extra_args,
+      ctx.lang_config.tool_args("ktlint"),
     ));
     cmd.current_dir(ctx.root.as_path());
 
@@ -268,7 +269,7 @@ mod tests {
   use crate::surfaces::{
     SurfaceStatus, check_binary_exists, forget_binary, test_ctx,
   };
-  use std::path::PathBuf;
+  use std::path::{Path, PathBuf};
   use std::sync::{Mutex, MutexGuard, PoisonError};
   use tempfile::TempDir;
 
@@ -284,6 +285,26 @@ mod tests {
   where
     F: FnOnce(&Path),
   {
+    struct Cleanup {
+      orig_path: Option<std::ffi::OsString>,
+    }
+    impl Drop for Cleanup {
+      fn drop(&mut self) {
+        if let Some(ref p) = self.orig_path {
+          // SAFETY: serialized by `KTLINT_TEST_GUARD`.
+          unsafe {
+            std::env::set_var("PATH", p);
+          }
+        } else {
+          // SAFETY: serialized by `KTLINT_TEST_GUARD`.
+          unsafe {
+            std::env::remove_var("PATH");
+          }
+        }
+        forget_binary("ktlint");
+      }
+    }
+
     let _guard = ktlint_test_lock();
 
     let temp = TempDir::new().unwrap();
@@ -329,26 +350,6 @@ mod tests {
     // concurrently in this test harness.
     unsafe {
       std::env::set_var("PATH", &new_path);
-    }
-
-    struct Cleanup {
-      orig_path: Option<std::ffi::OsString>,
-    }
-    impl Drop for Cleanup {
-      fn drop(&mut self) {
-        if let Some(ref p) = self.orig_path {
-          // SAFETY: serialized by `KTLINT_TEST_GUARD`.
-          unsafe {
-            std::env::set_var("PATH", p);
-          }
-        } else {
-          // SAFETY: serialized by `KTLINT_TEST_GUARD`.
-          unsafe {
-            std::env::remove_var("PATH");
-          }
-        }
-        forget_binary("ktlint");
-      }
     }
 
     let _cleanup = Cleanup { orig_path };
@@ -413,11 +414,11 @@ mod tests {
   fn test_kotlin_surface_detect() {
     let surface = KotlinSurface;
     let temp = TempDir::new().unwrap();
-    assert!(!surface.detect(temp.path()));
+    assert!(!crate::surfaces::detect_in(&surface, temp.path()));
 
     let kt_file = temp.path().join("Main.kt");
     std::fs::write(&kt_file, "fun main() {}\n").unwrap();
-    assert!(surface.detect(temp.path()));
+    assert!(crate::surfaces::detect_in(&surface, temp.path()));
   }
 
   #[test]
@@ -425,7 +426,7 @@ mod tests {
     let surface = KotlinSurface;
     let temp = TempDir::new().unwrap();
     std::fs::write(temp.path().join("build.gradle.kts"), "").unwrap();
-    assert!(surface.detect(temp.path()));
+    assert!(crate::surfaces::detect_in(&surface, temp.path()));
   }
 
   #[test]

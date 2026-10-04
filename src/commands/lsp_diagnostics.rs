@@ -2306,6 +2306,33 @@ mod tests {
   }
 
   #[test]
+  fn test_parse_taplo_lint_plain_metacharacter_path_matches_real_path() {
+    // Captured from npm taplo 0.9.0 linting `a[[]b[]][(]c[)]/bad.toml`
+    // (the escaped pattern `build_taplo_lsp_lint_args` passes): taplo
+    // prints the real absolute path, so it is matched against the
+    // document's own path, never the pattern.
+    let sample = concat!(
+      " INFO taplo:lint_files:collect_files: found files total=1 excluded=0 cwd=\"/proj\"\n",
+      "error: conflicting keys\n",
+      "  ┌─ /proj/a[b](c)/bad.toml:2:1\n",
+      "  │\n",
+      "1 │ a = 1\n",
+      "  │ - duplicate found here\n",
+      "2 │ a = 2\n",
+      "  │ ^ duplicate key\n",
+      "\n",
+      "ERROR taplo:lint_files: invalid file error=semantic errors found path=\"/proj/a[b](c)/bad.toml\"\n",
+      "ERROR operation failed error=some files were not valid\n",
+    );
+    let diagnostics =
+      parse_taplo_lint_plain(sample, Path::new("/proj/a[b](c)/bad.toml"));
+    assert_eq!(diagnostics.len(), 1);
+    assert_eq!(diagnostics[0].message, "conflicting keys");
+    assert_eq!(diagnostics[0].range.start.line, 1);
+    assert_eq!(diagnostics[0].range.start.character, 0);
+  }
+
+  #[test]
   fn test_parse_taplo_lint_plain_multiple_diagnostics_keep_own_locations() {
     // Two diagnostics in one run, verbatim shape from a real taplo v0.10.0
     // lint of a file with two distinct duplicate-key errors. Each message

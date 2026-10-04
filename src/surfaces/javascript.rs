@@ -5,7 +5,7 @@ use super::{
   DeclaresFacets, ExecutionContext, Facet, FacetSupport, LanguageSurface,
   NativeConfig, SurfaceResult, SurfaceStatus, ToolInfo,
   classify_all_nonzero_as_error, create_tool_command,
-  diff_check_via_tempcopy_classified, extra_args_set_flag, find_files_with_ext,
+  diff_check_via_tempcopy_classified, extra_args_set_flag,
   render_native_config, run_tool_command, run_tool_command_classified,
   sync_native_config, tool_missing_guard,
 };
@@ -264,7 +264,7 @@ const BIOME_LINTER_ENABLED_VALUE: &str = "false";
 /// finding on this path to misclassify. See [`extra_args_set_flag`].
 fn linter_enabled_override_message(offending: &str) -> String {
   format!(
-    "`[lang.javascript] extra_args` contains `{offending}`, but `fml fmt` \
+    "`[lang.javascript.extra_args] biome` contains `{offending}`, but `fml fmt` \
      already passes `{BIOME_LINTER_ENABLED_FLAG}={BIOME_LINTER_ENABLED_VALUE}` \
      to `biome check --write` — and biome rejects that flag given twice.\n\n\
      No value works here. Because `fml` supplies the flag itself, biome \
@@ -346,6 +346,10 @@ impl LanguageSurface for JavaScriptSurface {
     "javascript"
   }
 
+  fn extra_args_tools(&self) -> &'static [&'static str] {
+    &["biome"]
+  }
+
   fn aliases(&self) -> &[&'static str] {
     &["js", "ts", "typescript", "jsx", "tsx"]
   }
@@ -362,12 +366,8 @@ impl LanguageSurface for JavaScriptSurface {
     true
   }
 
-  fn detect(&self, root: &Path) -> bool {
-    root.join("biome.json").is_file()
-      || root.join("biome.jsonc").is_file()
-      || root.join("tsconfig.json").is_file()
-      || root.join("package.json").is_file()
-      || !find_files_with_ext(root, JS_TS_EXTENSIONS, &[], &[], &[]).is_empty()
+  fn marker_files(&self) -> &[&'static str] {
+    &["biome.json", "biome.jsonc", "tsconfig.json", "package.json"]
   }
 
   fn tool_info(
@@ -401,7 +401,7 @@ impl LanguageSurface for JavaScriptSurface {
     // ordering (it also makes this guard's tests hermetic).
     if let Some(offending) = extra_args_set_flag(
       BIOME_LINTER_ENABLED_FLAG,
-      &ctx.lang_config.extra_args,
+      ctx.lang_config.tool_args("biome"),
     ) {
       return SurfaceResult {
         surface_name: self.name(),
@@ -429,7 +429,7 @@ impl LanguageSurface for JavaScriptSurface {
           let mut cmd = create_tool_command("biome");
           cmd.args(build_biome_format_args(
             &[scratch.to_path_buf()],
-            &ctx.lang_config.extra_args,
+            ctx.lang_config.tool_args("biome"),
           ));
           cmd.args(&inline_config);
           cmd.current_dir(ctx.root.as_path());
@@ -456,7 +456,7 @@ impl LanguageSurface for JavaScriptSurface {
     let mut cmd = create_tool_command("biome");
     cmd.args(build_biome_format_args(
       &files_to_pass,
-      &ctx.lang_config.extra_args,
+      ctx.lang_config.tool_args("biome"),
     ));
     cmd.args(&inline_config);
     cmd.current_dir(ctx.root.as_path());
@@ -486,7 +486,7 @@ impl LanguageSurface for JavaScriptSurface {
     cmd.args(build_biome_lint_args(
       &files_to_pass,
       fix,
-      &ctx.lang_config.extra_args,
+      ctx.lang_config.tool_args("biome"),
     ));
     cmd.current_dir(ctx.root.as_path());
 
@@ -591,11 +591,11 @@ mod tests {
   fn test_javascript_surface_detect() {
     let temp = TempDir::new().unwrap();
     let surface = JavaScriptSurface;
-    assert!(!surface.detect(temp.path()));
+    assert!(!crate::surfaces::detect_in(&surface, temp.path()));
 
     let file = temp.path().join("index.ts");
     std::fs::write(&file, "export const x: number = 1;\n").unwrap();
-    assert!(surface.detect(temp.path()));
+    assert!(crate::surfaces::detect_in(&surface, temp.path()));
   }
 
   #[test]
@@ -811,7 +811,11 @@ mod tests {
   fn ctx_with_extra_args(temp: &TempDir, extra: &[&str]) -> ExecutionContext {
     std::fs::write(temp.path().join("a.ts"), "const x = 1;\n").unwrap();
     let mut lang = ResolvedLangConfig::new("javascript");
-    lang.extra_args = extra.iter().map(|s| (*s).to_string()).collect();
+    lang.extra_args = [(
+      "biome".to_string(),
+      extra.iter().map(|s| (*s).to_string()).collect(),
+    )]
+    .into();
     test_ctx(temp.path(), lang)
   }
 

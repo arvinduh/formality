@@ -850,9 +850,6 @@ impl LanguageSurface for MockMissingSurface {
   fn file_extensions(&self) -> &[&'static str] {
     &["mock"]
   }
-  fn detect(&self, _: &Path) -> bool {
-    true
-  }
   fn tool_info(
     &self,
     _: &crate::config::ResolvedLangConfig,
@@ -901,13 +898,13 @@ fn test_runner_missing_tool_exit_code_is_violations() {
   // fix is unconditional on mode.
   let root = PathBuf::from(".");
   let config = FormalityConfig::default();
-  let staged_paths = vec![PathBuf::from("test.mock")];
+  let staged_paths = Scope::Paths(Arc::new(vec![PathBuf::from("test.mock")]));
 
   // Lint unstaged & staged
   let unstaged_lint = Runner::run(
     &[Box::new(MockMissingSurface)],
     &root,
-    &[],
+    &Scope::Workspace(Arc::default()),
     &Plan::lint(false),
     &config,
   );
@@ -927,7 +924,7 @@ fn test_runner_missing_tool_exit_code_is_violations() {
   let unstaged_fmt = Runner::run(
     &[Box::new(MockMissingSurface)],
     &root,
-    &[],
+    &Scope::Workspace(Arc::default()),
     &Plan::fmt(false, false),
     &config,
   );
@@ -948,7 +945,7 @@ fn test_runner_missing_tool_exit_code_is_violations() {
   let check_fmt = Runner::run(
     &[Box::new(MockMissingSurface)],
     &root,
-    &[],
+    &Scope::Workspace(Arc::default()),
     &Plan::fmt(true, false),
     &config,
   );
@@ -958,7 +955,7 @@ fn test_runner_missing_tool_exit_code_is_violations() {
   let fix = Runner::run(
     &[Box::new(MockMissingSurface)],
     &root,
-    &[],
+    &Scope::Workspace(Arc::default()),
     &Plan::fix(false, false),
     &config,
   );
@@ -985,9 +982,6 @@ impl LanguageSurface for MockViolatingSurface {
   }
   fn file_extensions(&self) -> &[&'static str] {
     &["mock2"]
-  }
-  fn detect(&self, _: &Path) -> bool {
-    true
   }
   fn tool_info(
     &self,
@@ -1049,9 +1043,6 @@ impl LanguageSurface for MockErroringSurface {
   fn file_extensions(&self) -> &[&'static str] {
     &["mock3"]
   }
-  fn detect(&self, _: &Path) -> bool {
-    true
-  }
   fn tool_info(
     &self,
     _: &crate::config::ResolvedLangConfig,
@@ -1102,7 +1093,7 @@ fn test_runner_allow_missing_silences_tool_missing_but_not_violations() {
   let without_flag = Runner::run(
     &[Box::new(MockMissingSurface)],
     &root,
-    &[],
+    &Scope::Workspace(Arc::default()),
     &Plan::fmt(false, false),
     &config,
   );
@@ -1112,7 +1103,7 @@ fn test_runner_allow_missing_silences_tool_missing_but_not_violations() {
   let with_flag = Runner::run(
     &[Box::new(MockMissingSurface)],
     &root,
-    &[],
+    &Scope::Workspace(Arc::default()),
     &Plan::fmt(false, true),
     &config,
   );
@@ -1124,7 +1115,7 @@ fn test_runner_allow_missing_silences_tool_missing_but_not_violations() {
   let missing_and_violating = Runner::run(
     &[Box::new(MockMissingSurface), Box::new(MockViolatingSurface)],
     &root,
-    &[],
+    &Scope::Workspace(Arc::default()),
     &Plan::fmt(false, true),
     &config,
   );
@@ -1136,7 +1127,7 @@ fn test_runner_allow_missing_silences_tool_missing_but_not_violations() {
   let missing_and_erroring = Runner::run(
     &[Box::new(MockMissingSurface), Box::new(MockErroringSurface)],
     &root,
-    &[],
+    &Scope::Workspace(Arc::default()),
     &Plan::fmt(false, true),
     &config,
   );

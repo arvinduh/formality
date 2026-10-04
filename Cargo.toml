@@ -28,6 +28,7 @@ similar = { version = "3.1.2", features = ["text"] }
 tempfile = "3.27.0"
 toml = "1.1.4"
 tower-lsp = "0.20"
+tower-service = "0.3"
 tokio = { version = "1", features = ["rt-multi-thread", "io-std", "sync"] }
 unicode-width = "0.2"
 which = "8.0.5"
@@ -35,6 +36,7 @@ serde_yaml = "0.9.34"
 semver = "1.0.28"
 
 [dev-dependencies]
+futures = { version = "0.3", default-features = false }
 tokio = { version = "1", features = ["macros"] }
 
 [lints.rust]
@@ -43,10 +45,9 @@ unsafe_op_in_unsafe_fn = "deny"
 unused_qualifications = "warn"
 
 [lints.clippy]
-# Docs
-doc_markdown = "warn"
-missing_errors_doc = "warn"
-missing_panics_doc = "warn"
+pedantic = { level = "warn", priority = -1 }
+# Pedantic deviations
+too_many_lines = "allow" # until #340 clears the remaining sites
 # Imports
 wildcard_imports = "deny"
 single_component_path_imports = "allow" # `use some_crate;` manifests
@@ -54,20 +55,7 @@ single_component_path_imports = "allow" # `use some_crate;` manifests
 dbg_macro = "deny"
 todo = "warn"
 undocumented_unsafe_blocks = "deny"
-# Idioms
-case_sensitive_file_extension_comparisons = "warn"
-fn_params_excessive_bools = "warn"
-if_not_else = "warn"
-map_unwrap_or = "warn"
-match_same_arms = "warn"
-match_wildcard_for_single_variants = "warn"
-must_use_candidate = "warn"
-redundant_closure_for_method_calls = "warn"
-needless_pass_by_value = "warn"
-unreadable_literal = "warn"
-# Performance
-format_collect = "warn"
-implicit_hasher = "warn"
+# Performance (nursery, outside pedantic)
 redundant_clone = "warn"
 
 # Config for 'dist' (cargo-dist): GitHub Releases are the only channel - no

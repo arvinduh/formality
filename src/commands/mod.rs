@@ -22,11 +22,10 @@ pub mod sync;
 use std::path::{Path, PathBuf};
 
 use crate::config::FormalityConfig;
-use crate::engine::{Pass, Plan, Runner};
+use crate::engine::{Pass, Plan, Runner, Scope};
 use crate::errors::{ExitStatus, FormalityError, GitError, SurfaceError};
 use crate::surfaces::{
-  LanguageSurface, all_surfaces, detect_surfaces_smart, find_files_with_ext,
-  get_surface_by_name,
+  LanguageSurface, all_surfaces, default_registry, get_surface_by_name, glob,
 };
 
 /// Dispatches a [`Plan`] across target surfaces for the `fmt`, `lint`, and
@@ -52,14 +51,38 @@ pub fn dispatch_plan(
     }
   };
 
-  let surfaces =
-    match resolve_target_surfaces(root, lang, &target_paths, config) {
-      Ok(s) => s,
-      Err(e) => {
-        e.print_diagnostic();
-        return ExitStatus::Error;
-      }
-    };
+  run_resolved(
+    &mut std::io::stdout(),
+    root,
+    config,
+    lang,
+    &target_paths,
+    plan,
+  )
+}
+
+/// Runs `plan` against already-resolved `paths`: resolves target surfaces,
+/// warns about stale tools, then runs the passes and renders the report into
+/// `out`.
+///
+/// `out` is stdout for the CLI and stderr for `fml lsp`, whose stdout carries
+/// the JSON-RPC transport; one stray byte there breaks a strict client.
+fn run_resolved(
+  out: &mut dyn std::io::Write,
+  root: &Path,
+  config: &FormalityConfig,
+  lang: &[String],
+  paths: &[PathBuf],
+  plan: &Plan,
+) -> ExitStatus {
+  let scope = Scope::resolve(root, paths, &config.resolve_global().exclude);
+  let surfaces = match resolve_target_surfaces(root, lang, &scope, config) {
+    Ok(s) => s,
+    Err(e) => {
+      e.print_diagnostic();
+      return ExitStatus::Error;
+    }
+  };
 
   // Which tools to preflight follows directly from the plan's passes: a
   // plan that formats needs the formatters, a plan that lints needs the
@@ -69,7 +92,7 @@ pub fn dispatch_plan(
 
   doctor::preflight_warn_stale_tools(&surfaces, config, for_fmt, for_lint);
 
-  Runner::run(&surfaces, root, &target_paths, plan, config)
+  Runner::run_into(out, &surfaces, root, &scope, plan, config)
 }
 
 fn normalize_path(path: &Path) -> PathBuf {
@@ -211,8 +234,9 @@ pub fn get_git_changed_files(
 
 /// Resolves which language surfaces a command should act on: an explicit
 /// `lang_filter` wins outright, otherwise surfaces are narrowed to those with
-/// matching files under `paths`, falling back to full smart detection when
-/// neither is given.
+/// matching files under explicit paths, falling back to full smart detection
+/// over the workspace scope's candidate files, so detection walks nothing
+/// the runner does not already walk.
 ///
 /// # Errors
 ///
@@ -221,7 +245,7 @@ pub fn get_git_changed_files(
 pub fn resolve_target_surfaces(
   root: &Path,
   lang_filter: &[String],
-  paths: &[PathBuf],
+  scope: &Scope,
   config: &FormalityConfig,
 ) -> Result<Vec<Box<dyn LanguageSurface>>, FormalityError> {
   if !lang_filter.is_empty() {
@@ -238,27 +262,39 @@ pub fn resolve_target_surfaces(
     return Ok(selected);
   }
 
-  if !paths.is_empty() {
-    let mut active = Vec::new();
-    let global = config.resolve_global();
-    for surface in all_surfaces() {
+  match scope {
+    Scope::Paths(paths) => Ok(surfaces_with_files_under(root, paths, config)),
+    Scope::Workspace(candidates) => {
+      let present = std::cell::LazyCell::new(|| {
+        glob::PresentExtensions::from_paths(candidates)
+      });
+      Ok(default_registry().detect_surfaces_in(root, config, &present))
+    }
+  }
+}
+
+/// Every surface with at least one of its files under the explicit `paths`,
+/// expanding directory arguments once for all surfaces.
+fn surfaces_with_files_under(
+  root: &Path,
+  paths: &[PathBuf],
+  config: &FormalityConfig,
+) -> Vec<Box<dyn LanguageSurface>> {
+  let files = glob::expand_targets(root, paths);
+  let global = config.resolve_global();
+  all_surfaces()
+    .into_iter()
+    .filter(|surface| {
       let lang_cfg =
         config.resolve_for_lang_with_global(surface.name(), &global);
-      let matching = find_files_with_ext(
+      let filter = glob::FileFilter::new(
         root,
         surface.file_extensions(),
-        paths,
-        &lang_cfg.files,
         &lang_cfg.exclude,
       );
-      if !matching.is_empty() {
-        active.push(surface);
-      }
-    }
-    return Ok(active);
-  }
-
-  Ok(detect_surfaces_smart(root, config))
+      files.iter().any(|file| filter.matches(file))
+    })
+    .collect()
 }
 
 #[cfg(test)]
@@ -463,15 +499,20 @@ mod tests {
     config.lang.insert("rust".to_string(), rust_lang);
 
     // Target surface discovery with staged paths
-    let surfaces =
-      resolve_target_surfaces(root, &[], &staged_files, &config).unwrap();
+    let surfaces = resolve_target_surfaces(
+      root,
+      &[],
+      &Scope::Paths(std::sync::Arc::new(staged_files.clone())),
+      &config,
+    )
+    .unwrap();
     assert_eq!(surfaces.len(), 1);
     assert_eq!(surfaces[0].name(), "rust");
 
     // Discover staged files for the surface (Execution context matched_files)
     let global = config.resolve_global();
     let lang_cfg = config.resolve_for_lang_with_global("rust", &global);
-    let resolved_files = find_files_with_ext(
+    let resolved_files = glob::find_files_with_ext(
       root,
       surfaces[0].file_extensions(),
       &staged_files,
@@ -485,5 +526,91 @@ mod tests {
     assert!(!resolved_files.contains(&file_excluded));
     assert!(!resolved_files.contains(&file_fixture));
     assert!(!resolved_files.contains(&file_ignored));
+  }
+
+  #[test]
+  fn test_default_run_walks_the_workspace_once() {
+    let temp = TempDir::new().unwrap();
+    let root = temp.path();
+    fs::write(root.join("main.rs"), "fn main() {}\n").unwrap();
+
+    let mut out = Vec::new();
+    let _ = run_resolved(
+      &mut out,
+      root,
+      &FormalityConfig::with_defaults(),
+      &[],
+      &[],
+      &Plan::fmt(true, true),
+    );
+
+    // Detection found rust and the runner formatted it, both from one walk.
+    assert!(String::from_utf8_lossy(&out).contains("rust"));
+    assert_eq!(glob::walk_count::of(root), 1);
+  }
+
+  #[test]
+  fn test_explicit_directory_is_walked_once_for_all_surfaces() {
+    let temp = TempDir::new().unwrap();
+    let src = temp.path().join("src");
+    fs::create_dir(&src).unwrap();
+    fs::write(src.join("main.rs"), "fn main() {}\n").unwrap();
+    fs::write(src.join("notes.md"), "# Notes\n").unwrap();
+
+    let scope = Scope::Paths(std::sync::Arc::new(vec![src.clone()]));
+    let surfaces = resolve_target_surfaces(
+      temp.path(),
+      &[],
+      &scope,
+      &FormalityConfig::empty(),
+    )
+    .unwrap();
+
+    let names: Vec<&str> = surfaces.iter().map(|s| s.name()).collect();
+    assert_eq!(names, ["rust", "markdown"]);
+    assert_eq!(glob::walk_count::of(&src), 1);
+  }
+
+  #[test]
+  fn test_file_matched_only_by_global_exclude_does_not_activate_its_surface() {
+    let temp = TempDir::new().unwrap();
+    let root = temp.path();
+    fs::write(root.join("main.rs"), "fn main() {}\n").unwrap();
+    fs::create_dir(root.join("gen")).unwrap();
+    fs::write(root.join("gen/tool.py"), "x = 1\n").unwrap();
+    let detected = |config: &FormalityConfig| -> Vec<&'static str> {
+      let scope = Scope::resolve(root, &[], &config.resolve_global().exclude);
+      resolve_target_surfaces(root, &[], &scope, config)
+        .unwrap()
+        .iter()
+        .map(|s| s.name())
+        .collect()
+    };
+
+    assert_eq!(detected(&FormalityConfig::empty()), ["rust", "python"]);
+    let excluding = FormalityConfig::parse_str(
+      "[global]\nexclude = [\"gen\"]\n",
+      Path::new("formality.toml"),
+    )
+    .unwrap();
+    assert_eq!(detected(&excluding), ["rust"]);
+  }
+
+  #[test]
+  fn test_root_marker_activates_its_surface_despite_global_exclude() {
+    let temp = TempDir::new().unwrap();
+    let root = temp.path();
+    fs::write(root.join("pyproject.toml"), "[project]\n").unwrap();
+    let config = FormalityConfig::parse_str(
+      "[global]\nexclude = [\"pyproject.toml\"]\n",
+      Path::new("formality.toml"),
+    )
+    .unwrap();
+
+    // Marker files are checked at the root, outside the candidate list.
+    let scope = Scope::resolve(root, &[], &config.resolve_global().exclude);
+    let surfaces = resolve_target_surfaces(root, &[], &scope, &config).unwrap();
+    let names: Vec<&str> = surfaces.iter().map(|s| s.name()).collect();
+    assert_eq!(names, ["python"]);
   }
 }

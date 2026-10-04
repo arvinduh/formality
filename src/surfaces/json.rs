@@ -6,10 +6,10 @@ use super::{
   DeclaresFacets, ExecutionContext, Facet, FacetSupport, LanguageSurface,
   NativeConfig, PrettierConfig, SurfaceResult, ToolInfo,
   build_prettier_inline_args, classify_all_nonzero_as_error,
-  create_tool_command, diff_check_via_tempcopy_classified, find_files_with_ext,
+  create_tool_command, diff_check_via_tempcopy_classified,
   lint_fix_unsupported, run_tool_command_classified, tool_missing_guard,
 };
-use std::path::{Path, PathBuf};
+use std::path::PathBuf;
 use std::time::Instant;
 
 /// JSON language surface implementation.
@@ -38,6 +38,10 @@ impl LanguageSurface for JsonSurface {
     "json"
   }
 
+  fn extra_args_tools(&self) -> &'static [&'static str] {
+    &["prettier"]
+  }
+
   fn aliases(&self) -> &[&'static str] {
     &[]
   }
@@ -48,10 +52,6 @@ impl LanguageSurface for JsonSurface {
 
   fn clone_box(&self) -> Box<dyn LanguageSurface> {
     Box::new(*self)
-  }
-
-  fn detect(&self, root: &Path) -> bool {
-    !find_files_with_ext(root, JSON_EXTENSIONS, &[], &[], &[]).is_empty()
   }
 
   fn tool_info(
@@ -109,7 +109,7 @@ impl LanguageSurface for JsonSurface {
             .arg(parser)
             .args(&inline_config)
             .arg(scratch);
-          cmd.args(&ctx.lang_config.extra_args);
+          cmd.args(ctx.lang_config.tool_args("prettier"));
           cmd.current_dir(ctx.root.as_path());
           cmd.output()
         },
@@ -127,7 +127,7 @@ impl LanguageSurface for JsonSurface {
       cmd.arg(f);
     }
 
-    cmd.args(&ctx.lang_config.extra_args);
+    cmd.args(ctx.lang_config.tool_args("prettier"));
     cmd.current_dir(ctx.root.as_path());
 
     // `prettier --write` exits `0` regardless of whether it reformats and
@@ -200,10 +200,10 @@ mod tests {
   fn test_json_surface_detect() {
     let surface = JsonSurface;
     let temp = TempDir::new().unwrap();
-    assert!(!surface.detect(temp.path()));
+    assert!(!crate::surfaces::detect_in(&surface, temp.path()));
 
     std::fs::write(temp.path().join("config.json"), "{}").unwrap();
-    assert!(surface.detect(temp.path()));
+    assert!(crate::surfaces::detect_in(&surface, temp.path()));
   }
 
   #[test]
@@ -211,7 +211,7 @@ mod tests {
     let surface = JsonSurface;
     let temp = TempDir::new().unwrap();
     std::fs::write(temp.path().join("tsconfig.jsonc"), "{ /* c */ }").unwrap();
-    assert!(surface.detect(temp.path()));
+    assert!(crate::surfaces::detect_in(&surface, temp.path()));
   }
 
   #[test]

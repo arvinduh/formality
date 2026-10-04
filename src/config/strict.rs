@@ -32,6 +32,7 @@ pub fn parse(
     source,
   })?;
   check_lang_names(content, path, doc.get_ref())?;
+  check_extra_args(content, path, doc.get_ref())?;
   FormalityConfig::deserialize(toml::de::Deserializer::from(doc.clone()))
     .and_then(|config| {
       check_lang_options(&config, doc.get_ref()).map(|()| config)
@@ -64,6 +65,66 @@ fn check_lang_names(
           canonical,
           line: line_at(content, key.span().start),
         });
+      }
+      _ => {}
+    }
+  }
+  Ok(())
+}
+
+/// Rejects a `[lang.<name>] extra_args` written as a flat list, and a key
+/// in its table naming no tool the surface runs: either would otherwise
+/// fail as a bare type mismatch or reach no invocation at all. A section
+/// naming no surface has no tool list, so only its flat form is checked;
+/// a value of any other type is left to deserialization.
+fn check_extra_args(
+  content: &str,
+  path: &Path,
+  doc: &DeTable<'_>,
+) -> Result<(), ConfigError> {
+  let Some(DeValue::Table(sections)) =
+    doc.get("lang").map(toml::Spanned::get_ref)
+  else {
+    return Ok(());
+  };
+  let registry = SurfaceRegistry::default();
+  for (name, section) in sections {
+    let DeValue::Table(table) = section.get_ref() else {
+      continue;
+    };
+    let Some((key, value)) = table.get_key_value("extra_args") else {
+      continue;
+    };
+    let lang: &str = name.get_ref();
+    // An unknown section has no tool keys to check against; deserialization
+    // types its `extra_args` like any other key, so a flat list there is a
+    // plain `InvalidValue` type error.
+    let Some(surface) = registry.get_surface_by_name(lang) else {
+      continue;
+    };
+    let tools = surface.extra_args_tools();
+    match value.get_ref() {
+      DeValue::Array(_) => {
+        return Err(ConfigError::FlatExtraArgs {
+          path: path.to_path_buf(),
+          lang: lang.to_owned(),
+          line: line_at(content, key.span().start),
+          tools,
+        });
+      }
+      DeValue::Table(by_tool) => {
+        if let Some(tool) = by_tool
+          .keys()
+          .find(|tool| !tools.contains(&tool.get_ref().as_ref()))
+        {
+          return Err(ConfigError::UnknownTool {
+            path: path.to_path_buf(),
+            lang: lang.to_owned(),
+            tool: tool.get_ref().to_string(),
+            line: line_at(content, tool.span().start),
+            tools,
+          });
+        }
       }
       _ => {}
     }

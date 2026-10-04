@@ -80,8 +80,32 @@ pub fn walk_candidate_files(
   root: &Path,
   global_excludes: &[PathBuf],
 ) -> Vec<PathBuf> {
-  let mut results = Vec::new();
-  let walker = ignore::WalkBuilder::new(root)
+  included_candidates(root, global_excludes)
+    .map(ignore::DirEntry::into_path)
+    .collect()
+}
+
+/// Streams [`candidate_file_paths`] minus every file `global_excludes`
+/// matches, so each caller applies the one exclude check while walking.
+fn included_candidates<'a>(
+  root: &'a Path,
+  global_excludes: &'a [PathBuf],
+) -> impl Iterator<Item = ignore::DirEntry> + 'a {
+  let exclude: Vec<NormalizedExclude<'a>> = global_excludes
+    .iter()
+    .map(|ex| NormalizedExclude::new(ex, root))
+    .collect();
+  candidate_file_paths(root)
+    .filter(move |e| !is_excluded_normalized(e.path(), root, &exclude))
+}
+
+/// Yields every regular candidate file under `root`. This is the one place
+/// the candidate ignore rules live: gitignore, standard ignored dirs, temp
+/// files.
+fn candidate_file_paths(root: &Path) -> impl Iterator<Item = ignore::DirEntry> {
+  #[cfg(test)]
+  walk_count::record(root);
+  ignore::WalkBuilder::new(root)
     .hidden(false)
     .git_ignore(true)
     .git_global(true)
@@ -96,26 +120,96 @@ pub fn walk_candidate_files(
       }
       true
     })
-    .build();
+    .build()
+    .filter_map(Result::ok)
+    .filter(|entry| entry.path().is_file())
+}
 
-  for entry in walker.filter_map(Result::ok) {
-    let path = entry.path();
-    if path.is_file() {
-      results.push(path.to_path_buf());
+/// The set of file extensions present among a workspace's candidate files,
+/// compared ASCII-case-insensitively, as every surface's extension match is.
+///
+/// Built by one walk so that auto-detecting every surface costs one walk,
+/// not one per surface.
+pub struct PresentExtensions(std::collections::HashSet<String>);
+
+impl PresentExtensions {
+  /// Walks `root` once with [`walk_candidate_files`]' ignore rules and
+  /// `global_excludes`, recording every UTF-8 file extension seen.
+  #[must_use]
+  pub fn scan(root: &Path, global_excludes: &[PathBuf]) -> Self {
+    let mut present = Self(std::collections::HashSet::new());
+    for entry in included_candidates(root, global_excludes) {
+      present.record(entry.path());
+    }
+    present
+  }
+
+  /// Records the extensions of `paths`, a candidate list the caller already
+  /// walked, so detection and the runner share that one walk.
+  #[must_use]
+  pub fn from_paths(paths: &[PathBuf]) -> Self {
+    let mut present = Self(std::collections::HashSet::new());
+    for path in paths {
+      present.record(path);
+    }
+    present
+  }
+
+  /// Adds `path`'s UTF-8 extension, allocating only for a new one.
+  fn record(&mut self, path: &Path) {
+    let Some(ext) = path.extension().and_then(|e| e.to_str()) else {
+      return;
+    };
+    let ext = ascii_lowercase(ext);
+    if !self.0.contains(ext.as_ref()) {
+      self.0.insert(ext.into_owned());
     }
   }
 
-  if global_excludes.is_empty() {
-    results
+  /// Whether a candidate file with extension `ext` exists, ignoring ASCII
+  /// case.
+  #[must_use]
+  pub fn contains(&self, ext: &str) -> bool {
+    self.0.contains(ascii_lowercase(ext).as_ref())
+  }
+}
+
+/// Counts candidate walks per root, so a test can pin how many walks one
+/// command takes. Keyed by root because tests run in parallel, each in its
+/// own temp dir, and a surface may walk on a worker thread.
+#[cfg(test)]
+pub mod walk_count {
+  use std::path::{Path, PathBuf};
+
+  type Counts = std::collections::HashMap<PathBuf, usize>;
+
+  static WALKS: std::sync::LazyLock<std::sync::Mutex<Counts>> =
+    std::sync::LazyLock::new(std::sync::Mutex::default);
+
+  fn walks() -> std::sync::MutexGuard<'static, Counts> {
+    WALKS
+      .lock()
+      .unwrap_or_else(std::sync::PoisonError::into_inner)
+  }
+
+  /// Records one walk rooted at `root`.
+  pub fn record(root: &Path) {
+    *walks().entry(root.to_path_buf()).or_default() += 1;
+  }
+
+  /// How many walks so far were rooted at `root`.
+  #[must_use]
+  pub fn of(root: &Path) -> usize {
+    walks().get(root).copied().unwrap_or(0)
+  }
+}
+
+/// Lowercases `s`, allocating only when it holds an ASCII uppercase letter.
+fn ascii_lowercase(s: &str) -> std::borrow::Cow<'_, str> {
+  if s.bytes().any(|b| b.is_ascii_uppercase()) {
+    std::borrow::Cow::Owned(s.to_ascii_lowercase())
   } else {
-    let normalized_exclude: Vec<NormalizedExclude<'_>> = global_excludes
-      .iter()
-      .map(|ex| NormalizedExclude::new(ex, root))
-      .collect();
-    results
-      .into_iter()
-      .filter(|file| !is_excluded_normalized(file, root, &normalized_exclude))
-      .collect()
+    std::borrow::Cow::Borrowed(s)
   }
 }
 
@@ -232,55 +326,95 @@ pub fn find_files_with_ext(
     &[]
   };
 
-  let raw_files = if targets.is_empty() {
-    walk_dir_ext(root, extensions)
+  let files = if targets.is_empty() {
+    walk_candidate_files(root, &[])
   } else {
-    let repo_gitignore = build_repo_gitignore(root, targets);
-    let mut out = Vec::new();
-    for p in targets {
-      let full_p = if p.is_absolute() {
-        p.clone()
-      } else {
-        root.join(p)
-      };
-      if is_standard_ignored(&full_p, root) || is_temp_file(&full_p) {
-        continue;
-      }
-      if let Some(ref gi) = repo_gitignore
-        && gi
-          .matched_path_or_any_parents(&full_p, full_p.is_dir())
-          .is_ignore()
-      {
-        continue;
-      }
-      if full_p.is_file()
-        && let Some(ext) = full_p.extension().and_then(|e| e.to_str())
-        && extensions
-          .iter()
-          .any(|&target| target.eq_ignore_ascii_case(ext))
-      {
-        out.push(full_p);
-      } else if full_p.is_dir() {
-        out.extend(walk_dir_ext(&full_p, extensions));
-      }
-    }
-    out
+    expand_targets(root, targets)
   };
+  let filter = FileFilter::new(root, extensions, exclude);
+  files
+    .into_iter()
+    .filter(|file| filter.matches(file))
+    .collect()
+}
 
-  if exclude.is_empty() {
-    raw_files
-  } else {
-    // Normalize each exclude pattern once up front instead of re-deriving
-    // `to_string_lossy()` / `replace('\\', "/")` allocations for every
-    // (file, pattern) pair: O(excludes) allocations, not O(files * excludes).
-    let normalized_exclude: Vec<NormalizedExclude<'_>> = exclude
+/// Expands explicit path `targets` into candidate files: a file target as
+/// is, whatever its extension, and a directory target walked once. Ignored
+/// and temporary targets are skipped. Independent of any surface, so one
+/// expansion serves every surface's [`FileFilter`].
+#[must_use]
+pub fn expand_targets(root: &Path, targets: &[PathBuf]) -> Vec<PathBuf> {
+  let repo_gitignore = build_repo_gitignore(root, targets);
+  let mut out = Vec::new();
+  for p in targets {
+    let full_p = if p.is_absolute() {
+      p.clone()
+    } else {
+      root.join(p)
+    };
+    if is_standard_ignored(&full_p, root) || is_temp_file(&full_p) {
+      continue;
+    }
+    if let Some(ref gi) = repo_gitignore
+      && gi
+        .matched_path_or_any_parents(&full_p, full_p.is_dir())
+        .is_ignore()
+    {
+      continue;
+    }
+    if full_p.is_file() {
+      out.push(full_p);
+    } else if full_p.is_dir() {
+      out.extend(walk_candidate_files(&full_p, &[]));
+    }
+  }
+  out
+}
+
+/// One surface's file selection: an extension it handles, and no `exclude`
+/// pattern matching.
+pub struct FileFilter<'a> {
+  root: &'a Path,
+  extensions: &'a [&'a str],
+  // Normalized once up front instead of re-deriving `to_string_lossy()` /
+  // `replace('\\', "/")` allocations for every (file, pattern) pair:
+  // O(excludes) allocations, not O(files * excludes).
+  exclude: Vec<NormalizedExclude<'a>>,
+}
+
+impl<'a> FileFilter<'a> {
+  /// Selects files under `root` with one of `extensions` (ASCII
+  /// case-insensitive) that no `exclude` pattern matches.
+  #[must_use]
+  pub fn new(
+    root: &'a Path,
+    extensions: &'a [&'a str],
+    exclude: &'a [PathBuf],
+  ) -> Self {
+    let exclude = exclude
       .iter()
       .map(|ex| NormalizedExclude::new(ex, root))
       .collect();
-    raw_files
-      .into_iter()
-      .filter(|file| !is_excluded_normalized(file, root, &normalized_exclude))
-      .collect()
+    Self {
+      root,
+      extensions,
+      exclude,
+    }
+  }
+
+  /// Whether `file` is selected.
+  #[must_use]
+  pub fn matches(&self, file: &Path) -> bool {
+    file
+      .extension()
+      .and_then(|e| e.to_str())
+      .is_some_and(|ext| {
+        self
+          .extensions
+          .iter()
+          .any(|&target| target.eq_ignore_ascii_case(ext))
+      })
+      && !is_excluded_normalized(file, self.root, &self.exclude)
   }
 }
 
@@ -448,26 +582,51 @@ pub fn find_manifest_upwards(start: &Path, filename: &str) -> bool {
   start.ancestors().any(|dir| dir.join(filename).is_file())
 }
 
-fn walk_dir_ext(dir: &Path, extensions: &[&str]) -> Vec<PathBuf> {
-  walk_candidate_files(dir, &[])
-    .into_iter()
-    .filter(|path| {
-      path
-        .extension()
-        .and_then(|e| e.to_str())
-        .is_some_and(|ext| {
-          extensions
-            .iter()
-            .any(|&target| target.eq_ignore_ascii_case(ext))
-        })
-    })
-    .collect()
-}
-
 #[cfg(test)]
 mod tests {
   use super::*;
   use std::path::PathBuf;
+
+  #[test]
+  fn test_present_extensions_ignores_case_and_ignored_dirs() {
+    let temp = tempfile::TempDir::new().unwrap();
+    let root = temp.path();
+    std::fs::create_dir_all(root.join("a/b")).unwrap();
+    std::fs::write(root.join("a/b/Main.RS"), "").unwrap();
+    std::fs::create_dir_all(root.join("node_modules/x")).unwrap();
+    std::fs::write(root.join("node_modules/x/a.js"), "").unwrap();
+    std::fs::create_dir(root.join("dir.py")).unwrap();
+
+    let present = PresentExtensions::scan(root, &[]);
+    assert!(present.contains("rs"));
+    assert!(present.contains("Rs"));
+    assert!(!present.contains("js"));
+    assert!(!present.contains("py"));
+  }
+
+  #[test]
+  fn test_present_extensions_scan_skips_globally_excluded_files() {
+    let temp = tempfile::TempDir::new().unwrap();
+    let root = temp.path();
+    std::fs::create_dir(root.join("ci")).unwrap();
+    std::fs::write(root.join("ci/build.yaml"), "").unwrap();
+    std::fs::write(root.join("main.rs"), "").unwrap();
+
+    let present = PresentExtensions::scan(root, &[PathBuf::from("ci")]);
+    assert!(present.contains("rs"));
+    assert!(!present.contains("yaml"));
+    assert!(PresentExtensions::scan(root, &[]).contains("yaml"));
+  }
+
+  #[test]
+  fn test_present_extensions_from_paths_reads_only_the_given_list() {
+    let paths = [PathBuf::from("a/Main.RS"), PathBuf::from("b/notes")];
+    let present = PresentExtensions::from_paths(&paths);
+    assert!(present.contains("rs"));
+    // The test's cwd (the crate root) holds `.md` files, so this fails if
+    // `from_paths` walks the disk instead of reading the list.
+    assert!(!present.contains("md"));
+  }
 
   #[test]
   fn test_find_manifest_upwards_walks_parent_directories() {

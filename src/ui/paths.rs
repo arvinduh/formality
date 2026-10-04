@@ -3,8 +3,11 @@
 //! does not. Used by both the table cells and the diagnostics block so every
 //! path `fml` prints reads the same way.
 
-use crate::ui::table::strip_ansi_escapes;
-use std::path::{Path, PathBuf};
+use std::cmp;
+use std::env;
+use std::path;
+
+use crate::ui::table;
 
 /// Whether `s` already names an absolute location, judged **host-independently**
 /// — a Windows-style root (`C:\…`, `C:/…`, `\\server\…`) counts even when this
@@ -23,14 +26,14 @@ fn looks_absolute(s: &str) -> bool {
 /// rooted. No filesystem access and no lexical `.`/`..` collapsing — run roots
 /// and tool-reported paths are effectively always already clean, and rebuilding
 /// them component-by-component drops the Windows drive prefix.
-fn absolutize(p: &Path) -> PathBuf {
+fn absolutize(p: &path::Path) -> path::PathBuf {
   // `has_root()` (not `is_absolute()`) so a POSIX-style `/a/b` counts as rooted
   // on Windows too — diagnostic text and roots can arrive in either flavor.
   if p.has_root() {
     p.to_path_buf()
   } else {
-    std::path::absolute(p)
-      .unwrap_or_else(|_| std::env::current_dir().unwrap_or_default().join(p))
+    path::absolute(p)
+      .unwrap_or_else(|_| env::current_dir().unwrap_or_default().join(p))
   }
 }
 
@@ -39,20 +42,18 @@ fn absolutize(p: &Path) -> PathBuf {
 /// slash, and all-backslash — each with a trailing `/` and a trailing `\`.
 /// Longest first so the most specific spelling wins.
 ///
-/// Deliberately does **not** route through [`absolutize`] / [`Path`] joins:
+/// Deliberately does **not** route through [`absolutize`] / [`path::Path`] joins:
 /// on Linux a `C:\…` or `C:/…` root has no `Path` root, so joining it onto the
 /// cwd would yield `/cwd/C:/…` and match nothing. `looks_absolute` classifies
 /// it host-independently instead; only a genuinely relative root is anchored to
 /// the cwd (as a raw string, keeping its separators).
-fn root_prefixes(root: &Path) -> Vec<String> {
+fn root_prefixes(root: &path::Path) -> Vec<String> {
   let raw = root.to_string_lossy();
   let base: String = if looks_absolute(&raw) {
     raw.into_owned()
   } else {
-    std::path::absolute(root)
-      .unwrap_or_else(|_| {
-        std::env::current_dir().unwrap_or_default().join(root)
-      })
+    path::absolute(root)
+      .unwrap_or_else(|_| env::current_dir().unwrap_or_default().join(root))
       .to_string_lossy()
       .into_owned()
   };
@@ -78,7 +79,7 @@ fn root_prefixes(root: &Path) -> Vec<String> {
   // A bare separator prefix would strip a leading `/`/`\` off every allowlisted
   // line — never emit one (happens only for a `/` or empty root).
   variants.retain(|v| v.len() > 1);
-  variants.sort_by_key(|v| std::cmp::Reverse(v.len()));
+  variants.sort_by_key(|v| cmp::Reverse(v.len()));
   variants.dedup();
   variants
 }
@@ -86,7 +87,7 @@ fn root_prefixes(root: &Path) -> Vec<String> {
 /// Render `path` for display: relative to `root` (forward slashes) when it is
 /// under `root`, otherwise the path unchanged.
 #[must_use]
-pub fn display_path(root: &Path, path: &Path) -> String {
+pub fn display_path(root: &path::Path, path: &path::Path) -> String {
   let abs_root = absolutize(root);
   let abs_path = absolutize(path);
   match abs_path.strip_prefix(&abs_root) {
@@ -107,11 +108,11 @@ fn is_path_char(c: char) -> bool {
 
 /// The byte position immediately after a complete, terminated ANSI escape
 /// sequence ending exactly at `end`, or `None` if no such sequence abuts
-/// `end`. Recognizes the three shapes [`strip_ansi_escapes`] does — CSI
+/// `end`. Recognizes the three shapes [`table::strip_ansi_escapes`] does — CSI
 /// (`\x1b[` params/intermediates `final`, final in `0x40..=0x7e`), OSC
 /// (`\x1b]` payload terminated by BEL `\x07` or ST `\x1b` + `\`), and a bare
 /// two-byte `ESC final` (`final` in `0x30..=0x7e`) — but, unlike
-/// [`strip_ansi_escapes`], never looks *through* an OSC payload: it either
+/// [`table::strip_ansi_escapes`], never looks *through* an OSC payload: it either
 /// recognizes a complete sequence terminating right at `end`, or treats the
 /// byte at `end - 1` as ordinary text. All recognized bytes (`ESC`, `[`,
 /// `]`, `\`, `BEL`, and the CSI/simple-ESC final-byte ranges) are ASCII, so
@@ -187,7 +188,7 @@ fn simple_esc_start(b: &[u8], end: usize) -> Option<usize> {
 /// The byte length of a complete, terminated ANSI escape sequence starting
 /// exactly at the beginning of `b`, or `None` if no such sequence begins at
 /// index 0. Recognizes the same three shapes [`escape_seq_start`] and
-/// [`strip_ansi_escapes`] do — CSI (`\x1b[` params/intermediates `final`,
+/// [`table::strip_ansi_escapes`] do — CSI (`\x1b[` params/intermediates `final`,
 /// final in `0x40..=0x7e`), OSC (`\x1b]` payload terminated by BEL `\x07` or
 /// ST `\x1b` + `\`), and a bare two-byte `ESC final` (`final` in
 /// `0x30..=0x7e`) or ESC intermediate (`0x20..=0x2f`* `final`).
@@ -343,7 +344,7 @@ fn strip_leading_prefix(line: &str, prefix: &str) -> Option<String> {
 /// as one (`m` is alphanumeric) if the escape sequence weren't recognized
 /// and skipped — that was #182: an eligible colored line silently left
 /// unrewritten. [`char_before_ansi`] deliberately does *not* strip ANSI
-/// from the whole prefix the way [`strip_ansi_escapes`] does, because that
+/// from the whole prefix the way [`table::strip_ansi_escapes`] does, because that
 /// would also discard OSC *payload* text (e.g. the `file://` URI inside an
 /// OSC-8 hyperlink) as if nothing preceded the match — corrupting the
 /// escape sequence itself rather than merely leaving the line unrewritten.
@@ -463,12 +464,12 @@ const RELATIVIZE_LINE_PREFIXES: [&str; 4] =
 /// ([`RewriteScope::WholeLine`]), prefixes are matched contiguously in raw
 /// text.
 #[must_use]
-pub fn relativize_text(root: &Path, text: &str) -> String {
+pub fn relativize_text(root: &path::Path, text: &str) -> String {
   let prefixes = root_prefixes(root);
   text
     .split('\n')
     .map(|line| {
-      let plain = strip_ansi_escapes(line);
+      let plain = table::strip_ansi_escapes(line);
       // Marker prefixes are checked first: a diff header's payload is paths
       // whatever else the line looks like.
       if RELATIVIZE_LINE_PREFIXES
@@ -490,20 +491,24 @@ pub fn relativize_text(root: &Path, text: &str) -> String {
 mod tests {
   use super::*;
 
+  use colored;
+
+  use crate::engine;
+
   #[test]
   fn display_path_relativizes_under_root() {
-    let root = Path::new("/home/u/proj");
+    let root = path::Path::new("/home/u/proj");
     assert_eq!(
-      display_path(root, Path::new("/home/u/proj/src/main.rs")),
+      display_path(root, path::Path::new("/home/u/proj/src/main.rs")),
       "src/main.rs"
     );
   }
 
   #[test]
   fn display_path_keeps_absolute_outside_root() {
-    let root = Path::new("/home/u/proj");
+    let root = path::Path::new("/home/u/proj");
     assert_eq!(
-      display_path(root, Path::new("/usr/bin/rustfmt")),
+      display_path(root, path::Path::new("/usr/bin/rustfmt")),
       "/usr/bin/rustfmt"
     );
   }
@@ -524,30 +529,33 @@ mod tests {
   /// `relativize_text_diff_header_arm_rewrites_every_occurrence` below.
   #[test]
   fn display_path_relativizes_under_relative_root() {
-    let cwd = std::env::current_dir().unwrap();
+    let cwd = env::current_dir().unwrap();
     let file = cwd.join("src").join("lib.rs");
     // With "." as relative root
-    assert_eq!(display_path(Path::new("."), &file), "src/lib.rs");
+    assert_eq!(display_path(path::Path::new("."), &file), "src/lib.rs");
     assert_eq!(
-      display_path(Path::new("."), Path::new("src/lib.rs")),
+      display_path(path::Path::new("."), path::Path::new("src/lib.rs")),
       "src/lib.rs"
     );
-    assert_eq!(display_path(Path::new("."), Path::new(".")), ".");
+    assert_eq!(
+      display_path(path::Path::new("."), path::Path::new(".")),
+      "."
+    );
 
     // With "src" as relative root
-    assert_eq!(display_path(Path::new("src"), &file), "lib.rs");
+    assert_eq!(display_path(path::Path::new("src"), &file), "lib.rs");
     assert_eq!(
-      display_path(Path::new("src"), Path::new("src/lib.rs")),
+      display_path(path::Path::new("src"), path::Path::new("src/lib.rs")),
       "lib.rs"
     );
   }
 
   #[test]
   fn relativize_text_handles_relative_root() {
-    let cwd = std::env::current_dir().unwrap();
+    let cwd = env::current_dir().unwrap();
     let file = cwd.join("src").join("lib.rs");
     let text = format!("{}:1:1 error", file.display());
-    let relativized = relativize_text(Path::new("."), &text);
+    let relativized = relativize_text(path::Path::new("."), &text);
     assert!(
       relativized == "src/lib.rs:1:1 error"
         || relativized == "src\\lib.rs:1:1 error",
@@ -555,7 +563,7 @@ mod tests {
     );
 
     let diff_text = format!("--- {}", file.display());
-    let diff_relativized = relativize_text(Path::new("."), &diff_text);
+    let diff_relativized = relativize_text(path::Path::new("."), &diff_text);
     assert!(
       diff_relativized == "--- src/lib.rs"
         || diff_relativized == "--- src\\lib.rs",
@@ -565,7 +573,7 @@ mod tests {
 
   #[test]
   fn relativize_text_rewrites_only_the_leading_token_on_a_leading_path_line() {
-    let root = Path::new("/home/u/proj");
+    let root = path::Path::new("/home/u/proj");
     let text = "/home/u/proj/README.md /home/u/proj/docs/a.md \
                 and /usr/share/x";
     assert_eq!(
@@ -584,7 +592,7 @@ mod tests {
   /// issue.
   #[test]
   fn relativize_text_rewrites_a_colored_leading_path_line() {
-    let root = Path::new("/home/u/project");
+    let root = path::Path::new("/home/u/project");
     let text = "\x1b[31m/home/u/project/x.rs:1:1 error\x1b[0m";
     assert_eq!(relativize_text(root, text), "\x1b[31mx.rs:1:1 error\x1b[0m");
   }
@@ -606,7 +614,7 @@ mod tests {
   /// [`char_before_ansi`] recognizes and skips that complete escape.
   #[test]
   fn relativize_text_rewrites_only_the_colored_leading_token() {
-    let root = Path::new("/home/u/project");
+    let root = path::Path::new("/home/u/project");
     let text = "\x1b[31m/home/u/project/x.rs\x1b[0m:1:1 error in \
                 /home/u/project/y.rs";
     assert_eq!(
@@ -621,7 +629,7 @@ mod tests {
   /// uncolored/plain cases already covered elsewhere in this module.
   #[test]
   fn relativize_text_rewrites_colored_diff_headers() {
-    let root = Path::new("/home/u/proj");
+    let root = path::Path::new("/home/u/proj");
     let text = "\x1b[1m--- /home/u/proj/src/main.rs\x1b[0m";
     assert_eq!(relativize_text(root, text), "\x1b[1m--- src/main.rs\x1b[0m");
   }
@@ -644,7 +652,7 @@ mod tests {
   /// `relativize_text_does_not_mangle_an_osc8_payload_on_a_diff_header`.
   #[test]
   fn relativize_text_does_not_mangle_an_osc8_hyperlink_payload() {
-    let root = Path::new("/home/u/proj");
+    let root = path::Path::new("/home/u/proj");
     // Already eligible via the leading `x.rs` token; the second occurrence
     // sits inside an OSC-8 hyperlink's URI payload and must survive intact.
     let text = "/home/u/proj/x.rs \x1b]8;;file:///home/u/proj/y.rs\x1b\\y.rs\x1b]8;;\x1b\\";
@@ -665,7 +673,7 @@ mod tests {
   /// stopped at the first rejected occurrence and left this line unrewritten.
   #[test]
   fn relativize_text_rewrites_a_hyperlinked_leading_path_line() {
-    let root = Path::new("/home/u/proj");
+    let root = path::Path::new("/home/u/proj");
     let text = "\x1b]8;;file:///home/u/proj/x.rs\x1b\\/home/u/proj/x.rs:1:1 error\x1b]8;;\x1b\\";
     assert_eq!(
       relativize_text(root, text),
@@ -680,7 +688,7 @@ mod tests {
   /// user's file says.
   #[test]
   fn relativize_text_does_not_rewrite_echoed_content_on_a_diagnostic_line() {
-    let root = Path::new("/home/u/project");
+    let root = path::Path::new("/home/u/project");
     let text = "/home/u/project/README.md:3:1 error MD044 \
                 [Context: \"see /home/u/project/secret/notes.txt\"]";
     assert_eq!(
@@ -696,7 +704,7 @@ mod tests {
   /// quoted content is protected on purpose instead.
   #[test]
   fn relativize_text_does_not_rewrite_echoed_content_on_a_colored_line() {
-    let root = Path::new("/home/u/proj");
+    let root = path::Path::new("/home/u/proj");
     let text = "\x1b[31m/home/u/proj/README.md\x1b[0m:3:1 MD044 \
                 [Context: \"see /home/u/proj/secret/notes.txt\"]";
     assert_eq!(
@@ -713,7 +721,7 @@ mod tests {
   /// relativized path remains intact.
   #[test]
   fn relativize_text_rewrites_a_mid_prefix_colored_leading_path_line() {
-    let root = Path::new("/home/u/proj");
+    let root = path::Path::new("/home/u/proj");
     let text = "\x1b[31m/home/u/\x1b[1mproj/x.rs\x1b[0m:1:1 error";
     assert_eq!(
       relativize_text(root, text),
@@ -726,7 +734,7 @@ mod tests {
   /// line that must remain untouched (#183).
   #[test]
   fn relativize_text_mid_prefix_escapes_with_echoed_content() {
-    let root = Path::new("/home/u/proj");
+    let root = path::Path::new("/home/u/proj");
     let text = "\x1b[31m/home/\x1b[32mu/\x1b[1mproj\x1b[4m/x.rs\x1b[0m:1:1 error \
                 [Context: \"/home/u/proj/y.rs\"]";
     assert_eq!(
@@ -765,7 +773,7 @@ mod tests {
   /// cannot be narrowed to the leading token.
   #[test]
   fn relativize_text_diff_header_arm_rewrites_every_occurrence() {
-    let root = Path::new("/home/u/proj");
+    let root = path::Path::new("/home/u/proj");
     let text = "diff --git /home/u/proj/a/x.rs /home/u/proj/b/x.rs";
     assert_eq!(relativize_text(root, text), "diff --git a/x.rs b/x.rs");
   }
@@ -779,7 +787,7 @@ mod tests {
   /// its leading token.
   #[test]
   fn relativize_text_diff_header_arm_still_token_anchors_occurrences() {
-    let root = Path::new("/home/u/proj");
+    let root = path::Path::new("/home/u/proj");
     let text = "--- /home/u/proj/a.md /mnt/backup/home/u/proj/b.md \
                 /home/u/project/c.md";
     assert_eq!(
@@ -796,7 +804,7 @@ mod tests {
   /// payload the way `strip_ansi_escapes` would.
   #[test]
   fn relativize_text_does_not_mangle_an_osc8_payload_on_a_diff_header() {
-    let root = Path::new("/home/u/proj");
+    let root = path::Path::new("/home/u/proj");
     let text = "--- \x1b]8;;file:///home/u/proj/y.rs\x1b\\y.rs\x1b]8;;\x1b\\";
     assert_eq!(relativize_text(root, text), text);
   }
@@ -831,7 +839,7 @@ mod tests {
 
   #[test]
   fn relativize_text_handles_backslash_separators() {
-    let root = Path::new("C:/work/repo");
+    let root = path::Path::new("C:/work/repo");
     let text = "--- C:\\work\\repo\\poly\\data.json (formatted)";
     assert_eq!(
       relativize_text(root, text),
@@ -843,11 +851,11 @@ mod tests {
   fn root_prefixes_emits_both_separator_spellings_host_independently() {
     // A Windows-style root: on Linux it has no `Path` root, so this must not
     // route through a cwd join (which was the CI regression).
-    let v = root_prefixes(Path::new("C:\\work\\repo"));
+    let v = root_prefixes(path::Path::new("C:\\work\\repo"));
     assert!(v.contains(&"C:/work/repo/".to_string()), "{v:?}");
     assert!(v.contains(&"C:\\work\\repo\\".to_string()), "{v:?}");
     // A POSIX root, likewise both spellings.
-    let v = root_prefixes(Path::new("/home/u/proj"));
+    let v = root_prefixes(path::Path::new("/home/u/proj"));
     assert!(v.contains(&"/home/u/proj/".to_string()), "{v:?}");
     assert!(v.contains(&"\\home\\u\\proj\\".to_string()), "{v:?}");
   }
@@ -857,7 +865,7 @@ mod tests {
     // backslash root, forward-slash text
     assert_eq!(
       relativize_text(
-        Path::new("C:\\work\\repo"),
+        path::Path::new("C:\\work\\repo"),
         "--- C:/work/repo/poly/data.json (formatted)"
       ),
       "--- poly/data.json (formatted)"
@@ -865,7 +873,7 @@ mod tests {
     // forward-slash root, backslash text
     assert_eq!(
       relativize_text(
-        Path::new("C:/work/repo"),
+        path::Path::new("C:/work/repo"),
         "+++ C:\\work\\repo\\poly\\data.json"
       ),
       "+++ poly\\data.json"
@@ -884,7 +892,7 @@ mod tests {
 
   #[test]
   fn relativize_text_noop_when_nothing_under_root() {
-    let root = Path::new("/home/u/proj");
+    let root = path::Path::new("/home/u/proj");
     let text = "nothing to see /elsewhere/file";
     assert_eq!(relativize_text(root, text), text);
   }
@@ -896,7 +904,7 @@ mod tests {
     // message`, no fixed marker prefix. This is what let #157 fold
     // markdown's bespoke shim into this shared helper instead of keeping a
     // second, surface-local relativization pass.
-    let root = Path::new("/home/u/proj");
+    let root = path::Path::new("/home/u/proj");
     let text = "/home/u/proj/README.md:7:3 error MD019/no-multiple-space-atx \
                 Multiple spaces after hash";
     assert_eq!(
@@ -908,7 +916,7 @@ mod tests {
 
   #[test]
   fn relativize_text_does_not_mangle_a_path_that_merely_contains_the_root() {
-    let root = Path::new("/home/u/proj");
+    let root = path::Path::new("/home/u/proj");
     // The line is eligible (it opens with the literal root path), but the
     // other two occurrences are not touched: one has the root string
     // mid-way through an unrelated absolute path (no token boundary before
@@ -931,7 +939,7 @@ mod tests {
 
   #[test]
   fn relativize_text_rewrites_diff_headers_but_not_hunk_bodies() {
-    let root = Path::new("/home/u/proj");
+    let root = path::Path::new("/home/u/proj");
     // (b) the added/removed lines embed the root path as file *content*; only
     // the `---` / `+++` headers may be rewritten.
     let diff = "--- /home/u/proj/src/main.rs\n\
@@ -950,7 +958,7 @@ mod tests {
 
   #[test]
   fn relativize_text_two_file_plain_diff_relativizes_every_header() {
-    let root = Path::new("/home/u/proj");
+    let root = path::Path::new("/home/u/proj");
     let diff = "--- /home/u/proj/a/x.rs\n\
                 +++ /home/u/proj/a/x.rs (formatted)\n\
                 @@ -1 +1 @@\n-a\n+b\n\
@@ -971,7 +979,14 @@ mod tests {
   /// contains the absolute run-root path — must survive byte-for-byte.
   #[test]
   fn relativize_text_over_real_render_diff_never_touches_hunk_bodies() {
-    let root = Path::new("/home/u/proj");
+    struct ColorOverrideGuard;
+    impl Drop for ColorOverrideGuard {
+      fn drop(&mut self) {
+        colored::control::unset_override();
+      }
+    }
+
+    let root = path::Path::new("/home/u/proj");
     let old = "use \"/home/u/proj/lib\";\n\
                let p = \"/home/u/proj/x\";\n\
                fn main() {}\n\
@@ -993,12 +1008,12 @@ mod tests {
       let mut saw_header = false;
       let mut saw_body_with_root_path = false;
       for (a, b) in diff.lines().zip(out.lines()) {
-        let pa = strip_ansi_escapes(a);
+        let pa = table::strip_ansi_escapes(a);
         if pa.starts_with("--- ") || pa.starts_with("+++ ") {
           saw_header = true;
           assert_ne!(a, b, "header not relativized: {a:?}");
           assert!(
-            !strip_ansi_escapes(b).contains("/home/u/proj/src"),
+            !table::strip_ansi_escapes(b).contains("/home/u/proj/src"),
             "header still absolute: {b:?}"
           );
         } else {
@@ -1017,8 +1032,8 @@ mod tests {
         "test diff had no hunk line embedding the root path"
       );
       // Content path preserved; header path gone.
-      assert!(strip_ansi_escapes(&out).contains("/home/u/proj/x"));
-      assert!(!strip_ansi_escapes(&out).contains("/home/u/proj/src"));
+      assert!(table::strip_ansi_escapes(&out).contains("/home/u/proj/x"));
+      assert!(!table::strip_ansi_escapes(&out).contains("/home/u/proj/src"));
     };
 
     // `colored`'s override is a process-global — `cargo test` runs this
@@ -1033,17 +1048,11 @@ mod tests {
     // ever needs this same override, promote this to a shared
     // `Mutex`-guarded helper so the two can't interleave either — one test
     // doing the mutation doesn't justify that machinery yet.
-    struct ColorOverrideGuard;
-    impl Drop for ColorOverrideGuard {
-      fn drop(&mut self) {
-        colored::control::unset_override();
-      }
-    }
     let _guard = ColorOverrideGuard;
 
     colored::control::set_override(true);
-    check(&crate::engine::render_diff(old, new, old_label, new_label));
+    check(&engine::render_diff(old, new, old_label, new_label));
     colored::control::set_override(false);
-    check(&crate::engine::render_diff(old, new, old_label, new_label));
+    check(&engine::render_diff(old, new, old_label, new_label));
   }
 }

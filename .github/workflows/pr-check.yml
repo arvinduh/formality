@@ -135,6 +135,40 @@ jobs:
           ./target/debug/fml fmt schema/formality.schema.json
           git diff --exit-code schema/formality.schema.json
 
+  test-windows:
+    # Deliberately NOT a required status check (issue #480): it mirrors
+    # Library Tests on windows-latest so #[cfg(windows)] code and tests
+    # (spawn shims, .cmd quoting) actually run somewhere. Making it
+    # required is a branch-protection decision for the owner.
+    name: Windows Tests
+    runs-on: windows-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v7
+
+      - name: Set up Rust toolchain
+        # Pinned to match rust-toolchain.toml, same as Library Tests.
+        uses: dtolnay/rust-toolchain@1.98.1
+        with:
+          components: clippy, rustfmt
+
+      - name: Set up Rust cache
+        uses: Swatinem/rust-cache@v2
+
+      - name: Run clippy
+        run: cargo clippy --all-targets -- -D warnings
+
+      - name: Build fml
+        run: cargo build
+
+      - name: Install tool dependencies via fml
+        run: ./target/debug/fml doctor --install
+
+      - name: Run full test suite
+        # --no-fail-fast: a failing lib test must not hide the integration
+        # tests, which are the ones most likely to differ on Windows.
+        run: cargo test --verbose --no-fail-fast
+
   security-audit:
     name: Security Audit
     runs-on: ubuntu-latest

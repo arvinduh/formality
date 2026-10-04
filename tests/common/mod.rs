@@ -5,6 +5,8 @@
 
 #![allow(dead_code)]
 
+pub mod lsp;
+
 use fml::cli::{Cli, Commands};
 use fml::errors::ExitStatus;
 use std::fs;
@@ -52,6 +54,10 @@ impl BinaryOverride {
   }
 
   /// Runs `command` under this override; [`run_cli`] would deadlock here.
+  #[expect(
+    clippy::unused_self,
+    reason = "`&self` proves the caller holds the binary-cache lock"
+  )]
   pub fn run_cli(&self, root: &Path, command: Commands) -> ExitStatus {
     fml::run_with_args(Cli {
       config: None,

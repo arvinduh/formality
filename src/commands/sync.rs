@@ -5,7 +5,7 @@ use std::path::Path;
 
 use crate::commands::resolve_target_surfaces;
 use crate::config::FormalityConfig;
-use crate::engine::{Plan, Runner};
+use crate::engine::{Plan, Runner, Scope};
 use crate::errors::ExitStatus;
 
 /// Runs the `fml sync` command: the `[ConfigSync]` plan, writing by default
@@ -17,12 +17,13 @@ pub fn run_sync(
   check: bool,
   lang: &[String],
 ) -> ExitStatus {
-  let surfaces = match resolve_target_surfaces(root, lang, &[], config) {
+  let scope = Scope::resolve(root, &[], &config.resolve_global().exclude);
+  let surfaces = match resolve_target_surfaces(root, lang, &scope, config) {
     Ok(s) => s,
     Err(e) => {
       e.print_diagnostic();
       return ExitStatus::Error;
     }
   };
-  Runner::run(&surfaces, root, &[], &Plan::sync(check), config)
+  Runner::run(&surfaces, root, &scope, &Plan::sync(check), config)
 }

@@ -6,7 +6,7 @@ use super::{
   DeclaresFacets, ExecutionContext, Facet, FacetSupport, LanguageSurface,
   NativeConfig, SurfaceResult, SurfaceStatus, ToolInfo,
   classify_all_nonzero_as_error, classify_exit_one_as_violation,
-  create_tool_command, diff_check_via_tempcopy_classified, find_files_with_ext,
+  create_tool_command, diff_check_via_tempcopy_classified,
   find_manifest_upwards, render_native_config, run_tool_command_classified,
   sync_native_config, tool_missing_guard,
 };
@@ -162,6 +162,39 @@ pub fn build_golangci_lint_json_args(
   args
 }
 
+/// Builds the `gofmt -s -w` argv shared by `fml fmt` and `fml fmt --check`.
+///
+/// The `gofmt` extra args precede the files: Go's `flag` package stops
+/// parsing at the first positional, so a flag after a path is read as a path
+/// (#210).
+fn build_gofmt_args(
+  files: &[PathBuf],
+  lang: &crate::config::ResolvedLangConfig,
+) -> Vec<String> {
+  let mut args = vec!["-s".to_string(), "-w".to_string()];
+  args.extend(lang.tool_args("gofmt").iter().cloned());
+  args.extend(files.iter().map(|f| f.to_string_lossy().to_string()));
+  args
+}
+
+/// Builds the `goimports -w` argv shared by `fml fmt` and `fml fmt --check`,
+/// with `-local` when `local_prefix` is set and the `goimports` extra args
+/// ahead of the files for the same reason as [`build_gofmt_args`].
+fn build_goimports_args(
+  local_prefix: Option<&str>,
+  files: &[PathBuf],
+  lang: &crate::config::ResolvedLangConfig,
+) -> Vec<String> {
+  let mut args = vec!["-w".to_string()];
+  if let Some(prefix) = local_prefix {
+    args.push("-local".to_string());
+    args.push(prefix.to_string());
+  }
+  args.extend(lang.tool_args("goimports").iter().cloned());
+  args.extend(files.iter().map(|f| f.to_string_lossy().to_string()));
+  args
+}
+
 /// Renders the resolved linter set as the `--enable-only <comma-list>` flag
 /// golangci-lint v2 accepts inline, so `fml lint` can apply
 /// formality.toml's configured linter set without writing `.golangci.yml`
@@ -205,6 +238,10 @@ impl LanguageSurface for GoSurface {
     "go"
   }
 
+  fn extra_args_tools(&self) -> &'static [&'static str] {
+    &["gofmt", "goimports", "golangci-lint"]
+  }
+
   fn aliases(&self) -> &[&'static str] {
     &["golang"]
   }
@@ -221,12 +258,8 @@ impl LanguageSurface for GoSurface {
     true
   }
 
-  fn detect(&self, root: &std::path::Path) -> bool {
-    root.join("go.mod").is_file()
-      || root.join("go.sum").is_file()
-      || root.join(".golangci.yml").is_file()
-      || root.join(".golangci.yaml").is_file()
-      || !find_files_with_ext(root, GO_EXTENSIONS, &[], &[], &[]).is_empty()
+  fn marker_files(&self) -> &[&'static str] {
+    &["go.mod", "go.sum", ".golangci.yml", ".golangci.yaml"]
   }
 
   fn tool_info(
@@ -296,7 +329,8 @@ impl LanguageSurface for GoSurface {
         &files,
         |scratch| {
           let mut gofmt_cmd = create_tool_command("gofmt");
-          gofmt_cmd.arg("-s").arg("-w").arg(scratch);
+          let scratch = [scratch.to_path_buf()];
+          gofmt_cmd.args(build_gofmt_args(&scratch, &ctx.lang_config));
           gofmt_cmd.current_dir(ctx.root.as_path());
           let gofmt_out = gofmt_cmd.output()?;
           if !gofmt_out.status.success() {
@@ -304,11 +338,11 @@ impl LanguageSurface for GoSurface {
           }
 
           let mut goimports_cmd = create_tool_command("goimports");
-          goimports_cmd.arg("-w");
-          if let Some(ref prefix) = local_prefix {
-            goimports_cmd.arg("-local").arg(prefix);
-          }
-          goimports_cmd.arg(scratch);
+          goimports_cmd.args(build_goimports_args(
+            local_prefix.as_deref(),
+            &scratch,
+            &ctx.lang_config,
+          ));
           goimports_cmd.current_dir(ctx.root.as_path());
           goimports_cmd.output()
         },
@@ -322,10 +356,7 @@ impl LanguageSurface for GoSurface {
     }
 
     let mut gofmt_cmd = create_tool_command("gofmt");
-    gofmt_cmd.arg("-s").arg("-w");
-    for f in &files {
-      gofmt_cmd.arg(f);
-    }
+    gofmt_cmd.args(build_gofmt_args(&files, &ctx.lang_config));
     gofmt_cmd.current_dir(ctx.root.as_path());
 
     match gofmt_cmd.output() {
@@ -364,14 +395,11 @@ impl LanguageSurface for GoSurface {
     }
 
     let mut goimports_cmd = create_tool_command("goimports");
-    goimports_cmd.arg("-w");
-    if let Some(ref prefix) = local_prefix {
-      goimports_cmd.arg("-local").arg(prefix);
-    }
-    for f in &files {
-      goimports_cmd.arg(f);
-    }
-    goimports_cmd.args(&ctx.lang_config.extra_args);
+    goimports_cmd.args(build_goimports_args(
+      local_prefix.as_deref(),
+      &files,
+      &ctx.lang_config,
+    ));
     goimports_cmd.current_dir(ctx.root.as_path());
 
     match goimports_cmd.output() {
@@ -477,7 +505,7 @@ impl LanguageSurface for GoSurface {
     cmd.args(build_golangci_lint_args(
       &files_to_pass,
       fix,
-      &ctx.lang_config.extra_args,
+      ctx.lang_config.tool_args("golangci-lint"),
     ));
     cmd.current_dir(ctx.root.as_path());
 
@@ -545,6 +573,41 @@ pub(crate) mod tests {
   }
 
   #[test]
+  fn test_go_fmt_extra_args_precede_files() {
+    // Go's `flag` package stops at the first positional, so a user arg after
+    // the file list is read as a path (`stat -r: no such file`, #210).
+    let mut lang = ResolvedLangConfig::new("go");
+    lang.extra_args = [
+      (
+        "gofmt".to_string(),
+        vec!["-r".to_string(), "x -> y".to_string()],
+      ),
+      ("goimports".to_string(), vec!["-format-only".to_string()]),
+    ]
+    .into();
+    let files = vec![PathBuf::from("a.go"), PathBuf::from("b.go")];
+    assert_eq!(
+      build_gofmt_args(&files, &lang),
+      vec!["-s", "-w", "-r", "x -> y", "a.go", "b.go"]
+    );
+    assert_eq!(
+      build_goimports_args(Some("example.com"), &files, &lang),
+      vec![
+        "-w",
+        "-local",
+        "example.com",
+        "-format-only",
+        "a.go",
+        "b.go"
+      ]
+    );
+    assert_eq!(
+      build_goimports_args(None, &files, &lang),
+      vec!["-w", "-format-only", "a.go", "b.go"]
+    );
+  }
+
+  #[test]
   fn test_go_surface_basics() {
     let surface = GoSurface;
     assert_eq!(surface.name(), "go");
@@ -578,21 +641,21 @@ pub(crate) mod tests {
   fn test_go_detect() {
     let surface = GoSurface;
     let temp = TempDir::new().unwrap();
-    assert!(!surface.detect(temp.path()));
+    assert!(!crate::surfaces::detect_in(&surface, temp.path()));
 
     std::fs::write(temp.path().join("go.mod"), "module example.com/foo\n")
       .unwrap();
-    assert!(surface.detect(temp.path()));
+    assert!(crate::surfaces::detect_in(&surface, temp.path()));
   }
 
   #[test]
   fn test_go_detect_via_source_file() {
     let surface = GoSurface;
     let temp = TempDir::new().unwrap();
-    assert!(!surface.detect(temp.path()));
+    assert!(!crate::surfaces::detect_in(&surface, temp.path()));
 
     std::fs::write(temp.path().join("main.go"), "package main\n").unwrap();
-    assert!(surface.detect(temp.path()));
+    assert!(crate::surfaces::detect_in(&surface, temp.path()));
   }
 
   #[test]
@@ -803,7 +866,8 @@ pub(crate) mod tests {
 
     let surface = GoSurface;
     let mut config = ResolvedLangConfig::new("go");
-    config.extra_args = vec!["-local".to_string()];
+    config.extra_args =
+      [("goimports".to_string(), vec!["-local".to_string()])].into();
     let ctx = test_ctx(temp.path(), config);
 
     let res = surface.format(&ctx);

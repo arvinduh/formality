@@ -265,18 +265,12 @@ fn test_stale_unpinnable_explanation() {
 fn test_pinned_version_for_golangci_lint() {
   assert_eq!(
     pinned_version_for("golangci-lint"),
-    Some(Version::new(2, 13, 1))
+    Some(Version::new(2, 13, 2))
   );
 }
 
 #[test]
 fn test_scan_tools_and_build_table_surfaces_unprobeable_status_not_ready() {
-  // Use a system binary that exists on PATH but does not produce semver on `--version`
-  let binary_name: &'static str = if cfg!(windows) { "where" } else { "test" };
-  if which::which(binary_name).is_err() {
-    return;
-  }
-
   #[derive(Clone)]
   struct UnprobeableSurface {
     bin: &'static str,
@@ -295,7 +289,11 @@ fn test_scan_tools_and_build_table_surfaces_unprobeable_status_not_ready() {
     fn name(&self) -> &'static str {
       "mock_unprobeable"
     }
-    fn detect(&self, _root: &Path) -> bool {
+    fn detect(
+      &self,
+      _: &Path,
+      _: &crate::surfaces::glob::PresentExtensions,
+    ) -> bool {
       true
     }
     fn tool_info(
@@ -335,11 +333,26 @@ fn test_scan_tools_and_build_table_surfaces_unprobeable_status_not_ready() {
     }
   }
 
+  // Use a system binary that exists on PATH but does not produce semver on `--version`
+  let binary_name: &'static str = if cfg!(windows) { "where" } else { "test" };
+  if which::which(binary_name).is_err() {
+    return;
+  }
+
   let surfaces: Vec<Box<dyn LanguageSurface>> =
     vec![Box::new(UnprobeableSurface { bin: binary_name })];
   let config = FormalityConfig::default();
 
-  let scan = scan_tools_and_build_table(Path::new("."), &surfaces, &config);
+  let present = std::cell::LazyCell::new(|| {
+    crate::surfaces::glob::PresentExtensions::from_paths(&[])
+  });
+  let scan = scan_tools_and_build_table(
+    Path::new("."),
+    &surfaces,
+    &HashSet::new(),
+    &present,
+    &config,
+  );
 
   assert!(scan.missing.is_empty());
   assert!(scan.installed.contains(binary_name));
@@ -381,7 +394,7 @@ fn test_install_missing_tools_framed_fails_for_tool_without_installer() {
     is_required_for_lint: true,
   };
 
-  let report = install_missing_tools_framed(&[missing_tool], &Frame::capped());
+  let report = install_missing_tools_framed(&[missing_tool], Frame::capped());
   assert!(
     !report.all_ok,
     "Should report failure when tool cannot be auto-installed"
@@ -711,6 +724,25 @@ fn test_classify_install_outcome_unpinned_absent_binary_is_not_ok() {
   );
 }
 
+/// A tool with no install step that can run on the OS (`gofmt` anywhere, it
+/// has no chain; `checkstyle` on Windows, its chain is `brew` + `apt`) must
+/// not read like a chain whose package managers are all missing.
+#[test]
+fn test_miss_headline_distinguishes_no_install_path_from_no_installer() {
+  let headline = |binary, os| strip_ansi_escapes(&miss_headline(binary, os));
+  let no_installer =
+    |binary| format!("No automatic package manager found for {binary}.");
+  let no_path =
+    |binary| format!("fml has no install path for {binary} on this OS.");
+  for os in ["linux", "macos", "windows"] {
+    assert_eq!(headline("gofmt", os), no_path("gofmt"), "{os}");
+    assert_eq!(headline("prettier", os), no_installer("prettier"), "{os}");
+  }
+  assert_eq!(headline("checkstyle", "linux"), no_installer("checkstyle"));
+  assert_eq!(headline("checkstyle", "macos"), no_installer("checkstyle"));
+  assert_eq!(headline("checkstyle", "windows"), no_path("checkstyle"));
+}
+
 /// `PATH` resolution is checked first and unconditionally: a tool that cannot
 /// be invoked is not "present at the wrong version", it is absent. Even a
 /// probed version matching the pin exactly cannot promote it — that
@@ -936,7 +968,21 @@ fn test_doctor_table_shows_detected_vs_undetected_status_for_surfaces() {
 
   let config = FormalityConfig::default();
   let surfaces = all_surfaces();
-  let scan = scan_tools_and_build_table(temp.path(), &surfaces, &config);
+  let present = std::cell::LazyCell::new(|| {
+    crate::surfaces::glob::PresentExtensions::scan(temp.path(), &[])
+  });
+  let detected: HashSet<&'static str> = default_registry()
+    .detect_surfaces_in(temp.path(), &config, &present)
+    .iter()
+    .map(|s| s.name())
+    .collect();
+  let scan = scan_tools_and_build_table(
+    temp.path(),
+    &surfaces,
+    &detected,
+    &present,
+    &config,
+  );
 
   let rendered = strip_ansi_escapes(&render(&scan.table, &Palette::none()));
 
@@ -1125,4 +1171,46 @@ fn test_doctor_table_layout_budget_with_reported_distro_version() {
       len = line.chars().count()
     );
   }
+}
+
+#[test]
+fn test_run_doctor_walks_the_workspace_at_most_once() {
+  let temp = tempdir().unwrap();
+  std::fs::write(temp.path().join("main.rs"), "fn main() {}\n").unwrap();
+
+  let _ = run_doctor(temp.path(), false, false, &FormalityConfig::empty());
+
+  // Detection and the table's detected column share one walk.
+  assert_eq!(crate::surfaces::glob::walk_count::of(temp.path()), 1);
+}
+
+#[test]
+fn test_doctor_detects_the_surfaces_fmt_runs_under_global_exclude() {
+  let temp = tempdir().unwrap();
+  let root = temp.path();
+  std::fs::write(root.join("pyproject.toml"), "[project]\n").unwrap();
+  std::fs::write(root.join("main.rs"), "fn main() {}\n").unwrap();
+  std::fs::create_dir(root.join("ci")).unwrap();
+  std::fs::write(root.join("ci/build.yaml"), "a: 1\n").unwrap();
+  let config = FormalityConfig::parse_str(
+    "[global]\nexclude = [\"ci\", \"pyproject.toml\"]\n",
+    Path::new("formality.toml"),
+  )
+  .unwrap();
+
+  let _ = run_doctor(root, false, false, &config);
+  let doctor = LAST_DETECTED.take();
+  let scope =
+    crate::engine::Scope::resolve(root, &[], &config.resolve_global().exclude);
+  let fmt: Vec<&str> =
+    crate::commands::resolve_target_surfaces(root, &[], &scope, &config)
+      .unwrap()
+      .iter()
+      .map(|s| s.name())
+      .collect();
+
+  // The only `.yaml` file is excluded; the excluded root marker still
+  // activates python in both.
+  assert!(!doctor.contains(&"yaml"), "{doctor:?}");
+  assert_eq!(doctor, fmt);
 }
