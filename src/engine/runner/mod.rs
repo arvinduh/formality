@@ -14,7 +14,9 @@ use crate::surfaces::{
   ExecutionContext, LanguageSurface, Severity, SurfaceResult, SurfaceStatus,
 };
 use colored::Colorize;
-use rayon::prelude::*;
+use rayon::iter::IndexedParallelIterator;
+use rayon::iter::IntoParallelRefIterator;
+use rayon::iter::ParallelIterator;
 use std::fmt::Write as _;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;

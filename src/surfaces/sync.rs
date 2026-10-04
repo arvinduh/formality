@@ -5,7 +5,9 @@
 use super::tooling::merge_tool_streams;
 use super::{ExitClass, SurfaceResult, SurfaceStatus, SyncedConfigFile};
 use crate::engine::diff::render_diff;
-use rayon::prelude::*;
+use rayon::iter::IndexedParallelIterator;
+use rayon::iter::IntoParallelRefIterator;
+use rayon::iter::ParallelIterator;
 use std::path::{Path, PathBuf};
 use std::time::Instant;
 
