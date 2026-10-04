@@ -224,18 +224,13 @@ pub fn diff_check_via_tempcopy(
   )
 }
 
-/// Like [`diff_check_via_tempcopy`], but lets the caller classify a non-zero
-/// formatter exit code as either a formatting result or a tool failure via
-/// `classify` (receives [`std::process::ExitStatus::code`], `None` on a
-/// signal). On a non-zero exit both captured streams are surfaced when both
-/// are non-empty — no non-empty stream is discarded.
+/// Internal implementation backing [`diff_check_via_tempcopy_classified`]
+/// and [`diff_check_via_local_tempcopy_classified`].
 ///
-/// Uses an isolated temporary directory under [`std::env::temp_dir()`] so that
-/// scratch files do not pollute the workspace, and guarantees cleanup on all
-/// return paths and panics. When `local: true`, scratch files are placed in an
-/// isolated temporary subfolder under the file's parent directory rather than
-/// [`std::env::temp_dir()`], guaranteeing cleanup on all return paths and
-/// panics.
+/// When `local` is false, scratch copies are placed under
+/// [`std::env::temp_dir()`]. When `local` is true, each scratch copy is
+/// placed in a temporary `.fml-check-*` subdirectory adjacent to the target
+/// file. Guarantees cleanup on all exit paths.
 fn diff_check_classified_impl(
   files: &[PathBuf],
   run_in_place: &(impl Fn(&Path) -> std::io::Result<std::process::Output> + Sync),
