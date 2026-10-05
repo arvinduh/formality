@@ -8,10 +8,10 @@
 //! `fml sync` shells out to no external tool, so these tests are hermetic —
 //! they pass whether or not prettier/markdownlint/yamllint are installed.
 
-use fml::ui::table::strip_ansi_escapes;
-use std::collections::BTreeSet;
-use std::path::Path;
-use std::process::Command;
+use fml::ui::table;
+use std::collections;
+use std::path;
+use std::process;
 
 const SCHEMA_LINE: &str = "#:schema https://github.com/arvinduh/formality/releases/latest/download/formality.schema.json\n";
 
@@ -30,8 +30,8 @@ fn polyglot_repo() -> tempfile::TempDir {
 }
 
 /// Runs `fml sync` against `root` and returns its ANSI-stripped stdout.
-fn run_sync(root: &Path, extra: &[&str]) -> String {
-  let out = Command::new(env!("CARGO_BIN_EXE_fml"))
+fn run_sync(root: &path::Path, extra: &[&str]) -> String {
+  let out = process::Command::new(env!("CARGO_BIN_EXE_fml"))
     .arg("sync")
     .arg("--root")
     .arg(root)
@@ -40,7 +40,7 @@ fn run_sync(root: &Path, extra: &[&str]) -> String {
     .env_remove("FORCE_COLOR")
     .output()
     .expect("failed to run fml sync");
-  strip_ansi_escapes(&String::from_utf8_lossy(&out.stdout))
+  table::strip_ansi_escapes(&String::from_utf8_lossy(&out.stdout))
 }
 
 /// The `(N surfaces)` count from the framed header line.
@@ -137,8 +137,8 @@ fn sync_header_count_matches_the_rows_it_renders_on_a_polyglot_tree() {
 
 /// Every file `fml sync` left in `root`, excluding the fixture sources it
 /// was pointed at.
-fn generated_config_files(root: &Path) -> BTreeSet<String> {
-  let fixtures: BTreeSet<&str> = [
+fn generated_config_files(root: &path::Path) -> collections::BTreeSet<String> {
+  let fixtures: collections::BTreeSet<&str> = [
     "formality.toml",
     "README.md",
     "data.json",

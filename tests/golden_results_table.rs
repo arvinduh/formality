@@ -4,11 +4,11 @@
 //! Every test here runs the **real binary** and asserts the rendered row for
 //! a `SurfaceStatus`: its tag text, its surface-name cell, its detail text,
 //! and — the coverage that was entirely absent before this file — the
-//! `ui::table::Style` each of those three cells carries. Runs are made under
+//! `ui::table::table::Style` each of those three cells carries. Runs are made under
 //! `FORCE_COLOR=1` with `COLORTERM=truecolor`, so `Palette::detect()`
-//! resolves to [`Palette::truecolor`] and the SGR escapes are present in
+//! resolves to [`table::Palette::truecolor`] and the SGR escapes are present in
 //! stdout instead of being stripped. Expected escapes are derived from
-//! `Palette::truecolor().style_sgr(style)` rather than hardcoded, so this
+//! `table::Palette::truecolor().style_sgr(style)` rather than hardcoded, so this
 //! file pins the *semantic* style of each cell (which is what
 //! `engine::runner::RowSpec` decides) and not the palette's colour values.
 //!
@@ -47,7 +47,7 @@
 //! ported to cross-platform shims:
 //!
 //! - What this file pins, the status-to-row mapping (tag, detail text and
-//!   `Style`), lives in `engine::runner` and `ui::table`, which have no
+//!   `table::Style`), lives in `engine::runner` and `ui::table`, which have no
 //!   platform-conditional code. A row renders the same on every OS once the
 //!   status exists, and `Library Tests` (pr-check.yml, ubuntu) asserts all
 //!   eight on every PR.
@@ -66,20 +66,20 @@
 //! Revisit if a Windows `cargo test` job is ever added.
 
 use std::fmt::Write;
-use std::path::{Path, PathBuf};
-use std::process::Command;
+use std::path;
+use std::process;
 
-use fml::ui::table::{Palette, Style};
+use fml::ui::table;
 
 const SCHEMA_LINE: &str = "#:schema https://github.com/arvinduh/formality/releases/latest/download/formality.schema.json\n";
 
-/// The opening SGR escape `Palette::truecolor()` renders `style` with.
+/// The opening SGR escape `table::Palette::truecolor()` renders `style` with.
 ///
 /// Derived from the palette rather than written out, so a colour-value
-/// change stays a colour-value change; only a change to which `Style` a cell
+/// change stays a colour-value change; only a change to which `table::Style` a cell
 /// carries fails these tests.
-fn open(style: Style) -> String {
-  Palette::truecolor().style_sgr(style).0.to_string()
+fn open(style: table::Style) -> String {
+  table::Palette::truecolor().style_sgr(style).0.to_string()
 }
 
 /// One styled cell of a rendered row: the SGR escape it opened with, and its
@@ -237,9 +237,9 @@ fn assert_row(
   tag: &str,
   surface: &str,
   detail: &str,
-  tag_style: Style,
-  name_style: Style,
-  detail_style: Style,
+  tag_style: table::Style,
+  name_style: table::Style,
+  detail_style: table::Style,
 ) {
   let row = rows
     .iter()
@@ -274,7 +274,7 @@ fn assert_row(
   );
   assert_eq!(
     row.duration.sgr,
-    open(Style::Dim),
+    open(table::Style::Dim),
     "duration cell of the `{tag} {surface}` row is always dim"
   );
   assert_eq!(row.duration.text, "<dur>");
@@ -283,11 +283,15 @@ fn assert_row(
 /// Runs the real binary against `root` and returns its **styled** stdout.
 ///
 /// `FORCE_COLOR` + `COLORTERM=truecolor` pin `Palette::detect()` to
-/// [`Palette::truecolor`] regardless of whether the test harness's stdout is
+/// [`table::Palette::truecolor`] regardless of whether the test harness's stdout is
 /// a terminal; `NO_COLOR` is removed so an ambient one cannot strip the very
 /// escapes under test.
-fn run_fml(root: &Path, args: &[&str], path_env: Option<&Path>) -> String {
-  let mut cmd = Command::new(env!("CARGO_BIN_EXE_fml"));
+fn run_fml(
+  root: &path::Path,
+  args: &[&str],
+  path_env: Option<&path::Path>,
+) -> String {
+  let mut cmd = process::Command::new(env!("CARGO_BIN_EXE_fml"));
   cmd
     .args(args)
     .arg("--root")
@@ -307,7 +311,7 @@ fn run_fml(root: &Path, args: &[&str], path_env: Option<&Path>) -> String {
 
 /// A temp repo whose path is canonicalized, matching the existing golden
 /// tests: on macOS a `TempDir` under `/var/...` is really `/private/var/...`.
-fn temp_root(dir: &tempfile::TempDir) -> PathBuf {
+fn temp_root(dir: &tempfile::TempDir) -> path::PathBuf {
   if cfg!(windows) {
     dir.path().to_path_buf()
   } else {
@@ -340,9 +344,9 @@ fn golden_sync_write_renders_config_synced_and_skipped_rows_with_styles() {
     "[SYNC]",
     "rust",
     "Created .rustfmt.toml",
-    Style::Ok,
-    Style::Strong,
-    Style::Info,
+    table::Style::Ok,
+    table::Style::Strong,
+    table::Style::Info,
   );
   // `Skipped`: typst is configured entirely via CLI flags. This is the one
   // status whose surface-name cell is `Dim` rather than `Strong` — the sole
@@ -352,9 +356,9 @@ fn golden_sync_write_renders_config_synced_and_skipped_rows_with_styles() {
     "[SKIP]",
     "typst",
     "No config file (settings applied via CLI flags)",
-    Style::Dim,
-    Style::Dim,
-    Style::Dim,
+    table::Style::Dim,
+    table::Style::Dim,
+    table::Style::Dim,
   );
 }
 
@@ -393,18 +397,18 @@ fn golden_sync_check_renders_passed_drifted_and_manual_rows_with_styles() {
     "[DRIFT]",
     "rust",
     ".rustfmt.toml out of sync",
-    Style::Warn,
-    Style::Strong,
-    Style::Warn,
+    table::Style::Warn,
+    table::Style::Strong,
+    table::Style::Warn,
   );
   assert_row(
     &rows,
     "[MANUAL]",
     "toml",
     "taplo.toml is manually managed",
-    Style::Warn,
-    Style::Strong,
-    Style::Warn,
+    table::Style::Warn,
+    table::Style::Strong,
+    table::Style::Warn,
   );
   // `Passed` under a config-sync-only plan reads "Already in sync", not
   // "Clean / Formatted" (#130) — `passed_detail` is plan-dependent, and this
@@ -414,9 +418,9 @@ fn golden_sync_check_renders_passed_drifted_and_manual_rows_with_styles() {
     "[PASS]",
     "editorconfig",
     "Already in sync",
-    Style::Ok,
-    Style::Strong,
-    Style::Dim,
+    table::Style::Ok,
+    table::Style::Strong,
+    table::Style::Dim,
   );
 }
 
@@ -427,7 +431,7 @@ fn golden_sync_check_renders_passed_drifted_and_manual_rows_with_styles() {
 /// requires the executable bit for a `PATH` hit, so the mode is set
 /// explicitly.
 #[cfg(unix)]
-fn write_shim(dir: &Path, binary: &str, code: i32) {
+fn write_shim(dir: &path::Path, binary: &str, code: i32) {
   use std::os::unix::fs::PermissionsExt;
   let path = dir.join(binary);
   std::fs::write(&path, format!("#!/bin/sh\nexit {code}\n")).unwrap();
@@ -445,7 +449,7 @@ fn write_shim(dir: &Path, binary: &str, code: i32) {
 /// what the machine happens to have installed.
 #[cfg(unix)]
 fn missing_error_violation_repo()
--> (tempfile::TempDir, tempfile::TempDir, PathBuf) {
+-> (tempfile::TempDir, tempfile::TempDir, path::PathBuf) {
   let shims = tempfile::tempdir().expect("tempdir");
   // `clang-format` cannot do its job -> `ExecutionError` (#151); `typstyle`
   // exits non-zero through the unclassified `run_tool_command` path ->
@@ -485,27 +489,27 @@ fn golden_fmt_renders_missing_error_and_violation_rows_with_styles() {
     "[MISS]",
     "rust",
     "Missing binary: cargo / rustfmt",
-    Style::Warn,
-    Style::Strong,
-    Style::Warn,
+    table::Style::Warn,
+    table::Style::Strong,
+    table::Style::Warn,
   );
   assert_row(
     &rows,
     "[ERR]",
     "cpp",
     "Execution error",
-    Style::Error,
-    Style::Strong,
-    Style::Error,
+    table::Style::Error,
+    table::Style::Strong,
+    table::Style::Error,
   );
   assert_row(
     &rows,
     "[FAIL]",
     "typst",
     "Violations found",
-    Style::Error,
-    Style::Strong,
-    Style::Error,
+    table::Style::Error,
+    table::Style::Strong,
+    table::Style::Error,
   );
   // `Passed` again, under a format plan: the detail text is plan-dependent.
   assert_row(
@@ -513,9 +517,9 @@ fn golden_fmt_renders_missing_error_and_violation_rows_with_styles() {
     "[PASS]",
     "toml",
     "Clean / Formatted",
-    Style::Ok,
-    Style::Strong,
-    Style::Dim,
+    table::Style::Ok,
+    table::Style::Strong,
+    table::Style::Dim,
   );
 }
 
@@ -549,7 +553,12 @@ fn golden_fmt_summary_counts_missing_tools_and_errors_apart_from_failures() {
 /// depending on either being installed, or on the machine's version of
 /// either still wording them the same way.
 #[cfg(unix)]
-fn write_speaking_shim(dir: &Path, binary: &str, stdout: &str, code: i32) {
+fn write_speaking_shim(
+  dir: &path::Path,
+  binary: &str,
+  stdout: &str,
+  code: i32,
+) {
   use std::os::unix::fs::PermissionsExt;
   let path = dir.join(binary);
   let script = stdout.lines().fold(String::new(), |mut acc, l| {
@@ -604,7 +613,7 @@ README.md:5 error MD036/no-emphasis-as-heading Emphasis used instead of a headin
 #[cfg(unix)]
 fn counted_repo(
   markdownlint_stdout: &str,
-) -> (tempfile::TempDir, tempfile::TempDir, PathBuf) {
+) -> (tempfile::TempDir, tempfile::TempDir, path::PathBuf) {
   let shims = tempfile::tempdir().expect("tempdir");
   write_speaking_shim(shims.path(), "ruff", RUFF_MIXED_STDOUT, 1);
   write_speaking_shim(
@@ -645,9 +654,9 @@ fn golden_lint_renders_counted_violation_rows_and_summary() {
     "[FAIL]",
     "python",
     "4 violations, 2 auto-fixable",
-    Style::Error,
-    Style::Strong,
-    Style::Error,
+    table::Style::Error,
+    table::Style::Strong,
+    table::Style::Error,
   );
   // markdownlint-cli2 counts but marks no violation fixable, and this plan
   // ran no fixer — so the count is reported with no fixability claim rather
@@ -657,9 +666,9 @@ fn golden_lint_renders_counted_violation_rows_and_summary() {
     "[FAIL]",
     "markdown",
     "2 violations",
-    Style::Error,
-    Style::Strong,
-    Style::Error,
+    table::Style::Error,
+    table::Style::Strong,
+    table::Style::Error,
   );
 
   // 4 + 2, straight off the rows above. No fixability figure: markdown
@@ -701,9 +710,9 @@ fn golden_lint_says_in_words_when_nothing_left_is_auto_fixable() {
     "[FAIL]",
     "python",
     "2 violations, 0 auto-fixable",
-    Style::Error,
-    Style::Strong,
-    Style::Error,
+    table::Style::Error,
+    table::Style::Strong,
+    table::Style::Error,
   );
   // markdownlint's `Attempted:` line is its statement that it ran its fixer,
   // so what it still reports is what it could not fix.
@@ -712,9 +721,9 @@ fn golden_lint_says_in_words_when_nothing_left_is_auto_fixable() {
     "[FAIL]",
     "markdown",
     "2 violations, 0 auto-fixable",
-    Style::Error,
-    Style::Strong,
-    Style::Error,
+    table::Style::Error,
+    table::Style::Strong,
+    table::Style::Error,
   );
 
   assert_eq!(
@@ -744,9 +753,9 @@ fn golden_lint_suppresses_the_summary_clause_when_a_surface_is_uncounted() {
     "[FAIL]",
     "toml",
     "Violations found",
-    Style::Error,
-    Style::Strong,
-    Style::Error,
+    table::Style::Error,
+    table::Style::Strong,
+    table::Style::Error,
   );
   assert_eq!(summary_line(&stdout), "3 failed");
 }
@@ -783,9 +792,9 @@ fn golden_lint_attributes_each_ruff_hint_to_its_own_group() {
     "[FAIL]",
     "python",
     "5 violations, 3 auto-fixable",
-    Style::Error,
-    Style::Strong,
-    Style::Error,
+    table::Style::Error,
+    table::Style::Strong,
+    table::Style::Error,
   );
   assert_eq!(
     summary_line(&stdout),
@@ -801,7 +810,7 @@ fn golden_lint_attributes_each_ruff_hint_to_its_own_group() {
 /// finds nothing left to fix prints nothing at all
 /// (`markdownlint-cli2.mjs`, `if (issuesAttempted > 0)`).
 #[cfg(unix)]
-fn write_markdownlint_shim(dir: &Path, attempted: bool) {
+fn write_markdownlint_shim(dir: &path::Path, attempted: bool) {
   use std::os::unix::fs::PermissionsExt;
   let attempted_echo = if attempted {
     "  echo 'Attempted: 3 fixes in 1 file'\n"
@@ -869,9 +878,9 @@ fn golden_two_fix_runs_over_an_unchanged_tree_render_identically() {
       "[FAIL]",
       "markdown",
       "2 violations, 0 auto-fixable",
-      Style::Error,
-      Style::Strong,
-      Style::Error,
+      table::Style::Error,
+      table::Style::Strong,
+      table::Style::Error,
     );
     assert_eq!(
       summary_line(stdout),

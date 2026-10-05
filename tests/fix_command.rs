@@ -4,10 +4,10 @@
 
 mod common;
 
-use common::{fix_cmd, fmt_cmd, init_git_repo, lint_cmd, run_cli, temp_repo};
-use fml::cli::Commands;
 use std::fs;
-use std::path::PathBuf;
+use std::path;
+
+use fml::cli;
 
 /// `true` only when both tools the markdown surface drives are installed, so a
 /// `fml fix` run actually exercises the lint pass *and* the format pass rather
@@ -20,7 +20,7 @@ fn markdown_toolchain_available() -> bool {
 
 #[test]
 fn test_fix_command_rust_lifecycle() {
-  let temp = temp_repo(&[
+  let temp = common::temp_repo(&[
     (
       "Cargo.toml",
       "[package]\nname = \"fix_test\"\nversion = \"0.1.0\"\nedition = \
@@ -34,21 +34,21 @@ fn test_fix_command_rust_lifecycle() {
   let root = temp.path();
   let main_rs = root.join("src/main.rs");
 
-  assert_eq!(run_cli(root, fix_cmd(false, &["rust"])), 0);
+  assert_eq!(common::run_cli(root, common::fix_cmd(false, &["rust"])), 0);
 
   let formatted = fs::read_to_string(&main_rs).unwrap();
   assert!(formatted.contains("fn main() {"));
   assert!(formatted.contains("println!(\"hello from fix\");"));
 
   // Subsequent check should be clean
-  assert_eq!(run_cli(root, fmt_cmd(true, &["rust"])), 0);
+  assert_eq!(common::run_cli(root, common::fmt_cmd(true, &["rust"])), 0);
 }
 
 #[test]
 fn test_fix_command_targeted_paths() {
   let unformatted = "[package]\n   name =   \"target\"\n";
   let untouched = "[package]\n   name =   \"untouched\"\n";
-  let temp = temp_repo(&[
+  let temp = common::temp_repo(&[
     ("nested/target.toml", unformatted),
     ("untouched.toml", untouched),
   ]);
@@ -56,7 +56,7 @@ fn test_fix_command_targeted_paths() {
   let target_file = root.join("nested/target.toml");
   let untouched_file = root.join("untouched.toml");
 
-  let fix_args = Commands::Fix {
+  let fix_args = cli::Commands::Fix {
     check: false,
     staged: false,
     changed: false,
@@ -64,7 +64,7 @@ fn test_fix_command_targeted_paths() {
     allow_missing: false,
     paths: vec![target_file.clone()],
   };
-  assert_eq!(run_cli(root, fix_args), 0);
+  assert_eq!(common::run_cli(root, fix_args), 0);
 
   let formatted_target = fs::read_to_string(&target_file).unwrap();
   assert!(formatted_target.contains("name = \"target\""));
@@ -75,11 +75,12 @@ fn test_fix_command_targeted_paths() {
 
 #[test]
 fn test_fix_command_unsupported_autofix_surfaces() {
-  let temp = temp_repo(&[("sample.toml", "[package]\n name = \"test\"\n")]);
+  let temp =
+    common::temp_repo(&[("sample.toml", "[package]\n name = \"test\"\n")]);
   let root = temp.path();
   let toml_file = root.join("sample.toml");
 
-  let exit_code = run_cli(root, fix_cmd(false, &["toml"]));
+  let exit_code = common::run_cli(root, common::fix_cmd(false, &["toml"]));
   if fml::surfaces::check_binary_exists("taplo") {
     assert_eq!(exit_code, 0);
     let formatted = fs::read_to_string(&toml_file).unwrap();
@@ -98,14 +99,17 @@ fn test_fix_command_unsupported_autofix_surfaces() {
 
 #[test]
 fn test_fix_command_invalid_surface_and_mutual_exclusion() {
-  let temp = temp_repo(&[]);
+  let temp = common::temp_repo(&[]);
   let root = temp.path();
 
   // 1. Invalid language surface filter returns error
-  assert_eq!(run_cli(root, fix_cmd(false, &["nonexistent_lang"])), 2);
+  assert_eq!(
+    common::run_cli(root, common::fix_cmd(false, &["nonexistent_lang"])),
+    2
+  );
 
   // 2. Both staged and changed returns error
-  let conflict_args = Commands::Fix {
+  let conflict_args = cli::Commands::Fix {
     check: false,
     staged: true,
     changed: true,
@@ -113,17 +117,17 @@ fn test_fix_command_invalid_surface_and_mutual_exclusion() {
     allow_missing: false,
     paths: vec![],
   };
-  assert_eq!(run_cli(root, conflict_args), 2);
+  assert_eq!(common::run_cli(root, conflict_args), 2);
 }
 
 #[test]
 fn test_fix_command_polyglot_detection() {
-  let manifest_dir = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+  let manifest_dir = path::PathBuf::from(env!("CARGO_MANIFEST_DIR"));
   let fixture = manifest_dir.join("tests/fixtures/polyglot_repo");
   let cargo_toml = fixture.join("Cargo.toml");
   let before = fs::read_to_string(&cargo_toml).unwrap();
 
-  let exit_code = run_cli(&fixture, fix_cmd(false, &["toml"]));
+  let exit_code = common::run_cli(&fixture, common::fix_cmd(false, &["toml"]));
   if fml::surfaces::check_binary_exists("taplo") {
     assert_eq!(exit_code, 0);
     // The fixture's Cargo.toml is already well-formatted, so taplo leaves
@@ -140,10 +144,10 @@ fn test_fix_command_polyglot_detection() {
 
 #[test]
 fn test_fix_command_staged_with_explicit_paths_filtering() {
-  let temp = temp_repo(&[]);
+  let temp = common::temp_repo(&[]);
   let root = temp.path();
 
-  if !init_git_repo(root) {
+  if !common::init_git_repo(root) {
     return;
   }
 
@@ -176,7 +180,7 @@ fn test_fix_command_staged_with_explicit_paths_filtering() {
     .output();
 
   // Run fix with staged: true AND explicit paths: [target_file]
-  let fix_args = Commands::Fix {
+  let fix_args = cli::Commands::Fix {
     check: false,
     staged: true,
     changed: false,
@@ -184,7 +188,7 @@ fn test_fix_command_staged_with_explicit_paths_filtering() {
     allow_missing: false,
     paths: vec![target_file.clone()],
   };
-  assert_eq!(run_cli(root, fix_args), 0);
+  assert_eq!(common::run_cli(root, fix_args), 0);
 
   // target_file should have been formatted
   let formatted_target = fs::read_to_string(&target_file).unwrap();
@@ -197,10 +201,10 @@ fn test_fix_command_staged_with_explicit_paths_filtering() {
 
 #[test]
 fn test_fix_command_changed_with_explicit_paths_filtering() {
-  let temp = temp_repo(&[]);
+  let temp = common::temp_repo(&[]);
   let root = temp.path();
 
-  if !init_git_repo(root) {
+  if !common::init_git_repo(root) {
     return;
   }
 
@@ -227,7 +231,7 @@ fn test_fix_command_changed_with_explicit_paths_filtering() {
   fs::write(&other_file, "[package]\n   name =   \"other_mod\"\n").unwrap();
 
   // Run fix with changed: true AND explicit paths: [target_file]
-  let fix_args = Commands::Fix {
+  let fix_args = cli::Commands::Fix {
     check: false,
     staged: false,
     changed: true,
@@ -235,7 +239,7 @@ fn test_fix_command_changed_with_explicit_paths_filtering() {
     allow_missing: false,
     paths: vec![target_file.clone()],
   };
-  assert_eq!(run_cli(root, fix_args), 0);
+  assert_eq!(common::run_cli(root, fix_args), 0);
 
   // target_file should have been formatted
   let formatted_target = fs::read_to_string(&target_file).unwrap();
@@ -248,14 +252,14 @@ fn test_fix_command_changed_with_explicit_paths_filtering() {
 
 #[test]
 fn test_fix_command_python_composite_lifecycle() {
-  let temp = temp_repo(&[(
+  let temp = common::temp_repo(&[(
     "main.py",
     "import sys\nimport os\n\ndef foo(   x,  y  ):\n    return x+y\n",
   )]);
   let root = temp.path();
   let script_py = root.join("main.py");
 
-  let exit_code = run_cli(root, fix_cmd(false, &["python"]));
+  let exit_code = common::run_cli(root, common::fix_cmd(false, &["python"]));
   if fml::surfaces::check_binary_exists("ruff") {
     assert_eq!(exit_code, 0);
     let formatted = fs::read_to_string(&script_py).unwrap();
@@ -269,14 +273,15 @@ fn test_fix_command_python_composite_lifecycle() {
 
 #[test]
 fn test_fix_command_javascript_composite_lifecycle() {
-  let temp = temp_repo(&[(
+  let temp = common::temp_repo(&[(
     "index.js",
     "function   add(  a, b )  {\nreturn a + b;\n}\n",
   )]);
   let root = temp.path();
   let script_js = root.join("index.js");
 
-  let exit_code = run_cli(root, fix_cmd(false, &["javascript"]));
+  let exit_code =
+    common::run_cli(root, common::fix_cmd(false, &["javascript"]));
   if fml::surfaces::check_binary_exists("biome") {
     assert_eq!(exit_code, 0);
     let formatted = fs::read_to_string(&script_js).unwrap();
@@ -310,11 +315,14 @@ fn test_fix_command_reports_pass_when_format_pass_resolves_lint_violation() {
                    the configured line length limit for sure and then some \
                    more words to be safe.";
   let doc = format!("# Title\n\n{long_line}\n");
-  let temp = temp_repo(&[("doc.md", doc.as_str())]);
+  let temp = common::temp_repo(&[("doc.md", doc.as_str())]);
   let root = temp.path();
   let doc_md = root.join("doc.md");
 
-  assert_eq!(run_cli(root, fix_cmd(false, &["markdown"])), 0);
+  assert_eq!(
+    common::run_cli(root, common::fix_cmd(false, &["markdown"])),
+    0
+  );
 
   // prettier's prose-wrap pass (default `--prose-wrap=always`) rewrapped the
   // line, so the file on disk is now within the limit ...
@@ -326,7 +334,7 @@ fn test_fix_command_reports_pass_when_format_pass_resolves_lint_violation() {
   );
 
   // ... and a subsequent plain lint agrees the tree is clean.
-  assert_eq!(run_cli(root, lint_cmd(&["markdown"])), 0);
+  assert_eq!(common::run_cli(root, common::lint_cmd(&["markdown"])), 0);
 }
 
 /// Issue #116, inverse guard: a violation that *neither* pass can fix must
@@ -344,24 +352,30 @@ fn test_fix_command_still_fails_when_no_pass_resolves_violation() {
     return;
   }
 
-  let temp = temp_repo(&[("doc.md", "# First Heading\n\n# Second Heading\n")]);
+  let temp =
+    common::temp_repo(&[("doc.md", "# First Heading\n\n# Second Heading\n")]);
   let root = temp.path();
 
   // Exit code 1 exactly (`ExitStatus::Violations`) — not merely non-zero: a
   // code of 2 (`ExitStatus::Error`) would mean the surface blew up rather
   // than reporting the surviving MD025 violation, which is a different and
   // wrong failure mode this guard must not accept.
-  assert_eq!(run_cli(root, fix_cmd(false, &["markdown"])), 1);
+  assert_eq!(
+    common::run_cli(root, common::fix_cmd(false, &["markdown"])),
+    1
+  );
 }
 
 #[test]
 fn test_fix_command_markdown_composite_lifecycle() {
-  let temp =
-    temp_repo(&[("README.md", "# Title\n\nSome paragraph   with   spaces.\n")]);
+  let temp = common::temp_repo(&[(
+    "README.md",
+    "# Title\n\nSome paragraph   with   spaces.\n",
+  )]);
   let root = temp.path();
   let readme_md = root.join("README.md");
 
-  let exit_code = run_cli(root, fix_cmd(false, &["markdown"]));
+  let exit_code = common::run_cli(root, common::fix_cmd(false, &["markdown"]));
   if markdown_toolchain_available() {
     assert_eq!(exit_code, 0);
     let formatted = fs::read_to_string(&readme_md).unwrap();
@@ -396,13 +410,16 @@ fn test_fix_check_writes_nothing_and_flags_a_dirty_tree() {
                    the configured line length limit for sure and then some \
                    more words to be safe.";
   let doc = format!("# Title\n\n{long_line}\n");
-  let temp = temp_repo(&[("doc.md", doc.as_str())]);
+  let temp = common::temp_repo(&[("doc.md", doc.as_str())]);
   let root = temp.path();
   let doc_md = root.join("doc.md");
   let before = fs::read_to_string(&doc_md).unwrap();
 
   // Reports the dirty tree ...
-  assert_eq!(run_cli(root, fix_cmd(true, &["markdown"])), 1);
+  assert_eq!(
+    common::run_cli(root, common::fix_cmd(true, &["markdown"])),
+    1
+  );
 
   // ... and wrote nothing while doing so. Byte-for-byte: a check run that
   // "only" normalized line endings would still be a write.
@@ -413,7 +430,10 @@ fn test_fix_check_writes_nothing_and_flags_a_dirty_tree() {
   );
 
   // The writing run does change it, and reports clean afterwards.
-  assert_eq!(run_cli(root, fix_cmd(false, &["markdown"])), 0);
+  assert_eq!(
+    common::run_cli(root, common::fix_cmd(false, &["markdown"])),
+    0
+  );
   assert_ne!(fs::read_to_string(&doc_md).unwrap(), before);
 }
 
@@ -436,21 +456,26 @@ fn test_fix_check_and_fix_agree_on_an_already_clean_tree() {
                    the configured line length limit for sure and then some \
                    more words to be safe.";
   let doc = format!("# Title\n\n{long_line}\n");
-  let temp = temp_repo(&[("doc.md", doc.as_str())]);
+  let temp = common::temp_repo(&[("doc.md", doc.as_str())]);
   let root = temp.path();
   let doc_md = root.join("doc.md");
 
   // Bring the tree to the state `fml fix` leaves behind.
-  assert_eq!(run_cli(root, fix_cmd(false, &["markdown"])), 0);
+  assert_eq!(
+    common::run_cli(root, common::fix_cmd(false, &["markdown"])),
+    0
+  );
   let clean = fs::read_to_string(&doc_md).unwrap();
 
-  let check_status = run_cli(root, fix_cmd(true, &["markdown"]));
+  let check_status =
+    common::run_cli(root, common::fix_cmd(true, &["markdown"]));
   assert_eq!(
     fs::read_to_string(&doc_md).unwrap(),
     clean,
     "`fml fix --check` must not modify an already-clean file"
   );
-  let write_status = run_cli(root, fix_cmd(false, &["markdown"]));
+  let write_status =
+    common::run_cli(root, common::fix_cmd(false, &["markdown"]));
 
   assert_eq!(
     check_status, write_status,
@@ -477,13 +502,16 @@ fn test_fix_check_and_fix_agree_when_no_pass_can_fix() {
     return;
   }
 
-  let temp = temp_repo(&[("doc.md", "# First Heading\n\n# Second Heading\n")]);
+  let temp =
+    common::temp_repo(&[("doc.md", "# First Heading\n\n# Second Heading\n")]);
   let root = temp.path();
   let doc_md = root.join("doc.md");
   let before = fs::read_to_string(&doc_md).unwrap();
 
-  let check_status = run_cli(root, fix_cmd(true, &["markdown"]));
-  let write_status = run_cli(root, fix_cmd(false, &["markdown"]));
+  let check_status =
+    common::run_cli(root, common::fix_cmd(true, &["markdown"]));
+  let write_status =
+    common::run_cli(root, common::fix_cmd(false, &["markdown"]));
 
   assert_eq!(
     check_status, write_status,
@@ -520,17 +548,19 @@ indent_size = {indent_size}
 * item
     * nested
 ";
-    let temp =
-      temp_repo(&[("formality.toml", config.as_str()), ("doc.md", doc)]);
+    let temp = common::temp_repo(&[
+      ("formality.toml", config.as_str()),
+      ("doc.md", doc),
+    ]);
     let root = temp.path();
 
     assert_eq!(
-      run_cli(root, fix_cmd(false, &["markdown"])),
+      common::run_cli(root, common::fix_cmd(false, &["markdown"])),
       0,
       "fml fix failed for indent_size = {indent_size}"
     );
     assert_eq!(
-      run_cli(root, lint_cmd(&["markdown"])),
+      common::run_cli(root, common::lint_cmd(&["markdown"])),
       0,
       "subsequent fml lint failed for indent_size = {indent_size}"
     );

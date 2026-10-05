@@ -4,12 +4,12 @@
 //! Drives `fml sync --check`, which shells out to no external tool, so the
 //! test is hermetic whatever formatters are installed.
 
-use std::path::Path;
-use std::process::Command;
+use std::path;
+use std::process;
 
 /// Runs `fml sync` against `root` with `extra` args and returns its exit code.
-fn sync_exit_code(root: &Path, extra: &[&str]) -> Option<i32> {
-  Command::new(env!("CARGO_BIN_EXE_fml"))
+fn sync_exit_code(root: &path::Path, extra: &[&str]) -> Option<i32> {
+  process::Command::new(env!("CARGO_BIN_EXE_fml"))
     .arg("sync")
     .arg("--root")
     .arg(root)

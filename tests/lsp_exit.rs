@@ -7,16 +7,20 @@
 
 mod common;
 
-use common::lsp;
-use std::process::{Child, Stdio};
+use std::path;
+use std::process;
 use std::sync::mpsc;
-use std::time::{Duration, Instant};
+use std::time;
+
+use tower_lsp::lsp_types;
+
+use common::lsp;
 
 /// How long the server gets to answer a request before the test fails.
-const RESPONSE_TIMEOUT: Duration = Duration::from_secs(30);
+const RESPONSE_TIMEOUT: time::Duration = time::Duration::from_secs(30);
 
 /// How long the server gets to exit after `exit` before the test fails.
-const EXIT_TIMEOUT: Duration = Duration::from_secs(5);
+const EXIT_TIMEOUT: time::Duration = time::Duration::from_secs(5);
 
 /// How the client sends `shutdown` before `exit`.
 enum Shutdown {
@@ -29,9 +33,9 @@ enum Shutdown {
 }
 
 /// Spawns `fml lsp` in an empty workspace with piped stdio.
-fn spawn_server(root: &std::path::Path) -> Child {
+fn spawn_server(root: &path::Path) -> process::Child {
   lsp::no_color(&mut lsp::command(root, root))
-    .stderr(Stdio::null())
+    .stderr(process::Stdio::null())
     .spawn()
     .expect("failed to spawn fml lsp")
 }
@@ -57,7 +61,7 @@ fn exit_code_after_exit(shutdown: &Shutdown) -> Option<i32> {
   let mut stdin = child.stdin.take().unwrap();
   let rx = lsp::messages(&mut child);
 
-  let root_uri = tower_lsp::lsp_types::Url::from_file_path(dir.path()).unwrap();
+  let root_uri = lsp_types::Url::from_file_path(dir.path()).unwrap();
   lsp::send(
     &mut stdin,
     &[serde_json::json!({
@@ -89,9 +93,9 @@ fn exit_code_after_exit(shutdown: &Shutdown) -> Option<i32> {
 
   // The forwarder drops its sender when stdout closes, which happens only
   // when the process exits; stdin stays open throughout.
-  let deadline = Instant::now() + EXIT_TIMEOUT;
+  let deadline = time::Instant::now() + EXIT_TIMEOUT;
   let exited = loop {
-    let remaining = deadline.saturating_duration_since(Instant::now());
+    let remaining = deadline.saturating_duration_since(time::Instant::now());
     match rx.recv_timeout(remaining) {
       Ok(_) => {}
       Err(mpsc::RecvTimeoutError::Disconnected) => break true,

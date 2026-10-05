@@ -5,16 +5,15 @@
 //! UPDATE_SCHEMA=1 cargo test -j 2 --test schema_drift
 //! ```
 
-use fml::generate_schema;
 use std::fs;
-use std::path::PathBuf;
+use std::path;
 
 #[test]
 fn test_schema_drift_check() {
-  let root = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+  let root = path::PathBuf::from(env!("CARGO_MANIFEST_DIR"));
   let schema_path = root.join("schema").join("formality.schema.json");
 
-  let generated_schema = generate_schema();
+  let generated_schema = fml::generate_schema();
 
   if std::env::var("UPDATE_SCHEMA").as_deref() == Ok("1") {
     if let Some(parent) = schema_path.parent() {

@@ -34,7 +34,7 @@
 //! (issue #165).
 
 use std::fs;
-use std::path::PathBuf;
+use std::path;
 
 /// The comment marker each local edit carries in the workflow, up to the
 /// issue number that introduced it. The count of these is asserted to equal
@@ -140,7 +140,7 @@ fn non_comment_lines(workflow: &str) -> String {
 }
 
 fn read_workflow() -> String {
-  let path = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+  let path = path::PathBuf::from(env!("CARGO_MANIFEST_DIR"))
     .join(".github")
     .join("workflows")
     .join("release.yml");
@@ -156,7 +156,7 @@ fn read_workflow() -> String {
 }
 
 fn read_release_extras_workflow() -> String {
-  let path = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+  let path = path::PathBuf::from(env!("CARGO_MANIFEST_DIR"))
     .join(".github")
     .join("workflows")
     .join("release-extras.yml");
@@ -418,7 +418,7 @@ fn installed_dist_versions(workflow: &serde_yaml::Value) -> Vec<String> {
 #[test]
 fn test_release_yml_installs_the_pinned_cargo_dist() {
   let cargo_toml = fs::read_to_string(
-    PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("Cargo.toml"),
+    path::PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("Cargo.toml"),
   )
   .expect("Failed to read Cargo.toml");
   let manifest: toml::Value =

@@ -45,10 +45,10 @@
 //! and adding it to `EXTRA_CHECKED_BINARIES` would just require exempting
 //! it from both sides for no benefit.
 
-use fml::config::FormalityConfig;
+use fml::config;
 use fml::engine::version::mstv;
-use fml::surfaces::{all_surfaces, tooling};
-use std::collections::BTreeSet;
+use fml::surfaces;
+use std::collections;
 
 /// Which side(s) of the "has an `ALL_CHAINS` row and a `TOOL_MSTV_REGISTRY`
 /// entry" pairing a binary is exempt from. Exemptions are one-sided far more
@@ -135,14 +135,16 @@ const EXTRA_CHECKED_BINARIES: &[&str] = &["typst"];
 /// Every binary this test holds `ALL_CHAINS`/`TOOL_MSTV_REGISTRY` to
 /// agreement over: every binary a surface declares via `tool_info`, plus
 /// `EXTRA_CHECKED_BINARIES`.
-fn checked_binaries() -> BTreeSet<&'static str> {
-  let mut binaries: BTreeSet<&'static str> = all_surfaces()
-    .iter()
-    .flat_map(|s| {
-      let config = FormalityConfig::with_defaults().resolve_for_lang(s.name());
-      s.tool_info(&config).into_iter().map(|t| t.binary)
-    })
-    .collect();
+fn checked_binaries() -> collections::BTreeSet<&'static str> {
+  let mut binaries: collections::BTreeSet<&'static str> =
+    surfaces::all_surfaces()
+      .iter()
+      .flat_map(|s| {
+        let config =
+          config::FormalityConfig::with_defaults().resolve_for_lang(s.name());
+        s.tool_info(&config).into_iter().map(|t| t.binary)
+      })
+      .collect();
   binaries.extend(EXTRA_CHECKED_BINARIES);
   binaries
 }
@@ -157,7 +159,7 @@ fn test_checked_binaries_have_chain_and_mstv_rows() {
     let exempt_chain = side.is_some_and(ExemptSide::exempts_chain);
     let exempt_mstv = side.is_some_and(ExemptSide::exempts_mstv);
 
-    if !exempt_chain && tooling::install_chain_for(binary).is_none() {
+    if !exempt_chain && surfaces::tooling::install_chain_for(binary).is_none() {
       missing_chain.push(binary);
     }
     if !exempt_mstv && mstv::get_tool_mstv_entry(binary).is_none() {
@@ -189,7 +191,7 @@ fn test_mstv_entries_correspond_to_a_checked_binary() {
   // "clippy-driver", the MSTV entry is keyed "clippy") — so match by
   // resolving each checked binary through `get_tool_mstv_entry` rather than
   // comparing names directly, exactly as production lookups do.
-  let reachable_mstv_binaries: BTreeSet<&'static str> = checked
+  let reachable_mstv_binaries: collections::BTreeSet<&'static str> = checked
     .iter()
     .filter_map(|b| mstv::get_tool_mstv_entry(b))
     .map(|entry| entry.binary)
