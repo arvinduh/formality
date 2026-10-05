@@ -26,6 +26,7 @@ serde_json = "1.0.151"
 schemars = { version = "1.2", features = ["derive"] }
 similar = { version = "3.1.2", features = ["text"] }
 tempfile = "3.27.0"
+thiserror = "2"
 toml = "1.1.4"
 tower-lsp = "0.20"
 tower-service = "0.3"
