@@ -30,7 +30,7 @@ pub struct Frame {
 }
 
 impl Frame {
-  /// The width cap: [`TARGET_WIDTH`], or the real terminal width when narrower.
+  /// The width cap: 80 columns, or the real terminal width when narrower.
   #[must_use]
   pub fn cap() -> usize {
     (render::detect_terminal_width() as usize).min(TARGET_WIDTH)
