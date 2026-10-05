@@ -574,7 +574,7 @@ fn write_speaking_shim(
 /// and its elapsed time normalised away.
 #[cfg(unix)]
 fn summary_line(stdout: &str) -> String {
-  let plain = fml::ui::table::strip_ansi_escapes(stdout);
+  let plain = table::strip_ansi_escapes(stdout);
   let line = plain
     .lines()
     .map(str::trim)
