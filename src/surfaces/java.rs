@@ -166,7 +166,7 @@ impl NativeConfig for CheckstyleConfig {
 }
 
 /// Java language surface implementation.
-#[derive(Debug, Default, Clone, Copy)]
+#[derive(Debug, Default)]
 pub struct JavaSurface;
 
 impl DeclaresFacets for JavaSurface {
@@ -277,7 +277,7 @@ impl LanguageSurface for JavaSurface {
   }
 
   fn clone_box(&self) -> Box<dyn LanguageSurface> {
-    Box::new(*self)
+    Box::new(Self)
   }
 
   fn supports_lint_fix(&self) -> bool {

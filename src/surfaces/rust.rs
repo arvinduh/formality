@@ -80,7 +80,7 @@ impl NativeConfig for RustfmtConfig {
 }
 
 /// Rust language surface implementation.
-#[derive(Debug, Default, Clone, Copy)]
+#[derive(Debug, Default)]
 pub struct RustSurface;
 
 impl DeclaresFacets for RustSurface {
@@ -193,7 +193,7 @@ impl LanguageSurface for RustSurface {
   }
 
   fn clone_box(&self) -> Box<dyn LanguageSurface> {
-    Box::new(*self)
+    Box::new(Self)
   }
 
   fn supports_lint_fix(&self) -> bool {

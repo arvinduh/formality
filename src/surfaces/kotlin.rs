@@ -14,7 +14,7 @@ use crate::surfaces::LanguageSurface;
 use crate::surfaces::tooling;
 
 /// Kotlin language surface implementation.
-#[derive(Debug, Default, Clone, Copy)]
+#[derive(Debug, Default)]
 pub struct KotlinSurface;
 
 impl DeclaresFacets for KotlinSurface {
@@ -134,7 +134,7 @@ impl LanguageSurface for KotlinSurface {
   }
 
   fn clone_box(&self) -> Box<dyn LanguageSurface> {
-    Box::new(*self)
+    Box::new(Self)
   }
 
   fn marker_files(&self) -> &[&'static str] {

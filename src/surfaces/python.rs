@@ -114,7 +114,7 @@ impl NativeConfig for RuffConfig {
 }
 
 /// Python language surface implementation.
-#[derive(Debug, Default, Clone, Copy)]
+#[derive(Debug, Default)]
 pub struct PythonSurface;
 
 impl DeclaresFacets for PythonSurface {
@@ -367,7 +367,7 @@ impl LanguageSurface for PythonSurface {
   }
 
   fn clone_box(&self) -> Box<dyn LanguageSurface> {
-    Box::new(*self)
+    Box::new(Self)
   }
 
   fn supports_lint_fix(&self) -> bool {
