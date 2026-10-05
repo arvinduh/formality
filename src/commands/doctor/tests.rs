@@ -522,7 +522,7 @@ fn test_tool_tally_footer_reflects_post_install_state() {
 /// re-introduced stale read trips the `scan.`-free assertion.
 #[test]
 fn test_run_doctor_folds_install_into_tally_before_rendering_footer() {
-  let source = include_str!("mod.rs");
+  let source = include_str!("../doctor.rs");
   let start = source
     .find("pub fn run_doctor(")
     .expect("run_doctor must exist");
@@ -842,7 +842,7 @@ fn test_tool_is_on_path_matches_the_scan_predicate() {
 /// missing.
 #[test]
 fn test_install_site_resolves_path_before_classifying_the_outcome() {
-  let source = include_str!("mod.rs");
+  let source = include_str!("../doctor.rs");
   let start = source
     .find("fn install_missing_tools_framed(")
     .expect("install_missing_tools_framed must exist");

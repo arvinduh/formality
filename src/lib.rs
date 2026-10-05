@@ -229,10 +229,10 @@ mod tests {
   //
   // The rule: test modules live inline (`#[cfg(test)] mod tests { ... }`) in
   // the file under test. The one sanctioned exception is a directory module
-  // (`some/mod.rs`) large enough that its tests live in a sibling `tests.rs`
-  // declared via `mod tests;` — never any other `*_tests.rs` name. #120 [pre-recreation]
-  // deliberately collapsed every previous `<name>_tests.rs` file back inline;
-  // this test keeps that convention from silently drifting back.
+  // (`some.rs` + `some/tests.rs`) large enough that its tests live in
+  // `tests.rs` declared via `mod tests;` — never any other `*_tests.rs` name.
+  // #120 [pre-recreation] deliberately collapsed every previous `<name>_tests.rs` file
+  // back inline; this test keeps that convention from silently drifting back.
   #[test]
   fn test_no_stray_test_files_outside_sanctioned_pattern() {
     let manifest_dir = path::PathBuf::from(env!("CARGO_MANIFEST_DIR"));
@@ -250,12 +250,14 @@ mod tests {
         continue;
       };
       if file_name == "tests.rs" {
-        // Sanctioned only as a sibling of a directory module's `mod.rs`.
-        let has_sibling_mod_rs = path.with_file_name("mod.rs").is_file();
-        if !has_sibling_mod_rs {
+        // Sanctioned only as `some/tests.rs` for a directory module whose root is `some.rs`.
+        let has_module_root = path
+          .parent()
+          .is_some_and(|parent| parent.with_extension("rs").is_file());
+        if !has_module_root {
           violations.push(format!(
-            "{}: `tests.rs` with no sibling `mod.rs` — inline the tests in \
-             the module file instead",
+            "{}: `tests.rs` without associated module root (`some.rs` + `some/tests.rs`) — \
+             inline the tests in the module file instead",
             path.display()
           ));
         }
@@ -263,8 +265,8 @@ mod tests {
         violations.push(format!(
           "{}: `*_tests.rs` naming is not the sanctioned pattern — inline \
            `#[cfg(test)] mod tests {{ ... }}` in the module file, or (only \
-           for a directory module) use a sibling file named exactly \
-           `tests.rs`",
+           for a directory module) use a submodule file named exactly \
+           `tests.rs` (`some.rs` + `some/tests.rs`)",
           path.display()
         ));
       }
@@ -856,7 +858,10 @@ mod tests {
                   // auto-fixable reporting, which lives entirely in the
                   // runner (this fix, not the pre-recreation issue of the
                   // same number)
-                  119 => rel_path.starts_with("src/engine/runner/"),
+                  119 => {
+                    rel_path == "src/engine/runner.rs"
+                      || rel_path.starts_with("src/engine/runner/")
+                  }
                   // Post-recreation #157 is path relativization in ui/paths.rs and surfaces/markdown.rs
                   157 => {
                     rel_path == "src/ui/paths.rs"
@@ -864,7 +869,10 @@ mod tests {
                   }
                   // Post-recreation #177 is version probing model in engine/version/
                   // Post-recreation #195 is PR #195 version probing in engine/version/
-                  177 | 195 => rel_path.starts_with("src/engine/version/"),
+                  177 | 195 => {
+                    rel_path == "src/engine/version.rs"
+                      || rel_path.starts_with("src/engine/version/")
+                  }
                   // Post-recreation #191 is PR #191 review regression in ui/paths.rs
                   191 => rel_path == "src/ui/paths.rs",
                   // Post-recreation #201 is go lint test runner flakiness fix in go.rs
