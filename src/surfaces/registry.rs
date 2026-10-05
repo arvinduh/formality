@@ -1,12 +1,15 @@
-//! The [`SurfaceRegistry`]: discovery, lookup, and detection of the fleet of
-//! registered [`LanguageSurface`] implementations.
+//! Surface registry and fleet lookup.
+//!
+//! Discovers and catalogs all active `LanguageSurface` implementations.
+//! Tool discovery and install chains are owned by `super::tooling`.
 
-use super::{
-  LanguageSurface, cpp, glob, go, java, javascript, json, kotlin, markdown,
-  python, rust, toml, typst, yaml,
-};
-use crate::config::FormalityConfig;
-use std::path::Path;
+use std::cell;
+use std::path;
+use std::sync;
+
+use crate::config;
+use crate::surfaces;
+use crate::surfaces::LanguageSurface;
 
 /// Registry for managing, querying, and discovering language surfaces.
 #[derive(Clone)]
@@ -36,18 +39,18 @@ pub(crate) fn matches_name_or_alias(
 impl Default for SurfaceRegistry {
   fn default() -> Self {
     let mut reg = Self::empty();
-    reg.register_surface::<rust::RustSurface>();
-    reg.register_surface::<python::PythonSurface>();
-    reg.register_surface::<cpp::CppSurface>();
-    reg.register_surface::<java::JavaSurface>();
-    reg.register_surface::<go::GoSurface>();
-    reg.register_surface::<markdown::MarkdownSurface>();
-    reg.register_surface::<yaml::YamlSurface>();
-    reg.register_surface::<json::JsonSurface>();
-    reg.register_surface::<toml::TomlSurface>();
-    reg.register_surface::<typst::TypstSurface>();
-    reg.register_surface::<javascript::JavaScriptSurface>();
-    reg.register_surface::<kotlin::KotlinSurface>();
+    reg.register_surface::<surfaces::rust::RustSurface>();
+    reg.register_surface::<surfaces::python::PythonSurface>();
+    reg.register_surface::<surfaces::cpp::CppSurface>();
+    reg.register_surface::<surfaces::java::JavaSurface>();
+    reg.register_surface::<surfaces::go::GoSurface>();
+    reg.register_surface::<surfaces::markdown::MarkdownSurface>();
+    reg.register_surface::<surfaces::yaml::YamlSurface>();
+    reg.register_surface::<surfaces::json::JsonSurface>();
+    reg.register_surface::<surfaces::toml::TomlSurface>();
+    reg.register_surface::<surfaces::typst::TypstSurface>();
+    reg.register_surface::<surfaces::javascript::JavaScriptSurface>();
+    reg.register_surface::<surfaces::kotlin::KotlinSurface>();
     reg
   }
 }
@@ -110,11 +113,12 @@ impl SurfaceRegistry {
   #[must_use]
   pub fn detect_surfaces_smart(
     &self,
-    root: &Path,
-    config: &FormalityConfig,
+    root: &path::Path,
+    config: &config::FormalityConfig,
   ) -> Vec<Box<dyn LanguageSurface>> {
-    let present =
-      std::cell::LazyCell::new(|| glob::PresentExtensions::scan(root, &[]));
+    let present = cell::LazyCell::new(|| {
+      surfaces::glob::PresentExtensions::scan(root, &[])
+    });
     self.detect_surfaces_in(root, config, &present)
   }
 
@@ -123,11 +127,13 @@ impl SurfaceRegistry {
   /// (no explicit `languages` list), so a caller that already walked the
   /// tree, or shares one walk between several checks, walks no further.
   #[must_use]
-  pub fn detect_surfaces_in<F: FnOnce() -> glob::PresentExtensions>(
+  pub fn detect_surfaces_in<
+    F: FnOnce() -> surfaces::glob::PresentExtensions,
+  >(
     &self,
-    root: &Path,
-    config: &FormalityConfig,
-    present: &std::cell::LazyCell<glob::PresentExtensions, F>,
+    root: &path::Path,
+    config: &config::FormalityConfig,
+    present: &cell::LazyCell<surfaces::glob::PresentExtensions, F>,
   ) -> Vec<Box<dyn LanguageSurface>> {
     let global = config.resolve_global();
 
@@ -159,7 +165,7 @@ impl SurfaceRegistry {
 
     // 2. Otherwise auto-detect all project surfaces minus ignore_languages,
     // every surface reading the same single walk of `root`.
-    let present: &glob::PresentExtensions = present;
+    let present: &surfaces::glob::PresentExtensions = present;
     self
       .surfaces
       .iter()
@@ -179,8 +185,8 @@ impl SurfaceRegistry {
   }
 }
 
-static DEFAULT_REGISTRY: std::sync::LazyLock<SurfaceRegistry> =
-  std::sync::LazyLock::new(SurfaceRegistry::default);
+static DEFAULT_REGISTRY: sync::LazyLock<SurfaceRegistry> =
+  sync::LazyLock::new(SurfaceRegistry::default);
 
 /// Returns a reference to the global default [`SurfaceRegistry`].
 #[must_use]
@@ -197,8 +203,8 @@ pub fn all_surfaces() -> Vec<Box<dyn LanguageSurface>> {
 /// Detects and returns active language surfaces in `root` respecting `config` settings.
 #[must_use]
 pub fn detect_surfaces_smart(
-  root: &Path,
-  config: &FormalityConfig,
+  root: &path::Path,
+  config: &config::FormalityConfig,
 ) -> Vec<Box<dyn LanguageSurface>> {
   DEFAULT_REGISTRY.detect_surfaces_smart(root, config)
 }
@@ -211,6 +217,8 @@ pub fn get_surface_by_name(name: &str) -> Option<Box<dyn LanguageSurface>> {
 
 #[cfg(test)]
 mod tests {
+  use std::collections;
+
   use super::*;
 
   /// The trait's default declares no keys, which makes every
@@ -386,12 +394,12 @@ mod tests {
     assert!(reg.surfaces().is_empty());
     assert_eq!(reg.all_surfaces().len(), 0);
 
-    reg.register_surface::<rust::RustSurface>();
+    reg.register_surface::<surfaces::rust::RustSurface>();
     assert_eq!(reg.surfaces().len(), 1);
     assert!(reg.get_surface_by_name("rs").is_some());
     assert!(reg.get_surface_by_name("python").is_none());
 
-    reg.register_surface::<python::PythonSurface>();
+    reg.register_surface::<surfaces::python::PythonSurface>();
     assert_eq!(reg.surfaces().len(), 2);
     assert!(reg.get_surface_by_name("py").is_some());
 
@@ -407,8 +415,8 @@ mod tests {
     std::fs::write(root.join("script.py"), "print(1)").unwrap();
 
     let reg = SurfaceRegistry::default();
-    let detected =
-      reg.detect_surfaces_smart(root, &FormalityConfig::with_defaults());
+    let detected = reg
+      .detect_surfaces_smart(root, &config::FormalityConfig::with_defaults());
     let names: Vec<&str> = detected.iter().map(|s| s.name()).collect();
 
     assert!(names.contains(&"rust"));
@@ -418,8 +426,6 @@ mod tests {
 
   #[test]
   fn test_detect_surfaces_smart_explicit_allowlist_minus_ignore() {
-    use crate::config::FormalityConfig;
-
     let temp = tempfile::TempDir::new().unwrap();
     let root = temp.path();
     std::fs::write(root.join("main.rs"), "fn main() {}").unwrap();
@@ -432,7 +438,8 @@ mod tests {
       ignore_languages = ["go"]
     "#;
     let config =
-      FormalityConfig::parse_str(toml, Path::new("test.toml")).unwrap();
+      config::FormalityConfig::parse_str(toml, path::Path::new("test.toml"))
+        .unwrap();
 
     let reg = SurfaceRegistry::default();
     let selected = reg.detect_surfaces_smart(root, &config);
@@ -449,8 +456,6 @@ mod tests {
 
   #[test]
   fn test_detect_surfaces_smart_explicit_allowlist_respects_disabled_lang() {
-    use crate::config::FormalityConfig;
-
     let temp = tempfile::TempDir::new().unwrap();
     let root = temp.path();
     std::fs::write(root.join("main.rs"), "fn main() {}").unwrap();
@@ -463,7 +468,8 @@ mod tests {
       enabled = false
     "#;
     let config =
-      FormalityConfig::parse_str(toml, Path::new("test.toml")).unwrap();
+      config::FormalityConfig::parse_str(toml, path::Path::new("test.toml"))
+        .unwrap();
 
     let reg = SurfaceRegistry::default();
     let selected = reg.detect_surfaces_smart(root, &config);
@@ -475,8 +481,6 @@ mod tests {
 
   #[test]
   fn test_detect_surfaces_smart_auto_detect_respects_ignore_and_disabled() {
-    use crate::config::FormalityConfig;
-
     let temp = tempfile::TempDir::new().unwrap();
     let root = temp.path();
     std::fs::write(root.join("main.rs"), "fn main() {}").unwrap();
@@ -491,7 +495,8 @@ mod tests {
       enabled = false
     "#;
     let config =
-      FormalityConfig::parse_str(toml, Path::new("test.toml")).unwrap();
+      config::FormalityConfig::parse_str(toml, path::Path::new("test.toml"))
+        .unwrap();
 
     let reg = SurfaceRegistry::default();
     let selected = reg.detect_surfaces_smart(root, &config);
@@ -511,18 +516,17 @@ mod tests {
   #[test]
   fn test_detect_surfaces_smart_shares_one_scan_and_honours_overrides() {
     /// Whether each `detect` call's scan saw a file an earlier call wrote.
-    static SEEN: std::sync::Mutex<Vec<bool>> =
-      std::sync::Mutex::new(Vec::new());
+    static SEEN: sync::Mutex<Vec<bool>> = sync::Mutex::new(Vec::new());
 
     #[derive(Clone, Default)]
     struct RecordingSurface;
 
-    impl crate::config::facets::DeclaresFacets for RecordingSurface {
+    impl config::facets::DeclaresFacets for RecordingSurface {
       fn facet_support(
         &self,
-        _: crate::config::facets::Facet,
-      ) -> crate::config::facets::FacetSupport {
-        crate::config::facets::FacetSupport::Unsupported
+        _: config::facets::Facet,
+      ) -> config::facets::FacetSupport {
+        config::facets::FacetSupport::Unsupported
       }
     }
 
@@ -530,35 +534,39 @@ mod tests {
       fn name(&self) -> &'static str {
         "recording"
       }
-      fn detect(&self, root: &Path, present: &glob::PresentExtensions) -> bool {
+      fn detect(
+        &self,
+        root: &path::Path,
+        present: &surfaces::glob::PresentExtensions,
+      ) -> bool {
         SEEN.lock().unwrap().push(present.contains("probe"));
         std::fs::write(root.join("written.probe"), "").unwrap();
         true
       }
       fn tool_info(
         &self,
-        _: &crate::config::ResolvedLangConfig,
-      ) -> Vec<crate::surfaces::ToolInfo> {
+        _: &config::ResolvedLangConfig,
+      ) -> Vec<surfaces::ToolInfo> {
         unimplemented!()
       }
       fn format(
         &self,
-        _: &crate::surfaces::ExecutionContext,
-      ) -> crate::surfaces::SurfaceResult {
+        _: &surfaces::ExecutionContext,
+      ) -> surfaces::SurfaceResult {
         unimplemented!()
       }
       fn lint(
         &self,
-        _: &crate::surfaces::ExecutionContext,
+        _: &surfaces::ExecutionContext,
         _: bool,
-      ) -> crate::surfaces::SurfaceResult {
+      ) -> surfaces::SurfaceResult {
         unimplemented!()
       }
       fn sync_config(
         &self,
-        _: &crate::surfaces::ExecutionContext,
+        _: &surfaces::ExecutionContext,
         _: bool,
-      ) -> crate::surfaces::SurfaceResult {
+      ) -> surfaces::SurfaceResult {
         unimplemented!()
       }
       fn clone_box(&self) -> Box<dyn LanguageSurface> {
@@ -570,8 +578,10 @@ mod tests {
     reg.register_surface::<RecordingSurface>();
     reg.register_surface::<RecordingSurface>();
     let temp = tempfile::TempDir::new().unwrap();
-    let detected =
-      reg.detect_surfaces_smart(temp.path(), &FormalityConfig::with_defaults());
+    let detected = reg.detect_surfaces_smart(
+      temp.path(),
+      &config::FormalityConfig::with_defaults(),
+    );
 
     // Both overrides ran and were honoured on an empty tree.
     assert_eq!(detected.len(), 2);
@@ -594,14 +604,13 @@ mod tests {
 
   #[test]
   fn test_canonical_fleet_order_covers_all_surfaces() {
-    use std::collections::HashSet;
-
     let reg = SurfaceRegistry::default();
-    let registered_names: HashSet<&str> =
+    let registered_names: collections::HashSet<&str> =
       reg.surfaces().iter().map(|s| s.name()).collect();
 
-    let fleet_order = crate::surfaces::editorconfig::CANONICAL_FLEET_ORDER;
-    let fleet_set: HashSet<&str> = fleet_order.iter().copied().collect();
+    let fleet_order = surfaces::editorconfig::CANONICAL_FLEET_ORDER;
+    let fleet_set: collections::HashSet<&str> =
+      fleet_order.iter().copied().collect();
 
     assert_eq!(
       fleet_order.len(),

@@ -1,0 +1,4 @@
+# Clippy configuration
+# https://rust-lang.github.io/rust-clippy/master/index.html
+
+warn-on-all-wildcard-imports = true

@@ -1,19 +1,21 @@
-//! Go language surface: formats via `gofmt`/`goimports` and lints via
-//! `golangci-lint`, syncing the managed `.golangci.yml` from
-//! `formality.toml`.
+//! Go language surface: formats via `gofmt`/`goimports` and lints via `golangci-lint`.
+//!
+//! Implements `super::LanguageSurface` for Go, syncing `.golangci.yml`.
+//! Fleet registration is owned by `super::registry`.
 
-use super::{
-  DeclaresFacets, ExecutionContext, Facet, FacetSupport, LanguageSurface,
-  NativeConfig, SurfaceResult, SurfaceStatus, ToolInfo,
-  classify_all_nonzero_as_error, classify_exit_one_as_violation,
-  create_tool_command, diff_check_via_tempcopy_classified,
-  find_manifest_upwards, render_native_config, run_tool_command_classified,
-  sync_native_config, tool_missing_guard,
-};
-use serde::{Deserialize, Serialize};
-use std::path::PathBuf;
-use std::sync::OnceLock;
-use std::time::Instant;
+use std::path;
+use std::sync;
+use std::time;
+
+use serde;
+
+use crate::config;
+use crate::config::facets;
+use crate::config::facets::DeclaresFacets;
+use crate::errors;
+use crate::surfaces;
+use crate::surfaces::LanguageSurface;
+use crate::surfaces::NativeConfig;
 
 /// Default set of linters enabled in the generated `.golangci.yml` — matches
 /// golangci-lint's own well-known default set so `fml`-managed projects don't
@@ -30,14 +32,14 @@ pub fn default_go_linters() -> Vec<String> {
 }
 
 /// Linters configuration block for `.golangci.yml`.
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize, PartialEq, Eq)]
 pub struct GolangciLintersConfig {
   /// Enabled linter names.
   pub enable: Vec<String>,
 }
 
 /// Native `.golangci.yml` configuration representation for Go linting.
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize, PartialEq, Eq)]
 pub struct GolangciLintConfig {
   /// Schema/version identifier string for golangci-lint.
   pub version: String,
@@ -48,7 +50,7 @@ pub struct GolangciLintConfig {
 impl NativeConfig for GolangciLintConfig {
   const FILE_NAME: &'static str = ".golangci.yml";
 
-  fn from_context(ctx: &ExecutionContext) -> Self {
+  fn from_context(ctx: &surfaces::ExecutionContext) -> Self {
     let enable = ctx
       .lang_config
       .go
@@ -62,8 +64,8 @@ impl NativeConfig for GolangciLintConfig {
     }
   }
 
-  fn render(&self) -> Result<String, crate::errors::FormalityError> {
-    render_native_config(self)
+  fn render(&self) -> Result<String, errors::FormalityError> {
+    surfaces::render_native_config(self)
   }
 }
 
@@ -72,20 +74,20 @@ impl NativeConfig for GolangciLintConfig {
 pub struct GoSurface;
 
 impl DeclaresFacets for GoSurface {
-  fn facet_support(&self, facet: Facet) -> FacetSupport {
+  fn facet_support(&self, facet: facets::Facet) -> facets::FacetSupport {
     match facet {
       // Go is always tab-indented; gofmt/goimports do not accept a
       // space-indentation mode. This is a non-negotiable language rule, not
       // a per-project style choice.
-      Facet::IndentTabs => FacetSupport::Fixed("tab"),
-      Facet::ImportSort => FacetSupport::Configurable,
-      Facet::IndentWidth
-      | Facet::LineLength
-      | Facet::QuoteStyle
-      | Facet::TrailingComma
-      | Facet::ProseWrap
-      | Facet::Edition
-      | Facet::Standard => FacetSupport::Unsupported,
+      facets::Facet::IndentTabs => facets::FacetSupport::Fixed("tab"),
+      facets::Facet::ImportSort => facets::FacetSupport::Configurable,
+      facets::Facet::IndentWidth
+      | facets::Facet::LineLength
+      | facets::Facet::QuoteStyle
+      | facets::Facet::TrailingComma
+      | facets::Facet::ProseWrap
+      | facets::Facet::Edition
+      | facets::Facet::Standard => facets::FacetSupport::Unsupported,
     }
   }
 }
@@ -112,7 +114,7 @@ const GOFMT_INSTALL_HINT: &str =
 /// (Fixes #201).
 #[must_use]
 pub fn build_golangci_lint_args(
-  files: &[PathBuf],
+  files: &[path::PathBuf],
   fix: bool,
   extra_args: &[String],
 ) -> Vec<String> {
@@ -143,7 +145,7 @@ pub fn build_golangci_lint_args(
 /// v2 install for `fml lint`'s own inline-linter-set path.
 #[must_use]
 pub fn build_golangci_lint_json_args(
-  files: &[PathBuf],
+  files: &[path::PathBuf],
   extra_args: &[String],
 ) -> Vec<String> {
   let mut args = vec![
@@ -168,8 +170,8 @@ pub fn build_golangci_lint_json_args(
 /// parsing at the first positional, so a flag after a path is read as a path
 /// (#210).
 fn build_gofmt_args(
-  files: &[PathBuf],
-  lang: &crate::config::ResolvedLangConfig,
+  files: &[path::PathBuf],
+  lang: &config::ResolvedLangConfig,
 ) -> Vec<String> {
   let mut args = vec!["-s".to_string(), "-w".to_string()];
   args.extend(lang.tool_args("gofmt").iter().cloned());
@@ -182,8 +184,8 @@ fn build_gofmt_args(
 /// ahead of the files for the same reason as [`build_gofmt_args`].
 fn build_goimports_args(
   local_prefix: Option<&str>,
-  files: &[PathBuf],
-  lang: &crate::config::ResolvedLangConfig,
+  files: &[path::PathBuf],
+  lang: &config::ResolvedLangConfig,
 ) -> Vec<String> {
   let mut args = vec!["-w".to_string()];
   if let Some(prefix) = local_prefix {
@@ -220,9 +222,9 @@ pub fn build_golangci_lint_inline_args(linters: &[String]) -> Vec<String> {
 /// format that could itself drift.
 #[must_use]
 pub fn golangci_lint_supports_enable_only() -> bool {
-  static CACHE: OnceLock<bool> = OnceLock::new();
+  static CACHE: sync::OnceLock<bool> = sync::OnceLock::new();
   *CACHE.get_or_init(|| {
-    create_tool_command("golangci-lint")
+    surfaces::create_tool_command("golangci-lint")
       .arg("run")
       .arg("--help")
       .output()
@@ -264,10 +266,10 @@ impl LanguageSurface for GoSurface {
 
   fn tool_info(
     &self,
-    _config: &crate::config::ResolvedLangConfig,
-  ) -> Vec<ToolInfo> {
+    _config: &config::ResolvedLangConfig,
+  ) -> Vec<surfaces::ToolInfo> {
     vec![
-      ToolInfo {
+      surfaces::ToolInfo {
         binary: "gofmt",
         description: "Go code formatter (simplifies code with -s)",
         // No ALL_CHAINS row: gofmt ships with the Go toolchain itself
@@ -277,14 +279,14 @@ impl LanguageSurface for GoSurface {
         is_required_for_fmt: true,
         is_required_for_lint: false,
       },
-      ToolInfo {
+      surfaces::ToolInfo {
         binary: "goimports",
         description: "Go formatter that also groups and sorts imports",
         install_hint: None,
         is_required_for_fmt: true,
         is_required_for_lint: false,
       },
-      ToolInfo {
+      surfaces::ToolInfo {
         binary: "golangci-lint",
         description: "Fast Go linters runner aggregating multiple static analyzers",
         install_hint: None,
@@ -299,16 +301,23 @@ impl LanguageSurface for GoSurface {
     clippy::too_many_lines,
     reason = "orchestrates two-stage Go formatting with gofmt and goimports"
   )]
-  fn format(&self, ctx: &ExecutionContext) -> SurfaceResult {
-    let start = Instant::now();
+  fn format(
+    &self,
+    ctx: &surfaces::ExecutionContext,
+  ) -> surfaces::SurfaceResult {
+    let start = time::Instant::now();
 
-    if let Some(res) =
-      tool_missing_guard(self.name(), "gofmt", start, Some(GOFMT_INSTALL_HINT))
-    {
+    if let Some(res) = surfaces::tool_missing_guard(
+      self.name(),
+      "gofmt",
+      start,
+      Some(GOFMT_INSTALL_HINT),
+    ) {
       return res;
     }
 
-    if let Some(res) = tool_missing_guard(self.name(), "goimports", start, None)
+    if let Some(res) =
+      surfaces::tool_missing_guard(self.name(), "goimports", start, None)
     {
       return res;
     }
@@ -328,10 +337,10 @@ impl LanguageSurface for GoSurface {
     // handles import grouping/sorting, chained in a single `fml fmt` pass so
     // files land ready to pass `fml lint` immediately afterward.
     if ctx.check_only {
-      return diff_check_via_tempcopy_classified(
+      return surfaces::diff_check_via_tempcopy_classified(
         &files,
         |scratch| {
-          let mut gofmt_cmd = create_tool_command("gofmt");
+          let mut gofmt_cmd = surfaces::create_tool_command("gofmt");
           let scratch = [scratch.to_path_buf()];
           gofmt_cmd.args(build_gofmt_args(&scratch, &ctx.lang_config));
           gofmt_cmd.current_dir(ctx.root.as_path());
@@ -340,7 +349,7 @@ impl LanguageSurface for GoSurface {
             return Ok(gofmt_out);
           }
 
-          let mut goimports_cmd = create_tool_command("goimports");
+          let mut goimports_cmd = surfaces::create_tool_command("goimports");
           goimports_cmd.args(build_goimports_args(
             local_prefix.as_deref(),
             &scratch,
@@ -354,11 +363,11 @@ impl LanguageSurface for GoSurface {
         // `gofmt -w` / `goimports -w` exit non-zero only on a parse
         // failure — never to signal reformatting — so any non-zero exit
         // is an `ExecutionError`, matching the non-`--check` write path.
-        classify_all_nonzero_as_error,
+        surfaces::classify_all_nonzero_as_error,
       );
     }
 
-    let mut gofmt_cmd = create_tool_command("gofmt");
+    let mut gofmt_cmd = surfaces::create_tool_command("gofmt");
     gofmt_cmd.args(build_gofmt_args(&files, &ctx.lang_config));
     gofmt_cmd.current_dir(ctx.root.as_path());
 
@@ -379,17 +388,17 @@ impl LanguageSurface for GoSurface {
           // parse failure — never to signal reformatting — so this is an
           // operational failure, not a lint result (Fixes #155), matching
           // the `--check` path's `classify_all_nonzero_as_error` above.
-          return SurfaceResult {
+          return surfaces::SurfaceResult {
             surface_name: self.name(),
-            status: SurfaceStatus::ExecutionError { message: msg },
+            status: surfaces::SurfaceStatus::ExecutionError { message: msg },
             duration: start.elapsed(),
           };
         }
       }
       Err(e) => {
-        return SurfaceResult {
+        return surfaces::SurfaceResult {
           surface_name: self.name(),
-          status: SurfaceStatus::ExecutionError {
+          status: surfaces::SurfaceStatus::ExecutionError {
             message: format!("Failed to execute gofmt: {e}"),
           },
           duration: start.elapsed(),
@@ -397,7 +406,7 @@ impl LanguageSurface for GoSurface {
       }
     }
 
-    let mut goimports_cmd = create_tool_command("goimports");
+    let mut goimports_cmd = surfaces::create_tool_command("goimports");
     goimports_cmd.args(build_goimports_args(
       local_prefix.as_deref(),
       &files,
@@ -408,9 +417,9 @@ impl LanguageSurface for GoSurface {
     match goimports_cmd.output() {
       Ok(output) => {
         if output.status.success() {
-          SurfaceResult {
+          surfaces::SurfaceResult {
             surface_name: self.name(),
-            status: SurfaceStatus::Passed,
+            status: surfaces::SurfaceStatus::Passed,
             duration: start.elapsed(),
           }
         } else {
@@ -427,16 +436,16 @@ impl LanguageSurface for GoSurface {
           // Same reasoning as the `gofmt` branch above: `goimports -w`
           // rewrites in place and exits non-zero only on a parse failure,
           // never to report reformatting (Fixes #155).
-          SurfaceResult {
+          surfaces::SurfaceResult {
             surface_name: self.name(),
-            status: SurfaceStatus::ExecutionError { message: msg },
+            status: surfaces::SurfaceStatus::ExecutionError { message: msg },
             duration: start.elapsed(),
           }
         }
       }
-      Err(e) => SurfaceResult {
+      Err(e) => surfaces::SurfaceResult {
         surface_name: self.name(),
-        status: SurfaceStatus::ExecutionError {
+        status: surfaces::SurfaceStatus::ExecutionError {
           message: format!("Failed to execute goimports: {e}"),
         },
         duration: start.elapsed(),
@@ -444,8 +453,12 @@ impl LanguageSurface for GoSurface {
     }
   }
 
-  fn lint(&self, ctx: &ExecutionContext, fix: bool) -> SurfaceResult {
-    let start = Instant::now();
+  fn lint(
+    &self,
+    ctx: &surfaces::ExecutionContext,
+    fix: bool,
+  ) -> surfaces::SurfaceResult {
+    let start = time::Instant::now();
 
     // golangci-lint requires a go.mod to resolve a module graph against;
     // without one it fails immediately with a typecheck error ("directory
@@ -458,10 +471,10 @@ impl LanguageSurface for GoSurface {
     // all — hence this check runs before `tool_missing_guard` below, not
     // after (unlike the Rust surface, where cargo is always present in a
     // Rust dev environment and so ordering doesn't matter there).
-    if !find_manifest_upwards(&ctx.root, "go.mod") {
-      return SurfaceResult {
+    if !surfaces::find_manifest_upwards(&ctx.root, "go.mod") {
+      return surfaces::SurfaceResult {
         surface_name: self.name(),
-        status: SurfaceStatus::ExecutionError {
+        status: surfaces::SurfaceStatus::ExecutionError {
           message: format!(
             "No go.mod found in {} (or any parent directory). \
              `golangci-lint` needs a Go module to resolve a package graph \
@@ -475,7 +488,7 @@ impl LanguageSurface for GoSurface {
     }
 
     if let Some(res) =
-      tool_missing_guard(self.name(), "golangci-lint", start, None)
+      surfaces::tool_missing_guard(self.name(), "golangci-lint", start, None)
     {
       return res;
     }
@@ -498,7 +511,7 @@ impl LanguageSurface for GoSurface {
       .and_then(|g| g.linters.clone())
       .unwrap_or_else(default_go_linters);
 
-    let mut cmd = create_tool_command("golangci-lint");
+    let mut cmd = surfaces::create_tool_command("golangci-lint");
     if golangci_lint_supports_enable_only() {
       cmd.args(build_golangci_lint_inline_args(&linters));
     }
@@ -517,10 +530,10 @@ impl LanguageSurface for GoSurface {
     // failures). Only `1` is a lint result; everything else is an
     // `ExecutionError` so `fml lint` renders `[ERR]` with the real cause
     // instead of a misleading `Violations found` (Fixes #107).
-    run_tool_command_classified(
+    surfaces::run_tool_command_classified(
       self.name(),
       &mut cmd,
-      classify_exit_one_as_violation,
+      surfaces::classify_exit_one_as_violation,
     )
   }
 
@@ -546,19 +559,29 @@ impl LanguageSurface for GoSurface {
   // `golangci_lint_supports_enable_only()` returns false and `lint()`
   // gracefully falls back to whatever `.golangci.yml` is on disk instead of
   // passing an unrecognized flag.
-  fn sync_config(&self, ctx: &ExecutionContext, check: bool) -> SurfaceResult {
-    let start = Instant::now();
-    sync_native_config::<GolangciLintConfig>(ctx, check, start, self.name())
+  fn sync_config(
+    &self,
+    ctx: &surfaces::ExecutionContext,
+    check: bool,
+  ) -> surfaces::SurfaceResult {
+    let start = time::Instant::now();
+    surfaces::sync_native_config::<GolangciLintConfig>(
+      ctx,
+      check,
+      start,
+      self.name(),
+    )
   }
 }
 
 #[cfg(test)]
 pub(crate) mod tests {
   use super::*;
-  use crate::config::{GoOptions, ResolvedLangConfig};
-  use crate::surfaces::{check_binary_exists, test_ctx};
-  use std::sync::{Mutex, MutexGuard, PoisonError};
-  use tempfile::TempDir;
+  use crate::config;
+  use crate::config::facets;
+  use crate::surfaces;
+  use std::path;
+  use std::sync;
 
   /// `golangci-lint run` takes a machine-global lock and aborts with
   /// `parallel golangci-lint is running` if a second invocation overlaps
@@ -567,19 +590,19 @@ pub(crate) mod tests {
   /// `golangci-lint run` (via `GoSurface::lint` or LSP diagnostics) still holds
   /// this guard so concurrent libtest threads do not compete for disk and CPU
   /// during heavy analyzer runs.
-  static GOLANGCI_LINT_GUARD: Mutex<()> = Mutex::new(());
+  static GOLANGCI_LINT_GUARD: sync::Mutex<()> = sync::Mutex::new(());
 
-  pub(crate) fn golangci_lint_lock() -> MutexGuard<'static, ()> {
+  pub(crate) fn golangci_lint_lock() -> sync::MutexGuard<'static, ()> {
     GOLANGCI_LINT_GUARD
       .lock()
-      .unwrap_or_else(PoisonError::into_inner)
+      .unwrap_or_else(sync::PoisonError::into_inner)
   }
 
   #[test]
   fn test_go_fmt_extra_args_precede_files() {
     // Go's `flag` package stops at the first positional, so a user arg after
     // the file list is read as a path (`stat -r: no such file`, #210).
-    let mut lang = ResolvedLangConfig::new("go");
+    let mut lang = config::ResolvedLangConfig::new("go");
     lang.extra_args = [
       (
         "gofmt".to_string(),
@@ -588,7 +611,7 @@ pub(crate) mod tests {
       ("goimports".to_string(), vec!["-format-only".to_string()]),
     ]
     .into();
-    let files = vec![PathBuf::from("a.go"), PathBuf::from("b.go")];
+    let files = vec![path::PathBuf::from("a.go"), path::PathBuf::from("b.go")];
     assert_eq!(
       build_gofmt_args(&files, &lang),
       vec!["-s", "-w", "-r", "x -> y", "a.go", "b.go"]
@@ -623,42 +646,42 @@ pub(crate) mod tests {
   fn test_go_facet_support() {
     let surface = GoSurface;
     assert_eq!(
-      surface.facet_support(Facet::IndentTabs),
-      FacetSupport::Fixed("tab")
+      surface.facet_support(facets::Facet::IndentTabs),
+      facets::FacetSupport::Fixed("tab")
     );
     assert_eq!(
-      surface.facet_support(Facet::ImportSort),
-      FacetSupport::Configurable
+      surface.facet_support(facets::Facet::ImportSort),
+      facets::FacetSupport::Configurable
     );
     assert_eq!(
-      surface.facet_support(Facet::LineLength),
-      FacetSupport::Unsupported
+      surface.facet_support(facets::Facet::LineLength),
+      facets::FacetSupport::Unsupported
     );
     assert_eq!(
-      surface.facet_support(Facet::QuoteStyle),
-      FacetSupport::Unsupported
+      surface.facet_support(facets::Facet::QuoteStyle),
+      facets::FacetSupport::Unsupported
     );
   }
 
   #[test]
   fn test_go_detect() {
     let surface = GoSurface;
-    let temp = TempDir::new().unwrap();
-    assert!(!crate::surfaces::detect_in(&surface, temp.path()));
+    let temp = tempfile::TempDir::new().unwrap();
+    assert!(!surfaces::detect_in(&surface, temp.path()));
 
     std::fs::write(temp.path().join("go.mod"), "module example.com/foo\n")
       .unwrap();
-    assert!(crate::surfaces::detect_in(&surface, temp.path()));
+    assert!(surfaces::detect_in(&surface, temp.path()));
   }
 
   #[test]
   fn test_go_detect_via_source_file() {
     let surface = GoSurface;
-    let temp = TempDir::new().unwrap();
-    assert!(!crate::surfaces::detect_in(&surface, temp.path()));
+    let temp = tempfile::TempDir::new().unwrap();
+    assert!(!surfaces::detect_in(&surface, temp.path()));
 
     std::fs::write(temp.path().join("main.go"), "package main\n").unwrap();
-    assert!(crate::surfaces::detect_in(&surface, temp.path()));
+    assert!(surfaces::detect_in(&surface, temp.path()));
   }
 
   #[test]
@@ -676,7 +699,10 @@ pub(crate) mod tests {
 
   #[test]
   fn test_build_golangci_lint_args_with_fix_and_files() {
-    let files = vec![PathBuf::from("main.go"), PathBuf::from("util.go")];
+    let files = vec![
+      path::PathBuf::from("main.go"),
+      path::PathBuf::from("util.go"),
+    ];
     let extra = vec!["--timeout=5m".to_string()];
     let args = build_golangci_lint_args(&files, true, &extra);
     assert_eq!(
@@ -708,7 +734,7 @@ pub(crate) mod tests {
 
   #[test]
   fn test_build_golangci_lint_json_args_with_files() {
-    let files = vec![PathBuf::from("main.go")];
+    let files = vec![path::PathBuf::from("main.go")];
     let args = build_golangci_lint_json_args(&files, &[]);
     assert_eq!(
       args,
@@ -739,7 +765,7 @@ pub(crate) mod tests {
       },
     };
     let rendered = cfg.render().unwrap();
-    assert!(rendered.starts_with(crate::surfaces::AUTO_GENERATED_HEADER));
+    assert!(rendered.starts_with(surfaces::AUTO_GENERATED_HEADER));
     assert!(
       rendered.contains("version: '2'") || rendered.contains("version: \"2\"")
     );
@@ -749,9 +775,10 @@ pub(crate) mod tests {
 
   #[test]
   fn test_go_sync_config_default_linters() {
-    let temp = TempDir::new().unwrap();
+    let temp = tempfile::TempDir::new().unwrap();
     let surface = GoSurface;
-    let ctx = test_ctx(temp.path(), ResolvedLangConfig::new("go"));
+    let ctx =
+      surfaces::test_ctx(temp.path(), config::ResolvedLangConfig::new("go"));
 
     let res = surface.sync_config(&ctx, false);
     assert_eq!(res.status.created_file_names(), [".golangci.yml"]);
@@ -763,20 +790,20 @@ pub(crate) mod tests {
     assert!(content.contains("errcheck"));
 
     let check_res = surface.sync_config(&ctx, true);
-    assert!(matches!(check_res.status, SurfaceStatus::Passed));
+    assert!(matches!(check_res.status, surfaces::SurfaceStatus::Passed));
   }
 
   #[test]
   fn test_go_sync_config_custom_linters() {
-    let temp = TempDir::new().unwrap();
+    let temp = tempfile::TempDir::new().unwrap();
     let surface = GoSurface;
-    let mut lang_cfg = ResolvedLangConfig::new("go");
-    lang_cfg.go = Some(GoOptions {
+    let mut lang_cfg = config::ResolvedLangConfig::new("go");
+    lang_cfg.go = Some(config::GoOptions {
       local_prefixes: Some("example.com/myorg".to_string()),
       linters: Some(vec!["revive".to_string(), "gocritic".to_string()]),
     });
 
-    let ctx = test_ctx(temp.path(), lang_cfg);
+    let ctx = surfaces::test_ctx(temp.path(), lang_cfg);
 
     let res = surface.sync_config(&ctx, false);
     assert!(res.is_success());
@@ -790,34 +817,41 @@ pub(crate) mod tests {
 
   #[test]
   fn test_go_format_and_lint_with_real_tools() {
-    if !check_binary_exists("gofmt") || !check_binary_exists("goimports") {
+    if !surfaces::check_binary_exists("gofmt")
+      || !surfaces::check_binary_exists("goimports")
+    {
       return;
     }
-    let temp = TempDir::new().unwrap();
+    let temp = tempfile::TempDir::new().unwrap();
     let file = temp.path().join("main.go");
     let unformatted = "package main\n\nimport (\n\"fmt\"\n)\n\nfunc main(){\nfmt.Println(\"hi\")\n}\n";
     std::fs::write(&file, unformatted).unwrap();
 
     let surface = GoSurface;
-    let mut ctx_check = test_ctx(temp.path(), ResolvedLangConfig::new("go"));
+    let mut ctx_check =
+      surfaces::test_ctx(temp.path(), config::ResolvedLangConfig::new("go"));
     ctx_check.check_only = true;
 
     let check_res = surface.format(&ctx_check);
     assert!(matches!(
       check_res.status,
-      SurfaceStatus::ViolationsFound { .. }
+      surfaces::SurfaceStatus::ViolationsFound { .. }
     ));
 
-    let ctx_fix = test_ctx(temp.path(), ResolvedLangConfig::new("go"));
+    let ctx_fix =
+      surfaces::test_ctx(temp.path(), config::ResolvedLangConfig::new("go"));
 
     let fix_res = surface.format(&ctx_fix);
-    assert!(matches!(fix_res.status, SurfaceStatus::Passed));
+    assert!(matches!(fix_res.status, surfaces::SurfaceStatus::Passed));
 
     let formatted = std::fs::read_to_string(&file).unwrap();
     assert!(formatted.contains("\tfmt.Println(\"hi\")"));
 
     let check_clean = surface.format(&ctx_check);
-    assert!(matches!(check_clean.status, SurfaceStatus::Passed));
+    assert!(matches!(
+      check_clean.status,
+      surfaces::SurfaceStatus::Passed
+    ));
   }
 
   #[test]
@@ -828,10 +862,12 @@ pub(crate) mod tests {
     // `ExecutionError` (`[ERR]`), not a lint-style `ViolationsFound`
     // (`[FAIL]`) — matching the `--check` path's
     // `classify_all_nonzero_as_error`.
-    if !check_binary_exists("gofmt") || !check_binary_exists("goimports") {
+    if !surfaces::check_binary_exists("gofmt")
+      || !surfaces::check_binary_exists("goimports")
+    {
       return;
     }
-    let temp = TempDir::new().unwrap();
+    let temp = tempfile::TempDir::new().unwrap();
     std::fs::write(
       temp.path().join("broken.go"),
       "package main\n\nfunc main( {\n",
@@ -839,11 +875,12 @@ pub(crate) mod tests {
     .unwrap();
 
     let surface = GoSurface;
-    let ctx = test_ctx(temp.path(), ResolvedLangConfig::new("go"));
+    let ctx =
+      surfaces::test_ctx(temp.path(), config::ResolvedLangConfig::new("go"));
 
     let res = surface.format(&ctx);
     assert!(
-      matches!(res.status, SurfaceStatus::ExecutionError { .. }),
+      matches!(res.status, surfaces::SurfaceStatus::ExecutionError { .. }),
       "a gofmt failure on the write path must be ExecutionError, got: {:?}",
       res.status
     );
@@ -857,10 +894,12 @@ pub(crate) mod tests {
     // causes `goimports` specifically to fail, verifying that the `goimports`
     // write-path failure branch classifies the failure as `ExecutionError`
     // (`[ERR]`), not `ViolationsFound` (`[FAIL]`).
-    if !check_binary_exists("gofmt") || !check_binary_exists("goimports") {
+    if !surfaces::check_binary_exists("gofmt")
+      || !surfaces::check_binary_exists("goimports")
+    {
       return;
     }
-    let temp = TempDir::new().unwrap();
+    let temp = tempfile::TempDir::new().unwrap();
     std::fs::write(
       temp.path().join("valid.go"),
       "package main\n\nfunc main() {}\n",
@@ -868,14 +907,14 @@ pub(crate) mod tests {
     .unwrap();
 
     let surface = GoSurface;
-    let mut config = ResolvedLangConfig::new("go");
-    config.extra_args =
+    let mut conf = config::ResolvedLangConfig::new("go");
+    conf.extra_args =
       [("goimports".to_string(), vec!["-local".to_string()])].into();
-    let ctx = test_ctx(temp.path(), config);
+    let ctx = surfaces::test_ctx(temp.path(), conf);
 
     let res = surface.format(&ctx);
     assert!(
-      matches!(res.status, SurfaceStatus::ExecutionError { .. }),
+      matches!(res.status, surfaces::SurfaceStatus::ExecutionError { .. }),
       "a goimports failure on the write path must be ExecutionError, got: {:?}",
       res.status
     );
@@ -898,7 +937,7 @@ pub(crate) mod tests {
     // doesn't panic and its result is consistent with a direct check
     // against the same binary this test environment actually has (when
     // golangci-lint is on PATH).
-    if !check_binary_exists("golangci-lint") {
+    if !surfaces::check_binary_exists("golangci-lint") {
       return;
     }
     let supports = golangci_lint_supports_enable_only();
@@ -917,11 +956,11 @@ pub(crate) mod tests {
   fn test_go_lint_does_not_write_golangci_yml() {
     // Fixes #157 [pre-recreation]: `fml lint` must not write `.golangci.yml` as a side
     // effect; only `fml sync` should materialize the native config file.
-    if !check_binary_exists("golangci-lint") {
+    if !surfaces::check_binary_exists("golangci-lint") {
       return;
     }
     let _guard = golangci_lint_lock();
-    let temp = TempDir::new().unwrap();
+    let temp = tempfile::TempDir::new().unwrap();
     std::fs::write(
       temp.path().join("go.mod"),
       "module example.com/testproj\n\ngo 1.21\n",
@@ -934,7 +973,8 @@ pub(crate) mod tests {
     .unwrap();
 
     let surface = GoSurface;
-    let ctx = test_ctx(temp.path(), ResolvedLangConfig::new("go"));
+    let ctx =
+      surfaces::test_ctx(temp.path(), config::ResolvedLangConfig::new("go"));
 
     let _ = surface.lint(&ctx, false);
 
@@ -949,11 +989,11 @@ pub(crate) mod tests {
     // Verifies `--enable-only` actually drives which linters run, matching
     // the resolved `[lang.go] linters` set, without any `.golangci.yml` on
     // disk (Fixes #157 [pre-recreation]).
-    if !check_binary_exists("golangci-lint") {
+    if !surfaces::check_binary_exists("golangci-lint") {
       return;
     }
     let _guard = golangci_lint_lock();
-    let temp = TempDir::new().unwrap();
+    let temp = tempfile::TempDir::new().unwrap();
     std::fs::write(
       temp.path().join("go.mod"),
       "module example.com/testproj\n\ngo 1.21\n",
@@ -968,26 +1008,26 @@ pub(crate) mod tests {
 
     let surface = GoSurface;
 
-    let mut errcheck_cfg = ResolvedLangConfig::new("go");
-    errcheck_cfg.go = Some(GoOptions {
+    let mut errcheck_cfg = config::ResolvedLangConfig::new("go");
+    errcheck_cfg.go = Some(config::GoOptions {
       local_prefixes: None,
       linters: Some(vec!["errcheck".to_string()]),
     });
-    let ctx_errcheck = test_ctx(temp.path(), errcheck_cfg);
+    let ctx_errcheck = surfaces::test_ctx(temp.path(), errcheck_cfg);
     let res_errcheck = surface.lint(&ctx_errcheck, false);
     assert!(matches!(
       res_errcheck.status,
-      SurfaceStatus::ViolationsFound { .. }
+      surfaces::SurfaceStatus::ViolationsFound { .. }
     ));
 
-    let mut govet_cfg = ResolvedLangConfig::new("go");
-    govet_cfg.go = Some(GoOptions {
+    let mut govet_cfg = config::ResolvedLangConfig::new("go");
+    govet_cfg.go = Some(config::GoOptions {
       local_prefixes: None,
       linters: Some(vec!["govet".to_string()]),
     });
-    let ctx_govet = test_ctx(temp.path(), govet_cfg);
+    let ctx_govet = surfaces::test_ctx(temp.path(), govet_cfg);
     let res_govet = surface.lint(&ctx_govet, false);
-    assert!(matches!(res_govet.status, SurfaceStatus::Passed));
+    assert!(matches!(res_govet.status, surfaces::SurfaceStatus::Passed));
   }
 
   #[test]
@@ -997,11 +1037,11 @@ pub(crate) mod tests {
     // Before the fix this rendered as `[FAIL] Violations found` showing only
     // the contradictory "0 issues." line; it must now be an `ExecutionError`
     // carrying the real cause.
-    if !check_binary_exists("golangci-lint") {
+    if !surfaces::check_binary_exists("golangci-lint") {
       return;
     }
     let _guard = golangci_lint_lock();
-    let temp = TempDir::new().unwrap();
+    let temp = tempfile::TempDir::new().unwrap();
     // Deliberately no go.mod.
     std::fs::write(
       temp.path().join("main.go"),
@@ -1010,11 +1050,12 @@ pub(crate) mod tests {
     .unwrap();
 
     let surface = GoSurface;
-    let ctx = test_ctx(temp.path(), ResolvedLangConfig::new("go"));
+    let ctx =
+      surfaces::test_ctx(temp.path(), config::ResolvedLangConfig::new("go"));
     let res = surface.lint(&ctx, false);
 
     match res.status {
-      SurfaceStatus::ExecutionError { message } => {
+      surfaces::SurfaceStatus::ExecutionError { message } => {
         let lower = message.to_lowercase();
         assert!(
           lower.contains("module")
@@ -1040,7 +1081,7 @@ pub(crate) mod tests {
     // absent), this exercises the preflight guard itself (Fixes #108) and
     // must hold even when golangci-lint isn't installed at all — the guard
     // runs before `tool_missing_guard`, so it never touches the binary.
-    let temp = TempDir::new().unwrap();
+    let temp = tempfile::TempDir::new().unwrap();
     // Deliberately no go.mod anywhere under `temp`, and `temp` itself is a
     // fresh tempdir so no ancestor of it carries one either in practice.
     std::fs::write(
@@ -1050,11 +1091,12 @@ pub(crate) mod tests {
     .unwrap();
 
     let surface = GoSurface;
-    let ctx = test_ctx(temp.path(), ResolvedLangConfig::new("go"));
+    let ctx =
+      surfaces::test_ctx(temp.path(), config::ResolvedLangConfig::new("go"));
     let res = surface.lint(&ctx, false);
 
     match res.status {
-      SurfaceStatus::ExecutionError { message } => {
+      surfaces::SurfaceStatus::ExecutionError { message } => {
         assert!(
           message.contains("go.mod"),
           "message should name the missing manifest, got: {message}"
@@ -1079,11 +1121,11 @@ pub(crate) mod tests {
     // A subdirectory of a real Go module (go.mod lives one level up from
     // `ctx.root`) must NOT trip the preflight guard — it should walk parent
     // directories exactly like the Go toolchain itself does.
-    if !check_binary_exists("golangci-lint") {
+    if !surfaces::check_binary_exists("golangci-lint") {
       return;
     }
     let _guard = golangci_lint_lock();
-    let temp = TempDir::new().unwrap();
+    let temp = tempfile::TempDir::new().unwrap();
     std::fs::write(
       temp.path().join("go.mod"),
       "module example.com/testproj\n\ngo 1.21\n",
@@ -1095,10 +1137,11 @@ pub(crate) mod tests {
       .unwrap();
 
     let surface = GoSurface;
-    let ctx = test_ctx(&sub_dir, ResolvedLangConfig::new("go"));
+    let ctx =
+      surfaces::test_ctx(&sub_dir, config::ResolvedLangConfig::new("go"));
     let res = surface.lint(&ctx, false);
 
-    if let SurfaceStatus::ExecutionError { message } = &res.status {
+    if let surfaces::SurfaceStatus::ExecutionError { message } = &res.status {
       assert!(
         !message.contains("No go.mod found"),
         "go.mod in a parent directory must not trip the missing-manifest \

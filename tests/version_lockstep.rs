@@ -2,7 +2,7 @@
 //! VS Code extension's version in `editors/vscode/package.json`.
 
 use std::fs;
-use std::path::PathBuf;
+use std::path;
 
 /// Ensures `Cargo.toml`'s package version stays in lockstep with the
 /// VS Code extension's `package.json` version. The binary and the
@@ -12,7 +12,7 @@ use std::path::PathBuf;
 /// with each other, not any particular value.
 #[test]
 fn test_cargo_and_vscode_extension_versions_match() {
-  let root = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+  let root = path::PathBuf::from(env!("CARGO_MANIFEST_DIR"));
 
   let cargo_toml_path = root.join("Cargo.toml");
   let cargo_toml =

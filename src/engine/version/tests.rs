@@ -841,8 +841,8 @@ fn test_tool_version_cache_hit_avoids_subprocess() {
     let (bin_path, bin_mtime) =
       resolve_binary_info("rustfmt").expect("rustfmt binary info");
 
-    let now = SystemTime::now()
-      .duration_since(UNIX_EPOCH)
+    let now = time::SystemTime::now()
+      .duration_since(time::UNIX_EPOCH)
       .unwrap()
       .as_secs();
 
@@ -875,8 +875,8 @@ fn test_tool_version_cache_mtime_invalidation() {
     let (bin_path, bin_mtime) =
       resolve_binary_info("rustfmt").expect("rustfmt binary info");
 
-    let now = SystemTime::now()
-      .duration_since(UNIX_EPOCH)
+    let now = time::SystemTime::now()
+      .duration_since(time::UNIX_EPOCH)
       .unwrap()
       .as_secs();
 
@@ -917,8 +917,8 @@ fn test_tool_version_cache_ttl_invalidation() {
     let (bin_path, bin_mtime) =
       resolve_binary_info("rustfmt").expect("rustfmt binary info");
 
-    let now = SystemTime::now()
-      .duration_since(UNIX_EPOCH)
+    let now = time::SystemTime::now()
+      .duration_since(time::UNIX_EPOCH)
       .unwrap()
       .as_secs();
 
@@ -1383,7 +1383,7 @@ fn test_no_installed_registry_tool_prints_a_version_the_probe_discards() {
     }
 
     let printed = leaves.iter().find_map(|(bin, args)| {
-      let output = create_tool_command(bin)
+      let output = surfaces::create_tool_command(bin)
         .args(args.iter().map(String::as_str))
         .output()
         .ok()?;
@@ -1514,7 +1514,7 @@ fn test_render_probe_args_resolution() {
     .expect("literal args should always render");
   assert_eq!(
     rendered,
-    vec![OsString::from("version"), OsString::from("-m")]
+    vec![ffi::OsString::from("version"), ffi::OsString::from("-m")]
   );
 
   // Missing binary with ToolPath must return None (clean degradation).

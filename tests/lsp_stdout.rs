@@ -8,14 +8,19 @@
 
 mod common;
 
-use common::lsp;
-use std::io::{Read, Write};
-use std::process::Stdio;
+use std::io::Read;
+use std::io::Write;
+use std::path;
+use std::process;
 use std::sync::mpsc;
-use std::time::{Duration, Instant};
+use std::time;
+
+use tower_lsp::lsp_types;
+
+use common::lsp;
 
 /// How long the server gets for the whole exchange before the test fails.
-const TIMEOUT: Duration = Duration::from_secs(30);
+const TIMEOUT: time::Duration = time::Duration::from_secs(30);
 
 /// Splits complete JSON-RPC messages off the front of `buf`, strictly.
 ///
@@ -64,7 +69,7 @@ fn take_frames(buf: &mut Vec<u8>) -> Result<Vec<serde_json::Value>, String> {
 struct Transcript {
   chunks: mpsc::Receiver<Vec<u8>>,
   buf: Vec<u8>,
-  deadline: Instant,
+  deadline: time::Instant,
 }
 
 impl Transcript {
@@ -79,7 +84,9 @@ impl Transcript {
     mut done: impl FnMut(&serde_json::Value) -> bool,
   ) -> Result<(), String> {
     loop {
-      let remaining = self.deadline.saturating_duration_since(Instant::now());
+      let remaining = self
+        .deadline
+        .saturating_duration_since(time::Instant::now());
       let chunk = self
         .chunks
         .recv_timeout(remaining)
@@ -98,11 +105,11 @@ impl Transcript {
 fn exchange(
   stdin: &mut impl Write,
   transcript: &mut Transcript,
-  root: &std::path::Path,
-  file: &std::path::Path,
+  root: &path::Path,
+  file: &path::Path,
 ) -> Result<(), String> {
-  let root_uri = tower_lsp::lsp_types::Url::from_file_path(root).unwrap();
-  let file_uri = tower_lsp::lsp_types::Url::from_file_path(file).unwrap();
+  let root_uri = lsp_types::Url::from_file_path(root).unwrap();
+  let file_uri = lsp_types::Url::from_file_path(file).unwrap();
   let is_diagnostics =
     |m: &serde_json::Value| m["method"] == "textDocument/publishDiagnostics";
 
@@ -173,7 +180,7 @@ fn test_lsp_stdout_carries_only_json_rpc_frames() {
     .env("LOCALAPPDATA", &home)
     .env("XDG_DATA_HOME", &home)
     .env("XDG_CACHE_HOME", &home)
-    .stderr(Stdio::piped())
+    .stderr(process::Stdio::piped())
     .spawn()
     .expect("failed to spawn fml lsp");
 
@@ -190,7 +197,7 @@ fn test_lsp_stdout_carries_only_json_rpc_frames() {
   let mut transcript = Transcript {
     chunks,
     buf: Vec::new(),
-    deadline: Instant::now() + TIMEOUT,
+    deadline: time::Instant::now() + TIMEOUT,
   };
   let mut stdin = child.stdin.take().unwrap();
   // Drained on its own thread so a full pipe never stalls the server; it

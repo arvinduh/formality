@@ -1,39 +1,43 @@
-//! Minimum Supported Tool Version (MSTV) registry: per-tool minimum
-//! versions and version-probing metadata.
+//! Minimum Supported Tool Version (MSTV) registry.
+//!
+//! Defines minimum supported version floors and probe strategies for tools.
+//! Version scraping and semver comparison logic are owned by `super`.
 
-use super::Version;
+use crate::engine::version;
 
 /// Minimum Supported Tool Version declarations for tools in the Formality fleet.
 /// MSTV for rustfmt.
-pub const MSTV_RUSTFMT: Version = Version::new(1, 4, 0);
+pub const MSTV_RUSTFMT: version::Version = version::Version::new(1, 4, 0);
 /// MSTV for clippy.
-pub const MSTV_CLIPPY: Version = Version::new(1, 65, 0);
+pub const MSTV_CLIPPY: version::Version = version::Version::new(1, 65, 0);
 /// MSTV for ruff.
-pub const MSTV_RUFF: Version = Version::new(0, 1, 0);
+pub const MSTV_RUFF: version::Version = version::Version::new(0, 1, 0);
 /// MSTV for clang-format.
-pub const MSTV_CLANG_FORMAT: Version = Version::new(14, 0, 0);
+pub const MSTV_CLANG_FORMAT: version::Version = version::Version::new(14, 0, 0);
 /// MSTV for clang-tidy.
-pub const MSTV_CLANG_TIDY: Version = Version::new(14, 0, 0);
+pub const MSTV_CLANG_TIDY: version::Version = version::Version::new(14, 0, 0);
 /// MSTV for prettier.
-pub const MSTV_PRETTIER: Version = Version::new(2, 0, 0);
+pub const MSTV_PRETTIER: version::Version = version::Version::new(2, 0, 0);
 /// MSTV for taplo.
-pub const MSTV_TAPLO: Version = Version::new(0, 8, 0);
+pub const MSTV_TAPLO: version::Version = version::Version::new(0, 8, 0);
 /// MSTV for markdownlint-cli2.
-pub const MSTV_MARKDOWNLINT_CLI2: Version = Version::new(0, 4, 0);
+pub const MSTV_MARKDOWNLINT_CLI2: version::Version =
+  version::Version::new(0, 4, 0);
 /// MSTV for typstyle.
-pub const MSTV_TYPSTYLE: Version = Version::new(0, 11, 0);
+pub const MSTV_TYPSTYLE: version::Version = version::Version::new(0, 11, 0);
 /// MSTV for yamllint.
-pub const MSTV_YAMLLINT: Version = Version::new(1, 20, 0);
+pub const MSTV_YAMLLINT: version::Version = version::Version::new(1, 20, 0);
 /// MSTV for biome.
-pub const MSTV_BIOME: Version = Version::new(1, 5, 0);
+pub const MSTV_BIOME: version::Version = version::Version::new(1, 5, 0);
 /// MSTV for checkstyle.
-pub const MSTV_CHECKSTYLE: Version = Version::new(10, 0, 0);
+pub const MSTV_CHECKSTYLE: version::Version = version::Version::new(10, 0, 0);
 /// MSTV for ktlint.
-pub const MSTV_KTLINT: Version = Version::new(1, 0, 0);
+pub const MSTV_KTLINT: version::Version = version::Version::new(1, 0, 0);
 /// MSTV for gofmt.
-pub const MSTV_GOFMT: Version = Version::new(1, 18, 0);
+pub const MSTV_GOFMT: version::Version = version::Version::new(1, 18, 0);
 /// MSTV for golangci-lint.
-pub const MSTV_GOLANGCI_LINT: Version = Version::new(1, 50, 0);
+pub const MSTV_GOLANGCI_LINT: version::Version =
+  version::Version::new(1, 50, 0);
 
 /// How an argument to a [`VersionProbe::ViaBinary`] command is supplied.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -108,7 +112,7 @@ pub struct ToolMstvEntry {
   /// Name of the binary executable.
   pub binary: &'static str,
   /// Declared MSTV minimum required version, if one is enforced.
-  pub min_version: Option<Version>,
+  pub min_version: Option<version::Version>,
   /// How this tool's version string is obtained.
   pub probe: VersionProbe,
 }

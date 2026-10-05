@@ -8,12 +8,15 @@
 
 mod common;
 
+use std::process;
+use std::time;
+
+use tower_lsp::lsp_types;
+
 use common::lsp;
-use std::process::Stdio;
-use std::time::{Duration, Instant};
 
 /// How long the server gets to answer before the test fails.
-const TIMEOUT: Duration = Duration::from_secs(30);
+const TIMEOUT: time::Duration = time::Duration::from_secs(30);
 
 #[test]
 fn test_lsp_serves_initialize_with_invalid_root_config() {
@@ -24,11 +27,11 @@ fn test_lsp_serves_initialize_with_invalid_root_config() {
   std::fs::create_dir(&xdg).unwrap();
 
   let mut child = lsp::command(root, &xdg)
-    .stderr(Stdio::null())
+    .stderr(process::Stdio::null())
     .spawn()
     .expect("failed to spawn fml lsp");
 
-  let root_uri = tower_lsp::lsp_types::Url::from_file_path(root).unwrap();
+  let root_uri = lsp_types::Url::from_file_path(root).unwrap();
   let mut stdin = child.stdin.take().unwrap();
   lsp::send(
     &mut stdin,
@@ -41,11 +44,11 @@ fn test_lsp_serves_initialize_with_invalid_root_config() {
   );
   let rx = lsp::messages(&mut child);
 
-  let deadline = Instant::now() + TIMEOUT;
+  let deadline = time::Instant::now() + TIMEOUT;
   let mut answered = false;
   let mut error_shown = None;
   while !(answered && error_shown.is_some()) {
-    let remaining = deadline.saturating_duration_since(Instant::now());
+    let remaining = deadline.saturating_duration_since(time::Instant::now());
     let Ok(message) = rx.recv_timeout(remaining) else {
       break;
     };

@@ -10,12 +10,13 @@
 
 pub mod lsp;
 
-use fml::cli::{Cli, Commands};
-use fml::errors::ExitStatus;
 use std::fs;
-use std::path::Path;
-use std::sync::{PoisonError, RwLock, RwLockWriteGuard};
-use tempfile::TempDir;
+use std::path;
+use std::sync;
+use tempfile;
+
+use fml::cli;
+use fml::errors;
 
 /// Orders in-process fml runs against overrides of fml's process-wide binary
 /// cache, which every test thread in this binary shares.
@@ -26,7 +27,7 @@ use tempfile::TempDir;
 /// race a cold lookup against, an override it did not install. Read guards
 /// never poison, and every acquisition recovers a poisoned write guard, so a
 /// failing test cannot fail others through this lock.
-static BINARY_CACHE_LOCK: RwLock<()> = RwLock::new(());
+static BINARY_CACHE_LOCK: sync::RwLock<()> = sync::RwLock::new(());
 
 /// Write access to fml's binary cache, for simulating missing tools.
 ///
@@ -34,7 +35,7 @@ static BINARY_CACHE_LOCK: RwLock<()> = RwLock::new(());
 /// while unwinding, so the next run resolves them afresh.
 pub struct BinaryOverride {
   hidden: Vec<&'static str>,
-  _exclusive: RwLockWriteGuard<'static, ()>,
+  _exclusive: sync::RwLockWriteGuard<'static, ()>,
 }
 
 impl BinaryOverride {
@@ -43,7 +44,7 @@ impl BinaryOverride {
   pub fn lock() -> Self {
     let exclusive = BINARY_CACHE_LOCK
       .write()
-      .unwrap_or_else(PoisonError::into_inner);
+      .unwrap_or_else(sync::PoisonError::into_inner);
     Self {
       hidden: Vec::new(),
       _exclusive: exclusive,
@@ -61,8 +62,12 @@ impl BinaryOverride {
     clippy::unused_self,
     reason = "`&self` proves the caller holds the binary-cache lock"
   )]
-  pub fn run_cli(&self, root: &Path, command: Commands) -> ExitStatus {
-    fml::run_with_args(Cli {
+  pub fn run_cli(
+    &self,
+    root: &path::Path,
+    command: cli::Commands,
+  ) -> errors::ExitStatus {
+    fml::run_with_args(cli::Cli {
       config: None,
       root: Some(root.to_path_buf()),
       command,
@@ -80,8 +85,9 @@ impl Drop for BinaryOverride {
 
 /// Creates a temporary directory populated with the given `(relative_path, content)` files.
 /// Parent directories are created automatically for any nested file paths.
-pub fn temp_repo(files: &[(&str, &str)]) -> TempDir {
-  let temp = TempDir::new().expect("failed to create temporary directory");
+pub fn temp_repo(files: &[(&str, &str)]) -> tempfile::TempDir {
+  let temp =
+    tempfile::TempDir::new().expect("failed to create temporary directory");
   let root = temp.path();
   for (rel_path, content) in files {
     let dest = root.join(rel_path);
@@ -94,11 +100,14 @@ pub fn temp_repo(files: &[(&str, &str)]) -> TempDir {
 }
 
 /// Executes a CLI command targeted at the given root directory.
-pub fn run_cli(root: impl AsRef<Path>, command: Commands) -> ExitStatus {
+pub fn run_cli(
+  root: impl AsRef<path::Path>,
+  command: cli::Commands,
+) -> errors::ExitStatus {
   let _shared = BINARY_CACHE_LOCK
     .read()
-    .unwrap_or_else(PoisonError::into_inner);
-  let args = Cli {
+    .unwrap_or_else(sync::PoisonError::into_inner);
+  let args = cli::Cli {
     config: None,
     root: Some(root.as_ref().to_path_buf()),
     command,
@@ -107,11 +116,11 @@ pub fn run_cli(root: impl AsRef<Path>, command: Commands) -> ExitStatus {
 }
 
 /// Executes a CLI command without specifying a root directory (global / ambient mode).
-pub fn run_cli_no_root(command: Commands) -> ExitStatus {
+pub fn run_cli_no_root(command: cli::Commands) -> errors::ExitStatus {
   let _shared = BINARY_CACHE_LOCK
     .read()
-    .unwrap_or_else(PoisonError::into_inner);
-  let args = Cli {
+    .unwrap_or_else(sync::PoisonError::into_inner);
+  let args = cli::Cli {
     config: None,
     root: None,
     command,
@@ -121,7 +130,7 @@ pub fn run_cli_no_root(command: Commands) -> ExitStatus {
 
 /// Initializes a git repository in `path` with a dummy committer identity.
 /// Returns `true` if git was successfully initialized.
-pub fn init_git_repo(path: impl AsRef<Path>) -> bool {
+pub fn init_git_repo(path: impl AsRef<path::Path>) -> bool {
   let root = path.as_ref();
   let init_ok = std::process::Command::new("git")
     .arg("init")
@@ -143,21 +152,21 @@ pub fn init_git_repo(path: impl AsRef<Path>) -> bool {
 }
 
 /// Helper to create a `Commands::Init` command.
-pub fn init_cmd(force: bool, hidden: bool) -> Commands {
-  Commands::Init { force, hidden }
+pub fn init_cmd(force: bool, hidden: bool) -> cli::Commands {
+  cli::Commands::Init { force, hidden }
 }
 
 /// Helper to create a `Commands::Sync` command.
-pub fn sync_cmd(check: bool, lang: &[&str]) -> Commands {
-  Commands::Sync {
+pub fn sync_cmd(check: bool, lang: &[&str]) -> cli::Commands {
+  cli::Commands::Sync {
     check,
     lang: lang.iter().map(|s| (*s).to_string()).collect(),
   }
 }
 
 /// Helper to create a standard `Commands::Fmt` command.
-pub fn fmt_cmd(check: bool, lang: &[&str]) -> Commands {
-  Commands::Fmt {
+pub fn fmt_cmd(check: bool, lang: &[&str]) -> cli::Commands {
+  cli::Commands::Fmt {
     check,
     staged: false,
     changed: false,
@@ -168,8 +177,8 @@ pub fn fmt_cmd(check: bool, lang: &[&str]) -> Commands {
 }
 
 /// Helper to create a standard `Commands::Fix` command.
-pub fn fix_cmd(check: bool, lang: &[&str]) -> Commands {
-  Commands::Fix {
+pub fn fix_cmd(check: bool, lang: &[&str]) -> cli::Commands {
+  cli::Commands::Fix {
     check,
     staged: false,
     changed: false,
@@ -180,8 +189,8 @@ pub fn fix_cmd(check: bool, lang: &[&str]) -> Commands {
 }
 
 /// Helper to create a standard `Commands::Lint` command.
-pub fn lint_cmd(lang: &[&str]) -> Commands {
-  Commands::Lint {
+pub fn lint_cmd(lang: &[&str]) -> cli::Commands {
+  cli::Commands::Lint {
     check: false,
     staged: false,
     changed: false,

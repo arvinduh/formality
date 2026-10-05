@@ -1,13 +1,13 @@
 //! X-macro table describing each language surface's typed-options wiring.
 //!
-//! Before this module existed, [`super::LangConfig`]'s per-language
+//! Before this module existed, `super::LangConfig`'s per-language
 //! typed-options plumbing was hand-maintained in lockstep across three
 //! locations: `LangConfig::merge`'s `merge_option!` calls, the
 //! `LangConfig::xxx_options()` accessor methods, and `resolve_for_lang`'s
 //! struct-literal assembly. Adding a 13th language surface with typed
 //! options meant touching all three by hand, in sync — easy to drift.
 //!
-//! [`lang_options_table!`] is now the single source of truth for those
+//! `lang_options_table!` is now the single source of truth for those
 //! three call sites, and for the per-surface options check in
 //! `super::strict`, which defines its own callback. It doesn't generate
 //! code itself — it's an "X-macro": it just hands its table rows (plus

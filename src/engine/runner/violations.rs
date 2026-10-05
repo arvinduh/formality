@@ -1,5 +1,5 @@
 //! Reading each tool's own "how much is left, and how much of it can I still
-//! fix" signal out of a [`SurfaceStatus::ViolationsFound`] message (#119).
+//! fix" signal out of a `SurfaceStatus::ViolationsFound` message (#119).
 //!
 //! `fml fix` used to render every failing surface as a bare `Violations
 //! found`, which reads identically whether the fix passes failed to apply
@@ -13,7 +13,7 @@
 //! mapping, say, `MD033` to "unfixable" — that would be `fml` guessing on
 //! the tool's behalf and would go stale the moment a tool learns a new fix
 //! (#254 is exactly that happening to `MD036`). A tool that exposes no such
-//! signal produces [`None`] here, and the caller reports the surface without
+//! signal produces `None` here, and the caller reports the surface without
 //! a fixability claim rather than inventing one.
 //!
 //! Two tools expose one today:
@@ -24,7 +24,7 @@
 //! | `markdownlint-cli2` | `N issues in M files` | `Attempted: N fixes in M files` |
 //!
 //! Everything else — `prettier`, `eslint`, `gofmt`, the shell-shim path in
-//! the golden tests — falls through to [`None`] and renders exactly as it
+//! the golden tests — falls through to `None` and renders exactly as it
 //! did before this module existed.
 //!
 //! ## Why the counts are not summed into a "N fixed" figure
@@ -36,8 +36,6 @@
 //! provides. Per the owner decision on #119 (2026-09-17) this module reports
 //! only what remains; the run-level total is the sum of the per-surface
 //! numbers rendered above it, never an independent tally.
-//!
-//! [`SurfaceStatus::ViolationsFound`]: crate::surfaces::SurfaceStatus::ViolationsFound
 
 /// What one surface still reports after every pass a [`Plan`] ran.
 ///

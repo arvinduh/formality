@@ -1,7 +1,7 @@
-//! Per-language strongly typed formatting/linting option structs (one per
-//! surface, e.g. [`RustOptions`], [`PythonOptions`]) — the `[lang.*]` shape
-//! `formality.toml` deserializes into before [`super::resolve`] merges it
-//! with global config and surface defaults.
+//! Strongly-typed option structs for each language surface.
+//!
+//! Defines the per-language option representations deserialized from `[lang.*]` sections.
+//! Cascaded resolution of these options is owned by `super::resolve`.
 
 use schemars;
 use serde;

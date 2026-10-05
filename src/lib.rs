@@ -1,4 +1,9 @@
 //! Formality (`fml`) is a unified CLI for formatting, linting, and syncing configurations across multiple language surfaces.
+//!
+//! Owns top-level execution entry points and command dispatch. Subcommand
+//! implementations live in `commands`, configuration models live in
+//! `config`, execution engine lives in `engine`, and language definitions
+//! live in `surfaces`.
 
 /// Command-line argument parsing definitions.
 pub mod cli;
@@ -571,6 +576,203 @@ mod tests {
     assert!(
       violations.is_empty(),
       "canonical module path violation(s) — see docs/style-guide.md §1:\n{}",
+      violations.join("\n")
+    );
+  }
+
+  const ALLOWED_ITEM_IMPORTS: &[&str] = &[
+    "clap::CommandFactory",
+    "clap::Parser",
+    "colored::Colorize",
+    "crate::config::facets::DeclaresFacets",
+    "crate::config::lang_table::build_resolved_lang_config",
+    "crate::config::lang_table::impl_lang_accessors",
+    "crate::config::lang_table::impl_lang_merge",
+    "crate::config::lang_table::lang_options_table",
+    "crate::surfaces::LanguageSurface",
+    "crate::surfaces::NativeConfig",
+    "rayon::iter::IndexedParallelIterator",
+    "rayon::iter::IntoParallelRefIterator",
+    "rayon::iter::ParallelIterator",
+    "serde::Deserialize",
+    "serde::Serialize",
+    "std::fmt::Write",
+    "std::io::BufRead",
+    "std::io::Read",
+    "std::io::Write",
+    "std::os::unix::fs::PermissionsExt",
+    "super::lang_table::lang_options_table",
+    "tower_lsp::LanguageServer",
+  ];
+
+  const STD_MODULES: &[&str] = &[
+    "alloc",
+    "any",
+    "arch",
+    "array",
+    "ascii",
+    "backtrace",
+    "borrow",
+    "boxed",
+    "cell",
+    "char",
+    "clone",
+    "cmp",
+    "collections",
+    "convert",
+    "default",
+    "env",
+    "error",
+    "ffi",
+    "fmt",
+    "fs",
+    "future",
+    "hash",
+    "hint",
+    "io",
+    "iter",
+    "marker",
+    "mem",
+    "net",
+    "num",
+    "ops",
+    "option",
+    "os",
+    "panic",
+    "path",
+    "pin",
+    "prelude",
+    "process",
+    "ptr",
+    "rc",
+    "result",
+    "slice",
+    "str",
+    "string",
+    "sync",
+    "task",
+    "thread",
+    "time",
+    "vec",
+  ];
+
+  // Tier-2 enforcement for module-only imports documented in
+  // docs/style-guide.md §1 ("every `use` statement in `src/` and `tests/`
+  // must import a module, never an item. The only permitted exceptions are
+  // named traits and `use super::*;` inside test modules").
+  #[test]
+  fn test_no_item_imports() {
+    let manifest_dir = path::PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+    let src_dir = manifest_dir.join("src");
+    let tests_dir = manifest_dir.join("tests");
+
+    let mut violations = Vec::new();
+
+    for dir in [&src_dir, &tests_dir] {
+      for entry in ignore::WalkBuilder::new(dir)
+        .standard_filters(false)
+        .build()
+        .filter_map(Result::ok)
+        .filter(|e| e.file_type().is_some_and(|ft| ft.is_file()))
+        .filter(|e| e.path().extension().is_some_and(|ext| ext == "rs"))
+      {
+        let path = entry.path();
+        let Ok(content) = std::fs::read_to_string(path) else {
+          continue;
+        };
+
+        let is_test_file = path.starts_with(&tests_dir)
+          || path.file_name().is_some_and(|n| n == "tests.rs");
+        let mut in_test_mod = false;
+
+        for (i, line) in content.lines().enumerate() {
+          let trimmed = line.trim();
+          if trimmed.contains("mod tests {") || trimmed.contains("#[cfg(test)]")
+          {
+            in_test_mod = true;
+          }
+          if trimmed.starts_with("//")
+            || trimmed.starts_with("/*")
+            || trimmed.starts_with('*')
+          {
+            continue;
+          }
+          let Some(rest) = trimmed.strip_prefix("use ") else {
+            continue;
+          };
+          let stmt = rest.trim_end_matches(';').trim();
+
+          if stmt == "super::*" {
+            if !is_test_file && !in_test_mod {
+              violations.push(format!(
+                "{}:{}: `use super::*;` outside test context",
+                path.display(),
+                i + 1
+              ));
+            }
+            continue;
+          }
+
+          if stmt.contains('{') || stmt.contains('}') {
+            violations.push(format!(
+              "{}:{}: grouped use statement `{trimmed}` violates rust-guide §3A",
+              path.display(),
+              i + 1
+            ));
+            continue;
+          }
+
+          if ALLOWED_ITEM_IMPORTS.contains(&stmt) {
+            continue;
+          }
+
+          let base_stmt = stmt
+            .split_once(" as ")
+            .map_or(stmt, |(base, _)| base.trim());
+          let segments: Vec<&str> = base_stmt.split("::").collect();
+          let last = segments.last().copied().unwrap_or_default();
+
+          if last.chars().next().is_some_and(char::is_uppercase) {
+            violations.push(format!(
+              "{}:{}: item import `{stmt}` is not an allowed trait — see docs/style-guide.md §1",
+              path.display(),
+              i + 1
+            ));
+            continue;
+          }
+
+          if segments[0] == "crate" || segments[0] == "fml" {
+            let mut rel_path = src_dir.clone();
+            for part in &segments[1..] {
+              rel_path.push(part);
+            }
+            let is_mod = rel_path.with_extension("rs").is_file()
+              || rel_path.join("mod.rs").is_file()
+              || rel_path.is_dir();
+            if !is_mod {
+              violations.push(format!(
+                "{}:{}: `{stmt}` does not resolve to a module — see docs/style-guide.md §1",
+                path.display(),
+                i + 1
+              ));
+            }
+          } else if segments[0] == "std"
+            && segments.len() > 1
+            && !STD_MODULES.contains(&segments[1])
+          {
+            violations.push(format!(
+              "{}:{}: `{stmt}` is not a standard library module — see docs/style-guide.md §1",
+              path.display(),
+              i + 1
+            ));
+          }
+        }
+      }
+    }
+
+    assert!(
+      violations.is_empty(),
+      "item import violation(s) — see docs/style-guide.md §1:\n{}",
       violations.join("\n")
     );
   }

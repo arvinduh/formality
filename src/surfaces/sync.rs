@@ -1,13 +1,18 @@
-//! `fml sync` support: auto-generation-header detection, the generic
-//! expected-vs-current file sync helper, and the tempcopy-based diff-check
-//! used by in-place formatters during `fml fmt --check`.
+//! Configuration file synchronization support.
+//!
+//! Implements expected-versus-current file diffing and auto-generation header checks.
+//! High-level command coordination is owned by `crate::commands::sync`.
 
-use super::tooling::merge_tool_streams;
-use super::{ExitClass, SurfaceResult, SurfaceStatus, SyncedConfigFile};
-use crate::engine::diff::render_diff;
-use rayon::prelude::*;
-use std::path::{Path, PathBuf};
-use std::time::Instant;
+use std::path;
+use std::time;
+
+use rayon::iter::IndexedParallelIterator;
+use rayon::iter::IntoParallelRefIterator;
+use rayon::iter::ParallelIterator;
+
+use crate::engine::diff;
+use crate::surfaces;
+use crate::surfaces::tooling;
 
 /// Returns true if `content` was written by `fml sync` (contains the
 /// auto-generation sentinel comment). Used to guard against silently
@@ -25,13 +30,13 @@ pub fn is_auto_generated(content: &str) -> bool {
 /// clobbering it.
 #[must_use]
 pub fn sync_file_helper(
-  file_path: &Path,
+  file_path: &path::Path,
   file_name: &str,
   expected_content: &str,
   check: bool,
-  start: Instant,
+  start: time::Instant,
   surface_name: &'static str,
-) -> SurfaceResult {
+) -> surfaces::SurfaceResult {
   let exists = file_path.is_file();
   let current_content = if exists {
     std::fs::read_to_string(file_path).unwrap_or_default()
@@ -40,9 +45,9 @@ pub fn sync_file_helper(
   };
 
   if current_content.trim() == expected_content.trim() {
-    return SurfaceResult {
+    return surfaces::SurfaceResult {
       surface_name,
-      status: SurfaceStatus::Passed,
+      status: surfaces::SurfaceStatus::Passed,
       duration: start.elapsed(),
     };
   }
@@ -79,9 +84,9 @@ pub fn sync_file_helper(
        {expected_content}\n\
        ---"
     );
-    return SurfaceResult {
+    return surfaces::SurfaceResult {
       surface_name,
-      status: SurfaceStatus::ManualConfig {
+      status: surfaces::SurfaceStatus::ManualConfig {
         file: file_name.to_string(),
         suggestion,
       },
@@ -90,15 +95,15 @@ pub fn sync_file_helper(
   }
 
   if check {
-    let diff = render_diff(
+    let diff = diff::render_diff(
       &current_content,
       expected_content,
       if exists { file_name } else { "(missing)" },
       &format!("{file_name} (expected)"),
     );
-    SurfaceResult {
+    surfaces::SurfaceResult {
       surface_name,
-      status: SurfaceStatus::ConfigDrifted {
+      status: surfaces::SurfaceStatus::ConfigDrifted {
         file: file_name.to_string(),
         diff,
       },
@@ -109,16 +114,16 @@ pub fn sync_file_helper(
       let _ = std::fs::create_dir_all(parent);
     }
     match std::fs::write(file_path, expected_content) {
-      Ok(()) => SurfaceResult {
+      Ok(()) => surfaces::SurfaceResult {
         surface_name,
-        status: SurfaceStatus::ConfigSynced {
-          files: vec![SyncedConfigFile::new(file_name, !exists)],
+        status: surfaces::SurfaceStatus::ConfigSynced {
+          files: vec![surfaces::SyncedConfigFile::new(file_name, !exists)],
         },
         duration: start.elapsed(),
       },
-      Err(e) => SurfaceResult {
+      Err(e) => surfaces::SurfaceResult {
         surface_name,
-        status: SurfaceStatus::ExecutionError {
+        status: surfaces::SurfaceStatus::ExecutionError {
           message: format!("Failed to write {file_name}: {e}"),
         },
         duration: start.elapsed(),
@@ -128,7 +133,7 @@ pub fn sync_file_helper(
 }
 
 /// Folds the per-file results of a surface that syncs more than one native
-/// config file into the single [`SurfaceResult`] the runner renders for it.
+/// config file into the single [`surfaces::SurfaceResult`] the runner renders for it.
 ///
 /// Before #130 such a surface simply returned its *last* successful result
 /// and dropped the rest, so `fml sync` could write `.markdownlint.json` and
@@ -141,19 +146,21 @@ pub fn sync_file_helper(
 ///   returned as-is. It already names the file it is about, and a surface
 ///   stops at its first failure rather than writing the remaining files, so
 ///   there is nothing further to report.
-/// - Otherwise every [`SurfaceStatus::ConfigSynced`] file list is
+/// - Otherwise every [`surfaces::SurfaceStatus::ConfigSynced`] file list is
 ///   concatenated in call order. If nothing was written — every file was
-///   already correct — the merged status is [`SurfaceStatus::Passed`].
+///   already correct — the merged status is [`surfaces::SurfaceStatus::Passed`].
 /// - Durations sum, so the reported time covers all the work done. Callers
-///   must therefore time each file from its own [`Instant`] rather than
+///   must therefore time each file from its own [`time::Instant`] rather than
 ///   sharing one start.
 ///
 /// # Panics
 ///
 /// Panics on an empty slice in debug builds; a surface that syncs no file at
-/// all reports [`SurfaceStatus::Skipped`] directly and never calls this.
+/// all reports [`surfaces::SurfaceStatus::Skipped`] directly and never calls this.
 #[must_use]
-pub fn merge_sync_results(results: &[SurfaceResult]) -> SurfaceResult {
+pub fn merge_sync_results(
+  results: &[surfaces::SurfaceResult],
+) -> surfaces::SurfaceResult {
   debug_assert!(
     !results.is_empty(),
     "merge_sync_results called with no results"
@@ -162,25 +169,25 @@ pub fn merge_sync_results(results: &[SurfaceResult]) -> SurfaceResult {
   let duration = results.iter().map(|r| r.duration).sum();
 
   if let Some(failed) = results.iter().find(|r| !r.is_success()) {
-    return SurfaceResult {
+    return surfaces::SurfaceResult {
       surface_name,
       status: failed.status.clone(),
       duration,
     };
   }
 
-  let files: Vec<SyncedConfigFile> = results
+  let files: Vec<surfaces::SyncedConfigFile> = results
     .iter()
     .flat_map(|r| r.status.synced_files().iter().cloned())
     .collect();
 
   let status = if files.is_empty() {
-    SurfaceStatus::Passed
+    surfaces::SurfaceStatus::Passed
   } else {
-    SurfaceStatus::ConfigSynced { files }
+    surfaces::SurfaceStatus::ConfigSynced { files }
   };
 
-  SurfaceResult {
+  surfaces::SurfaceResult {
     surface_name,
     status,
     duration,
@@ -203,24 +210,24 @@ enum PerFileCheckResult {
 /// Executes an in-place formatter on temporary copies of the given files in
 /// parallel and generates unified diffs between the original content and the
 /// formatted content, treating **any** non-zero formatter exit as
-/// [`SurfaceStatus::ViolationsFound`].
+/// [`surfaces::SurfaceStatus::ViolationsFound`].
 ///
 /// Surfaces whose formatter distinguishes "could not run" from a formatting
 /// result via its exit code should call [`diff_check_via_tempcopy_classified`]
-/// so a tool *failure* is reported as [`SurfaceStatus::ExecutionError`],
+/// so a tool *failure* is reported as [`surfaces::SurfaceStatus::ExecutionError`],
 /// consistently with the non-`--check` write path.
 pub fn diff_check_via_tempcopy(
-  files: &[PathBuf],
-  run_in_place: impl Fn(&Path) -> std::io::Result<std::process::Output> + Sync,
+  files: &[path::PathBuf],
+  run_in_place: impl Fn(&path::Path) -> std::io::Result<std::process::Output> + Sync,
   surface_name: &'static str,
-  start: Instant,
-) -> SurfaceResult {
+  start: time::Instant,
+) -> surfaces::SurfaceResult {
   diff_check_via_tempcopy_classified(
     files,
     run_in_place,
     surface_name,
     start,
-    |_| ExitClass::ViolationsFound,
+    |_| tooling::ExitClass::ViolationsFound,
   )
 }
 
@@ -237,17 +244,19 @@ pub fn diff_check_via_tempcopy(
   reason = "implements tempcopy execution, unified diff generation, and RAII cleanup"
 )]
 fn diff_check_classified_impl(
-  files: &[PathBuf],
-  run_in_place: &(impl Fn(&Path) -> std::io::Result<std::process::Output> + Sync),
+  files: &[path::PathBuf],
+  run_in_place: &(
+     impl Fn(&path::Path) -> std::io::Result<std::process::Output> + Sync
+   ),
   surface_name: &'static str,
-  start: Instant,
-  classify: impl Fn(Option<i32>) -> ExitClass,
+  start: time::Instant,
+  classify: impl Fn(Option<i32>) -> tooling::ExitClass,
   local: bool,
-) -> SurfaceResult {
+) -> surfaces::SurfaceResult {
   if files.is_empty() {
-    return SurfaceResult {
+    return surfaces::SurfaceResult {
       surface_name,
-      status: SurfaceStatus::Passed,
+      status: surfaces::SurfaceStatus::Passed,
       duration: start.elapsed(),
     };
   }
@@ -261,9 +270,9 @@ fn diff_check_classified_impl(
     {
       Ok(dir) => Some(dir),
       Err(e) => {
-        return SurfaceResult {
+        return surfaces::SurfaceResult {
           surface_name,
-          status: SurfaceStatus::ExecutionError {
+          status: surfaces::SurfaceStatus::ExecutionError {
             message: format!("Failed to create temporary directory: {e}"),
           },
           duration: start.elapsed(),
@@ -295,7 +304,7 @@ fn diff_check_classified_impl(
         let parent = original
           .parent()
           .filter(|p| !p.as_os_str().is_empty())
-          .unwrap_or_else(|| Path::new("."));
+          .unwrap_or_else(|| path::Path::new("."));
         let dir = match tempfile::Builder::new()
           .prefix(".fml-check-")
           .tempdir_in(parent)
@@ -344,7 +353,7 @@ fn diff_check_classified_impl(
       if !output.status.success() {
         let stdout = String::from_utf8_lossy(&output.stdout);
         let stderr = String::from_utf8_lossy(&output.stderr);
-        let message = merge_tool_streams(
+        let message = tooling::merge_tool_streams(
           &stdout,
           &stderr,
           &format!("Formatter failed for {}", original.display()),
@@ -369,7 +378,7 @@ fn diff_check_classified_impl(
       if formatted == original_content {
         PerFileCheckResult::Clean
       } else {
-        let diff = render_diff(
+        let diff = diff::render_diff(
           &original_content,
           &formatted,
           &original.display().to_string(),
@@ -385,23 +394,25 @@ fn diff_check_classified_impl(
   for result in results {
     match result {
       PerFileCheckResult::ExecutionError(message) => {
-        return SurfaceResult {
+        return surfaces::SurfaceResult {
           surface_name,
-          status: SurfaceStatus::ExecutionError { message },
+          status: surfaces::SurfaceStatus::ExecutionError { message },
           duration: start.elapsed(),
         };
       }
       PerFileCheckResult::FormatterError { message, code } => {
         let status = match classify(code) {
-          ExitClass::ViolationsFound => SurfaceStatus::ViolationsFound {
-            message,
-            diff: None,
-          },
-          ExitClass::ExecutionError => {
-            SurfaceStatus::ExecutionError { message }
+          tooling::ExitClass::ViolationsFound => {
+            surfaces::SurfaceStatus::ViolationsFound {
+              message,
+              diff: None,
+            }
+          }
+          tooling::ExitClass::ExecutionError => {
+            surfaces::SurfaceStatus::ExecutionError { message }
           }
         };
-        return SurfaceResult {
+        return surfaces::SurfaceResult {
           surface_name,
           status,
           duration: start.elapsed(),
@@ -418,15 +429,15 @@ fn diff_check_classified_impl(
   }
 
   if combined_diff.is_empty() {
-    SurfaceResult {
+    surfaces::SurfaceResult {
       surface_name,
-      status: SurfaceStatus::Passed,
+      status: surfaces::SurfaceStatus::Passed,
       duration: start.elapsed(),
     }
   } else {
-    SurfaceResult {
+    surfaces::SurfaceResult {
       surface_name,
-      status: SurfaceStatus::ViolationsFound {
+      status: surfaces::SurfaceStatus::ViolationsFound {
         message: String::new(),
         diff: Some(combined_diff),
       },
@@ -445,12 +456,12 @@ fn diff_check_classified_impl(
 /// scratch files do not pollute the workspace, and guarantees cleanup on all
 /// exit paths.
 pub fn diff_check_via_tempcopy_classified(
-  files: &[PathBuf],
-  run_in_place: impl Fn(&Path) -> std::io::Result<std::process::Output> + Sync,
+  files: &[path::PathBuf],
+  run_in_place: impl Fn(&path::Path) -> std::io::Result<std::process::Output> + Sync,
   surface_name: &'static str,
-  start: Instant,
-  classify: impl Fn(Option<i32>) -> ExitClass,
-) -> SurfaceResult {
+  start: time::Instant,
+  classify: impl Fn(Option<i32>) -> tooling::ExitClass,
+) -> surfaces::SurfaceResult {
   diff_check_classified_impl(
     files,
     &run_in_place,
@@ -471,12 +482,12 @@ pub fn diff_check_via_tempcopy_classified(
 /// `markdownlint-cli2`) to find the exact same on-disk configuration as the
 /// in-place write pass.
 pub fn diff_check_via_local_tempcopy_classified(
-  files: &[PathBuf],
-  run_in_place: impl Fn(&Path) -> std::io::Result<std::process::Output> + Sync,
+  files: &[path::PathBuf],
+  run_in_place: impl Fn(&path::Path) -> std::io::Result<std::process::Output> + Sync,
   surface_name: &'static str,
-  start: Instant,
-  classify: impl Fn(Option<i32>) -> ExitClass,
-) -> SurfaceResult {
+  start: time::Instant,
+  classify: impl Fn(Option<i32>) -> tooling::ExitClass,
+) -> surfaces::SurfaceResult {
   diff_check_classified_impl(
     files,
     &run_in_place,
@@ -490,8 +501,6 @@ pub fn diff_check_via_local_tempcopy_classified(
 #[cfg(test)]
 mod tests {
   use super::*;
-  use crate::surfaces::SurfaceStatus;
-  use tempfile::TempDir;
 
   fn create_dummy_success_output() -> std::process::Output {
     #[cfg(windows)]
@@ -569,9 +578,9 @@ mod tests {
 
   #[test]
   fn test_sync_file_helper_creates_missing_file() {
-    let temp = TempDir::new().unwrap();
+    let temp = tempfile::TempDir::new().unwrap();
     let path = temp.path().join(".rustfmt.toml");
-    let start = Instant::now();
+    let start = time::Instant::now();
 
     let res = sync_file_helper(
       &path,
@@ -592,7 +601,7 @@ mod tests {
 
   #[test]
   fn test_sync_file_helper_matching_content_is_passed() {
-    let temp = TempDir::new().unwrap();
+    let temp = tempfile::TempDir::new().unwrap();
     let path = temp.path().join(".rustfmt.toml");
     // Trailing whitespace differences must not count as drift (comparison is
     // trim()'d on both sides).
@@ -603,10 +612,10 @@ mod tests {
       ".rustfmt.toml",
       "max_width = 80",
       false,
-      Instant::now(),
+      time::Instant::now(),
       "rust",
     );
-    assert!(matches!(res.status, SurfaceStatus::Passed));
+    assert!(matches!(res.status, surfaces::SurfaceStatus::Passed));
   }
 
   #[test]
@@ -614,7 +623,7 @@ mod tests {
     // A file previously written by fml (carries the header) that has since
     // drifted from the expected content must be silently rewritten in
     // non-check mode — the manual-config protection must NOT trigger here.
-    let temp = TempDir::new().unwrap();
+    let temp = tempfile::TempDir::new().unwrap();
     let path = temp.path().join(".rustfmt.toml");
     std::fs::write(
       &path,
@@ -627,7 +636,7 @@ mod tests {
       ".rustfmt.toml",
       "# WARNING: DO NOT EDIT THIS FILE DIRECTLY!\nmax_width = 80\n",
       false,
-      Instant::now(),
+      time::Instant::now(),
       "rust",
     );
 
@@ -642,7 +651,7 @@ mod tests {
 
   #[test]
   fn test_sync_file_helper_auto_generated_drift_check_mode_reports_diff() {
-    let temp = TempDir::new().unwrap();
+    let temp = tempfile::TempDir::new().unwrap();
     let path = temp.path().join(".rustfmt.toml");
     std::fs::write(
       &path,
@@ -655,12 +664,12 @@ mod tests {
       ".rustfmt.toml",
       "# WARNING: DO NOT EDIT THIS FILE DIRECTLY!\nmax_width = 80\n",
       true,
-      Instant::now(),
+      time::Instant::now(),
       "rust",
     );
 
     match res.status {
-      SurfaceStatus::ConfigDrifted { file, diff } => {
+      surfaces::SurfaceStatus::ConfigDrifted { file, diff } => {
         assert_eq!(file, ".rustfmt.toml");
         assert!(diff.contains("max_width"));
       }
@@ -680,7 +689,7 @@ mod tests {
     // clobbered, in either check or write mode — this is the exact
     // protection this project's own pre-commit hook (.githooks/pre-commit,
     // `fml sync --check`) relies on to avoid destroying user settings.
-    let temp = TempDir::new().unwrap();
+    let temp = tempfile::TempDir::new().unwrap();
     let path = temp.path().join(".rustfmt.toml");
     std::fs::write(&path, "max_width = 120\n# hand-tuned, no header\n")
       .unwrap();
@@ -690,11 +699,11 @@ mod tests {
       ".rustfmt.toml",
       "# WARNING: DO NOT EDIT THIS FILE DIRECTLY!\nmax_width = 80\n",
       false,
-      Instant::now(),
+      time::Instant::now(),
       "rust",
     );
     match res_write.status {
-      SurfaceStatus::ManualConfig { file, suggestion } => {
+      surfaces::SurfaceStatus::ManualConfig { file, suggestion } => {
         assert_eq!(file, ".rustfmt.toml");
         assert!(suggestion.contains("was not generated by formality"));
         assert!(suggestion.contains("max_width = 80"));
@@ -712,12 +721,12 @@ mod tests {
       ".rustfmt.toml",
       "# WARNING: DO NOT EDIT THIS FILE DIRECTLY!\nmax_width = 80\n",
       true,
-      Instant::now(),
+      time::Instant::now(),
       "rust",
     );
     assert!(matches!(
       res_check.status,
-      SurfaceStatus::ManualConfig { .. }
+      surfaces::SurfaceStatus::ManualConfig { .. }
     ));
   }
 
@@ -725,7 +734,7 @@ mod tests {
   fn test_sync_file_helper_json_without_header_is_protected_as_manual() {
     // Hand-written JSON configs (e.g. .prettierrc.json, biome.json) with no fml header
     // or $comment must be protected from silent overwrite.
-    let temp = TempDir::new().unwrap();
+    let temp = tempfile::TempDir::new().unwrap();
     let path = temp.path().join(".prettierrc.json");
     std::fs::write(
       &path,
@@ -747,12 +756,12 @@ mod tests {
       ".prettierrc.json",
       expected,
       false,
-      Instant::now(),
+      time::Instant::now(),
       "markdown",
     );
     assert!(matches!(
       res.status,
-      SurfaceStatus::ManualConfig { file, .. } if file == ".prettierrc.json"
+      surfaces::SurfaceStatus::ManualConfig { file, .. } if file == ".prettierrc.json"
     ));
 
     let biome_path = temp.path().join("biome.json");
@@ -763,23 +772,23 @@ mod tests {
       "biome.json",
       expected,
       false,
-      Instant::now(),
+      time::Instant::now(),
       "javascript",
     );
     assert!(matches!(
       res_biome.status,
-      SurfaceStatus::ManualConfig { file, .. } if file == "biome.json"
+      surfaces::SurfaceStatus::ManualConfig { file, .. } if file == "biome.json"
     ));
   }
 
   #[test]
   fn test_diff_check_via_tempcopy_clean() {
-    let temp = TempDir::new().unwrap();
+    let temp = tempfile::TempDir::new().unwrap();
     let file = temp.path().join("clean.rs");
     std::fs::write(&file, "fn main() {\n  println!(\"clean\");\n}\n").unwrap();
 
-    let scratch_path = std::sync::Mutex::new(PathBuf::new());
-    let start = Instant::now();
+    let scratch_path = std::sync::Mutex::new(path::PathBuf::new());
+    let start = time::Instant::now();
     let res = diff_check_via_tempcopy(
       std::slice::from_ref(&file),
       |scratch| {
@@ -792,19 +801,19 @@ mod tests {
       start,
     );
 
-    assert!(matches!(res.status, SurfaceStatus::Passed));
+    assert!(matches!(res.status, surfaces::SurfaceStatus::Passed));
     assert!(!scratch_path.lock().unwrap().exists());
     assert_eq!(std::fs::read_dir(temp.path()).unwrap().count(), 1);
   }
 
   #[test]
   fn test_diff_check_via_tempcopy_with_diff() {
-    let temp = TempDir::new().unwrap();
+    let temp = tempfile::TempDir::new().unwrap();
     let file = temp.path().join("dirty.rs");
     std::fs::write(&file, "fn main() {let x=1;}").unwrap();
 
-    let scratch_path = std::sync::Mutex::new(PathBuf::new());
-    let start = Instant::now();
+    let scratch_path = std::sync::Mutex::new(path::PathBuf::new());
+    let start = time::Instant::now();
     let res = diff_check_via_tempcopy(
       std::slice::from_ref(&file),
       |scratch| {
@@ -817,7 +826,7 @@ mod tests {
     );
 
     match res.status {
-      SurfaceStatus::ViolationsFound { message, diff } => {
+      surfaces::SurfaceStatus::ViolationsFound { message, diff } => {
         assert!(message.is_empty());
         let diff_str = diff.expect("diff should be present");
         assert!(diff_str.contains("dirty.rs"));
@@ -832,12 +841,12 @@ mod tests {
 
   #[test]
   fn test_diff_check_via_tempcopy_raii_cleanup_on_error() {
-    let temp = TempDir::new().unwrap();
+    let temp = tempfile::TempDir::new().unwrap();
     let file = temp.path().join("error_case.rs");
     std::fs::write(&file, "invalid syntax").unwrap();
 
-    let scratch_path = std::sync::Mutex::new(PathBuf::new());
-    let start = Instant::now();
+    let scratch_path = std::sync::Mutex::new(path::PathBuf::new());
+    let start = time::Instant::now();
     let res = diff_check_via_tempcopy(
       std::slice::from_ref(&file),
       |scratch| {
@@ -848,19 +857,22 @@ mod tests {
       start,
     );
 
-    assert!(matches!(res.status, SurfaceStatus::ExecutionError { .. }));
+    assert!(matches!(
+      res.status,
+      surfaces::SurfaceStatus::ExecutionError { .. }
+    ));
     assert!(!scratch_path.lock().unwrap().exists());
     assert_eq!(std::fs::read_dir(temp.path()).unwrap().count(), 1);
   }
 
   #[test]
   fn test_diff_check_via_tempcopy_raii_cleanup_on_panic() {
-    let temp = TempDir::new().unwrap();
+    let temp = tempfile::TempDir::new().unwrap();
     let file = temp.path().join("panic_case.rs");
     std::fs::write(&file, "panic content").unwrap();
 
-    let scratch_path = std::sync::Mutex::new(PathBuf::new());
-    let start = Instant::now();
+    let scratch_path = std::sync::Mutex::new(path::PathBuf::new());
+    let start = time::Instant::now();
     let _ = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
       diff_check_via_tempcopy(
         std::slice::from_ref(&file),
@@ -879,7 +891,7 @@ mod tests {
 
   #[test]
   fn test_diff_check_via_tempcopy_naming_and_path_edge_cases() {
-    let temp = TempDir::new().unwrap();
+    let temp = tempfile::TempDir::new().unwrap();
 
     // Case A: File with no extension (e.g., Makefile)
     let no_ext = temp.path().join("Makefile");
@@ -892,9 +904,9 @@ mod tests {
         Ok(create_dummy_success_output())
       },
       "makefile",
-      Instant::now(),
+      time::Instant::now(),
     );
-    assert!(matches!(res_no_ext.status, SurfaceStatus::Passed));
+    assert!(matches!(res_no_ext.status, surfaces::SurfaceStatus::Passed));
 
     // Case B: Multi-dot file extension (e.g. app.test.spec.rs)
     let multi_ext = temp.path().join("app.test.spec.rs");
@@ -908,9 +920,9 @@ mod tests {
         Ok(create_dummy_success_output())
       },
       "rust",
-      Instant::now(),
+      time::Instant::now(),
     );
-    assert!(matches!(res_multi.status, SurfaceStatus::Passed));
+    assert!(matches!(res_multi.status, surfaces::SurfaceStatus::Passed));
 
     // Case C: File in nested directory hierarchy
     let nested_dir = temp.path().join("nested").join("sub");
@@ -925,9 +937,9 @@ mod tests {
         Ok(create_dummy_success_output())
       },
       "python",
-      Instant::now(),
+      time::Instant::now(),
     );
-    assert!(matches!(res_nested.status, SurfaceStatus::Passed));
+    assert!(matches!(res_nested.status, surfaces::SurfaceStatus::Passed));
 
     // Case D: Filename with spaces and special characters
     let special_file = temp.path().join("my test #1 (draft).js");
@@ -943,14 +955,17 @@ mod tests {
         Ok(create_dummy_success_output())
       },
       "javascript",
-      Instant::now(),
+      time::Instant::now(),
     );
-    assert!(matches!(res_special.status, SurfaceStatus::Passed));
+    assert!(matches!(
+      res_special.status,
+      surfaces::SurfaceStatus::Passed
+    ));
   }
 
   #[test]
   fn test_diff_check_via_tempcopy_original_file_non_mutation_fuzzing() {
-    let temp = TempDir::new().unwrap();
+    let temp = tempfile::TempDir::new().unwrap();
     let original_file = temp.path().join("fuzz_target.txt");
     let original_bytes = b"ORIGINAL_STABLE_CONTENT_DO_NOT_MUTATE_123456789";
     std::fs::write(&original_file, original_bytes).unwrap();
@@ -963,7 +978,7 @@ mod tests {
         Ok(create_dummy_success_output())
       },
       "text",
-      Instant::now(),
+      time::Instant::now(),
     );
     assert_eq!(std::fs::read(&original_file).unwrap(), original_bytes);
 
@@ -975,7 +990,7 @@ mod tests {
         Ok(create_dummy_success_output())
       },
       "text",
-      Instant::now(),
+      time::Instant::now(),
     );
     assert_eq!(std::fs::read(&original_file).unwrap(), original_bytes);
 
@@ -987,14 +1002,14 @@ mod tests {
         Ok(create_dummy_success_output())
       },
       "text",
-      Instant::now(),
+      time::Instant::now(),
     );
     assert_eq!(std::fs::read(&original_file).unwrap(), original_bytes);
   }
 
   #[test]
   fn test_diff_check_via_tempcopy_batch_processing_and_cleanup() {
-    let temp = TempDir::new().unwrap();
+    let temp = tempfile::TempDir::new().unwrap();
     let files: Vec<_> = (0..5)
       .map(|i| {
         let p = temp.path().join(format!("batch_{i}.rs"));
@@ -1004,7 +1019,7 @@ mod tests {
       .collect();
 
     // Multi-file run where element index 2 panics or returns error
-    let start = Instant::now();
+    let start = time::Instant::now();
     let _ = diff_check_via_tempcopy(
       &files,
       |scratch| {
@@ -1029,7 +1044,7 @@ mod tests {
 
   #[test]
   fn test_diff_check_via_tempcopy_content_variations() {
-    let temp = TempDir::new().unwrap();
+    let temp = tempfile::TempDir::new().unwrap();
 
     // Empty file
     let empty = temp.path().join("empty.rs");
@@ -1038,9 +1053,9 @@ mod tests {
       std::slice::from_ref(&empty),
       |_scratch| Ok(create_dummy_success_output()),
       "rust",
-      Instant::now(),
+      time::Instant::now(),
     );
-    assert!(matches!(res_empty.status, SurfaceStatus::Passed));
+    assert!(matches!(res_empty.status, surfaces::SurfaceStatus::Passed));
 
     // CRLF line endings
     let crlf = temp.path().join("crlf.rs");
@@ -1052,17 +1067,17 @@ mod tests {
         Ok(create_dummy_success_output())
       },
       "rust",
-      Instant::now(),
+      time::Instant::now(),
     );
     assert!(matches!(
       res_crlf.status,
-      SurfaceStatus::ViolationsFound { .. }
+      surfaces::SurfaceStatus::ViolationsFound { .. }
     ));
   }
 
   #[test]
   fn test_diff_check_via_tempcopy_parallel_multi_file_diff_ordering() {
-    let temp = TempDir::new().unwrap();
+    let temp = tempfile::TempDir::new().unwrap();
     let files: Vec<_> = (0..8)
       .map(|i| {
         let p = temp.path().join(format!("order_test_{i}.rs"));
@@ -1071,7 +1086,7 @@ mod tests {
       })
       .collect();
 
-    let start = Instant::now();
+    let start = time::Instant::now();
     let res = diff_check_via_tempcopy(
       &files,
       |scratch| {
@@ -1096,7 +1111,7 @@ mod tests {
     );
 
     match res.status {
-      SurfaceStatus::ViolationsFound { message, diff } => {
+      surfaces::SurfaceStatus::ViolationsFound { message, diff } => {
         assert!(message.is_empty());
         let diff_str = diff.expect("diff should be present");
         let pos0 = diff_str
@@ -1123,7 +1138,7 @@ mod tests {
 
   #[test]
   fn test_diff_check_via_tempcopy_parallel_deterministic_error_priority() {
-    let temp = TempDir::new().unwrap();
+    let temp = tempfile::TempDir::new().unwrap();
     let files: Vec<_> = (0..6)
       .map(|i| {
         let p = temp.path().join(format!("err_prio_{i}.rs"));
@@ -1132,7 +1147,7 @@ mod tests {
       })
       .collect();
 
-    let start = Instant::now();
+    let start = time::Instant::now();
     let res = diff_check_via_tempcopy(
       &files,
       |scratch| {
@@ -1150,7 +1165,7 @@ mod tests {
     );
 
     match res.status {
-      SurfaceStatus::ExecutionError { message } => {
+      surfaces::SurfaceStatus::ExecutionError { message } => {
         assert!(
           message.contains("err_prio_2"),
           "Expected earliest failing file (index 2) to be reported, got: {message}"
@@ -1162,7 +1177,7 @@ mod tests {
 
   #[test]
   fn test_diff_check_via_tempcopy_parallel_all_clean_multiple_files() {
-    let temp = TempDir::new().unwrap();
+    let temp = tempfile::TempDir::new().unwrap();
     let files: Vec<_> = (0..10)
       .map(|i| {
         let p = temp.path().join(format!("clean_{i}.rs"));
@@ -1175,17 +1190,17 @@ mod tests {
       &files,
       |_scratch| Ok(create_dummy_success_output()),
       "rust",
-      Instant::now(),
+      time::Instant::now(),
     );
 
-    assert!(matches!(res.status, SurfaceStatus::Passed));
+    assert!(matches!(res.status, surfaces::SurfaceStatus::Passed));
   }
 
   #[test]
   fn test_diff_check_via_tempcopy_default_formatter_error_is_violation() {
     // Non-opting callers keep today's behavior: a non-zero formatter exit
     // is `ViolationsFound`.
-    let temp = TempDir::new().unwrap();
+    let temp = tempfile::TempDir::new().unwrap();
     let file = temp.path().join("a.rs");
     std::fs::write(&file, "fn a() {}\n").unwrap();
 
@@ -1193,11 +1208,11 @@ mod tests {
       std::slice::from_ref(&file),
       |_scratch| Ok(scripted_output("", "boom", 2)),
       "rust",
-      Instant::now(),
+      time::Instant::now(),
     );
 
     match res.status {
-      SurfaceStatus::ViolationsFound { message, diff } => {
+      surfaces::SurfaceStatus::ViolationsFound { message, diff } => {
         assert!(diff.is_none());
         assert_eq!(message, "boom");
       }
@@ -1209,7 +1224,7 @@ mod tests {
   fn test_diff_check_via_tempcopy_classified_error_exit_and_both_streams() {
     // Opting in via `classify_all_nonzero_as_error`: the same non-zero exit
     // is now an `ExecutionError`, and both captured streams survive.
-    let temp = TempDir::new().unwrap();
+    let temp = tempfile::TempDir::new().unwrap();
     let file = temp.path().join("a.yaml");
     std::fs::write(&file, "a: 1\n").unwrap();
 
@@ -1217,12 +1232,12 @@ mod tests {
       std::slice::from_ref(&file),
       |_scratch| Ok(scripted_output("BANNER", "PARSEFAIL", 2)),
       "yaml",
-      Instant::now(),
-      crate::surfaces::classify_all_nonzero_as_error,
+      time::Instant::now(),
+      surfaces::classify_all_nonzero_as_error,
     );
 
     match res.status {
-      SurfaceStatus::ExecutionError { message } => {
+      surfaces::SurfaceStatus::ExecutionError { message } => {
         let out = message.find("BANNER").expect("stdout kept");
         let err = message.find("PARSEFAIL").expect("stderr kept");
         assert!(out < err, "stdout precedes stderr");
@@ -1235,7 +1250,7 @@ mod tests {
   #[test]
   fn test_diff_check_via_tempcopy_classified_violation_exit() {
     // A classifier can still route a specific code to `ViolationsFound`.
-    let temp = TempDir::new().unwrap();
+    let temp = tempfile::TempDir::new().unwrap();
     let file = temp.path().join("a.rs");
     std::fs::write(&file, "fn a() {}\n").unwrap();
 
@@ -1243,12 +1258,12 @@ mod tests {
       std::slice::from_ref(&file),
       |_scratch| Ok(scripted_output("drift", "", 1)),
       "rust",
-      Instant::now(),
-      crate::surfaces::classify_exit_one_as_violation,
+      time::Instant::now(),
+      surfaces::classify_exit_one_as_violation,
     );
 
     match res.status {
-      SurfaceStatus::ViolationsFound { message, .. } => {
+      surfaces::SurfaceStatus::ViolationsFound { message, .. } => {
         assert_eq!(message, "drift");
       }
       other => panic!("expected ViolationsFound, got {other:?}"),
@@ -1257,13 +1272,13 @@ mod tests {
 
   #[test]
   fn test_diff_check_via_local_tempcopy_classified_places_scratch_in_parent() {
-    let temp = TempDir::new().unwrap();
+    let temp = tempfile::TempDir::new().unwrap();
     let sub = temp.path().join("sub");
     std::fs::create_dir_all(&sub).unwrap();
     let file = sub.join("doc.md");
     std::fs::write(&file, "before\n").unwrap();
 
-    let scratch_observed = std::sync::Mutex::new(PathBuf::new());
+    let scratch_observed = std::sync::Mutex::new(path::PathBuf::new());
     let res = diff_check_via_local_tempcopy_classified(
       std::slice::from_ref(&file),
       |scratch| {
@@ -1274,23 +1289,26 @@ mod tests {
         Ok(create_dummy_success_output())
       },
       "markdown",
-      Instant::now(),
-      |_| ExitClass::ViolationsFound,
+      time::Instant::now(),
+      |_| tooling::ExitClass::ViolationsFound,
     );
 
-    assert!(matches!(res.status, SurfaceStatus::ViolationsFound { .. }));
+    assert!(matches!(
+      res.status,
+      surfaces::SurfaceStatus::ViolationsFound { .. }
+    ));
     let scratch_path = scratch_observed.into_inner().unwrap();
     assert!(!scratch_path.exists());
     assert_eq!(std::fs::read_dir(&sub).unwrap().count(), 1);
   }
 
-  fn synced(name: &str, created: bool, ms: u64) -> SurfaceResult {
-    SurfaceResult {
+  fn synced(name: &str, created: bool, ms: u64) -> surfaces::SurfaceResult {
+    surfaces::SurfaceResult {
       surface_name: "test",
-      status: SurfaceStatus::ConfigSynced {
-        files: vec![SyncedConfigFile::new(name, created)],
+      status: surfaces::SurfaceStatus::ConfigSynced {
+        files: vec![surfaces::SyncedConfigFile::new(name, created)],
       },
-      duration: std::time::Duration::from_millis(ms),
+      duration: time::Duration::from_millis(ms),
     }
   }
 
@@ -1311,43 +1329,43 @@ mod tests {
     assert_eq!(merged.status.created_file_names(), [".markdownlint.json"]);
     assert_eq!(merged.surface_name, "test");
     // Durations sum: the row's time covers all the work the surface did.
-    assert_eq!(merged.duration, std::time::Duration::from_millis(7));
+    assert_eq!(merged.duration, time::Duration::from_millis(7));
   }
 
   #[test]
   fn test_merge_sync_results_all_already_in_sync_is_passed() {
-    let already = |ms| SurfaceResult {
+    let already = |ms| surfaces::SurfaceResult {
       surface_name: "test",
-      status: SurfaceStatus::Passed,
-      duration: std::time::Duration::from_millis(ms),
+      status: surfaces::SurfaceStatus::Passed,
+      duration: time::Duration::from_millis(ms),
     };
     let merged = merge_sync_results(&[already(1), already(2)]);
-    assert!(matches!(merged.status, SurfaceStatus::Passed));
+    assert!(matches!(merged.status, surfaces::SurfaceStatus::Passed));
     assert!(merged.status.synced_file_names().is_empty());
-    assert_eq!(merged.duration, std::time::Duration::from_millis(3));
+    assert_eq!(merged.duration, time::Duration::from_millis(3));
   }
 
   #[test]
   fn test_merge_sync_results_reports_the_first_failure_verbatim() {
     // A failure already names its own file and the surface stops before
     // writing the rest, so it is surfaced as-is rather than merged.
-    let drifted = SurfaceResult {
+    let drifted = surfaces::SurfaceResult {
       surface_name: "test",
-      status: SurfaceStatus::ConfigDrifted {
+      status: surfaces::SurfaceStatus::ConfigDrifted {
         file: ".clang-tidy".to_string(),
         diff: "--- a
 +++ b
 "
         .to_string(),
       },
-      duration: std::time::Duration::from_millis(5),
+      duration: time::Duration::from_millis(5),
     };
     let merged =
       merge_sync_results(&[synced(".clang-format", true, 2), drifted]);
     assert!(matches!(
       merged.status,
-      SurfaceStatus::ConfigDrifted { ref file, .. } if file == ".clang-tidy"
+      surfaces::SurfaceStatus::ConfigDrifted { ref file, .. } if file == ".clang-tidy"
     ));
-    assert_eq!(merged.duration, std::time::Duration::from_millis(7));
+    assert_eq!(merged.duration, time::Duration::from_millis(7));
   }
 }

@@ -1,16 +1,16 @@
-//! Java language surface: formats via `google-java-format` and lints via
-//! `checkstyle`, syncing the managed `checkstyle.xml` from
-//! `formality.toml`.
+//! Java language surface: formats via `google-java-format` and lints via `checkstyle`.
+//!
+//! Implements `super::LanguageSurface` for Java, syncing `checkstyle.xml`.
+//! Fleet registration is owned by `super::registry`.
 
-use super::{
-  DeclaresFacets, ExecutionContext, Facet, FacetSupport, LanguageSurface,
-  NativeConfig, SurfaceResult, SurfaceStatus, ToolInfo,
-  classify_all_nonzero_as_error, create_tool_command,
-  diff_check_via_tempcopy_classified, lint_fix_unsupported,
-  run_tool_command_classified, sync_native_config, tool_missing_guard,
-};
+use crate::config::facets;
+use crate::config::facets::DeclaresFacets;
+use crate::surfaces;
+use crate::surfaces::LanguageSurface;
+use crate::surfaces::NativeConfig;
 use std::io::Write;
-use std::time::Instant;
+use std::path;
+use std::time;
 
 /// Detects the failure google-java-format produces when the `java` on
 /// `PATH` is older than the JDK its bundled javac API was built against.
@@ -39,7 +39,10 @@ fn is_jvm_too_old_for_formatter(message: &str) -> bool {
 /// culprit in the message below. Only called on the error path.
 #[must_use]
 fn java_version_line() -> Option<String> {
-  let output = create_tool_command("java").arg("-version").output().ok()?;
+  let output = surfaces::create_tool_command("java")
+    .arg("-version")
+    .output()
+    .ok()?;
   let stderr = String::from_utf8_lossy(&output.stderr);
   stderr.lines().next().map(str::trim).map(str::to_string)
 }
@@ -53,7 +56,9 @@ fn java_version_line() -> Option<String> {
 /// control -- a stock `ubuntu-latest` `GitHub` runner still defaults to JDK
 /// 17, which is exactly where this fires.
 #[must_use]
-fn explain_jvm_incompatibility(result: SurfaceResult) -> SurfaceResult {
+fn explain_jvm_incompatibility(
+  result: surfaces::SurfaceResult,
+) -> surfaces::SurfaceResult {
   let rewrite = |message: String| {
     if !is_jvm_too_old_for_formatter(&message) {
       return message;
@@ -70,21 +75,21 @@ fn explain_jvm_incompatibility(result: SurfaceResult) -> SurfaceResult {
   };
 
   let status = match result.status {
-    SurfaceStatus::ViolationsFound { message, diff } => {
-      SurfaceStatus::ViolationsFound {
+    surfaces::SurfaceStatus::ViolationsFound { message, diff } => {
+      surfaces::SurfaceStatus::ViolationsFound {
         message: rewrite(message),
         diff,
       }
     }
-    SurfaceStatus::ExecutionError { message } => {
-      SurfaceStatus::ExecutionError {
+    surfaces::SurfaceStatus::ExecutionError { message } => {
+      surfaces::SurfaceStatus::ExecutionError {
         message: rewrite(message),
       }
     }
     other => other,
   };
 
-  SurfaceResult { status, ..result }
+  surfaces::SurfaceResult { status, ..result }
 }
 
 /// Typed configuration for Checkstyle, rendered as a Checkstyle XML module
@@ -99,10 +104,10 @@ fn explain_jvm_incompatibility(result: SurfaceResult) -> SurfaceResult {
 /// immediately afterward ("Smart Format").
 ///
 /// ### XML Emission Special Case
-/// Unlike other surfaces (which serialize to JSON, TOML, or YAML via [`super::render_native_config`]),
+/// Unlike other surfaces (which serialize to JSON, TOML, or YAML via `super::render_native_config`),
 /// Checkstyle uses an XML DTD hierarchy with strict module nests and comment headers.
-/// `CheckstyleConfig` implements [`NativeConfig`] by emitting this XML module structure directly
-/// in [`NativeConfig::render`], integrating into the standard [`sync_native_config`] workflow
+/// `CheckstyleConfig` implements `NativeConfig` by emitting this XML module structure directly
+/// in `NativeConfig::render`, integrating into the standard `sync_native_config` workflow
 /// without requiring serde serialization overhead or an XML serializer crate.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct CheckstyleConfig {
@@ -115,7 +120,7 @@ pub struct CheckstyleConfig {
 impl NativeConfig for CheckstyleConfig {
   const FILE_NAME: &'static str = "checkstyle.xml";
 
-  fn from_context(ctx: &ExecutionContext) -> Self {
+  fn from_context(ctx: &surfaces::ExecutionContext) -> Self {
     Self {
       // google-java-format enforces a fixed 100-column limit; there is no
       // knob to change it, so the generated lint config mirrors that rather
@@ -172,10 +177,10 @@ impl DeclaresFacets for JavaSurface {
     clippy::match_same_arms,
     reason = "distinct facet variants carry distinct rationale comments"
   )]
-  fn facet_support(&self, facet: Facet) -> FacetSupport {
+  fn facet_support(&self, facet: facets::Facet) -> facets::FacetSupport {
     match facet {
       // google-java-format never uses tabs.
-      Facet::IndentTabs => FacetSupport::Fixed("spaces"),
+      facets::Facet::IndentTabs => facets::FacetSupport::Fixed("spaces"),
       // Indentation width is configurable, but not freely: it tracks the
       // configured `style` (Google = 2, AOSP = 4) via
       // `FormalityConfig::resolve_for_lang`, or an explicit `indent_size`
@@ -183,20 +188,20 @@ impl DeclaresFacets for JavaSurface {
       // Configurable — `.editorconfig` and `checkstyle.xml` both read the
       // same resolved `ResolvedLangConfig::indent_size`, so they can never
       // disagree.
-      Facet::IndentWidth => FacetSupport::Configurable,
+      facets::Facet::IndentWidth => facets::FacetSupport::Configurable,
       // google-java-format hardcodes a 100-column limit; there is no flag
       // to change it.
-      Facet::LineLength => FacetSupport::Fixed("100"),
+      facets::Facet::LineLength => facets::FacetSupport::Fixed("100"),
       // Import organization/sorting happens automatically as part of
       // `google-java-format --replace`, and is checked via Checkstyle's
       // ImportOrder/UnusedImports modules.
-      Facet::ImportSort => FacetSupport::Configurable,
-      Facet::QuoteStyle
-      | Facet::TrailingComma
-      | Facet::ProseWrap
-      | Facet::Edition => FacetSupport::Unsupported,
+      facets::Facet::ImportSort => facets::FacetSupport::Configurable,
+      facets::Facet::QuoteStyle
+      | facets::Facet::TrailingComma
+      | facets::Facet::ProseWrap
+      | facets::Facet::Edition => facets::FacetSupport::Unsupported,
       // Google vs AOSP style, surfaced via `[lang.java] style = "aosp"`.
-      Facet::Standard => FacetSupport::Configurable,
+      facets::Facet::Standard => facets::FacetSupport::Configurable,
     }
   }
 }
@@ -233,7 +238,7 @@ const CHECKSTYLE_INSTALL_HINT: &str = "Install via: brew install checkstyle (or 
 /// `checkstyle.xml` generation.
 #[must_use]
 pub fn build_checkstyle_plain_args(
-  files: &[std::path::PathBuf],
+  files: &[path::PathBuf],
   extra_args: &[String],
 ) -> Vec<String> {
   let mut args = vec!["-f".to_string(), "plain".to_string()];
@@ -245,7 +250,7 @@ pub fn build_checkstyle_plain_args(
 }
 
 #[must_use]
-fn is_aosp_style(ctx: &ExecutionContext) -> bool {
+fn is_aosp_style(ctx: &surfaces::ExecutionContext) -> bool {
   ctx
     .lang_config
     .java
@@ -291,16 +296,16 @@ impl LanguageSurface for JavaSurface {
   fn tool_info(
     &self,
     _config: &crate::config::ResolvedLangConfig,
-  ) -> Vec<ToolInfo> {
+  ) -> Vec<surfaces::ToolInfo> {
     vec![
-      ToolInfo {
+      surfaces::ToolInfo {
         binary: "google-java-format",
         description: "Java code formatter with built-in import organizing",
         install_hint: Some(GOOGLE_JAVA_FORMAT_INSTALL_HINT),
         is_required_for_fmt: true,
         is_required_for_lint: false,
       },
-      ToolInfo {
+      surfaces::ToolInfo {
         binary: "checkstyle",
         description: "Java static analysis / style linter",
         install_hint: Some(CHECKSTYLE_INSTALL_HINT),
@@ -310,10 +315,13 @@ impl LanguageSurface for JavaSurface {
     ]
   }
 
-  fn format(&self, ctx: &ExecutionContext) -> SurfaceResult {
-    let start = Instant::now();
+  fn format(
+    &self,
+    ctx: &surfaces::ExecutionContext,
+  ) -> surfaces::SurfaceResult {
+    let start = time::Instant::now();
 
-    if let Some(res) = tool_missing_guard(
+    if let Some(res) = surfaces::tool_missing_guard(
       self.name(),
       "google-java-format",
       start,
@@ -334,40 +342,42 @@ impl LanguageSurface for JavaSurface {
     // reorders and de-duplicates imports as part of normal formatting, so
     // there is no separate import-sort pass needed like Python's ruff.
     if ctx.check_only {
-      return explain_jvm_incompatibility(diff_check_via_tempcopy_classified(
-        &files,
-        |scratch| {
-          let mut cmd = create_tool_command("google-java-format");
-          if aosp {
-            cmd.arg("--aosp");
-          }
-          cmd.arg("--replace").arg(scratch);
-          cmd.args(ctx.lang_config.tool_args("google-java-format"));
-          cmd.current_dir(ctx.root.as_path());
-          cmd.output()
-        },
-        self.name(),
-        start,
-        // `google-java-format --replace` rewrites the scratch copy and exits
-        // 0 whether or not it changed anything; `--set-exit-if-changed` is
-        // what turns "I changed something" into exit 1, and `fml` never
-        // passes it. (Verified on the pinned `google-java-format@2.3.0` /
-        // upstream 1.35.0: the flag is *not* confined to `--dry-run` — with
-        // `--replace` it still rewrites the file and then exits 1. A user
-        // adding it via `extra_args` therefore gets a successful reformat
-        // reported as an `ExecutionError`; see ADR 0005, which records that
-        // case as documented-but-unguarded.) A non-zero exit means it could
-        // not format — a file that does
-        // not parse, or the `NoClassDefFoundError` a too-old JVM raises
-        // (which `explain_jvm_incompatibility` then annotates). Every
-        // non-zero exit is therefore an `ExecutionError` (Fixes #151). Same
-        // reasoning applies verbatim to the non-`--check` write branch below
-        // (Fixes #155).
-        classify_all_nonzero_as_error,
-      ));
+      return explain_jvm_incompatibility(
+        surfaces::diff_check_via_tempcopy_classified(
+          &files,
+          |scratch| {
+            let mut cmd = surfaces::create_tool_command("google-java-format");
+            if aosp {
+              cmd.arg("--aosp");
+            }
+            cmd.arg("--replace").arg(scratch);
+            cmd.args(ctx.lang_config.tool_args("google-java-format"));
+            cmd.current_dir(ctx.root.as_path());
+            cmd.output()
+          },
+          self.name(),
+          start,
+          // `google-java-format --replace` rewrites the scratch copy and exits
+          // 0 whether or not it changed anything; `--set-exit-if-changed` is
+          // what turns "I changed something" into exit 1, and `fml` never
+          // passes it. (Verified on the pinned `google-java-format@2.3.0` /
+          // upstream 1.35.0: the flag is *not* confined to `--dry-run` — with
+          // `--replace` it still rewrites the file and then exits 1. A user
+          // adding it via `extra_args` therefore gets a successful reformat
+          // reported as an `ExecutionError`; see ADR 0005, which records that
+          // case as documented-but-unguarded.) A non-zero exit means it could
+          // not format — a file that does
+          // not parse, or the `NoClassDefFoundError` a too-old JVM raises
+          // (which `explain_jvm_incompatibility` then annotates). Every
+          // non-zero exit is therefore an `ExecutionError` (Fixes #151). Same
+          // reasoning applies verbatim to the non-`--check` write branch below
+          // (Fixes #155).
+          surfaces::classify_all_nonzero_as_error,
+        ),
+      );
     }
 
-    let mut cmd = create_tool_command("google-java-format");
+    let mut cmd = surfaces::create_tool_command("google-java-format");
     if aosp {
       cmd.arg("--aosp");
     }
@@ -380,10 +390,10 @@ impl LanguageSurface for JavaSurface {
     cmd.args(ctx.lang_config.tool_args("google-java-format"));
     cmd.current_dir(ctx.root.as_path());
 
-    explain_jvm_incompatibility(run_tool_command_classified(
+    explain_jvm_incompatibility(surfaces::run_tool_command_classified(
       self.name(),
       &mut cmd,
-      classify_all_nonzero_as_error,
+      surfaces::classify_all_nonzero_as_error,
     ))
   }
 
@@ -391,14 +401,18 @@ impl LanguageSurface for JavaSurface {
     clippy::too_many_lines,
     reason = "orchestrates checkstyle execution with fallback temp config generation"
   )]
-  fn lint(&self, ctx: &ExecutionContext, fix: bool) -> SurfaceResult {
-    let start = Instant::now();
+  fn lint(
+    &self,
+    ctx: &surfaces::ExecutionContext,
+    fix: bool,
+  ) -> surfaces::SurfaceResult {
+    let start = time::Instant::now();
 
     if fix {
-      return lint_fix_unsupported(self.name(), start);
+      return surfaces::lint_fix_unsupported(self.name(), start);
     }
 
-    if let Some(res) = tool_missing_guard(
+    if let Some(res) = surfaces::tool_missing_guard(
       self.name(),
       "checkstyle",
       start,
@@ -430,9 +444,9 @@ impl LanguageSurface for JavaSurface {
           {
             Ok(tf) => tf,
             Err(e) => {
-              return SurfaceResult {
+              return surfaces::SurfaceResult {
                 surface_name: self.name(),
-                status: SurfaceStatus::ExecutionError {
+                status: surfaces::SurfaceStatus::ExecutionError {
                   message: format!(
                     "Failed to create temporary checkstyle config: {e}"
                   ),
@@ -442,9 +456,9 @@ impl LanguageSurface for JavaSurface {
             }
           };
           if let Err(e) = temp_file.write_all(rendered.as_bytes()) {
-            return SurfaceResult {
+            return surfaces::SurfaceResult {
               surface_name: self.name(),
-              status: SurfaceStatus::ExecutionError {
+              status: surfaces::SurfaceStatus::ExecutionError {
                 message: format!(
                   "Failed to write temporary checkstyle config: {e}"
                 ),
@@ -456,9 +470,9 @@ impl LanguageSurface for JavaSurface {
           (path, Some(temp_file))
         }
         Err(e) => {
-          return SurfaceResult {
+          return surfaces::SurfaceResult {
             surface_name: self.name(),
-            status: SurfaceStatus::ExecutionError {
+            status: surfaces::SurfaceStatus::ExecutionError {
               message: format!("Failed to render checkstyle config: {e}"),
             },
             duration: start.elapsed(),
@@ -467,7 +481,7 @@ impl LanguageSurface for JavaSurface {
       }
     };
 
-    let mut cmd = create_tool_command("checkstyle");
+    let mut cmd = surfaces::create_tool_command("checkstyle");
     cmd.arg("-c").arg(&config_path);
     for f in &files {
       cmd.arg(f);
@@ -485,9 +499,9 @@ impl LanguageSurface for JavaSurface {
         let has_findings = stdout.contains("WARN") || stdout.contains("ERROR");
 
         if output.status.success() && !has_findings {
-          SurfaceResult {
+          surfaces::SurfaceResult {
             surface_name: self.name(),
-            status: SurfaceStatus::Passed,
+            status: surfaces::SurfaceStatus::Passed,
             duration: start.elapsed(),
           }
         } else {
@@ -499,9 +513,9 @@ impl LanguageSurface for JavaSurface {
             "Checkstyle violations found in Java files".to_string()
           };
 
-          SurfaceResult {
+          surfaces::SurfaceResult {
             surface_name: self.name(),
-            status: SurfaceStatus::ViolationsFound {
+            status: surfaces::SurfaceStatus::ViolationsFound {
               message: msg,
               diff: None,
             },
@@ -509,9 +523,9 @@ impl LanguageSurface for JavaSurface {
           }
         }
       }
-      Err(e) => SurfaceResult {
+      Err(e) => surfaces::SurfaceResult {
         surface_name: self.name(),
-        status: SurfaceStatus::ExecutionError {
+        status: surfaces::SurfaceStatus::ExecutionError {
           message: format!("Failed to execute checkstyle: {e}"),
         },
         duration: start.elapsed(),
@@ -540,24 +554,32 @@ impl LanguageSurface for JavaSurface {
   // without mutating `ctx.root`. google-java-format (the actual formatter tool)
   // has a fixed, unconfigurable style already, so it was never reading this file
   // in the first place — this config is specific to checkstyle, the linter.
-  fn sync_config(&self, ctx: &ExecutionContext, check: bool) -> SurfaceResult {
-    let start = Instant::now();
-    sync_native_config::<CheckstyleConfig>(ctx, check, start, self.name())
+  fn sync_config(
+    &self,
+    ctx: &surfaces::ExecutionContext,
+    check: bool,
+  ) -> surfaces::SurfaceResult {
+    let start = time::Instant::now();
+    surfaces::sync_native_config::<CheckstyleConfig>(
+      ctx,
+      check,
+      start,
+      self.name(),
+    )
   }
 }
 
 #[cfg(test)]
 mod tests {
   use super::*;
-  use crate::config::ResolvedLangConfig;
-  use crate::surfaces::{check_binary_exists, test_ctx};
-  use std::path::Path;
-  use std::sync::Arc;
-  use tempfile::TempDir;
+  use crate::config;
+  use crate::surfaces;
+  use std::path;
+  use std::sync;
 
   #[test]
   fn test_build_checkstyle_plain_args() {
-    let files = vec![std::path::PathBuf::from("Main.java")];
+    let files = vec![path::PathBuf::from("Main.java")];
     let extra = vec!["--exclude".to_string(), "generated".to_string()];
     let args = build_checkstyle_plain_args(&files, &extra);
     assert_eq!(
@@ -576,24 +598,24 @@ mod tests {
   fn test_java_facet_support() {
     let surface = JavaSurface;
     assert_eq!(
-      surface.facet_support(Facet::IndentTabs),
-      FacetSupport::Fixed("spaces")
+      surface.facet_support(facets::Facet::IndentTabs),
+      facets::FacetSupport::Fixed("spaces")
     );
     assert_eq!(
-      surface.facet_support(Facet::IndentWidth),
-      FacetSupport::Configurable
+      surface.facet_support(facets::Facet::IndentWidth),
+      facets::FacetSupport::Configurable
     );
     assert_eq!(
-      surface.facet_support(Facet::LineLength),
-      FacetSupport::Fixed("100")
+      surface.facet_support(facets::Facet::LineLength),
+      facets::FacetSupport::Fixed("100")
     );
     assert_eq!(
-      surface.facet_support(Facet::ImportSort),
-      FacetSupport::Configurable
+      surface.facet_support(facets::Facet::ImportSort),
+      facets::FacetSupport::Configurable
     );
     assert_eq!(
-      surface.facet_support(Facet::QuoteStyle),
-      FacetSupport::Unsupported
+      surface.facet_support(facets::Facet::QuoteStyle),
+      facets::FacetSupport::Unsupported
     );
   }
 
@@ -608,20 +630,20 @@ mod tests {
 
   #[test]
   fn test_java_detect_by_build_files() {
-    let temp = TempDir::new().unwrap();
+    let temp = tempfile::TempDir::new().unwrap();
     let surface = JavaSurface;
-    assert!(!crate::surfaces::detect_in(&surface, temp.path()));
+    assert!(!surfaces::detect_in(&surface, temp.path()));
 
     std::fs::write(temp.path().join("pom.xml"), "<project></project>").unwrap();
-    assert!(crate::surfaces::detect_in(&surface, temp.path()));
+    assert!(surfaces::detect_in(&surface, temp.path()));
   }
 
   #[test]
   fn test_java_detect_by_source_file() {
-    let temp = TempDir::new().unwrap();
+    let temp = tempfile::TempDir::new().unwrap();
     let surface = JavaSurface;
     std::fs::write(temp.path().join("Main.java"), "class Main {}\n").unwrap();
-    assert!(crate::surfaces::detect_in(&surface, temp.path()));
+    assert!(surfaces::detect_in(&surface, temp.path()));
   }
 
   #[test]
@@ -641,7 +663,7 @@ mod tests {
 
   #[test]
   fn test_checkstyle_config_from_context_aosp_style() {
-    let temp = TempDir::new().unwrap();
+    let temp = tempfile::TempDir::new().unwrap();
     // Go through real config parsing + resolve_for_lang (not a hand-built
     // ResolvedLangConfig) so this exercises the same indent_size derivation
     // `fml sync` actually uses.
@@ -649,15 +671,15 @@ mod tests {
       [lang.java]
       style = "aosp"
     "#;
-    let cfg = crate::config::FormalityConfig::parse_str(
+    let cfg = config::FormalityConfig::parse_str(
       toml_str,
-      Path::new("formality.toml"),
+      path::Path::new("formality.toml"),
     )
     .unwrap();
     let lang_cfg = cfg.resolve_for_lang("java");
     assert_eq!(lang_cfg.indent_size, 4);
 
-    let ctx = test_ctx(temp.path(), lang_cfg);
+    let ctx = surfaces::test_ctx(temp.path(), lang_cfg);
 
     let checkstyle_cfg = CheckstyleConfig::from_context(&ctx);
     assert_eq!(checkstyle_cfg.indent_size, 4);
@@ -675,23 +697,25 @@ mod tests {
       [lang.java]
       style = "aosp"
     "#;
-    let cfg = crate::config::FormalityConfig::parse_str(
+    let cfg = config::FormalityConfig::parse_str(
       toml_str,
-      Path::new("formality.toml"),
+      path::Path::new("formality.toml"),
     )
     .unwrap();
     let lang_cfg = cfg.resolve_for_lang("java");
 
-    let temp = TempDir::new().unwrap();
-    let mut ctx = test_ctx(temp.path(), lang_cfg);
-    ctx.global_config = Arc::new(cfg.resolve_global());
+    let temp = tempfile::TempDir::new().unwrap();
+    let mut ctx = surfaces::test_ctx(temp.path(), lang_cfg);
+    ctx.global_config = sync::Arc::new(cfg.resolve_global());
 
     let checkstyle_indent = CheckstyleConfig::from_context(&ctx).indent_size;
 
-    let surfaces: Vec<Box<dyn LanguageSurface>> = vec![Box::new(JavaSurface)];
+    let test_surfaces: Vec<Box<dyn LanguageSurface>> =
+      vec![Box::new(JavaSurface)];
     let editorconfig_content =
-      crate::surfaces::editorconfig::generate_editorconfig_from_config(
-        &cfg, &surfaces,
+      surfaces::editorconfig::generate_editorconfig_from_config(
+        &cfg,
+        &test_surfaces,
       );
     // Extract the `[*.java]` section's indent_size line.
     let java_section = editorconfig_content
@@ -713,10 +737,11 @@ mod tests {
 
   #[test]
   fn test_java_sync_config_generates_checkstyle_xml() {
-    let temp = TempDir::new().unwrap();
+    let temp = tempfile::TempDir::new().unwrap();
     let root = temp.path().to_path_buf();
 
-    let ctx = test_ctx(&root, ResolvedLangConfig::new("java"));
+    let ctx =
+      surfaces::test_ctx(&root, config::ResolvedLangConfig::new("java"));
 
     let surface = JavaSurface;
     let res = surface.sync_config(&ctx, false);
@@ -730,53 +755,63 @@ mod tests {
     assert!(content.contains("basicOffset"));
 
     let check_res = surface.sync_config(&ctx, true);
-    assert!(matches!(check_res.status, SurfaceStatus::Passed));
+    assert!(matches!(check_res.status, surfaces::SurfaceStatus::Passed));
   }
 
   #[test]
   fn test_is_aosp_style_default_false() {
-    let temp = TempDir::new().unwrap();
-    let ctx = test_ctx(temp.path(), ResolvedLangConfig::new("java"));
+    let temp = tempfile::TempDir::new().unwrap();
+    let ctx =
+      surfaces::test_ctx(temp.path(), config::ResolvedLangConfig::new("java"));
     assert!(!is_aosp_style(&ctx));
   }
 
   #[test]
   fn test_java_lint_missing_tool() {
-    if check_binary_exists("checkstyle") {
+    if surfaces::check_binary_exists("checkstyle") {
       return;
     }
-    let temp = TempDir::new().unwrap();
+    let temp = tempfile::TempDir::new().unwrap();
     std::fs::write(temp.path().join("Main.java"), "class Main {}\n").unwrap();
 
-    let ctx = test_ctx(temp.path(), ResolvedLangConfig::new("java"));
+    let ctx =
+      surfaces::test_ctx(temp.path(), config::ResolvedLangConfig::new("java"));
 
     let surface = JavaSurface;
     let res = surface.lint(&ctx, false);
-    assert!(matches!(res.status, SurfaceStatus::ToolMissing { .. }));
+    assert!(matches!(
+      res.status,
+      surfaces::SurfaceStatus::ToolMissing { .. }
+    ));
   }
 
   #[test]
   fn test_java_format_missing_tool() {
-    if check_binary_exists("google-java-format") {
+    if surfaces::check_binary_exists("google-java-format") {
       return;
     }
-    let temp = TempDir::new().unwrap();
+    let temp = tempfile::TempDir::new().unwrap();
     std::fs::write(temp.path().join("Main.java"), "class Main {}\n").unwrap();
 
-    let ctx = test_ctx(temp.path(), ResolvedLangConfig::new("java"));
+    let ctx =
+      surfaces::test_ctx(temp.path(), config::ResolvedLangConfig::new("java"));
 
     let surface = JavaSurface;
     let res = surface.format(&ctx);
-    assert!(matches!(res.status, SurfaceStatus::ToolMissing { .. }));
+    assert!(matches!(
+      res.status,
+      surfaces::SurfaceStatus::ToolMissing { .. }
+    ));
   }
 
   #[test]
   fn test_java_lint_does_not_write_to_ctx_root() {
-    let temp = TempDir::new().unwrap();
+    let temp = tempfile::TempDir::new().unwrap();
     let main_java = temp.path().join("Main.java");
     std::fs::write(&main_java, "class Main {}\n").unwrap();
 
-    let ctx = test_ctx(temp.path(), ResolvedLangConfig::new("java"));
+    let ctx =
+      surfaces::test_ctx(temp.path(), config::ResolvedLangConfig::new("java"));
 
     let surface = JavaSurface;
     let _ = surface.lint(&ctx, false);
@@ -822,14 +857,14 @@ mod tests {
 
   #[test]
   fn test_explain_jvm_incompatibility_rewrites_only_the_matching_message() {
-    let result = SurfaceResult {
+    let result = surfaces::SurfaceResult {
       surface_name: "java",
-      status: SurfaceStatus::ExecutionError {
+      status: surfaces::SurfaceStatus::ExecutionError {
         message: JDK_TOO_OLD_STACK.to_string(),
       },
-      duration: std::time::Duration::from_millis(1),
+      duration: time::Duration::from_millis(1),
     };
-    let SurfaceStatus::ExecutionError { message } =
+    let surfaces::SurfaceStatus::ExecutionError { message } =
       explain_jvm_incompatibility(result).status
     else {
       panic!("status variant must be preserved");
@@ -843,15 +878,15 @@ mod tests {
       "the original error must be kept underneath, not discarded: {message}"
     );
 
-    let untouched = SurfaceResult {
+    let untouched = surfaces::SurfaceResult {
       surface_name: "java",
-      status: SurfaceStatus::ViolationsFound {
+      status: surfaces::SurfaceStatus::ViolationsFound {
         message: "Sample.java:1:1: needs formatting".to_string(),
         diff: None,
       },
-      duration: std::time::Duration::from_millis(1),
+      duration: time::Duration::from_millis(1),
     };
-    let SurfaceStatus::ViolationsFound { message, .. } =
+    let surfaces::SurfaceStatus::ViolationsFound { message, .. } =
       explain_jvm_incompatibility(untouched).status
     else {
       panic!("status variant must be preserved");
@@ -869,10 +904,10 @@ mod tests {
     // `ExecutionError` (`[ERR]`), not a lint-style `ViolationsFound`
     // (`[FAIL]`) — `--replace` has no "would reformat" exit code, so a
     // non-zero exit is always operational.
-    if !check_binary_exists("google-java-format") {
+    if !surfaces::check_binary_exists("google-java-format") {
       return;
     }
-    let temp = TempDir::new().unwrap();
+    let temp = tempfile::TempDir::new().unwrap();
     std::fs::write(
       temp.path().join("Broken.java"),
       "class Broken { void m( { int x = ; } }\n",
@@ -880,12 +915,13 @@ mod tests {
     .unwrap();
 
     let surface = JavaSurface;
-    let mut ctx = test_ctx(temp.path(), ResolvedLangConfig::new("java"));
+    let mut ctx =
+      surfaces::test_ctx(temp.path(), config::ResolvedLangConfig::new("java"));
     ctx.check_only = true;
 
     let res = surface.format(&ctx);
     assert!(
-      matches!(res.status, SurfaceStatus::ExecutionError { .. }),
+      matches!(res.status, surfaces::SurfaceStatus::ExecutionError { .. }),
       "a formatter failure on --check must be ExecutionError, got: {:?}",
       res.status
     );
@@ -898,10 +934,10 @@ mod tests {
     // operational google-java-format failure as `ExecutionError`, not
     // `ViolationsFound` — mirroring
     // `test_java_check_reports_execution_error_on_formatter_failure` above.
-    if !check_binary_exists("google-java-format") {
+    if !surfaces::check_binary_exists("google-java-format") {
       return;
     }
-    let temp = TempDir::new().unwrap();
+    let temp = tempfile::TempDir::new().unwrap();
     std::fs::write(
       temp.path().join("Broken.java"),
       "class Broken { void m( { int x = ; } }\n",
@@ -909,11 +945,12 @@ mod tests {
     .unwrap();
 
     let surface = JavaSurface;
-    let ctx = test_ctx(temp.path(), ResolvedLangConfig::new("java"));
+    let ctx =
+      surfaces::test_ctx(temp.path(), config::ResolvedLangConfig::new("java"));
 
     let res = surface.format(&ctx);
     assert!(
-      matches!(res.status, SurfaceStatus::ExecutionError { .. }),
+      matches!(res.status, surfaces::SurfaceStatus::ExecutionError { .. }),
       "a formatter failure on the write path must be ExecutionError, got: {:?}",
       res.status
     );

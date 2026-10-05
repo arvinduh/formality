@@ -23,22 +23,16 @@
 //! clangd, …) — it does not spawn, proxy, or route requests to them. See
 //! `README.md`'s "Editor setup" section for how to wire `fml lsp` in
 //! alongside a primary language server.
-use colored::Colorize;
-use std::path::{Path, PathBuf};
-use std::sync::Arc;
-use tower_lsp::jsonrpc::{Request, Response, Result as LspResult};
-use tower_lsp::lsp_types::{
-  Diagnostic, DiagnosticSeverity, DidChangeWatchedFilesParams,
-  DidOpenTextDocumentParams, DidSaveTextDocumentParams,
-  DocumentFormattingParams, InitializeParams, InitializeResult,
-  InitializedParams, MessageType, OneOf, Position, Range, ServerCapabilities,
-  ServerInfo, TextDocumentIdentifier, TextDocumentSyncCapability,
-  TextDocumentSyncKind, TextEdit,
-};
-use tower_lsp::{Client, ExitedError, LanguageServer, LspService, Server};
+use std::path;
+use std::sync;
 
-use crate::config::FormalityConfig;
-use crate::errors::ExitStatus;
+use colored::Colorize;
+use tower_lsp;
+use tower_lsp::jsonrpc;
+use tower_lsp::lsp_types;
+
+use crate::config;
+use crate::errors;
 
 /// Server identity reported in `initialize`'s `ServerInfo`.
 const SERVER_NAME: &str = "formality";
@@ -46,11 +40,11 @@ const SERVER_VERSION: &str = env!("CARGO_PKG_VERSION");
 
 /// Returns whether the specified path points to a formality configuration file (`formality.toml` or `.formality.toml`).
 #[must_use]
-pub fn is_formality_config_file(path: &Path) -> bool {
+pub fn is_formality_config_file(path: &path::Path) -> bool {
   path
     .file_name()
     .and_then(|n| n.to_str())
-    .is_some_and(|name| crate::config::CONFIG_FILE_CANDIDATES.contains(&name))
+    .is_some_and(|name| config::CONFIG_FILE_CANDIDATES.contains(&name))
 }
 
 // ---------------------------------------------------------------------------
@@ -63,29 +57,29 @@ pub fn is_formality_config_file(path: &Path) -> bool {
 /// locate `formality.toml` and to run `fml fmt` / `fml lint` in-process
 /// against the correct working directory.
 pub struct FormalityLsp {
-  client: Client,
+  client: tower_lsp::Client,
   /// Workspace root detected at `initialize` time.
-  root: tokio::sync::Mutex<Option<PathBuf>>,
+  root: tokio::sync::Mutex<Option<path::PathBuf>>,
   /// Cached formality configuration, loaded at initialize time and replaced
   /// only by a successful reload after `formality.toml` /
   /// `.formality.toml` changes.
-  config: Arc<tokio::sync::RwLock<Option<FormalityConfig>>>,
+  config: sync::Arc<tokio::sync::RwLock<Option<config::FormalityConfig>>>,
 }
 
 impl FormalityLsp {
   /// Creates a new [`FormalityLsp`] instance with the provided client handle.
   #[must_use]
-  pub fn new(client: Client) -> Self {
+  pub fn new(client: tower_lsp::Client) -> Self {
     Self {
       client,
       root: tokio::sync::Mutex::new(None),
-      config: Arc::new(tokio::sync::RwLock::new(None)),
+      config: sync::Arc::new(tokio::sync::RwLock::new(None)),
     }
   }
 
   /// Returns the cached configuration, or loads and caches it if not yet present.
   ///
-  /// An invalid config is reported once (see [`Self::load_config`]) and the
+  /// An invalid config is reported once (see `Self::load_config`) and the
   /// built-in defaults are cached in its place, so later requests reuse them
   /// instead of re-reporting the same error.
   ///
@@ -94,8 +88,8 @@ impl FormalityLsp {
   /// `initialize`, so in practice only tests reach it.
   pub async fn get_or_load_config(
     &self,
-    root: Option<&Path>,
-  ) -> FormalityConfig {
+    root: Option<&path::Path>,
+  ) -> config::FormalityConfig {
     if let Some(config) = self.config.read().await.as_ref() {
       return config.clone();
     }
@@ -106,7 +100,7 @@ impl FormalityLsp {
     let loaded = self
       .load_config(root, "using the built-in defaults")
       .await
-      .unwrap_or_else(FormalityConfig::with_defaults);
+      .unwrap_or_else(config::FormalityConfig::with_defaults);
     *lock = Some(loaded.clone());
     loaded
   }
@@ -121,14 +115,17 @@ impl FormalityLsp {
   /// [`crate::config::ConfigError`] text and returns `None`.
   async fn load_config(
     &self,
-    root: Option<&Path>,
+    root: Option<&path::Path>,
     fallback: &str,
-  ) -> Option<FormalityConfig> {
-    match FormalityConfig::load_layered(root) {
+  ) -> Option<config::FormalityConfig> {
+    match config::FormalityConfig::load_layered(root) {
       Ok((config, _)) => Some(config),
       Err(err) => {
         let message = format!("[formality] invalid config, {fallback}: {err}");
-        self.client.show_message(MessageType::ERROR, message).await;
+        self
+          .client
+          .show_message(lsp_types::MessageType::ERROR, message)
+          .await;
         None
       }
     }
@@ -136,11 +133,11 @@ impl FormalityLsp {
 }
 
 #[tower_lsp::async_trait]
-impl LanguageServer for FormalityLsp {
+impl tower_lsp::LanguageServer for FormalityLsp {
   async fn initialize(
     &self,
-    params: InitializeParams,
-  ) -> LspResult<InitializeResult> {
+    params: lsp_types::InitializeParams,
+  ) -> jsonrpc::Result<lsp_types::InitializeResult> {
     // Resolve workspace root from the initialize params.
     let root = params
       .root_uri
@@ -151,7 +148,7 @@ impl LanguageServer for FormalityLsp {
           deprecated,
           reason = "fallback for LSP clients that still provide root_path instead of root_uri"
         )]
-        params.root_path.as_ref().map(PathBuf::from)
+        params.root_path.as_ref().map(path::PathBuf::from)
       });
 
     *self.root.lock().await = root.clone();
@@ -161,23 +158,23 @@ impl LanguageServer for FormalityLsp {
     let config = self
       .load_config(root.as_deref(), "using the built-in defaults")
       .await
-      .unwrap_or_else(FormalityConfig::with_defaults);
+      .unwrap_or_else(config::FormalityConfig::with_defaults);
     *self.config.write().await = Some(config);
 
-    Ok(InitializeResult {
-      server_info: Some(ServerInfo {
+    Ok(lsp_types::InitializeResult {
+      server_info: Some(lsp_types::ServerInfo {
         name: SERVER_NAME.to_string(),
         version: Some(SERVER_VERSION.to_string()),
       }),
-      capabilities: ServerCapabilities {
+      capabilities: lsp_types::ServerCapabilities {
         // formality handles formatting itself via `fml fmt` — no child
         // server is spawned or delegated to.
-        document_formatting_provider: Some(OneOf::Left(true)),
+        document_formatting_provider: Some(lsp_types::OneOf::Left(true)),
         // Not implemented — formality only formats whole documents.
         document_range_formatting_provider: None,
         // Document sync capability: NONE matches disk-reading behavior.
-        text_document_sync: Some(TextDocumentSyncCapability::Kind(
-          TextDocumentSyncKind::NONE,
+        text_document_sync: Some(lsp_types::TextDocumentSyncCapability::Kind(
+          lsp_types::TextDocumentSyncKind::NONE,
         )),
         // Nothing else is provided. Hover, completion, go-to-definition,
         // and every other language-intelligence capability are left to
@@ -188,11 +185,11 @@ impl LanguageServer for FormalityLsp {
     })
   }
 
-  async fn initialized(&self, _: InitializedParams) {
+  async fn initialized(&self, _: lsp_types::InitializedParams) {
     self
       .client
       .log_message(
-        MessageType::INFO,
+        lsp_types::MessageType::INFO,
         format!("formality LSP v{SERVER_VERSION} initialized"),
       )
       .await;
@@ -227,7 +224,7 @@ impl LanguageServer for FormalityLsp {
         if !names.is_empty() {
           client
             .log_message(
-              MessageType::INFO,
+              lsp_types::MessageType::INFO,
               format!("[formality] active surfaces: {}", names.join(", ")),
             )
             .await;
@@ -236,7 +233,7 @@ impl LanguageServer for FormalityLsp {
     }
   }
 
-  async fn shutdown(&self) -> LspResult<()> {
+  async fn shutdown(&self) -> jsonrpc::Result<()> {
     Ok(())
   }
 
@@ -246,12 +243,15 @@ impl LanguageServer for FormalityLsp {
 
   async fn formatting(
     &self,
-    params: DocumentFormattingParams,
-  ) -> LspResult<Option<Vec<TextEdit>>> {
+    params: lsp_types::DocumentFormattingParams,
+  ) -> jsonrpc::Result<Option<Vec<lsp_types::TextEdit>>> {
     let path = params.text_document.uri.to_file_path().unwrap_or_default();
 
     let root = self.root.lock().await.clone().unwrap_or_else(|| {
-      path.parent().map(Path::to_path_buf).unwrap_or_default()
+      path
+        .parent()
+        .map(path::Path::to_path_buf)
+        .unwrap_or_default()
     });
 
     // Read the current file content so we can diff it after formatting.
@@ -261,7 +261,7 @@ impl LanguageServer for FormalityLsp {
         self
           .client
           .log_message(
-            MessageType::ERROR,
+            lsp_types::MessageType::ERROR,
             format!("[formality] cannot read {}: {e}", path.display()),
           )
           .await;
@@ -288,7 +288,7 @@ impl LanguageServer for FormalityLsp {
       self
         .client
         .log_message(
-          MessageType::ERROR,
+          lsp_types::MessageType::ERROR,
           format!("[formality] fml fmt failed for {}", path.display()),
         )
         .await;
@@ -300,10 +300,13 @@ impl LanguageServer for FormalityLsp {
   // Document sync — used to trigger `fml lint` diagnostics on save.
   // -------------------------------------------------------------------------
 
-  async fn did_save(&self, params: DidSaveTextDocumentParams) {
+  async fn did_save(&self, params: lsp_types::DidSaveTextDocumentParams) {
     let path = params.text_document.uri.to_file_path().unwrap_or_default();
     let root = self.root.lock().await.clone().unwrap_or_else(|| {
-      path.parent().map(Path::to_path_buf).unwrap_or_default()
+      path
+        .parent()
+        .map(path::Path::to_path_buf)
+        .unwrap_or_default()
     });
     let uri = params.text_document.uri.clone();
     let config = self.get_or_load_config(Some(&root)).await;
@@ -342,9 +345,9 @@ impl LanguageServer for FormalityLsp {
       if status.is_clean() {
         vec![]
       } else {
-        vec![Diagnostic {
-          range: Range::default(),
-          severity: Some(DiagnosticSeverity::WARNING),
+        vec![lsp_types::Diagnostic {
+          range: lsp_types::Range::default(),
+          severity: Some(lsp_types::DiagnosticSeverity::WARNING),
           source: Some("formality".to_string()),
           message: "fml lint found issues — see the Formality output channel."
             .to_string(),
@@ -359,11 +362,11 @@ impl LanguageServer for FormalityLsp {
       .await;
   }
 
-  async fn did_open(&self, params: DidOpenTextDocumentParams) {
+  async fn did_open(&self, params: lsp_types::DidOpenTextDocumentParams) {
     // Trigger lint on open so diagnostics appear immediately.
     self
-      .did_save(DidSaveTextDocumentParams {
-        text_document: TextDocumentIdentifier {
+      .did_save(lsp_types::DidSaveTextDocumentParams {
+        text_document: lsp_types::TextDocumentIdentifier {
           uri: params.text_document.uri,
         },
         text: None,
@@ -373,7 +376,7 @@ impl LanguageServer for FormalityLsp {
 
   async fn did_change_watched_files(
     &self,
-    params: DidChangeWatchedFilesParams,
+    params: lsp_types::DidChangeWatchedFilesParams,
   ) {
     let has_config_change = params.changes.iter().any(|change| {
       change
@@ -395,7 +398,10 @@ impl LanguageServer for FormalityLsp {
       *self.config.write().await = Some(config);
       self
         .client
-        .log_message(MessageType::INFO, "[formality] configuration reloaded")
+        .log_message(
+          lsp_types::MessageType::INFO,
+          "[formality] configuration reloaded",
+        )
         .await;
     }
   }
@@ -405,40 +411,43 @@ impl LanguageServer for FormalityLsp {
 // Formatting helper functions
 // ---------------------------------------------------------------------------
 
-/// Computes the whole-document LSP [`Range`] for the given document content.
+/// Computes the whole-document LSP `Range` for the given document content.
 ///
 /// Per the Language Server Protocol specification:
 /// - Line bounds are 0-indexed, so the end line is `line_count.saturating_sub(1)`.
 /// - Character offsets are based on UTF-16 code units, not UTF-8 byte lengths or
 ///   Unicode scalar values.
 #[must_use]
-pub fn full_document_range(text: &str) -> Range {
+pub fn full_document_range(text: &str) -> lsp_types::Range {
   let line_count = u32::try_from(text.lines().count()).unwrap_or(u32::MAX);
   let last_col = text.lines().last().map_or(0, |l| {
     u32::try_from(l.encode_utf16().count()).unwrap_or(u32::MAX)
   });
 
-  Range {
-    start: Position {
+  lsp_types::Range {
+    start: lsp_types::Position {
       line: 0,
       character: 0,
     },
-    end: Position {
+    end: lsp_types::Position {
       line: line_count.saturating_sub(1),
       character: last_col,
     },
   }
 }
 
-/// Computes the [`TextEdit`] list required to replace the document with formatted content.
+/// Computes the `TextEdit` list required to replace the document with formatted content.
 ///
 /// Returns an empty vector if `before == after`.
 #[must_use]
-pub fn compute_formatting_edits(before: &str, after: &str) -> Vec<TextEdit> {
+pub fn compute_formatting_edits(
+  before: &str,
+  after: &str,
+) -> Vec<lsp_types::TextEdit> {
   if before == after {
     return Vec::new();
   }
-  vec![TextEdit {
+  vec![lsp_types::TextEdit {
     range: full_document_range(before),
     new_text: after.to_string(),
   }]
@@ -454,28 +463,30 @@ pub fn compute_formatting_edits(before: &str, after: &str) -> Vec<TextEdit> {
 /// at stdin EOF, so a client that keeps stdin open would otherwise keep the
 /// process alive. This wrapper sees every request first and fires `exited`.
 struct ExitSignal {
-  service: LspService<FormalityLsp>,
+  service: tower_lsp::LspService<FormalityLsp>,
   /// Fired once, on the first `exit`; dropped with `serve` at stdin EOF.
-  exited: Option<tokio::sync::oneshot::Sender<ExitStatus>>,
+  exited: Option<tokio::sync::oneshot::Sender<errors::ExitStatus>>,
   /// Set when a `shutdown` request is received, not when it is answered: an
   /// `exit` read in the same poll cancels the pending `shutdown` handler.
   shut_down: bool,
 }
 
-impl tower_service::Service<Request> for ExitSignal {
-  type Response = Option<Response>;
-  type Error = ExitedError;
+impl tower_service::Service<jsonrpc::Request> for ExitSignal {
+  type Response = Option<jsonrpc::Response>;
+  type Error = tower_lsp::ExitedError;
   type Future =
-    <LspService<FormalityLsp> as tower_service::Service<Request>>::Future;
+    <tower_lsp::LspService<FormalityLsp> as tower_service::Service<
+      jsonrpc::Request,
+    >>::Future;
 
   fn poll_ready(
     &mut self,
     cx: &mut std::task::Context<'_>,
-  ) -> std::task::Poll<Result<(), ExitedError>> {
+  ) -> std::task::Poll<Result<(), tower_lsp::ExitedError>> {
     tower_service::Service::poll_ready(&mut self.service, cx)
   }
 
-  fn call(&mut self, request: Request) -> Self::Future {
+  fn call(&mut self, request: jsonrpc::Request) -> Self::Future {
     let is_exit = request.method() == "exit";
     self.shut_down |= request.method() == "shutdown";
     let response = tower_service::Service::call(&mut self.service, request);
@@ -493,11 +504,11 @@ impl tower_service::Service<Request> for ExitSignal {
 /// request has been received before; otherwise with `error` code 1." Code 1
 /// is [`ExitStatus::Violations`]; here it means `exit` came without
 /// `shutdown`, not lint violations.
-fn exit_status(shut_down: bool) -> ExitStatus {
+fn exit_status(shut_down: bool) -> errors::ExitStatus {
   if shut_down {
-    ExitStatus::Clean
+    errors::ExitStatus::Clean
   } else {
-    ExitStatus::Violations
+    errors::ExitStatus::Violations
   }
 }
 
@@ -506,10 +517,12 @@ fn exit_status(shut_down: bool) -> ExitStatus {
 /// `Ok` is stdin EOF, a normal stop. A [`tokio::task::JoinError`] is a
 /// handler panic (the panic hook has already printed it), which must not read
 /// as a clean exit to the client.
-fn serve_status(joined: &Result<(), tokio::task::JoinError>) -> ExitStatus {
+fn serve_status(
+  joined: &Result<(), tokio::task::JoinError>,
+) -> errors::ExitStatus {
   match joined {
-    Ok(()) => ExitStatus::Clean,
-    Err(_) => ExitStatus::Error,
+    Ok(()) => errors::ExitStatus::Clean,
+    Err(_) => errors::ExitStatus::Error,
   }
 }
 
@@ -519,13 +532,13 @@ fn serve_status(joined: &Result<(), tokio::task::JoinError>) -> ExitStatus {
 /// from `fml lsp`.
 ///
 /// Returns the exit status the LSP spec prescribes for `exit` (see
-/// [`exit_status`]), [`ExitStatus::Clean`] when stdin closes first, or
-/// [`ExitStatus::Error`] when a handler panics (see [`serve_status`]).
+/// `exit_status`), `ExitStatus::Clean` when stdin closes first, or
+/// `ExitStatus::Error` when a handler panics (see `serve_status`).
 ///
 /// # Panics
 ///
 /// Panics if the underlying Tokio runtime fails to initialize.
-pub fn run_lsp_server(root: Option<&Path>) -> ExitStatus {
+pub fn run_lsp_server(root: Option<&path::Path>) -> errors::ExitStatus {
   // Print a startup banner to stderr (not stdout — that's the LSP channel).
   eprintln!(
     "{} LSP server starting (stdio transport, v{SERVER_VERSION})",
@@ -536,14 +549,15 @@ pub fn run_lsp_server(root: Option<&Path>) -> ExitStatus {
   }
 
   let rt = tokio::runtime::Runtime::new().expect("tokio runtime");
-  let (service, socket) = LspService::new(FormalityLsp::new);
+  let (service, socket) = tower_lsp::LspService::new(FormalityLsp::new);
   let (exited_tx, exited_rx) = tokio::sync::oneshot::channel();
   let service = ExitSignal {
     service,
     exited: Some(exited_tx),
     shut_down: false,
   };
-  let server = Server::new(tokio::io::stdin(), tokio::io::stdout(), socket);
+  let server =
+    tower_lsp::Server::new(tokio::io::stdin(), tokio::io::stdout(), socket);
   // `serve` owns the sender, so the receiver resolves on `exit` or, when
   // `serve` returns at stdin EOF, on the dropped sender.
   let serve = rt.spawn(server.serve(service));
@@ -564,20 +578,21 @@ pub fn run_lsp_server(root: Option<&Path>) -> ExitStatus {
 #[cfg(test)]
 mod tests {
   use super::*;
+  use tower_lsp::LanguageServer;
 
   #[test]
   fn test_full_document_range_empty_document() {
     let range = full_document_range("");
     assert_eq!(
       range.start,
-      Position {
+      lsp_types::Position {
         line: 0,
         character: 0
       }
     );
     assert_eq!(
       range.end,
-      Position {
+      lsp_types::Position {
         line: 0,
         character: 0
       }
@@ -589,14 +604,14 @@ mod tests {
     let range = full_document_range("hello world");
     assert_eq!(
       range.start,
-      Position {
+      lsp_types::Position {
         line: 0,
         character: 0
       }
     );
     assert_eq!(
       range.end,
-      Position {
+      lsp_types::Position {
         line: 0,
         character: 11
       }
@@ -608,14 +623,14 @@ mod tests {
     let range = full_document_range("hello world\n");
     assert_eq!(
       range.start,
-      Position {
+      lsp_types::Position {
         line: 0,
         character: 0
       }
     );
     assert_eq!(
       range.end,
-      Position {
+      lsp_types::Position {
         line: 0,
         character: 11
       }
@@ -628,14 +643,14 @@ mod tests {
     let range = full_document_range(text);
     assert_eq!(
       range.start,
-      Position {
+      lsp_types::Position {
         line: 0,
         character: 0
       }
     );
     assert_eq!(
       range.end,
-      Position {
+      lsp_types::Position {
         line: 2,
         character: 1
       }
@@ -648,14 +663,14 @@ mod tests {
     let range = full_document_range(text);
     assert_eq!(
       range.start,
-      Position {
+      lsp_types::Position {
         line: 0,
         character: 0
       }
     );
     assert_eq!(
       range.end,
-      Position {
+      lsp_types::Position {
         line: 2,
         character: 6
       }
@@ -670,7 +685,7 @@ mod tests {
     let range = full_document_range(text);
     assert_eq!(
       range.start,
-      Position {
+      lsp_types::Position {
         line: 0,
         character: 0
       }
@@ -683,7 +698,7 @@ mod tests {
     // Total = 19 UTF-16 code units (vs 23 UTF-8 bytes)
     assert_eq!(
       range.end,
-      Position {
+      lsp_types::Position {
         line: 0,
         character: 19
       }
@@ -694,14 +709,14 @@ mod tests {
     let range_chinese = full_document_range(chinese);
     assert_eq!(
       range_chinese.start,
-      Position {
+      lsp_types::Position {
         line: 0,
         character: 0
       }
     );
     assert_eq!(
       range_chinese.end,
-      Position {
+      lsp_types::Position {
         line: 0,
         character: 4
       }
@@ -714,14 +729,14 @@ mod tests {
     let range = full_document_range(text);
     assert_eq!(
       range.start,
-      Position {
+      lsp_types::Position {
         line: 0,
         character: 0
       }
     );
     assert_eq!(
       range.end,
-      Position {
+      lsp_types::Position {
         line: 2,
         character: 1
       }
@@ -731,7 +746,7 @@ mod tests {
     let range_unicode_last = full_document_range(text_unicode_last_line);
     assert_eq!(
       range_unicode_last.start,
-      Position {
+      lsp_types::Position {
         line: 0,
         character: 0
       }
@@ -739,7 +754,7 @@ mod tests {
     // Line 1: "    let s = \"你好 🌍\";" -> 13 + 2 + 1 + 2 + 2 = 20 UTF-16 code units
     assert_eq!(
       range_unicode_last.end,
-      Position {
+      lsp_types::Position {
         line: 1,
         character: 20
       }
@@ -761,12 +776,12 @@ mod tests {
     assert_eq!(edits.len(), 1);
     assert_eq!(
       edits[0].range,
-      Range {
-        start: Position {
+      lsp_types::Range {
+        start: lsp_types::Position {
           line: 0,
           character: 0
         },
-        end: Position {
+        end: lsp_types::Position {
           line: 2,
           character: 1
         },
@@ -783,12 +798,12 @@ mod tests {
     assert_eq!(edits.len(), 1);
     assert_eq!(
       edits[0].range,
-      Range {
-        start: Position {
+      lsp_types::Range {
+        start: lsp_types::Position {
           line: 0,
           character: 0
         },
-        end: Position {
+        end: lsp_types::Position {
           line: 2,
           character: 1
         },
@@ -799,29 +814,27 @@ mod tests {
 
   #[tokio::test]
   async fn test_lsp_formatting_nonexistent_file_returns_none() {
-    let (service, _) = LspService::new(FormalityLsp::new);
+    let (service, _) = tower_lsp::LspService::new(FormalityLsp::new);
     let server = service.inner();
     let temp = tempfile::tempdir().unwrap();
     let root = temp.path();
 
     server
-      .initialize(InitializeParams {
-        root_uri: tower_lsp::lsp_types::Url::from_file_path(root).ok(),
+      .initialize(lsp_types::InitializeParams {
+        root_uri: lsp_types::Url::from_file_path(root).ok(),
         ..Default::default()
       })
       .await
       .unwrap();
 
     let missing_path = root.join("nonexistent.rs");
-    let missing_uri =
-      tower_lsp::lsp_types::Url::from_file_path(&missing_path).unwrap();
+    let missing_uri = lsp_types::Url::from_file_path(&missing_path).unwrap();
 
     let result = server
-      .formatting(DocumentFormattingParams {
-        text_document: TextDocumentIdentifier { uri: missing_uri },
-        options: tower_lsp::lsp_types::FormattingOptions::default(),
-        work_done_progress_params:
-          tower_lsp::lsp_types::WorkDoneProgressParams::default(),
+      .formatting(lsp_types::DocumentFormattingParams {
+        text_document: lsp_types::TextDocumentIdentifier { uri: missing_uri },
+        options: lsp_types::FormattingOptions::default(),
+        work_done_progress_params: lsp_types::WorkDoneProgressParams::default(),
       })
       .await
       .unwrap();
@@ -831,14 +844,14 @@ mod tests {
 
   #[tokio::test]
   async fn test_lsp_formatting_inprocess_unmatched_file_returns_empty_edits() {
-    let (service, _) = LspService::new(FormalityLsp::new);
+    let (service, _) = tower_lsp::LspService::new(FormalityLsp::new);
     let server = service.inner();
     let temp = tempfile::tempdir().unwrap();
     let root = temp.path();
 
     server
-      .initialize(InitializeParams {
-        root_uri: tower_lsp::lsp_types::Url::from_file_path(root).ok(),
+      .initialize(lsp_types::InitializeParams {
+        root_uri: lsp_types::Url::from_file_path(root).ok(),
         ..Default::default()
       })
       .await
@@ -846,15 +859,13 @@ mod tests {
 
     let file_path = root.join("notes.txt");
     std::fs::write(&file_path, "plain text without code formatting\n").unwrap();
-    let file_uri =
-      tower_lsp::lsp_types::Url::from_file_path(&file_path).unwrap();
+    let file_uri = lsp_types::Url::from_file_path(&file_path).unwrap();
 
     let result = server
-      .formatting(DocumentFormattingParams {
-        text_document: TextDocumentIdentifier { uri: file_uri },
-        options: tower_lsp::lsp_types::FormattingOptions::default(),
-        work_done_progress_params:
-          tower_lsp::lsp_types::WorkDoneProgressParams::default(),
+      .formatting(lsp_types::DocumentFormattingParams {
+        text_document: lsp_types::TextDocumentIdentifier { uri: file_uri },
+        options: lsp_types::FormattingOptions::default(),
+        work_done_progress_params: lsp_types::WorkDoneProgressParams::default(),
       })
       .await
       .unwrap();
@@ -864,14 +875,14 @@ mod tests {
 
   #[tokio::test]
   async fn test_lsp_did_save_inprocess_execution() {
-    let (service, _) = LspService::new(FormalityLsp::new);
+    let (service, _) = tower_lsp::LspService::new(FormalityLsp::new);
     let server = service.inner();
     let temp = tempfile::tempdir().unwrap();
     let root = temp.path();
 
     server
-      .initialize(InitializeParams {
-        root_uri: tower_lsp::lsp_types::Url::from_file_path(root).ok(),
+      .initialize(lsp_types::InitializeParams {
+        root_uri: lsp_types::Url::from_file_path(root).ok(),
         ..Default::default()
       })
       .await
@@ -879,13 +890,12 @@ mod tests {
 
     let file_path = root.join("notes.txt");
     std::fs::write(&file_path, "clean notes\n").unwrap();
-    let file_uri =
-      tower_lsp::lsp_types::Url::from_file_path(&file_path).unwrap();
+    let file_uri = lsp_types::Url::from_file_path(&file_path).unwrap();
 
     // did_save dispatches in-process lint fallback without spawning an fml child process
     server
-      .did_save(DidSaveTextDocumentParams {
-        text_document: TextDocumentIdentifier { uri: file_uri },
+      .did_save(lsp_types::DidSaveTextDocumentParams {
+        text_document: lsp_types::TextDocumentIdentifier { uri: file_uri },
         text: None,
       })
       .await;
@@ -893,33 +903,33 @@ mod tests {
 
   #[test]
   fn test_is_formality_config_file() {
-    assert!(is_formality_config_file(Path::new("formality.toml")));
-    assert!(is_formality_config_file(Path::new(".formality.toml")));
-    assert!(is_formality_config_file(Path::new(
+    assert!(is_formality_config_file(path::Path::new("formality.toml")));
+    assert!(is_formality_config_file(path::Path::new(".formality.toml")));
+    assert!(is_formality_config_file(path::Path::new(
       "/path/to/project/formality.toml"
     )));
-    assert!(is_formality_config_file(Path::new(
+    assert!(is_formality_config_file(path::Path::new(
       "/path/to/project/.formality.toml"
     )));
     #[cfg(windows)]
-    assert!(is_formality_config_file(Path::new(
+    assert!(is_formality_config_file(path::Path::new(
       "C:\\path\\to\\project\\.formality.toml"
     )));
 
-    assert!(!is_formality_config_file(Path::new("other.toml")));
-    assert!(!is_formality_config_file(Path::new("Cargo.toml")));
-    assert!(!is_formality_config_file(Path::new("notes.txt")));
+    assert!(!is_formality_config_file(path::Path::new("other.toml")));
+    assert!(!is_formality_config_file(path::Path::new("Cargo.toml")));
+    assert!(!is_formality_config_file(path::Path::new("notes.txt")));
   }
 
   #[tokio::test]
   async fn test_lsp_initialize_capabilities_sync_kind_none() {
-    let (service, _) = LspService::new(FormalityLsp::new);
+    let (service, _) = tower_lsp::LspService::new(FormalityLsp::new);
     let server = service.inner();
     let temp = tempfile::tempdir().unwrap();
 
     let init_result = server
-      .initialize(InitializeParams {
-        root_uri: tower_lsp::lsp_types::Url::from_file_path(temp.path()).ok(),
+      .initialize(lsp_types::InitializeParams {
+        root_uri: lsp_types::Url::from_file_path(temp.path()).ok(),
         ..Default::default()
       })
       .await
@@ -927,13 +937,15 @@ mod tests {
 
     assert_eq!(
       init_result.capabilities.text_document_sync,
-      Some(TextDocumentSyncCapability::Kind(TextDocumentSyncKind::NONE))
+      Some(lsp_types::TextDocumentSyncCapability::Kind(
+        lsp_types::TextDocumentSyncKind::NONE
+      ))
     );
   }
 
   #[tokio::test]
   async fn test_lsp_config_caching_on_initialize() {
-    let (service, _) = LspService::new(FormalityLsp::new);
+    let (service, _) = tower_lsp::LspService::new(FormalityLsp::new);
     let server = service.inner();
     let temp = tempfile::tempdir().unwrap();
     let config_path = temp.path().join("formality.toml");
@@ -942,8 +954,8 @@ mod tests {
     assert!(server.config.read().await.clone().is_none());
 
     server
-      .initialize(InitializeParams {
-        root_uri: tower_lsp::lsp_types::Url::from_file_path(temp.path()).ok(),
+      .initialize(lsp_types::InitializeParams {
+        root_uri: lsp_types::Url::from_file_path(temp.path()).ok(),
         ..Default::default()
       })
       .await
@@ -957,15 +969,15 @@ mod tests {
 
   #[tokio::test]
   async fn test_lsp_watcher_invalidation_on_did_change_watched_files() {
-    let (service, _) = LspService::new(FormalityLsp::new);
+    let (service, _) = tower_lsp::LspService::new(FormalityLsp::new);
     let server = service.inner();
     let temp = tempfile::tempdir().unwrap();
     let config_path = temp.path().join("formality.toml");
     std::fs::write(&config_path, "[global]\nindent_size = 4\n").unwrap();
 
     server
-      .initialize(InitializeParams {
-        root_uri: tower_lsp::lsp_types::Url::from_file_path(temp.path()).ok(),
+      .initialize(lsp_types::InitializeParams {
+        root_uri: lsp_types::Url::from_file_path(temp.path()).ok(),
         ..Default::default()
       })
       .await
@@ -981,12 +993,12 @@ mod tests {
     std::fs::write(&config_path, "[global]\nindent_size = 8\n").unwrap();
 
     // Trigger watcher event
-    let uri = tower_lsp::lsp_types::Url::from_file_path(&config_path).unwrap();
+    let uri = lsp_types::Url::from_file_path(&config_path).unwrap();
     server
-      .did_change_watched_files(DidChangeWatchedFilesParams {
-        changes: vec![tower_lsp::lsp_types::FileEvent {
+      .did_change_watched_files(lsp_types::DidChangeWatchedFilesParams {
+        changes: vec![lsp_types::FileEvent {
           uri,
-          typ: tower_lsp::lsp_types::FileChangeType::CHANGED,
+          typ: lsp_types::FileChangeType::CHANGED,
         }],
       })
       .await;
@@ -1000,15 +1012,15 @@ mod tests {
 
   #[tokio::test]
   async fn test_lsp_watcher_invalidation_hidden_formality_toml() {
-    let (service, _) = LspService::new(FormalityLsp::new);
+    let (service, _) = tower_lsp::LspService::new(FormalityLsp::new);
     let server = service.inner();
     let temp = tempfile::tempdir().unwrap();
     let config_path = temp.path().join(".formality.toml");
     std::fs::write(&config_path, "[global]\nline_length = 100\n").unwrap();
 
     server
-      .initialize(InitializeParams {
-        root_uri: tower_lsp::lsp_types::Url::from_file_path(temp.path()).ok(),
+      .initialize(lsp_types::InitializeParams {
+        root_uri: lsp_types::Url::from_file_path(temp.path()).ok(),
         ..Default::default()
       })
       .await
@@ -1023,12 +1035,12 @@ mod tests {
     // Modify .formality.toml on disk
     std::fs::write(&config_path, "[global]\nline_length = 120\n").unwrap();
 
-    let uri = tower_lsp::lsp_types::Url::from_file_path(&config_path).unwrap();
+    let uri = lsp_types::Url::from_file_path(&config_path).unwrap();
     server
-      .did_change_watched_files(DidChangeWatchedFilesParams {
-        changes: vec![tower_lsp::lsp_types::FileEvent {
+      .did_change_watched_files(lsp_types::DidChangeWatchedFilesParams {
+        changes: vec![lsp_types::FileEvent {
           uri,
-          typ: tower_lsp::lsp_types::FileChangeType::CHANGED,
+          typ: lsp_types::FileChangeType::CHANGED,
         }],
       })
       .await;
@@ -1042,15 +1054,15 @@ mod tests {
 
   #[tokio::test]
   async fn test_lsp_watcher_ignores_non_config_file_changes() {
-    let (service, _) = LspService::new(FormalityLsp::new);
+    let (service, _) = tower_lsp::LspService::new(FormalityLsp::new);
     let server = service.inner();
     let temp = tempfile::tempdir().unwrap();
     let config_path = temp.path().join("formality.toml");
     std::fs::write(&config_path, "[global]\nindent_size = 4\n").unwrap();
 
     server
-      .initialize(InitializeParams {
-        root_uri: tower_lsp::lsp_types::Url::from_file_path(temp.path()).ok(),
+      .initialize(lsp_types::InitializeParams {
+        root_uri: lsp_types::Url::from_file_path(temp.path()).ok(),
         ..Default::default()
       })
       .await
@@ -1061,12 +1073,12 @@ mod tests {
 
     // Trigger watcher for an unrelated file
     let other_path = temp.path().join("src/main.rs");
-    let uri = tower_lsp::lsp_types::Url::from_file_path(&other_path).unwrap();
+    let uri = lsp_types::Url::from_file_path(&other_path).unwrap();
     server
-      .did_change_watched_files(DidChangeWatchedFilesParams {
-        changes: vec![tower_lsp::lsp_types::FileEvent {
+      .did_change_watched_files(lsp_types::DidChangeWatchedFilesParams {
+        changes: vec![lsp_types::FileEvent {
           uri,
-          typ: tower_lsp::lsp_types::FileChangeType::CHANGED,
+          typ: lsp_types::FileChangeType::CHANGED,
         }],
       })
       .await;
@@ -1078,7 +1090,7 @@ mod tests {
 
   #[test]
   fn test_lsp_module_does_not_spawn_fml_child_process() {
-    let manifest_dir = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+    let manifest_dir = path::PathBuf::from(env!("CARGO_MANIFEST_DIR"));
     let lsp_rs_path = manifest_dir.join("src/commands/lsp.rs");
     let content = std::fs::read_to_string(lsp_rs_path).unwrap();
 
@@ -1097,7 +1109,7 @@ mod tests {
 
   #[test]
   fn test_serve_status_normal_stop_is_clean() {
-    assert_eq!(serve_status(&Ok(())), ExitStatus::Clean);
+    assert_eq!(serve_status(&Ok(())), errors::ExitStatus::Clean);
   }
 
   #[test]
@@ -1107,13 +1119,13 @@ mod tests {
       .unwrap();
     let joined = rt.block_on(rt.spawn(async { panic!("handler panic") }));
     assert!(joined.as_ref().is_err_and(tokio::task::JoinError::is_panic));
-    assert_eq!(serve_status(&joined), ExitStatus::Error);
+    assert_eq!(serve_status(&joined), errors::ExitStatus::Error);
   }
 
   /// Drains the `window/showMessage` notifications the server has sent so far.
   fn drain_show_messages(
     socket: &mut tower_lsp::ClientSocket,
-  ) -> Vec<tower_lsp::lsp_types::ShowMessageParams> {
+  ) -> Vec<lsp_types::ShowMessageParams> {
     let mut shown = Vec::new();
     while let Some(Some(request)) =
       futures::FutureExt::now_or_never(futures::StreamExt::next(socket))
@@ -1128,19 +1140,19 @@ mod tests {
 
   #[tokio::test]
   async fn test_lsp_invalid_config_at_initialize_reports_and_uses_defaults() {
-    let (service, mut socket) = LspService::new(FormalityLsp::new);
+    let (service, mut socket) = tower_lsp::LspService::new(FormalityLsp::new);
     let server = service.inner();
     let temp = tempfile::tempdir().unwrap();
     let config_path = temp.path().join("formality.toml");
     std::fs::write(&config_path, "[global]\nindent_size = 4\nbogus = 1\n")
       .unwrap();
-    let expected = FormalityConfig::load_layered(Some(temp.path()))
+    let expected = config::FormalityConfig::load_layered(Some(temp.path()))
       .unwrap_err()
       .to_string();
 
     server
-      .initialize(InitializeParams {
-        root_uri: tower_lsp::lsp_types::Url::from_file_path(temp.path()).ok(),
+      .initialize(lsp_types::InitializeParams {
+        root_uri: lsp_types::Url::from_file_path(temp.path()).ok(),
         ..Default::default()
       })
       .await
@@ -1149,27 +1161,27 @@ mod tests {
     let cfg = server.get_or_load_config(Some(temp.path())).await;
     server.get_or_load_config(Some(temp.path())).await;
 
-    let defaults = FormalityConfig::with_defaults();
-    let indent = |c: &FormalityConfig| c.global.as_ref()?.indent_size;
+    let defaults = config::FormalityConfig::with_defaults();
+    let indent = |c: &config::FormalityConfig| c.global.as_ref()?.indent_size;
     assert_ne!(indent(&cfg), Some(4));
     assert_eq!(indent(&cfg), indent(&defaults));
     let shown = drain_show_messages(&mut socket);
     assert_eq!(shown.len(), 1, "{shown:?}");
-    assert_eq!(shown[0].typ, MessageType::ERROR);
+    assert_eq!(shown[0].typ, lsp_types::MessageType::ERROR);
     assert!(shown[0].message.contains(&expected), "{}", shown[0].message);
   }
 
   #[tokio::test]
   async fn test_lsp_invalid_config_on_reload_reports_and_keeps_previous() {
-    let (service, mut socket) = LspService::new(FormalityLsp::new);
+    let (service, mut socket) = tower_lsp::LspService::new(FormalityLsp::new);
     let server = service.inner();
     let temp = tempfile::tempdir().unwrap();
     let config_path = temp.path().join("formality.toml");
     std::fs::write(&config_path, "[global]\nindent_size = 4\n").unwrap();
 
     server
-      .initialize(InitializeParams {
-        root_uri: tower_lsp::lsp_types::Url::from_file_path(temp.path()).ok(),
+      .initialize(lsp_types::InitializeParams {
+        root_uri: lsp_types::Url::from_file_path(temp.path()).ok(),
         ..Default::default()
       })
       .await
@@ -1178,15 +1190,15 @@ mod tests {
 
     std::fs::write(&config_path, "[global]\nindent_size = 8\nbogus = 1\n")
       .unwrap();
-    let expected = FormalityConfig::load_layered(Some(temp.path()))
+    let expected = config::FormalityConfig::load_layered(Some(temp.path()))
       .unwrap_err()
       .to_string();
-    let uri = tower_lsp::lsp_types::Url::from_file_path(&config_path).unwrap();
+    let uri = lsp_types::Url::from_file_path(&config_path).unwrap();
     server
-      .did_change_watched_files(DidChangeWatchedFilesParams {
-        changes: vec![tower_lsp::lsp_types::FileEvent {
+      .did_change_watched_files(lsp_types::DidChangeWatchedFilesParams {
+        changes: vec![lsp_types::FileEvent {
           uri,
-          typ: tower_lsp::lsp_types::FileChangeType::CHANGED,
+          typ: lsp_types::FileChangeType::CHANGED,
         }],
       })
       .await;
@@ -1195,7 +1207,7 @@ mod tests {
     assert_eq!(cfg.global.as_ref().and_then(|g| g.indent_size), Some(4));
     let shown = drain_show_messages(&mut socket);
     assert_eq!(shown.len(), 1, "{shown:?}");
-    assert_eq!(shown[0].typ, MessageType::ERROR);
+    assert_eq!(shown[0].typ, lsp_types::MessageType::ERROR);
     assert!(shown[0].message.contains(&expected), "{}", shown[0].message);
   }
 }

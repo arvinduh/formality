@@ -11,7 +11,7 @@
 //! check, this can produce failures in CI that cannot be reproduced locally.
 
 use std::fs;
-use std::path::{Path, PathBuf};
+use std::path;
 
 #[derive(Debug, PartialEq, Eq)]
 struct ToolchainPin {
@@ -69,7 +69,7 @@ fn extract_pins(content: &str, file_path: &str) -> Vec<ToolchainPin> {
 
 #[test]
 fn test_rust_toolchain_channel_matches_workflow_pins() {
-  let root = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+  let root = path::PathBuf::from(env!("CARGO_MANIFEST_DIR"));
 
   let toolchain_toml_path = root.join("rust-toolchain.toml");
   assert!(
@@ -94,7 +94,7 @@ fn test_rust_toolchain_channel_matches_workflow_pins() {
     workflows_dir.display()
   );
 
-  let mut workflow_paths: Vec<PathBuf> = fs::read_dir(&workflows_dir)
+  let mut workflow_paths: Vec<path::PathBuf> = fs::read_dir(&workflows_dir)
     .expect("Failed to read .github/workflows directory")
     .filter_map(Result::ok)
     .map(|entry| entry.path())
@@ -116,7 +116,7 @@ fn test_rust_toolchain_channel_matches_workflow_pins() {
 
     let rel_path = path
       .strip_prefix(&root)
-      .unwrap_or(Path::new(path))
+      .unwrap_or(path::Path::new(path))
       .to_string_lossy()
       .replace('\\', "/");
 

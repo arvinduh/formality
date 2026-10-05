@@ -1,4 +1,8 @@
 //! Standalone command implementations for the Formality CLI.
+//!
+//! Coordinates user-requested actions by delegating to the execution engine in
+//! `crate::engine`, config loading in `crate::config`, and language surfaces
+//! in `crate::surfaces`.
 
 /// Doctor diagnostic commands for workspace and toolchain verification.
 pub mod doctor;
@@ -19,33 +23,31 @@ pub mod schema;
 /// Native configuration synchronization CLI command handler.
 pub mod sync;
 
-use std::io::Write;
-use std::path::{Path, PathBuf};
+use std::path;
 
 use colored::Colorize;
 
-use crate::config::FormalityConfig;
-use crate::engine::{Pass, Plan, Runner, Scope};
-use crate::errors::{ExitStatus, FormalityError, GitError, SurfaceError};
-use crate::surfaces::{
-  LanguageSurface, all_surfaces, default_registry, get_surface_by_name, glob,
-};
+use crate::config;
+use crate::engine;
+use crate::errors;
+use crate::surfaces;
+use crate::surfaces::LanguageSurface;
 
-/// Dispatches a [`Plan`] across target surfaces for the `fmt`, `lint`, and
+/// Dispatches a [`engine::Plan`] across target surfaces for the `fmt`, `lint`, and
 /// `fix` commands after resolving git paths, target surfaces, and preflight
 /// tool requirements. Provisioning missing tools is `fml doctor --install`'s
 /// job now, not these commands' — see #282; this dispatch only warns about
 /// stale tools, never installs.
 #[must_use]
 pub fn dispatch_plan(
-  root: &Path,
-  config: &FormalityConfig,
+  root: &path::Path,
+  config: &config::FormalityConfig,
   staged: bool,
   changed: bool,
   lang: &[String],
-  paths: Vec<PathBuf>,
-  plan: &Plan,
-) -> ExitStatus {
+  paths: Vec<path::PathBuf>,
+  plan: &engine::Plan,
+) -> errors::ExitStatus {
   dispatch_into(
     &mut std::io::stdout(),
     root,
@@ -67,21 +69,21 @@ pub fn dispatch_plan(
   reason = "dispatch_plan's arguments plus the report sink"
 )]
 fn dispatch_into(
-  out: &mut dyn Write,
-  root: &Path,
-  config: &FormalityConfig,
+  out: &mut dyn std::io::Write,
+  root: &path::Path,
+  config: &config::FormalityConfig,
   staged: bool,
   changed: bool,
   lang: &[String],
-  paths: Vec<PathBuf>,
-  plan: &Plan,
-) -> ExitStatus {
+  paths: Vec<path::PathBuf>,
+  plan: &engine::Plan,
+) -> errors::ExitStatus {
   let scoped = !paths.is_empty();
   let target_paths = match resolve_git_paths(root, staged, changed, paths) {
     Ok(p) => p,
     Err(e) => {
       e.print_diagnostic();
-      return ExitStatus::Error;
+      return errors::ExitStatus::Error;
     }
   };
 
@@ -89,7 +91,7 @@ fn dispatch_into(
     let flag = if staged { "staged" } else { "changed" };
     let under = if scoped { " under the given paths" } else { "" };
     let _ = writeln!(out, "{}", format!("No {flag} files{under}.").yellow());
-    return ExitStatus::Clean;
+    return errors::ExitStatus::Clean;
   }
 
   run_resolved(out, root, config, lang, &target_paths, plan)
@@ -102,40 +104,41 @@ fn dispatch_into(
 /// `out` is stdout for the CLI and stderr for `fml lsp`, whose stdout carries
 /// the JSON-RPC transport; one stray byte there breaks a strict client.
 fn run_resolved(
-  out: &mut dyn Write,
-  root: &Path,
-  config: &FormalityConfig,
+  out: &mut dyn std::io::Write,
+  root: &path::Path,
+  config: &config::FormalityConfig,
   lang: &[String],
-  paths: &[PathBuf],
-  plan: &Plan,
-) -> ExitStatus {
-  let scope = Scope::resolve(root, paths, &config.resolve_global().exclude);
+  paths: &[path::PathBuf],
+  plan: &engine::Plan,
+) -> errors::ExitStatus {
+  let scope =
+    engine::Scope::resolve(root, paths, &config.resolve_global().exclude);
   let surfaces = match resolve_target_surfaces(root, lang, &scope, config) {
     Ok(s) => s,
     Err(e) => {
       e.print_diagnostic();
-      return ExitStatus::Error;
+      return errors::ExitStatus::Error;
     }
   };
 
   // Which tools to preflight follows directly from the plan's passes: a
   // plan that formats needs the formatters, a plan that lints needs the
   // linters, and `fix` needs both.
-  let for_fmt = plan.includes(Pass::Format);
-  let for_lint = plan.includes(Pass::Lint);
+  let for_fmt = plan.includes(engine::Pass::Format);
+  let for_lint = plan.includes(engine::Pass::Lint);
 
   doctor::preflight_warn_stale_tools(&surfaces, config, for_fmt, for_lint);
 
-  Runner::run_into(out, &surfaces, root, &scope, plan, config)
+  engine::Runner::run_into(out, &surfaces, root, &scope, plan, config)
 }
 
-fn normalize_path(path: &Path) -> PathBuf {
+fn normalize_path(path: &path::Path) -> path::PathBuf {
   let mut components = Vec::new();
   for component in path.components() {
     match component {
-      std::path::Component::CurDir => {}
-      std::path::Component::ParentDir => {
-        if let Some(std::path::Component::Normal(_)) = components.last() {
+      path::Component::CurDir => {}
+      path::Component::ParentDir => {
+        if let Some(path::Component::Normal(_)) = components.last() {
           components.pop();
         } else {
           components.push(component);
@@ -156,16 +159,18 @@ fn normalize_path(path: &Path) -> PathBuf {
 ///
 /// # Errors
 ///
-/// Returns a [`FormalityError`] if both `staged` and `changed` are set, or if
+/// Returns a [`errors::FormalityError`] if both `staged` and `changed` are set, or if
 /// the underlying git query fails.
 pub fn resolve_git_paths(
-  root: &Path,
+  root: &path::Path,
   staged: bool,
   changed: bool,
-  explicit_paths: Vec<PathBuf>,
-) -> Result<Vec<PathBuf>, FormalityError> {
+  explicit_paths: Vec<path::PathBuf>,
+) -> Result<Vec<path::PathBuf>, errors::FormalityError> {
   if staged && changed {
-    return Err(FormalityError::Git(GitError::MutuallyExclusiveFlags));
+    return Err(errors::FormalityError::Git(
+      errors::GitError::MutuallyExclusiveFlags,
+    ));
   }
   if !staged && !changed {
     return Ok(explicit_paths);
@@ -182,7 +187,7 @@ pub fn resolve_git_paths(
   }
 
   let norm_root = normalize_path(root);
-  let normalized_explicit: Vec<(PathBuf, PathBuf)> = explicit_paths
+  let normalized_explicit: Vec<(path::PathBuf, path::PathBuf)> = explicit_paths
     .iter()
     .map(|p| {
       let abs = if p.is_absolute() {
@@ -213,10 +218,10 @@ pub fn resolve_git_paths(
 }
 
 fn get_git_diff_files(
-  root: &Path,
+  root: &path::Path,
   staged: bool,
   error_context: &str,
-) -> Result<Vec<PathBuf>, FormalityError> {
+) -> Result<Vec<path::PathBuf>, errors::FormalityError> {
   let mut cmd = std::process::Command::new("git");
   cmd.arg("diff").arg("--name-only");
   if staged {
@@ -225,17 +230,21 @@ fn get_git_diff_files(
   cmd.arg("--diff-filter=ACMR").current_dir(root);
 
   let output = cmd.output().map_err(|e| {
-    FormalityError::Git(GitError::ExecutionFailed(e.to_string()))
+    errors::FormalityError::Git(errors::GitError::ExecutionFailed(
+      e.to_string(),
+    ))
   })?;
 
   if !output.status.success() {
-    return Err(FormalityError::Git(GitError::CommandFailed(format!(
-      "Failed to query git {error_context} files."
-    ))));
+    return Err(errors::FormalityError::Git(
+      errors::GitError::CommandFailed(format!(
+        "Failed to query git {error_context} files."
+      )),
+    ));
   }
 
   let stdout = String::from_utf8_lossy(&output.stdout);
-  let files: Vec<PathBuf> = stdout
+  let files: Vec<path::PathBuf> = stdout
     .lines()
     .map(|l| root.join(l.trim()))
     .filter(|p| p.is_file())
@@ -248,10 +257,10 @@ fn get_git_diff_files(
 ///
 /// # Errors
 ///
-/// Returns a [`FormalityError`] if git execution fails or the git command cannot be run.
+/// Returns a [`errors::FormalityError`] if git execution fails or the git command cannot be run.
 pub fn get_git_staged_files(
-  root: &Path,
-) -> Result<Vec<PathBuf>, FormalityError> {
+  root: &path::Path,
+) -> Result<Vec<path::PathBuf>, errors::FormalityError> {
   get_git_diff_files(root, true, "staged")
 }
 
@@ -259,10 +268,10 @@ pub fn get_git_staged_files(
 ///
 /// # Errors
 ///
-/// Returns a [`FormalityError`] if git execution fails or the git command cannot be run.
+/// Returns a [`errors::FormalityError`] if git execution fails or the git command cannot be run.
 pub fn get_git_changed_files(
-  root: &Path,
-) -> Result<Vec<PathBuf>, FormalityError> {
+  root: &path::Path,
+) -> Result<Vec<path::PathBuf>, errors::FormalityError> {
   get_git_diff_files(root, false, "changed")
 }
 
@@ -274,37 +283,39 @@ pub fn get_git_changed_files(
 ///
 /// # Errors
 ///
-/// Returns a [`FormalityError`] if `lang_filter` names a surface that doesn't
+/// Returns a [`errors::FormalityError`] if `lang_filter` names a surface that doesn't
 /// exist.
 pub fn resolve_target_surfaces(
-  root: &Path,
+  root: &path::Path,
   lang_filter: &[String],
-  scope: &Scope,
-  config: &FormalityConfig,
-) -> Result<Vec<Box<dyn LanguageSurface>>, FormalityError> {
+  scope: &engine::Scope,
+  config: &config::FormalityConfig,
+) -> Result<Vec<Box<dyn LanguageSurface>>, errors::FormalityError> {
   if !lang_filter.is_empty() {
     let mut selected = Vec::new();
     for name in lang_filter {
-      if let Some(s) = get_surface_by_name(name) {
+      if let Some(s) = surfaces::get_surface_by_name(name) {
         selected.push(s);
       } else {
-        return Err(FormalityError::Surface(SurfaceError::UnknownSurface(
-          name.clone(),
-        )));
+        return Err(errors::FormalityError::Surface(
+          errors::SurfaceError::UnknownSurface(name.clone()),
+        ));
       }
     }
     return Ok(selected);
   }
 
   match scope {
-    Scope::Paths { files, .. } => {
+    engine::Scope::Paths { files, .. } => {
       Ok(surfaces_with_files_under(root, files, config))
     }
-    Scope::Workspace(candidates) => {
+    engine::Scope::Workspace(candidates) => {
       let present = std::cell::LazyCell::new(|| {
-        glob::PresentExtensions::from_paths(candidates)
+        surfaces::glob::PresentExtensions::from_paths(candidates)
       });
-      Ok(default_registry().detect_surfaces_in(root, config, &present))
+      Ok(
+        surfaces::default_registry().detect_surfaces_in(root, config, &present),
+      )
     }
   }
 }
@@ -312,17 +323,17 @@ pub fn resolve_target_surfaces(
 /// Every surface with at least one of its files among the explicit paths'
 /// expanded `files`.
 fn surfaces_with_files_under(
-  root: &Path,
-  files: &[PathBuf],
-  config: &FormalityConfig,
+  root: &path::Path,
+  files: &[path::PathBuf],
+  config: &config::FormalityConfig,
 ) -> Vec<Box<dyn LanguageSurface>> {
   let global = config.resolve_global();
-  all_surfaces()
+  surfaces::all_surfaces()
     .into_iter()
     .filter(|surface| {
       let lang_cfg =
         config.resolve_for_lang_with_global(surface.name(), &global);
-      let filter = glob::FileFilter::new(
+      let filter = surfaces::glob::FileFilter::new(
         root,
         surface.file_extensions(),
         &lang_cfg.exclude,
@@ -336,40 +347,44 @@ fn surfaces_with_files_under(
 mod tests {
   use super::*;
   use std::fs;
-  use tempfile::TempDir;
 
   #[test]
   fn test_normalize_path_components() {
-    let p = Path::new("a/b/../c/./d");
+    let p = path::Path::new("a/b/../c/./d");
     let norm = normalize_path(p);
-    assert_eq!(norm, PathBuf::from("a/c/d"));
+    assert_eq!(norm, path::PathBuf::from("a/c/d"));
 
-    let p2 = Path::new("./a/b");
+    let p2 = path::Path::new("./a/b");
     let norm2 = normalize_path(p2);
-    assert_eq!(norm2, PathBuf::from("a/b"));
+    assert_eq!(norm2, path::PathBuf::from("a/b"));
   }
 
   #[test]
   fn test_resolve_git_paths_mutual_exclusion() {
-    let res = resolve_git_paths(Path::new("."), true, true, vec![]);
+    let res = resolve_git_paths(path::Path::new("."), true, true, vec![]);
     assert!(matches!(
       res,
-      Err(FormalityError::Git(GitError::MutuallyExclusiveFlags))
+      Err(errors::FormalityError::Git(
+        errors::GitError::MutuallyExclusiveFlags
+      ))
     ));
   }
 
   #[test]
   fn test_resolve_git_paths_no_git_flags_returns_explicit() {
-    let explicit =
-      vec![PathBuf::from("src/main.rs"), PathBuf::from("README.md")];
-    let res = resolve_git_paths(Path::new("."), false, false, explicit.clone())
-      .unwrap();
+    let explicit = vec![
+      path::PathBuf::from("src/main.rs"),
+      path::PathBuf::from("README.md"),
+    ];
+    let res =
+      resolve_git_paths(path::Path::new("."), false, false, explicit.clone())
+        .unwrap();
     assert_eq!(res, explicit);
   }
 
   #[test]
   fn test_resolve_git_paths_staged_filtering() {
-    let temp = TempDir::new().unwrap();
+    let temp = tempfile::TempDir::new().unwrap();
     let root = temp.path();
 
     // Initialize git repository
@@ -433,21 +448,30 @@ mod tests {
 
     // 2. Staged filtered by explicit directory "src"
     let staged_src =
-      resolve_git_paths(root, true, false, vec![PathBuf::from("src")]).unwrap();
+      resolve_git_paths(root, true, false, vec![path::PathBuf::from("src")])
+        .unwrap();
     assert_eq!(staged_src.len(), 1);
     assert_eq!(staged_src[0], file_a);
 
     // 3. Staged filtered by explicit file "tests/c.rs"
-    let staged_c =
-      resolve_git_paths(root, true, false, vec![PathBuf::from("tests/c.rs")])
-        .unwrap();
+    let staged_c = resolve_git_paths(
+      root,
+      true,
+      false,
+      vec![path::PathBuf::from("tests/c.rs")],
+    )
+    .unwrap();
     assert_eq!(staged_c.len(), 1);
     assert_eq!(staged_c[0], file_c);
 
     // 4. Staged filtered by non-staged explicit path "src/b.rs"
-    let staged_b =
-      resolve_git_paths(root, true, false, vec![PathBuf::from("src/b.rs")])
-        .unwrap();
+    let staged_b = resolve_git_paths(
+      root,
+      true,
+      false,
+      vec![path::PathBuf::from("src/b.rs")],
+    )
+    .unwrap();
     assert!(staged_b.is_empty());
 
     // 5. Changed (unstaged) without explicit paths returns modified unstaged file_b
@@ -458,7 +482,7 @@ mod tests {
 
   #[test]
   fn test_staged_file_discovery_respects_surface_exclusions() {
-    let temp = TempDir::new().unwrap();
+    let temp = tempfile::TempDir::new().unwrap();
     let root = temp.path();
 
     // Initialize git repository
@@ -526,9 +550,9 @@ mod tests {
     assert_eq!(staged_files.len(), 4);
 
     // Formality config with surface exclusion for Rust
-    let mut config = FormalityConfig::empty();
-    let rust_lang = crate::config::LangConfig {
-      exclude: Some(vec![PathBuf::from("src/generated.rs")]),
+    let mut config = config::FormalityConfig::empty();
+    let rust_lang = config::LangConfig {
+      exclude: Some(vec![path::PathBuf::from("src/generated.rs")]),
       ..Default::default()
     };
     config.lang.insert("rust".to_string(), rust_lang);
@@ -537,7 +561,7 @@ mod tests {
     let surfaces = resolve_target_surfaces(
       root,
       &[],
-      &Scope::resolve(root, &staged_files, &[]),
+      &engine::Scope::resolve(root, &staged_files, &[]),
       &config,
     )
     .unwrap();
@@ -547,7 +571,7 @@ mod tests {
     // Discover staged files for the surface (Execution context matched_files)
     let global = config.resolve_global();
     let lang_cfg = config.resolve_for_lang_with_global("rust", &global);
-    let resolved_files = glob::find_files_with_ext(
+    let resolved_files = surfaces::glob::find_files_with_ext(
       root,
       surfaces[0].file_extensions(),
       &staged_files,
@@ -565,7 +589,7 @@ mod tests {
 
   #[test]
   fn test_empty_staged_selection_runs_no_surface() {
-    let temp = TempDir::new().unwrap();
+    let temp = tempfile::TempDir::new().unwrap();
     let root = temp.path();
     let init_ok = std::process::Command::new("git")
       .arg("init")
@@ -578,8 +602,8 @@ mod tests {
     fs::write(root.join("bad.py"), "x  =  1\n").unwrap();
 
     let mut out = Vec::new();
-    let config = FormalityConfig::with_defaults();
-    let plan = Plan::fmt(true, true);
+    let config = config::FormalityConfig::with_defaults();
+    let plan = engine::Plan::fmt(true, true);
     let status =
       dispatch_into(&mut out, root, &config, true, false, &[], vec![], &plan);
 
@@ -589,7 +613,7 @@ mod tests {
     assert!(status.is_clean());
 
     let mut out = Vec::new();
-    let paths = vec![PathBuf::from("bad.py")];
+    let paths = vec![path::PathBuf::from("bad.py")];
     let _ =
       dispatch_into(&mut out, root, &config, true, false, &[], paths, &plan);
     let out = String::from_utf8_lossy(&out);
@@ -601,7 +625,7 @@ mod tests {
 
   #[test]
   fn test_default_run_walks_the_workspace_once() {
-    let temp = TempDir::new().unwrap();
+    let temp = tempfile::TempDir::new().unwrap();
     let root = temp.path();
     fs::write(root.join("main.rs"), "fn main() {}\n").unwrap();
 
@@ -609,42 +633,43 @@ mod tests {
     let _ = run_resolved(
       &mut out,
       root,
-      &FormalityConfig::with_defaults(),
+      &config::FormalityConfig::with_defaults(),
       &[],
       &[],
-      &Plan::fmt(true, true),
+      &engine::Plan::fmt(true, true),
     );
 
     // Detection found rust and the runner formatted it, both from one walk.
     assert!(String::from_utf8_lossy(&out).contains("rust"));
-    assert_eq!(glob::walk_count::of(root), 1);
+    assert_eq!(surfaces::glob::walk_count::of(root), 1);
   }
 
   #[test]
   fn test_explicit_directory_is_walked_once_for_all_surfaces() {
-    let temp = TempDir::new().unwrap();
+    let temp = tempfile::TempDir::new().unwrap();
     let src = temp.path().join("src");
     fs::create_dir(&src).unwrap();
     fs::write(src.join("main.rs"), "fn main() {}\n").unwrap();
     fs::write(src.join("notes.md"), "# Notes\n").unwrap();
 
-    let scope = Scope::resolve(temp.path(), std::slice::from_ref(&src), &[]);
+    let scope =
+      engine::Scope::resolve(temp.path(), std::slice::from_ref(&src), &[]);
     let surfaces = resolve_target_surfaces(
       temp.path(),
       &[],
       &scope,
-      &FormalityConfig::empty(),
+      &config::FormalityConfig::empty(),
     )
     .unwrap();
 
     let names: Vec<&str> = surfaces.iter().map(|s| s.name()).collect();
     assert_eq!(names, ["rust", "markdown"]);
-    assert_eq!(glob::walk_count::of(&src), 1);
+    assert_eq!(surfaces::glob::walk_count::of(&src), 1);
   }
 
   #[test]
   fn test_explicit_directory_run_walks_it_once() {
-    let temp = TempDir::new().unwrap();
+    let temp = tempfile::TempDir::new().unwrap();
     let src = temp.path().join("src");
     fs::create_dir(&src).unwrap();
     fs::write(src.join("main.rs"), "fn main() {}\n").unwrap();
@@ -654,27 +679,28 @@ mod tests {
     let _ = run_resolved(
       &mut out,
       temp.path(),
-      &FormalityConfig::empty(),
+      &config::FormalityConfig::empty(),
       &[],
       std::slice::from_ref(&src),
-      &Plan::fmt(true, true),
+      &engine::Plan::fmt(true, true),
     );
 
     // Selection and both surfaces' runs share one expansion of `src`.
     let out = String::from_utf8_lossy(&out);
     assert!(out.contains("rust") && out.contains("markdown"), "{out}");
-    assert_eq!(glob::walk_count::of(&src), 1);
+    assert_eq!(surfaces::glob::walk_count::of(&src), 1);
   }
 
   #[test]
   fn test_file_matched_only_by_global_exclude_does_not_activate_its_surface() {
-    let temp = TempDir::new().unwrap();
+    let temp = tempfile::TempDir::new().unwrap();
     let root = temp.path();
     fs::write(root.join("main.rs"), "fn main() {}\n").unwrap();
     fs::create_dir(root.join("gen")).unwrap();
     fs::write(root.join("gen/tool.py"), "x = 1\n").unwrap();
-    let detected = |config: &FormalityConfig| -> Vec<&'static str> {
-      let scope = Scope::resolve(root, &[], &config.resolve_global().exclude);
+    let detected = |config: &config::FormalityConfig| -> Vec<&'static str> {
+      let scope =
+        engine::Scope::resolve(root, &[], &config.resolve_global().exclude);
       resolve_target_surfaces(root, &[], &scope, config)
         .unwrap()
         .iter()
@@ -682,10 +708,13 @@ mod tests {
         .collect()
     };
 
-    assert_eq!(detected(&FormalityConfig::empty()), ["rust", "python"]);
-    let excluding = FormalityConfig::parse_str(
+    assert_eq!(
+      detected(&config::FormalityConfig::empty()),
+      ["rust", "python"]
+    );
+    let excluding = config::FormalityConfig::parse_str(
       "[global]\nexclude = [\"gen\"]\n",
-      Path::new("formality.toml"),
+      path::Path::new("formality.toml"),
     )
     .unwrap();
     assert_eq!(detected(&excluding), ["rust"]);
@@ -693,17 +722,18 @@ mod tests {
 
   #[test]
   fn test_root_marker_activates_its_surface_despite_global_exclude() {
-    let temp = TempDir::new().unwrap();
+    let temp = tempfile::TempDir::new().unwrap();
     let root = temp.path();
     fs::write(root.join("pyproject.toml"), "[project]\n").unwrap();
-    let config = FormalityConfig::parse_str(
+    let config = config::FormalityConfig::parse_str(
       "[global]\nexclude = [\"pyproject.toml\"]\n",
-      Path::new("formality.toml"),
+      path::Path::new("formality.toml"),
     )
     .unwrap();
 
     // Marker files are checked at the root, outside the candidate list.
-    let scope = Scope::resolve(root, &[], &config.resolve_global().exclude);
+    let scope =
+      engine::Scope::resolve(root, &[], &config.resolve_global().exclude);
     let surfaces = resolve_target_surfaces(root, &[], &scope, &config).unwrap();
     let names: Vec<&str> = surfaces.iter().map(|s| s.name()).collect();
     assert_eq!(names, ["python"]);

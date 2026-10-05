@@ -1,9 +1,12 @@
-//! Colored unified-diff rendering shared by every surface's `--check` /
-//! sync-preview output.
+//! Unified diff generation and rendering.
+//!
+//! Produces colored unified diffs from file comparisons. Multiprocess pass
+//! execution driving these diffs is owned by `super::runner`.
+
+use std::fmt::Write;
 
 use colored::Colorize;
-use similar::{ChangeTag, TextDiff};
-use std::fmt::Write as _;
+use similar;
 
 /// Generates a colored unified diff string between `old_content` and `new_content`.
 #[must_use]
@@ -13,7 +16,7 @@ pub fn render_diff(
   old_label: &str,
   new_label: &str,
 ) -> String {
-  let diff = TextDiff::from_lines(old_content, new_content);
+  let diff = similar::TextDiff::from_lines(old_content, new_content);
   // Rendered diffs (headers + ANSI styling) are usually comparable in size
   // to the larger of the two inputs; reserving up front avoids repeated
   // reallocation/copying as `out` grows line-by-line below.
@@ -29,13 +32,13 @@ pub fn render_diff(
     let _ = write!(out, "{}", format!("{}\n", hunk.header()).cyan());
     for change in hunk.iter_changes() {
       match change.tag() {
-        ChangeTag::Delete => {
+        similar::ChangeTag::Delete => {
           let _ = write!(out, "{}", format!("-{change}").red());
         }
-        ChangeTag::Insert => {
+        similar::ChangeTag::Insert => {
           let _ = write!(out, "{}", format!("+{change}").green());
         }
-        ChangeTag::Equal => {
+        similar::ChangeTag::Equal => {
           let _ = write!(out, " {change}");
         }
       }

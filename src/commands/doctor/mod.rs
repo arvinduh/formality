@@ -1,7 +1,8 @@
-//! `fml doctor` command: probes every surface's required
-//! tools against the resolved config, reports version compatibility, and
-//! (with `install`) installs whatever's missing, plus workspace hygiene
-//! checks ([`gitignore`], [`venv`]).
+//! `fml doctor` command: probes toolchains and reports environment health.
+//!
+//! Checks binary existence and versions via `crate::engine::version` and
+//! provides installation hints. Execution of linters and formatters is owned
+//! by `crate::engine::runner`.
 
 /// Gitignore workspace hygiene validation.
 pub mod gitignore;
@@ -17,26 +18,17 @@ pub use venv::{
   detect_virtualenv_with_env, find_system_python, find_venv_interpreter,
 };
 
-use crate::config::FormalityConfig;
-use crate::engine::version::{
-  ToolStatus, Version, evaluate_tool_status, get_raw_tool_version,
-  minimum_supported_tool_version, normalize_probed_version, probe_tool_version,
-  reported_raw_version_if_differing,
-};
-use crate::surfaces::{
-  LanguageSurface, ToolInfo, all_surfaces, check_binary_exists,
-  create_tool_command, default_registry, install_chain_for,
-  matches_name_or_alias, pinned_version_for,
-};
-use crate::ui::paths::display_path;
-use crate::ui::table::{
-  Cell, Column, Frame, Layout, Palette, Row, Span, Style, Table, WidthPolicy,
-  render,
-};
+use crate::config;
+use crate::engine::version;
+use crate::errors;
+use crate::surfaces;
+use crate::surfaces::LanguageSurface;
+use crate::ui::paths;
+use crate::ui::table;
 use colored::Colorize;
-use std::collections::{HashMap, HashSet};
-use std::fmt::Write as _;
-use std::path::Path;
+use std::collections;
+use std::fmt::Write;
+use std::path;
 
 /// Installs a deduplicated list of missing tools, rendered inside `frame` so
 /// `fml doctor --install` brackets this block with the same rule width as every other section it
@@ -51,8 +43,8 @@ use std::path::Path;
 )]
 #[must_use]
 fn install_missing_tools_framed(
-  missing: &[ToolInfo],
-  frame: Frame,
+  missing: &[surfaces::ToolInfo],
+  frame: table::Frame,
 ) -> InstallRunReport {
   if missing.is_empty() {
     return InstallRunReport {
@@ -61,7 +53,7 @@ fn install_missing_tools_framed(
     };
   }
 
-  let palette = Palette::detect();
+  let palette = table::Palette::detect();
   println!(
     "\n{}",
     "Installing Missing / Stale Toolchains:".bold().cyan()
@@ -86,11 +78,9 @@ fn install_missing_tools_framed(
   // chain still resolves to the lagging system-package install and #102's
   // spurious post-install `[WARN]` can still occur. Giving no-cargo hosts a
   // real prebuilt install path is the broader question tracked in #104.
-  if !crate::surfaces::has_cargo_binstall()
+  if !surfaces::has_cargo_binstall()
     && missing.iter().any(|tool| {
-      crate::surfaces::tool_would_benefit_from_cargo_binstall_bootstrap(
-        tool.binary,
-      )
+      surfaces::tool_would_benefit_from_cargo_binstall_bootstrap(tool.binary)
     })
   {
     println!(
@@ -98,7 +88,7 @@ fn install_missing_tools_framed(
       "[INSTALL]".cyan().bold(),
       "cargo-binstall".bold()
     );
-    if crate::surfaces::ensure_cargo_binstall() {
+    if surfaces::ensure_cargo_binstall() {
       println!("    {} cargo-binstall is ready", "[OK]  ".green().bold());
     } else {
       println!(
@@ -124,7 +114,7 @@ fn install_missing_tools_framed(
         args.join(" ").cyan()
       );
 
-      let mut cmd = create_tool_command(&program);
+      let mut cmd = surfaces::create_tool_command(&program);
       cmd.args(&args);
 
       match cmd.status() {
@@ -138,7 +128,7 @@ fn install_missing_tools_framed(
           // the binary on `PATH` instead of replaying the stale "not
           // found" result and reporting a tool we just installed as still
           // missing.
-          crate::surfaces::forget_binary(tool.binary);
+          surfaces::forget_binary(tool.binary);
 
           // Some installers place the binary in a directory this
           // already-running process's `PATH` doesn't contain at all --
@@ -148,7 +138,7 @@ fn install_missing_tools_framed(
           // underlying `PATH` string genuinely lacks the directory. A
           // no-op for every other installer (npm/cargo/pipx/brew/...,
           // which install alongside a package manager already on `PATH`).
-          crate::surfaces::refresh_path_after_install(&program);
+          surfaces::refresh_path_after_install(&program);
 
           // Resolution guard: an exit code of 0 only proves the package
           // manager ran to completion, never that the binary it produced is
@@ -174,13 +164,13 @@ fn install_missing_tools_framed(
           // the binary isn't resolvable: there is nothing to probe, and an
           // unpinned tool must not pay for a probe it never needed.
           let expected = if on_path {
-            pinned_version_for(tool.binary)
+            surfaces::pinned_version_for(tool.binary)
           } else {
             None
           };
           let actual = expected
             .as_ref()
-            .and_then(|_| probe_tool_version(tool.binary));
+            .and_then(|_| version::probe_tool_version(tool.binary));
 
           match classify_install_outcome(
             on_path,
@@ -375,7 +365,7 @@ enum InstallOutcome {
 /// `brew` and `apt` steps, so none on Windows), or some step can and its
 /// package manager is not on `PATH`.
 fn miss_headline(binary: &str, os: &str) -> String {
-  let has_path = install_chain_for(binary)
+  let has_path = surfaces::install_chain_for(binary)
     .is_some_and(|chain| chain.iter().any(|method| method.runs_on(os)));
   if has_path {
     format!("No automatic package manager found for {}.", binary.bold())
@@ -399,8 +389,8 @@ fn miss_headline(binary: &str, os: &str) -> String {
 /// verification at all.
 fn classify_install_outcome(
   on_path: bool,
-  expected: Option<&Version>,
-  probed: Option<&Version>,
+  expected: Option<&version::Version>,
+  probed: Option<&version::Version>,
 ) -> InstallOutcome {
   if !on_path {
     return InstallOutcome::NotOnPath;
@@ -415,41 +405,52 @@ fn classify_install_outcome(
 /// the caller's `frame` so its rule matches the rest of the command's output:
 /// one row per tool this `install_missing_tools_framed` call attempted, its
 /// installer, and the outcome. A no-op if `rows` is empty.
-fn print_install_summary_table(rows: &[InstallSummaryRow], frame: Frame) {
+fn print_install_summary_table(
+  rows: &[InstallSummaryRow],
+  frame: table::Frame,
+) {
   if rows.is_empty() {
     return;
   }
 
-  let mut table = Table::new(vec![
-    Column::new(Cell::text("")).width(WidthPolicy::Fixed(10)),
-    Column::new(Cell::text("")).width(WidthPolicy::Fixed(20)),
-    Column::new(Cell::text("")).width(WidthPolicy::Fixed(14)),
-    Column::new(Cell::text("")).width(WidthPolicy::Auto),
+  let mut table = table::Table::new(vec![
+    table::Column::new(table::Cell::text(""))
+      .width(table::WidthPolicy::Fixed(10)),
+    table::Column::new(table::Cell::text(""))
+      .width(table::WidthPolicy::Fixed(20)),
+    table::Column::new(table::Cell::text(""))
+      .width(table::WidthPolicy::Fixed(14)),
+    table::Column::new(table::Cell::text("")).width(table::WidthPolicy::Auto),
   ])
-  .layout(Layout::compact().indent(2).padding(0, 1).max_width(80));
+  .layout(
+    table::Layout::compact()
+      .indent(2)
+      .padding(0, 1)
+      .max_width(80),
+  );
 
   for row in rows {
     let (label, style) = match row.outcome {
-      InstallOutcome::Ok => ("[OK]  ", Style::Ok),
-      InstallOutcome::Warn => ("[WARN]", Style::Warn),
+      InstallOutcome::Ok => ("[OK]  ", table::Style::Ok),
+      InstallOutcome::Warn => ("[WARN]", table::Style::Warn),
       // Renders like a failure because that is what it is from the caller's
       // side: the tool is not usable. The `detail` column carries the
       // distinction (installer exited 0) that the label can't.
       InstallOutcome::NotOnPath | InstallOutcome::Fail => {
-        ("[FAIL]", Style::Error)
+        ("[FAIL]", table::Style::Error)
       }
-      InstallOutcome::NoInstaller => ("[MISS]", Style::Warn),
+      InstallOutcome::NoInstaller => ("[MISS]", table::Style::Warn),
     };
-    table.add_row(Row::new(vec![
-      Cell::styled(label, style),
-      Cell::styled(row.binary, Style::Tool),
-      Cell::styled(row.installer.as_str(), Style::Dim),
-      Cell::styled(row.detail.as_str(), Style::Dim),
+    table.add_row(table::Row::new(vec![
+      table::Cell::styled(label, style),
+      table::Cell::styled(row.binary, table::Style::Tool),
+      table::Cell::styled(row.installer.as_str(), table::Style::Dim),
+      table::Cell::styled(row.detail.as_str(), table::Style::Dim),
     ]));
   }
 
-  let palette = Palette::detect();
-  let rendered = render(&table, &palette);
+  let palette = table::Palette::detect();
+  let rendered = table::render(&table, &palette);
   println!(
     "\n{}",
     frame.section(
@@ -462,17 +463,17 @@ fn print_install_summary_table(rows: &[InstallSummaryRow], frame: Frame) {
 
 /// Preflight check for `fml fmt`, `fml lint`, and `fml fix`: scans all
 /// required tools for the active target surfaces and emits a non-blocking
-/// warning to stderr if any tool is present but [`ToolStatus::Stale`]
+/// warning to stderr if any tool is present but `ToolStatus::Stale`
 /// relative to its pinned version.
 pub fn preflight_warn_stale_tools(
   surfaces: &[Box<dyn LanguageSurface>],
-  config: &FormalityConfig,
+  config: &config::FormalityConfig,
   for_fmt: bool,
   for_lint: bool,
 ) {
   for (tool, lookup) in required_tools(surfaces, config, for_fmt, for_lint) {
     if lookup.is_installed
-      && let Some(ToolStatus::Stale { current, pinned }) =
+      && let Some(version::ToolStatus::Stale { current, pinned }) =
         lookup.status.as_ref()
     {
       let warning = format_stale_tool_warning(tool.binary, current, pinned);
@@ -486,11 +487,12 @@ pub fn preflight_warn_stale_tools(
 /// [`ToolLookupResult`], for [`preflight_warn_stale_tools`].
 fn required_tools(
   surfaces: &[Box<dyn LanguageSurface>],
-  config: &FormalityConfig,
+  config: &config::FormalityConfig,
   for_fmt: bool,
   for_lint: bool,
-) -> Vec<(ToolInfo, ToolLookupResult)> {
-  let mut seen: HashSet<&'static str> = HashSet::new();
+) -> Vec<(surfaces::ToolInfo, ToolLookupResult)> {
+  let mut seen: collections::HashSet<&'static str> =
+    collections::HashSet::new();
   let mut result = Vec::new();
   let global = config.resolve_global();
 
@@ -520,8 +522,8 @@ fn required_tools(
 #[must_use]
 pub fn format_stale_tool_warning(
   binary: &str,
-  current: &Version,
-  pinned: &Version,
+  current: &version::Version,
+  pinned: &version::Version,
 ) -> String {
   format!(
     "tool '{binary}' is stale (v{current} != pinned v{pinned}); run 'fml doctor --install' to update"
@@ -532,11 +534,12 @@ pub fn format_stale_tool_warning(
 /// whenever the raw banner version differs from the normalized version.
 #[must_use]
 pub(crate) fn format_version_details(
-  current: &Version,
+  current: &version::Version,
   detail: Option<&str>,
   raw_banner: Option<&str>,
 ) -> String {
-  let raw_reported = reported_raw_version_if_differing(current, raw_banner);
+  let raw_reported =
+    version::reported_raw_version_if_differing(current, raw_banner);
   let raw_suffix = match raw_reported {
     Some(r) => format!(" — reported {r}"),
     None => String::new(),
@@ -556,12 +559,11 @@ pub struct ToolLookupResult {
   /// Raw version output string from `--version`.
   pub raw_version: Option<String>,
   /// Parsed semver version structure.
-  pub parsed_version: Option<Version>,
+  pub parsed_version: Option<version::Version>,
   /// Combined status relative to the MSTV floor and the exact version pin
   /// (`None` when neither is registered for this tool).
-  pub status: Option<ToolStatus>,
+  pub status: Option<version::ToolStatus>,
 }
-use crate::errors::ExitStatus;
 
 #[cfg(test)]
 thread_local! {
@@ -574,28 +576,29 @@ thread_local! {
 /// Executes the `fml doctor` diagnostic command to scan tools, environment, and hygiene.
 #[must_use]
 pub fn run_doctor(
-  root: &Path,
+  root: &path::Path,
   show_all: bool,
   install: bool,
-  config: &FormalityConfig,
-) -> ExitStatus {
+  config: &config::FormalityConfig,
+) -> errors::ExitStatus {
   // One walk at most, shared by detection, the table's detected column
   // and the unconfigured-languages note. `global.exclude` applies, so the
   // detected column agrees with what `fml fmt` runs.
   let present = std::cell::LazyCell::new(|| {
-    crate::surfaces::glob::PresentExtensions::scan(
+    surfaces::glob::PresentExtensions::scan(
       root,
       &config.resolve_global().exclude,
     )
   });
-  let detected = default_registry().detect_surfaces_in(root, config, &present);
+  let detected =
+    surfaces::default_registry().detect_surfaces_in(root, config, &present);
   #[cfg(test)]
   LAST_DETECTED.set(detected.iter().map(|s| s.name()).collect());
-  let detected_names: HashSet<&'static str> =
+  let detected_names: collections::HashSet<&'static str> =
     detected.iter().map(|s| s.name()).collect();
   let surfaces: Vec<Box<dyn LanguageSurface>> =
     if show_all || detected.is_empty() {
-      all_surfaces()
+      surfaces::all_surfaces()
     } else {
       detected
     };
@@ -608,9 +611,9 @@ pub fn run_doctor(
     config,
   );
 
-  let palette = Palette::detect();
-  let rendered_table = render(&scan.table, &palette);
-  let frame = Frame::for_body(&rendered_table);
+  let palette = table::Palette::detect();
+  let rendered_table = table::render(&scan.table, &palette);
+  let frame = table::Frame::for_body(&rendered_table);
 
   let title = format!(
     "{} {}",
@@ -636,20 +639,22 @@ pub fn run_doctor(
   // selected installer carries a matching pin are reinstalled. If a stale tool's
   // selected installer cannot pin to `expected_binary_version`, reinstall is
   // skipped and explained (#11).
-  let mut to_install: Vec<ToolInfo> = scan.missing.clone();
-  let mut unpinnable_stale_tools: Vec<(ToolInfo, Version, Version)> =
-    Vec::new();
+  let mut to_install: Vec<surfaces::ToolInfo> = scan.missing.clone();
+  let mut unpinnable_stale_tools: Vec<(
+    surfaces::ToolInfo,
+    version::Version,
+    version::Version,
+  )> = Vec::new();
 
   for tool in &scan.stale {
-    let expected = pinned_version_for(tool.binary);
-    let selected_pin =
-      crate::surfaces::selected_pinned_version_for(tool.binary);
+    let expected = surfaces::pinned_version_for(tool.binary);
+    let selected_pin = surfaces::selected_pinned_version_for(tool.binary);
     if let Some(ref exp) = expected {
       if selected_pin.as_ref() == Some(exp) {
         to_install.push(tool.clone());
       } else {
-        let current = probe_tool_version(tool.binary)
-          .unwrap_or_else(|| Version::new(0, 0, 0));
+        let current = version::probe_tool_version(tool.binary)
+          .unwrap_or_else(|| version::Version::new(0, 0, 0));
         unpinnable_stale_tools.push((tool.clone(), current, exp.clone()));
       }
     }
@@ -681,9 +686,9 @@ pub fn run_doctor(
   println!("{}\n", tally.render(!to_install.is_empty() && !install));
 
   if (tally.missing.is_empty() || install) && !install_failed {
-    ExitStatus::Clean
+    errors::ExitStatus::Clean
   } else {
-    ExitStatus::Error
+    errors::ExitStatus::Error
   }
 }
 
@@ -710,9 +715,11 @@ fn command_ran_successfully(
 #[must_use]
 fn clippy_probe_succeeds(driver_bin: &str, cargo_bin: &str) -> bool {
   command_ran_successfully(
-    &create_tool_command(driver_bin).arg("--version").output(),
+    &surfaces::create_tool_command(driver_bin)
+      .arg("--version")
+      .output(),
   ) || command_ran_successfully(
-    &create_tool_command(cargo_bin)
+    &surfaces::create_tool_command(cargo_bin)
       .args(["clippy", "--version"])
       .output(),
   )
@@ -741,7 +748,7 @@ fn tool_is_on_path(binary: &str) -> bool {
   if matches!(binary, "clippy" | "clippy-driver" | "cargo-clippy") {
     clippy_probe_succeeds("clippy-driver", "cargo")
   } else {
-    check_binary_exists(binary)
+    surfaces::check_binary_exists(binary)
   }
 }
 
@@ -752,24 +759,24 @@ fn lookup_tool_info(binary: &'static str) -> ToolLookupResult {
       .or_else(|_| which::which("cargo"))
       .ok()
       .map(|p| p.display().to_string());
-    let raw_version = get_raw_tool_version(binary);
+    let raw_version = version::get_raw_tool_version(binary);
     let parsed_version = raw_version
       .as_deref()
-      .and_then(|raw| normalize_probed_version(binary, raw));
-    let mstv = minimum_supported_tool_version(binary);
-    let pinned = pinned_version_for(binary);
+      .and_then(|raw| version::normalize_probed_version(binary, raw));
+    let mstv = version::minimum_supported_tool_version(binary);
+    let pinned = surfaces::pinned_version_for(binary);
     // Only fabricate a status when there's an actual floor or pin to check
     // against — a tool with neither (no MSTV entry, no known pin) keeps the
     // prior behavior of `status: None`, rendered as a plain `[READY]` by
     // `scan_tools_and_build_table`'s catch-all arm.
     let status = match parsed_version.clone() {
-      Some(curr) => Some(evaluate_tool_status(
+      Some(curr) => Some(version::evaluate_tool_status(
         Some(curr),
         raw_version.clone(),
         mstv.as_ref(),
         pinned.as_ref(),
       )),
-      None => Some(ToolStatus::UnknownVersion(
+      None => Some(version::ToolStatus::UnknownVersion(
         raw_version.clone().unwrap_or_default(),
       )),
     };
@@ -787,18 +794,18 @@ fn lookup_tool_info(binary: &'static str) -> ToolLookupResult {
       path: None,
       raw_version: None,
       parsed_version: None,
-      status: Some(ToolStatus::NotFound),
+      status: Some(version::ToolStatus::NotFound),
     }
   }
 }
 
 struct DoctorScanResult {
-  table: Table,
-  missing: Vec<ToolInfo>,
-  installed: HashSet<&'static str>,
-  outdated: HashSet<&'static str>,
-  stale: Vec<ToolInfo>,
-  unknown: HashSet<&'static str>,
+  table: table::Table,
+  missing: Vec<surfaces::ToolInfo>,
+  installed: collections::HashSet<&'static str>,
+  outdated: collections::HashSet<&'static str>,
+  stale: Vec<surfaces::ToolInfo>,
+  unknown: collections::HashSet<&'static str>,
 }
 
 /// The counts `fml doctor` closes with ("`8 installed (1 unknown), 0
@@ -822,11 +829,11 @@ struct DoctorScanResult {
 /// that, so it stays; anything that later needs `unknown` to be exact must
 /// widen it back to a name set rather than assume an install cannot touch it.
 struct ToolTally {
-  installed: HashSet<&'static str>,
+  installed: collections::HashSet<&'static str>,
   outdated: usize,
-  stale: HashSet<&'static str>,
+  stale: collections::HashSet<&'static str>,
   unknown: usize,
-  missing: HashSet<&'static str>,
+  missing: collections::HashSet<&'static str>,
 }
 
 impl ToolTally {
@@ -924,47 +931,57 @@ impl ToolTally {
   reason = "scans toolchains across surfaces and builds diagnostic status table"
 )]
 fn scan_tools_and_build_table(
-  root: &Path,
+  root: &path::Path,
   surfaces: &[Box<dyn LanguageSurface>],
-  detected_names: &HashSet<&'static str>,
+  detected_names: &collections::HashSet<&'static str>,
   present: &std::cell::LazyCell<
-    crate::surfaces::glob::PresentExtensions,
-    impl FnOnce() -> crate::surfaces::glob::PresentExtensions,
+    surfaces::glob::PresentExtensions,
+    impl FnOnce() -> surfaces::glob::PresentExtensions,
   >,
-  config: &FormalityConfig,
+  config: &config::FormalityConfig,
 ) -> DoctorScanResult {
-  let mut cache: HashMap<&'static str, ToolLookupResult> = HashMap::new();
-  let mut missing_unique_tools: Vec<ToolInfo> = Vec::new();
-  let mut installed_unique_tools = HashSet::new();
-  let mut outdated_unique_tools = HashSet::new();
+  let mut cache: collections::HashMap<&'static str, ToolLookupResult> =
+    collections::HashMap::new();
+  let mut missing_unique_tools: Vec<surfaces::ToolInfo> = Vec::new();
+  let mut installed_unique_tools = collections::HashSet::new();
+  let mut outdated_unique_tools = collections::HashSet::new();
   // Tools that are present and executable, but whose installed version
   // doesn't match the exact pin `fml doctor --install` would install — [`ToolStatus::
   // Stale`]. Kept as a `Vec<ToolInfo>` (not just a name set, like
   // `installed_unique_tools`/`outdated_unique_tools`) because `fml doctor --install`
   // needs the full `ToolInfo` to reinstall it, same as `missing_unique_tools`.
-  let mut stale_unique_tools: Vec<ToolInfo> = Vec::new();
-  let mut unknown_unique_tools = HashSet::new();
+  let mut stale_unique_tools: Vec<surfaces::ToolInfo> = Vec::new();
+  let mut unknown_unique_tools = collections::HashSet::new();
   let global = config.resolve_global();
 
-  let mut doctor_table = Table::new(vec![
-    Column::new(Cell::text("")).width(WidthPolicy::Fixed(10)),
-    Column::new(Cell::text("")).width(WidthPolicy::Fixed(20)),
-    Column::new(Cell::text("")).width(WidthPolicy::Fixed(11)),
-    Column::new(Cell::text("")).width(WidthPolicy::Fixed(11)),
-    Column::new(Cell::text("")).width(WidthPolicy::Auto),
+  let mut doctor_table = table::Table::new(vec![
+    table::Column::new(table::Cell::text(""))
+      .width(table::WidthPolicy::Fixed(10)),
+    table::Column::new(table::Cell::text(""))
+      .width(table::WidthPolicy::Fixed(20)),
+    table::Column::new(table::Cell::text(""))
+      .width(table::WidthPolicy::Fixed(11)),
+    table::Column::new(table::Cell::text(""))
+      .width(table::WidthPolicy::Fixed(11)),
+    table::Column::new(table::Cell::text("")).width(table::WidthPolicy::Auto),
   ])
-  .layout(Layout::compact().indent(2).padding(0, 1).max_width(80));
+  .layout(
+    table::Layout::compact()
+      .indent(2)
+      .padding(0, 1)
+      .max_width(80),
+  );
 
   for surface in surfaces {
     let is_detected = detected_names.contains(surface.name())
-      || (default_registry()
+      || (surfaces::default_registry()
         .get_surface_by_name(surface.name())
         .is_none()
         && surface.detect(root, present));
     let detected_cell = if is_detected {
-      Cell::styled("detected", Style::Ok)
+      table::Cell::styled("detected", table::Style::Ok)
     } else {
-      Cell::styled("undetected", Style::Dim)
+      table::Cell::styled("undetected", table::Style::Dim)
     };
 
     let resolved = config.resolve_for_lang_with_global(surface.name(), &global);
@@ -982,30 +999,30 @@ fn scan_tools_and_build_table(
           let path_rel = lookup
             .path
             .as_deref()
-            .map(|p| display_path(root, Path::new(p)))
+            .map(|p| paths::display_path(root, path::Path::new(p)))
             .unwrap_or_default();
           let path_str = path_rel.as_str();
           match &lookup.status {
-            Some(ToolStatus::Outdated { current, minimum }) => {
+            Some(version::ToolStatus::Outdated { current, minimum }) => {
               outdated_unique_tools.insert(tool.binary);
               let v_info = format_version_details(
                 current,
                 Some(&format!("< MSTV v{minimum}")),
                 lookup.raw_version.as_deref(),
               );
-              let row = Row::new(vec![
-                Cell::styled("[WARN] ", Style::Warn),
-                Cell::styled(tool.binary, Style::Warn),
-                Cell::styled(surface.name(), Style::Dim),
+              let row = table::Row::new(vec![
+                table::Cell::styled("[WARN] ", table::Style::Warn),
+                table::Cell::styled(tool.binary, table::Style::Warn),
+                table::Cell::styled(surface.name(), table::Style::Dim),
                 detected_cell.clone(),
-                Cell::new(vec![
-                  Span::styled(path_str, Style::Dim),
-                  Span::styled(v_info, Style::Warn),
+                table::Cell::new(vec![
+                  table::Span::styled(path_str, table::Style::Dim),
+                  table::Span::styled(v_info, table::Style::Warn),
                 ]),
               ]);
               doctor_table.add_row(row);
             }
-            Some(ToolStatus::Stale { current, pinned }) => {
+            Some(version::ToolStatus::Stale { current, pinned }) => {
               if !stale_unique_tools.iter().any(|t| t.binary == tool.binary) {
                 stale_unique_tools.push(tool.clone());
               }
@@ -1014,51 +1031,51 @@ fn scan_tools_and_build_table(
                 Some(&format!("!= pinned v{pinned}")),
                 lookup.raw_version.as_deref(),
               );
-              let row = Row::new(vec![
-                Cell::styled("[STALE]", Style::Warn),
-                Cell::styled(tool.binary, Style::Warn),
-                Cell::styled(surface.name(), Style::Dim),
+              let row = table::Row::new(vec![
+                table::Cell::styled("[STALE]", table::Style::Warn),
+                table::Cell::styled(tool.binary, table::Style::Warn),
+                table::Cell::styled(surface.name(), table::Style::Dim),
                 detected_cell.clone(),
-                Cell::new(vec![
-                  Span::styled(path_str, Style::Dim),
-                  Span::styled(v_info, Style::Warn),
+                table::Cell::new(vec![
+                  table::Span::styled(path_str, table::Style::Dim),
+                  table::Span::styled(v_info, table::Style::Warn),
                 ]),
               ]);
               doctor_table.add_row(row);
             }
-            Some(ToolStatus::Compatible { current, .. }) => {
+            Some(version::ToolStatus::Compatible { current, .. }) => {
               let v_info = format_version_details(
                 current,
                 None,
                 lookup.raw_version.as_deref(),
               );
-              let row = Row::new(vec![
-                Cell::styled("[READY]", Style::Ok),
-                Cell::styled(tool.binary, Style::Tool),
-                Cell::styled(surface.name(), Style::Dim),
+              let row = table::Row::new(vec![
+                table::Cell::styled("[READY]", table::Style::Ok),
+                table::Cell::styled(tool.binary, table::Style::Tool),
+                table::Cell::styled(surface.name(), table::Style::Dim),
                 detected_cell.clone(),
-                Cell::new(vec![
-                  Span::styled(path_str, Style::Dim),
-                  Span::styled(v_info, Style::Info),
+                table::Cell::new(vec![
+                  table::Span::styled(path_str, table::Style::Dim),
+                  table::Span::styled(v_info, table::Style::Info),
                 ]),
               ]);
               doctor_table.add_row(row);
             }
-            Some(ToolStatus::UnknownVersion(raw)) => {
+            Some(version::ToolStatus::UnknownVersion(raw)) => {
               unknown_unique_tools.insert(tool.binary);
               let v_info = if raw.trim().is_empty() {
                 " (version unprobeable)".to_string()
               } else {
                 format!(" ({})", raw.trim())
               };
-              let row = Row::new(vec![
-                Cell::styled("[UNKNOWN]", Style::Warn),
-                Cell::styled(tool.binary, Style::Warn),
-                Cell::styled(surface.name(), Style::Dim),
+              let row = table::Row::new(vec![
+                table::Cell::styled("[UNKNOWN]", table::Style::Warn),
+                table::Cell::styled(tool.binary, table::Style::Warn),
+                table::Cell::styled(surface.name(), table::Style::Dim),
                 detected_cell.clone(),
-                Cell::new(vec![
-                  Span::styled(path_str, Style::Dim),
-                  Span::styled(v_info, Style::Warn),
+                table::Cell::new(vec![
+                  table::Span::styled(path_str, table::Style::Dim),
+                  table::Span::styled(v_info, table::Style::Warn),
                 ]),
               ]);
               doctor_table.add_row(row);
@@ -1071,14 +1088,14 @@ fn scan_tools_and_build_table(
               } else {
                 String::new()
               };
-              let row = Row::new(vec![
-                Cell::styled("[READY]", Style::Ok),
-                Cell::styled(tool.binary, Style::Tool),
-                Cell::styled(surface.name(), Style::Dim),
+              let row = table::Row::new(vec![
+                table::Cell::styled("[READY]", table::Style::Ok),
+                table::Cell::styled(tool.binary, table::Style::Tool),
+                table::Cell::styled(surface.name(), table::Style::Dim),
                 detected_cell.clone(),
-                Cell::new(vec![
-                  Span::styled(path_str, Style::Dim),
-                  Span::styled(v_info, Style::Info),
+                table::Cell::new(vec![
+                  table::Span::styled(path_str, table::Style::Dim),
+                  table::Span::styled(v_info, table::Style::Info),
                 ]),
               ]);
               doctor_table.add_row(row);
@@ -1088,12 +1105,12 @@ fn scan_tools_and_build_table(
       } else if !missing_unique_tools.iter().any(|t| t.binary == tool.binary) {
         missing_unique_tools.push(tool.clone());
 
-        let row = Row::new(vec![
-          Cell::styled("[MISS] ", Style::Warn),
-          Cell::styled(tool.binary, Style::Warn),
-          Cell::styled(surface.name(), Style::Dim),
+        let row = table::Row::new(vec![
+          table::Cell::styled("[MISS] ", table::Style::Warn),
+          table::Cell::styled(tool.binary, table::Style::Warn),
+          table::Cell::styled(surface.name(), table::Style::Dim),
           detected_cell.clone(),
-          Cell::styled(tool.description, Style::Dim),
+          table::Cell::styled(tool.description, table::Style::Dim),
         ]);
         doctor_table.add_row(row);
       }
@@ -1111,24 +1128,23 @@ fn scan_tools_and_build_table(
 }
 
 fn print_unconfigured_languages(
-  root: &Path,
-  config: &FormalityConfig,
+  root: &path::Path,
+  config: &config::FormalityConfig,
   present: &std::cell::LazyCell<
-    crate::surfaces::glob::PresentExtensions,
-    impl FnOnce() -> crate::surfaces::glob::PresentExtensions,
+    surfaces::glob::PresentExtensions,
+    impl FnOnce() -> surfaces::glob::PresentExtensions,
   >,
-  frame: Frame,
-  palette: &Palette,
+  frame: table::Frame,
+  palette: &table::Palette,
 ) {
   let Some(ref explicit_langs) = config.resolve_global().languages else {
     return;
   };
   let mut unconfigured = Vec::new();
-  for surface in all_surfaces() {
-    if !explicit_langs
-      .iter()
-      .any(|l| matches_name_or_alias(surface.name(), surface.aliases(), l))
-      && surface.detect(root, present)
+  for surface in surfaces::all_surfaces() {
+    if !explicit_langs.iter().any(|l| {
+      surfaces::matches_name_or_alias(surface.name(), surface.aliases(), l)
+    }) && surface.detect(root, present)
     {
       unconfigured.push(surface.name());
     }
@@ -1166,11 +1182,11 @@ fn print_unconfigured_languages(
 }
 
 fn print_virtualenv_status(
-  root: &Path,
+  root: &path::Path,
   surfaces: &[Box<dyn LanguageSurface>],
   show_all: bool,
-  frame: Frame,
-  palette: &Palette,
+  frame: table::Frame,
+  palette: &table::Palette,
 ) {
   let has_python = surfaces
     .iter()
@@ -1188,7 +1204,7 @@ fn print_virtualenv_status(
     venv_info
       .venv_path
       .as_ref()
-      .map(|p| display_path(root, p))
+      .map(|p| paths::display_path(root, p))
       .unwrap_or_default()
   };
 
@@ -1224,7 +1240,7 @@ fn print_virtualenv_status(
     let _ = write!(
       body,
       "  • Python interpreter: {}",
-      display_path(root, interp).cyan()
+      paths::display_path(root, interp).cyan()
     );
   } else {
     let _ = write!(
@@ -1245,10 +1261,10 @@ fn print_virtualenv_status(
 }
 
 fn print_gitignore_hygiene(
-  root: &Path,
+  root: &path::Path,
   surfaces: &[Box<dyn LanguageSurface>],
-  frame: Frame,
-  palette: &Palette,
+  frame: table::Frame,
+  palette: &table::Palette,
 ) {
   let hygiene_report = check_gitignore_hygiene(root, surfaces);
   if hygiene_report.issues.is_empty() {
@@ -1296,15 +1312,15 @@ fn print_gitignore_hygiene(
 #[must_use]
 pub fn stale_unpinnable_explanation(
   binary: &str,
-  current: &Version,
-  expected: &Version,
+  current: &version::Version,
+  expected: &version::Version,
 ) -> String {
-  let selected = crate::surfaces::selected_install_method_for(binary);
+  let selected = surfaces::selected_install_method_for(binary);
   let available_desc = match selected {
     Some(m) => format!("the available installer ({})", m.installer_name()),
     None => "no available installer".to_string(),
   };
-  let suggestion = match crate::surfaces::pinned_installer_for(binary) {
+  let suggestion = match surfaces::pinned_installer_for(binary) {
     Some(installer) => format!(
       "install {installer} to get the exact pinned version, or accept this drift"
     ),
@@ -1318,9 +1334,13 @@ pub fn stale_unpinnable_explanation(
 }
 
 fn print_stale_unpinnable_warnings(
-  unpinnable_stale: &[(ToolInfo, Version, Version)],
-  frame: Frame,
-  palette: &Palette,
+  unpinnable_stale: &[(
+    surfaces::ToolInfo,
+    version::Version,
+    version::Version,
+  )],
+  frame: table::Frame,
+  palette: &table::Palette,
 ) {
   if unpinnable_stale.is_empty() {
     return;
@@ -1340,7 +1360,7 @@ fn print_stale_unpinnable_warnings(
   );
 }
 
-/// The informational message printed by [`print_sync_notice`], exposed as a
+/// The informational message printed by `print_sync_notice`, exposed as a
 /// standalone constant so it can be asserted on directly in tests without
 /// capturing stdout.
 pub const SYNC_NOTICE_SUMMARY: &str = "`fml sync` is optional for the primary fml fmt / fml lint / VS Code workflow now \
@@ -1357,7 +1377,7 @@ real file on disk rather than talking to `fml lsp`).";
 /// passed inline and the VS Code extension talks to `fml lsp` directly. This
 /// does not change `fml sync`'s behavior in any way — it still works exactly
 /// as before for editor integrations that read native config files directly.
-fn print_sync_notice(frame: Frame, palette: &Palette) {
+fn print_sync_notice(frame: table::Frame, palette: &table::Palette) {
   let body = format!(
     "  {} {}\n    {SYNC_NOTICE_DETAIL}",
     "[INFO] ".cyan().bold(),

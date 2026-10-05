@@ -1,6 +1,8 @@
-//! Language surfaces: the `LanguageSurface` trait, the fleet of per-language
-//! implementations, and the shared machinery (registry, glob matching, tool
-//! discovery, config sync) they're all built on.
+//! Language surfaces interface and shared fleet infrastructure.
+//!
+//! Defines the `LanguageSurface` trait and shared registry/lookup machinery.
+//! Concrete language implementations live in sibling submodules, while execution
+//! orchestration is owned by `crate::engine`.
 
 /// C/C++ language surface implementation.
 pub mod cpp;
@@ -53,10 +55,11 @@ pub use prettier::{
 };
 
 pub use crate::config::facets::{DeclaresFacets, Facet, FacetSupport};
-use crate::config::{ResolvedGlobalConfig, ResolvedLangConfig};
-use std::path::{Path, PathBuf};
-use std::sync::Arc;
-use std::time::{Duration, Instant};
+use std::path;
+use std::sync as std_sync;
+use std::time;
+
+use crate::config;
 
 pub use glob::{
   STANDARD_IGNORED_DIRS, build_repo_gitignore, filter_candidates_with_ext,
@@ -86,10 +89,10 @@ pub use tooling::{
   tool_missing_result, tool_would_benefit_from_cargo_binstall_bootstrap,
 };
 
-/// Execution context shared with every [`LanguageSurface`] invocation for a
+/// Execution context shared with every [`trait@LanguageSurface`] invocation for a
 /// single `fml` command.
 ///
-/// `root`, `paths`, `global_config`, and `candidate_files` are wrapped in [`Arc`] because the
+/// `root`, `paths`, `global_config`, and `candidate_files` are wrapped in [`std::sync::Arc`] because the
 /// runner builds one `ExecutionContext` per surface and dispatches them in
 /// parallel (`rayon::par_iter`), and all surfaces see the same values for
 /// these fields. For `paths`, `global_config`, and `candidate_files` this avoids a real
@@ -97,33 +100,33 @@ pub use tooling::{
 /// would deep-clone the candidate path list and the global config
 /// on every invocation, in place of a cheap refcount bump. `root` is wrapped
 /// for consistency with those shared fields, not for a comparable
-/// saving — it's one short `PathBuf`, so the copy avoided there is small.
-/// `Arc<PathBuf>` (not `Arc<Path>`) matches the `Arc<Vec<PathBuf>>` /
+/// saving — it's one short `path::PathBuf`, so the copy avoided there is small.
+/// `Arc<path::PathBuf>` (not `Arc<Path>`) matches the `Arc<Vec<path::PathBuf>>` /
 /// `Arc<ResolvedGlobalConfig>` shape already used above: every field here is
 /// `Arc` wrapping the type's natural owned form, not the `Arc<[T]>`/
-/// `Arc<str>`-style unsized-coercion pattern, so `root` follows the same
-/// convention rather than special-casing to `Arc<Path>`.
+/// `sync::Arc<str>`-style unsized-coercion pattern, so `root` follows the same
+/// convention rather than special-casing to `sync::Arc<Path>`.
 #[derive(Debug, Clone)]
 pub struct ExecutionContext {
   /// Target workspace root directory path.
-  pub root: Arc<PathBuf>,
+  pub root: std_sync::Arc<path::PathBuf>,
   /// Target path arguments.
-  pub paths: Arc<Vec<PathBuf>>,
+  pub paths: std_sync::Arc<Vec<path::PathBuf>>,
   /// Resolved global configuration settings.
-  pub global_config: Arc<ResolvedGlobalConfig>,
+  pub global_config: std_sync::Arc<config::ResolvedGlobalConfig>,
   /// Resolved per-language configuration settings for this surface.
-  pub lang_config: ResolvedLangConfig,
+  pub lang_config: config::ResolvedLangConfig,
   /// Whether to perform check-only mode without mutating files.
   pub check_only: bool,
   /// The run's candidate files, found once for every surface: the workspace
   /// walk when `paths` is empty, otherwise `paths` expanded.
-  pub candidate_files: Arc<Vec<PathBuf>>,
+  pub candidate_files: std_sync::Arc<Vec<path::PathBuf>>,
 }
 
 impl ExecutionContext {
   /// Discovers target files for the surface matching extensions, honoring scoped paths, files, and excludes.
   #[must_use]
-  pub fn matched_files(&self, extensions: &[&str]) -> Vec<PathBuf> {
+  pub fn matched_files(&self, extensions: &[&str]) -> Vec<path::PathBuf> {
     if self.paths.is_empty() {
       let includes: Vec<String> = self
         .lang_config
@@ -158,9 +161,9 @@ impl ExecutionContext {
   #[must_use]
   pub fn early_out_if_empty(
     &self,
-    files: &[PathBuf],
+    files: &[path::PathBuf],
     name: &'static str,
-    start: Instant,
+    start: time::Instant,
   ) -> Option<SurfaceResult> {
     if files.is_empty() {
       Some(SurfaceResult {
@@ -178,7 +181,7 @@ impl ExecutionContext {
   /// returns the filtered files; otherwise returns an empty Vec so the tool
   /// can scan the whole directory.
   #[must_use]
-  pub fn files_to_pass(&self, files: Vec<PathBuf>) -> Vec<PathBuf> {
+  pub fn files_to_pass(&self, files: Vec<path::PathBuf>) -> Vec<path::PathBuf> {
     if !self.paths.is_empty()
       || !self.lang_config.files.is_empty()
       || !self.lang_config.exclude.is_empty()
@@ -192,7 +195,7 @@ impl ExecutionContext {
 
 /// Runs `surface`'s detection on `root` alone, scanning `root` for it.
 #[cfg(test)]
-fn detect_in(surface: &dyn LanguageSurface, root: &Path) -> bool {
+fn detect_in(surface: &dyn LanguageSurface, root: &path::Path) -> bool {
   surface.detect(root, &glob::PresentExtensions::scan(root, &[]))
 }
 
@@ -200,17 +203,17 @@ fn detect_in(surface: &dyn LanguageSurface, root: &Path) -> bool {
 #[cfg(test)]
 #[must_use]
 pub fn test_ctx(
-  root: impl AsRef<Path>,
-  lang_config: ResolvedLangConfig,
+  root: impl AsRef<path::Path>,
+  lang_config: config::ResolvedLangConfig,
 ) -> ExecutionContext {
   let root_ref = root.as_ref();
   ExecutionContext {
-    root: Arc::new(root_ref.to_path_buf()),
-    paths: Arc::new(Vec::new()),
-    global_config: Arc::new(ResolvedGlobalConfig::default()),
+    root: std_sync::Arc::new(root_ref.to_path_buf()),
+    paths: std_sync::Arc::new(Vec::new()),
+    global_config: std_sync::Arc::new(config::ResolvedGlobalConfig::default()),
     lang_config,
     check_only: false,
-    candidate_files: Arc::new(walk_candidate_files(root_ref, &[])),
+    candidate_files: std_sync::Arc::new(walk_candidate_files(root_ref, &[])),
   }
 }
 
@@ -218,19 +221,19 @@ pub fn test_ctx(
 #[cfg(test)]
 #[must_use]
 pub fn test_ctx_with_paths(
-  root: impl AsRef<Path>,
-  lang_config: ResolvedLangConfig,
-  paths: Vec<PathBuf>,
+  root: impl AsRef<path::Path>,
+  lang_config: config::ResolvedLangConfig,
+  paths: Vec<path::PathBuf>,
 ) -> ExecutionContext {
   let root_ref = root.as_ref();
   let candidate_files = glob::expand_targets(root_ref, &paths);
   ExecutionContext {
-    root: Arc::new(root_ref.to_path_buf()),
-    paths: Arc::new(paths),
-    global_config: Arc::new(ResolvedGlobalConfig::default()),
+    root: std_sync::Arc::new(root_ref.to_path_buf()),
+    paths: std_sync::Arc::new(paths),
+    global_config: std_sync::Arc::new(config::ResolvedGlobalConfig::default()),
     lang_config,
     check_only: false,
-    candidate_files: Arc::new(candidate_files),
+    candidate_files: std_sync::Arc::new(candidate_files),
   }
 }
 
@@ -458,7 +461,7 @@ pub struct SurfaceResult {
   /// Status of the execution.
   pub status: SurfaceStatus,
   /// Execution duration.
-  pub duration: Duration,
+  pub duration: time::Duration,
 }
 
 impl SurfaceResult {
@@ -493,12 +496,16 @@ pub trait LanguageSurface: DeclaresFacets + Send + Sync {
   /// directly under `root` (a directory of that name does not count), or
   /// when `present` holds one of `file_extensions()`. `present` comes from
   /// one walk shared by every surface, so an override must not walk again.
-  fn detect(&self, root: &Path, present: &glob::PresentExtensions) -> bool {
+  fn detect(
+    &self,
+    root: &path::Path,
+    present: &glob::PresentExtensions,
+  ) -> bool {
     self.marker_files().iter().any(|m| root.join(m).is_file())
       || self.file_extensions().iter().any(|e| present.contains(e))
   }
   /// Returns information about required tools for this surface.
-  fn tool_info(&self, config: &ResolvedLangConfig) -> Vec<ToolInfo>;
+  fn tool_info(&self, config: &config::ResolvedLangConfig) -> Vec<ToolInfo>;
   /// Keys `[lang.<name>.extra_args]` accepts, one per tool invocation this
   /// surface makes. Each is the binary name `fml doctor` and the install
   /// chains use, or `<binary>-<subcommand>` where one binary runs two passes
@@ -545,10 +552,6 @@ impl Clone for Box<dyn LanguageSurface> {
 #[cfg(test)]
 mod tests {
   use super::*;
-  use crate::surfaces::{
-    cpp, go, java, javascript, json, kotlin, markdown, python, rust, toml,
-    typst, yaml,
-  };
 
   #[test]
   fn test_surface_supports_lint_fix() {
@@ -602,7 +605,7 @@ mod tests {
       SurfaceResult {
         surface_name: "test",
         status,
-        duration: Duration::from_millis(0),
+        duration: time::Duration::from_millis(0),
       }
     }
 
@@ -666,7 +669,10 @@ mod tests {
 
   #[test]
   fn test_unsupported_lint_fix_returns_skipped() {
-    let dummy_ctx = test_ctx(Path::new("."), ResolvedLangConfig::new("dummy"));
+    let dummy_ctx = test_ctx(
+      path::Path::new("."),
+      config::ResolvedLangConfig::new("dummy"),
+    );
 
     let unsupported_surfaces: Vec<Box<dyn LanguageSurface>> = vec![
       Box::new(yaml::YamlSurface),

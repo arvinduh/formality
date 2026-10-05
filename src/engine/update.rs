@@ -1,12 +1,15 @@
-//! Background self-update check: a cached, rate-limited probe (spawned once
-//! per invocation, printed after the main command finishes) for whether a
-//! newer `fml` release is available.
+//! Background self-update check for newer releases.
+//!
+//! Probes GitHub releases asynchronously for updates. Toolchain version
+//! compatibility checks for installed linters/formatters are owned by `super::version`.
 
-use crate::engine::version::Version;
+use std::path;
+use std::time;
+
 use colored::Colorize;
-use serde::{Deserialize, Serialize};
-use std::path::{Path, PathBuf};
-use std::time::{SystemTime, UNIX_EPOCH};
+use serde;
+
+use crate::engine::version;
 
 const UPDATE_CHECK_INTERVAL_SECS: u64 = 24 * 60 * 60; // 24 hours
 
@@ -17,7 +20,7 @@ const UPDATE_CHECK_INTERVAL_SECS: u64 = 24 * 60 * 60; // 24 hours
 // checks for a full day once the network comes back.
 const UPDATE_CHECK_FAILURE_BACKOFF_SECS: u64 = 15 * 60; // 15 minutes
 
-#[derive(Serialize, Deserialize, Debug)]
+#[derive(serde::Serialize, serde::Deserialize, Debug)]
 struct UpdateCache {
   last_checked_unix: u64,
   latest_tag: Option<String>,
@@ -28,7 +31,7 @@ struct UpdateCache {
   failed: bool,
 }
 
-fn get_cache_path() -> PathBuf {
+fn get_cache_path() -> path::PathBuf {
   super::cache_path("update_check.json")
 }
 
@@ -38,7 +41,10 @@ fn get_cache_path() -> PathBuf {
   reason = "outer Option represents cache validity; inner Option is the cached latest tag"
 )]
 fn read_cached_tag() -> Option<Option<String>> {
-  let now = SystemTime::now().duration_since(UNIX_EPOCH).ok()?.as_secs();
+  let now = time::SystemTime::now()
+    .duration_since(time::UNIX_EPOCH)
+    .ok()?
+    .as_secs();
   read_cached_tag_at(&get_cache_path(), now)
 }
 
@@ -51,7 +57,7 @@ fn read_cached_tag() -> Option<Option<String>> {
   clippy::option_option,
   reason = "outer Option represents cache validity; inner Option is the cached latest tag"
 )]
-fn read_cached_tag_at(path: &Path, now: u64) -> Option<Option<String>> {
+fn read_cached_tag_at(path: &path::Path, now: u64) -> Option<Option<String>> {
   let data = std::fs::read_to_string(path).ok()?;
   let cache: UpdateCache = serde_json::from_str(&data).ok()?;
 
@@ -73,12 +79,12 @@ fn read_cached_tag_at(path: &Path, now: u64) -> Option<Option<String>> {
 /// Takes the path explicitly (rather than calling [`get_cache_path`]
 /// itself) so tests can point it at a temp file instead of the real
 /// per-user cache directory.
-fn write_cached_tag_at(path: &Path, tag: Option<&str>) {
+fn write_cached_tag_at(path: &path::Path, tag: Option<&str>) {
   if let Some(parent) = path.parent() {
     let _ = std::fs::create_dir_all(parent);
   }
-  let now = SystemTime::now()
-    .duration_since(UNIX_EPOCH)
+  let now = time::SystemTime::now()
+    .duration_since(time::UNIX_EPOCH)
     .map_or(0, |d| d.as_secs());
   let cache = UpdateCache {
     last_checked_unix: now,
@@ -94,12 +100,12 @@ fn write_cached_tag_at(path: &Path, tag: Option<&str>) {
 /// body at all) at `path`, stamping `last_checked_unix` so the next
 /// invocation retries after [`UPDATE_CHECK_FAILURE_BACKOFF_SECS`] instead of
 /// re-spawning curl immediately.
-fn write_failed_check_at(path: &Path) {
+fn write_failed_check_at(path: &path::Path) {
   if let Some(parent) = path.parent() {
     let _ = std::fs::create_dir_all(parent);
   }
-  let now = SystemTime::now()
-    .duration_since(UNIX_EPOCH)
+  let now = time::SystemTime::now()
+    .duration_since(time::UNIX_EPOCH)
     .map_or(0, |d| d.as_secs());
   let cache = UpdateCache {
     last_checked_unix: now,
@@ -119,7 +125,7 @@ fn write_failed_check_at(path: &Path) {
 /// Returns the latest tag only when it represents a version newer than
 /// `current_version`.
 fn process_release_response_at(
-  cache_path: &Path,
+  cache_path: &path::Path,
   body: &str,
   current_version: &str,
 ) -> Option<String> {
@@ -138,13 +144,16 @@ pub fn parse_latest_tag_from_json(body: &str) -> Option<String> {
 
 /// Compares a release tag (e.g. "v0.2.0" or "0.2.0") with the current version.
 ///
-/// Both sides are scraped by [`Version::parse`] (the custom extraction layer —
+/// Both sides are scraped by [`version::Version::parse`] (the custom extraction layer —
 /// it tolerates the `v` prefix `GitHub` tags carry); the `>` that decides the
-/// banner is `semver`-backed via [`Version`]'s `Ord`. An unparseable tag can
+/// banner is `semver`-backed via [`version::Version`]'s `Ord`. An unparseable tag can
 /// never trip the banner: it yields `false`, not a spurious "update available".
 #[must_use]
 pub fn is_newer_version(latest_tag: &str, current_version: &str) -> bool {
-  match (Version::parse(latest_tag), Version::parse(current_version)) {
+  match (
+    version::Version::parse(latest_tag),
+    version::Version::parse(current_version),
+  ) {
     (Some(latest), Some(curr)) => latest > curr,
     _ => false,
   }
@@ -363,14 +372,14 @@ mod tests {
     let temp = tempfile::TempDir::new().unwrap();
     let cache_path = temp.path().join("update_check.json");
 
-    let before = SystemTime::now()
-      .duration_since(UNIX_EPOCH)
+    let before = time::SystemTime::now()
+      .duration_since(time::UNIX_EPOCH)
       .unwrap()
       .as_secs();
     let result =
       process_release_response_at(&cache_path, "not valid json {{{", "0.1.0");
-    let after = SystemTime::now()
-      .duration_since(UNIX_EPOCH)
+    let after = time::SystemTime::now()
+      .duration_since(time::UNIX_EPOCH)
       .unwrap()
       .as_secs();
 
@@ -425,13 +434,13 @@ mod tests {
     let temp = tempfile::TempDir::new().unwrap();
     let cache_path = temp.path().join("update_check.json");
 
-    let before = SystemTime::now()
-      .duration_since(UNIX_EPOCH)
+    let before = time::SystemTime::now()
+      .duration_since(time::UNIX_EPOCH)
       .unwrap()
       .as_secs();
     write_failed_check_at(&cache_path);
-    let after = SystemTime::now()
-      .duration_since(UNIX_EPOCH)
+    let after = time::SystemTime::now()
+      .duration_since(time::UNIX_EPOCH)
       .unwrap()
       .as_secs();
 
@@ -461,8 +470,8 @@ mod tests {
       );
     }
 
-    let now = SystemTime::now()
-      .duration_since(UNIX_EPOCH)
+    let now = time::SystemTime::now()
+      .duration_since(time::UNIX_EPOCH)
       .unwrap()
       .as_secs();
 

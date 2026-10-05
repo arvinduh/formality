@@ -1,13 +1,15 @@
-//! `fml fix` command: runs a lint-fix pass followed by a format pass across
-//! the resolved target surfaces via [`Runner`], or with `--check` reports
-//! what that would do without writing.
+//! `fml fix` command: runs a lint-fix pass followed by a format pass.
+//!
+//! Dispatches the `[Lint, Format]` plan through `crate::engine::runner::Runner`.
+//! Read-only linting is handled by `super::lint`, formatting alone is handled
+//! by `super::fmt`, and tool installation belongs to `super::doctor`.
 
-use std::path::{Path, PathBuf};
+use std::path;
 
-use crate::commands::dispatch_plan;
-use crate::config::FormalityConfig;
-use crate::engine::Plan;
-use crate::errors::ExitStatus;
+use crate::commands;
+use crate::config;
+use crate::engine;
+use crate::errors;
 
 /// Runs the `fml fix` command: the `[Lint, Format]` plan, writing by default
 /// and reporting only under `check`. Provisioning missing tools is `fml
@@ -22,22 +24,22 @@ use crate::errors::ExitStatus;
 )]
 #[must_use]
 pub fn run_fix(
-  root: &Path,
-  config: &FormalityConfig,
+  root: &path::Path,
+  config: &config::FormalityConfig,
   check: bool,
   staged: bool,
   changed: bool,
   lang: &[String],
-  paths: Vec<PathBuf>,
+  paths: Vec<path::PathBuf>,
   allow_missing: bool,
-) -> ExitStatus {
-  dispatch_plan(
+) -> errors::ExitStatus {
+  commands::dispatch_plan(
     root,
     config,
     staged,
     changed,
     lang,
     paths,
-    &Plan::fix(check, allow_missing),
+    &engine::Plan::fix(check, allow_missing),
   )
 }

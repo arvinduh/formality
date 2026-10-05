@@ -1,19 +1,20 @@
-//! Strict parsing of one config document into a [`FormalityConfig`],
-//! turning a rejected key or value into a [`ConfigError`] that names its key
+//! Strict parsing of one config document into a `FormalityConfig`,
+//! turning a rejected key or value into a `ConfigError` that names its key
 //! path and line.
 //!
 //! The typed structs in `super` decide what a config may contain; this module
 //! only locates what they rejected. Reading files and layering configs stay in
 //! `resolve`.
 
+use std::path;
+
 use serde::Deserialize;
-use std::path::Path;
-use toml::de::{DeTable, DeValue};
+use toml::de;
 
 use super::lang_table::lang_options_table;
-use super::options::MarkdownOptions;
-use super::{ConfigError, FormalityConfig};
-use crate::surfaces::SurfaceRegistry;
+use super::options;
+use crate::config;
+use crate::surfaces;
 
 /// Parses `content`, read from `path`, into a [`FormalityConfig`].
 ///
@@ -25,15 +26,17 @@ use crate::surfaces::SurfaceRegistry;
 /// as an alias or case variant, or [`ConfigError::Parse`] for invalid TOML.
 pub fn parse(
   content: &str,
-  path: &Path,
-) -> Result<FormalityConfig, ConfigError> {
-  let doc = DeTable::parse(content).map_err(|source| ConfigError::Parse {
-    path: path.to_path_buf(),
-    source,
+  path: &path::Path,
+) -> Result<config::FormalityConfig, config::ConfigError> {
+  let doc = de::DeTable::parse(content).map_err(|source| {
+    config::ConfigError::Parse {
+      path: path.to_path_buf(),
+      source,
+    }
   })?;
   check_lang_names(content, path, doc.get_ref())?;
   check_extra_args(content, path, doc.get_ref())?;
-  FormalityConfig::deserialize(toml::de::Deserializer::from(doc.clone()))
+  config::FormalityConfig::deserialize(de::Deserializer::from(doc.clone()))
     .and_then(|config| {
       check_lang_options(&config, doc.get_ref()).map(|()| config)
     })
@@ -46,20 +49,20 @@ pub fn parse(
 /// resolves to no surface is left to the unrecognized-section warning.
 fn check_lang_names(
   content: &str,
-  path: &Path,
-  doc: &DeTable<'_>,
-) -> Result<(), ConfigError> {
-  let Some(DeValue::Table(sections)) =
+  path: &path::Path,
+  doc: &de::DeTable<'_>,
+) -> Result<(), config::ConfigError> {
+  let Some(de::DeValue::Table(sections)) =
     doc.get("lang").map(toml::Spanned::get_ref)
   else {
     return Ok(());
   };
-  let registry = SurfaceRegistry::default();
+  let registry = surfaces::SurfaceRegistry::default();
   for key in sections.keys() {
     let name: &str = key.get_ref();
     match registry.resolve_canonical_name(name) {
       Some(canonical) if canonical != name => {
-        return Err(ConfigError::NonCanonicalLang {
+        return Err(config::ConfigError::NonCanonicalLang {
           path: path.to_path_buf(),
           name: name.to_owned(),
           canonical,
@@ -79,17 +82,17 @@ fn check_lang_names(
 /// a value of any other type is left to deserialization.
 fn check_extra_args(
   content: &str,
-  path: &Path,
-  doc: &DeTable<'_>,
-) -> Result<(), ConfigError> {
-  let Some(DeValue::Table(sections)) =
+  path: &path::Path,
+  doc: &de::DeTable<'_>,
+) -> Result<(), config::ConfigError> {
+  let Some(de::DeValue::Table(sections)) =
     doc.get("lang").map(toml::Spanned::get_ref)
   else {
     return Ok(());
   };
-  let registry = SurfaceRegistry::default();
+  let registry = surfaces::SurfaceRegistry::default();
   for (name, section) in sections {
-    let DeValue::Table(table) = section.get_ref() else {
+    let de::DeValue::Table(table) = section.get_ref() else {
       continue;
     };
     let Some((key, value)) = table.get_key_value("extra_args") else {
@@ -104,20 +107,20 @@ fn check_extra_args(
     };
     let tools = surface.extra_args_tools();
     match value.get_ref() {
-      DeValue::Array(_) => {
-        return Err(ConfigError::FlatExtraArgs {
+      de::DeValue::Array(_) => {
+        return Err(config::ConfigError::FlatExtraArgs {
           path: path.to_path_buf(),
           lang: lang.to_owned(),
           line: line_at(content, key.span().start),
           tools,
         });
       }
-      DeValue::Table(by_tool) => {
+      de::DeValue::Table(by_tool) => {
         if let Some(tool) = by_tool
           .keys()
           .find(|tool| !tools.contains(&tool.get_ref().as_ref()))
         {
-          return Err(ConfigError::UnknownTool {
+          return Err(config::ConfigError::UnknownTool {
             path: path.to_path_buf(),
             lang: lang.to_owned(),
             tool: tool.get_ref().to_string(),
@@ -137,16 +140,16 @@ fn check_extra_args(
 /// value, into that surface's typed options. The lenient accessors that
 /// read them later drop what does not fit; this rejects it up front.
 fn check_lang_options(
-  config: &FormalityConfig,
-  doc: &DeTable<'_>,
-) -> Result<(), toml::de::Error> {
-  let Some(DeValue::Table(sections)) =
+  config: &config::FormalityConfig,
+  doc: &de::DeTable<'_>,
+) -> Result<(), de::Error> {
+  let Some(de::DeValue::Table(sections)) =
     doc.get("lang").map(toml::Spanned::get_ref)
   else {
     return Ok(());
   };
   for (name, section) in sections {
-    let (DeValue::Table(table), Some(lang)) =
+    let (de::DeValue::Table(table), Some(lang)) =
       (section.get_ref(), config.lang.get(name.get_ref().as_ref()))
     else {
       continue;
@@ -158,7 +161,7 @@ fn check_lang_options(
       .collect();
     check_options(
       name.get_ref(),
-      toml::Spanned::new(section.span(), DeValue::Table(flat)),
+      toml::Spanned::new(section.span(), de::DeValue::Table(flat)),
     )?;
     if let Some(options) = table.get("options") {
       check_options(name.get_ref(), options.clone())?;
@@ -173,7 +176,7 @@ macro_rules! check_by_name {
   ([$name:expr, $de:expr] $( $lang:ident { $ty:ty, $accessor:ident, $is_empty:expr } )*) => {
     match $name {
       $( stringify!($lang) => <$ty>::deserialize($de).map(drop), )*
-      "markdown" => MarkdownOptions::deserialize($de).map(drop),
+      "markdown" => options::MarkdownOptions::deserialize($de).map(drop),
       _ => Ok(()),
     }
   };
@@ -184,20 +187,20 @@ macro_rules! check_by_name {
 /// none, or an unknown section, is not checked.
 fn check_options(
   name: &str,
-  value: toml::Spanned<DeValue<'_>>,
-) -> Result<(), toml::de::Error> {
-  let de = toml::de::ValueDeserializer::from(value);
+  value: toml::Spanned<de::DeValue<'_>>,
+) -> Result<(), de::Error> {
+  let de = de::ValueDeserializer::from(value);
   lang_options_table!(check_by_name, name, de)
 }
 
 /// Attributes a deserialization error to the key it occurred under, falling
 /// back to [`ConfigError::Parse`] when its span matches no key.
 fn locate(
-  path: &Path,
+  path: &path::Path,
   content: &str,
-  doc: &DeTable<'_>,
-  mut source: toml::de::Error,
-) -> ConfigError {
+  doc: &de::DeTable<'_>,
+  mut source: de::Error,
+) -> config::ConfigError {
   let mut key = Vec::new();
   match source.span() {
     Some(span) if key_path_at(doc, span.start, &mut key) => {
@@ -205,13 +208,13 @@ fn locate(
       // serde's `de::Error::unknown_field` wording; the typed structs
       // reject extra keys with `deny_unknown_fields`.
       if source.message().starts_with("unknown field ") {
-        return ConfigError::UnknownKey {
+        return config::ConfigError::UnknownKey {
           path: path.to_path_buf(),
           key: key.join("."),
           line,
         };
       }
-      ConfigError::InvalidValue {
+      config::ConfigError::InvalidValue {
         path: path.to_path_buf(),
         key: key.join("."),
         line,
@@ -220,7 +223,7 @@ fn locate(
     }
     _ => {
       source.set_input(Some(content));
-      ConfigError::Parse {
+      config::ConfigError::Parse {
         path: path.to_path_buf(),
         source,
       }
@@ -236,14 +239,14 @@ fn line_at(content: &str, offset: usize) -> usize {
 /// Pushes onto `path` the keys leading to the innermost entry whose key or
 /// value spans byte `offset`, and returns whether one was found.
 fn key_path_at(
-  table: &DeTable<'_>,
+  table: &de::DeTable<'_>,
   offset: usize,
   path: &mut Vec<String>,
 ) -> bool {
   for (key, value) in table {
     path.push(key.get_ref().to_string());
     let inner = match value.get_ref() {
-      DeValue::Table(inner) => key_path_at(inner, offset, path),
+      de::DeValue::Table(inner) => key_path_at(inner, offset, path),
       _ => false,
     };
     if inner || key.span().contains(&offset) || value.span().contains(&offset) {

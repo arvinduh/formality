@@ -1,21 +1,19 @@
-//! Python language surface: formats and lints via `ruff` (format, import
-//! sort, and lint), syncing the managed `ruff.toml` from `formality.toml`.
+//! Python language surface: formats and lints via Ruff.
+//!
+//! Implements `super::LanguageSurface` for Python, syncing `ruff.toml`.
+//! Fleet registration is owned by `super::registry`.
 
-use super::{
-  DeclaresFacets, ExecutionContext, ExitClass, Facet, FacetSupport,
-  LanguageSurface, NativeConfig, SurfaceResult, SurfaceStatus, ToolInfo,
-  classify_all_nonzero_as_error, create_tool_command,
-  diff_check_via_tempcopy_classified, merge_tool_streams, render_native_config,
-  run_tool_command, run_tool_command_classified, sync_native_config,
-  tool_missing_guard,
-};
-use crate::config::ResolvedLangConfig;
-use serde::{Deserialize, Serialize};
-use std::path::PathBuf;
-use std::time::Instant;
+use crate::config;
+use crate::config::facets;
+use crate::config::facets::DeclaresFacets;
+use crate::surfaces;
+use crate::surfaces::LanguageSurface;
+use crate::surfaces::NativeConfig;
+use std::path;
+use std::time;
 
 /// Format configuration subsection for `ruff.toml`.
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "kebab-case")]
 pub struct RuffFormatConfig {
   /// Indent style (`"space"` or `"tab"`).
@@ -27,7 +25,7 @@ pub struct RuffFormatConfig {
 }
 
 /// Lint configuration subsection for `ruff.toml`.
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize, PartialEq, Eq)]
 pub struct RuffLintConfig {
   /// Selected rule codes to enable.
   pub select: Vec<String>,
@@ -36,7 +34,7 @@ pub struct RuffLintConfig {
 }
 
 /// Native `ruff.toml` configuration representation for Python formatting and linting.
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "kebab-case")]
 pub struct RuffConfig {
   /// Line length limit.
@@ -55,7 +53,7 @@ pub struct RuffConfig {
 impl NativeConfig for RuffConfig {
   const FILE_NAME: &'static str = "ruff.toml";
 
-  fn from_context(ctx: &ExecutionContext) -> Self {
+  fn from_context(ctx: &surfaces::ExecutionContext) -> Self {
     let indent_style = if ctx.lang_config.use_tabs {
       "tab"
     } else {
@@ -111,7 +109,7 @@ impl NativeConfig for RuffConfig {
   }
 
   fn render(&self) -> Result<String, crate::errors::FormalityError> {
-    render_native_config(self)
+    surfaces::render_native_config(self)
   }
 }
 
@@ -120,17 +118,17 @@ impl NativeConfig for RuffConfig {
 pub struct PythonSurface;
 
 impl DeclaresFacets for PythonSurface {
-  fn facet_support(&self, facet: Facet) -> FacetSupport {
+  fn facet_support(&self, facet: facets::Facet) -> facets::FacetSupport {
     match facet {
-      Facet::IndentTabs
-      | Facet::IndentWidth
-      | Facet::LineLength
-      | Facet::QuoteStyle
-      | Facet::ImportSort => FacetSupport::Configurable,
-      Facet::TrailingComma
-      | Facet::ProseWrap
-      | Facet::Edition
-      | Facet::Standard => FacetSupport::Unsupported,
+      facets::Facet::IndentTabs
+      | facets::Facet::IndentWidth
+      | facets::Facet::LineLength
+      | facets::Facet::QuoteStyle
+      | facets::Facet::ImportSort => facets::FacetSupport::Configurable,
+      facets::Facet::TrailingComma
+      | facets::Facet::ProseWrap
+      | facets::Facet::Edition
+      | facets::Facet::Standard => facets::FacetSupport::Unsupported,
     }
   }
 }
@@ -205,8 +203,8 @@ pub fn is_ruff_import_sort_violation(
 /// ending with the `ruff-check` extra args.
 #[must_use]
 pub fn build_ruff_import_sort_args(
-  files: &[PathBuf],
-  lang: &ResolvedLangConfig,
+  files: &[path::PathBuf],
+  lang: &config::ResolvedLangConfig,
 ) -> Vec<String> {
   let extra_args = lang.tool_args(RUFF_CHECK);
   let mut args = vec![
@@ -230,9 +228,9 @@ pub fn build_ruff_import_sort_args(
 /// `ruff-check` extra args.
 #[must_use]
 pub fn build_ruff_check_args(
-  files: &[PathBuf],
+  files: &[path::PathBuf],
   fix: bool,
-  lang: &ResolvedLangConfig,
+  lang: &config::ResolvedLangConfig,
 ) -> Vec<String> {
   let extra_args = lang.tool_args(RUFF_CHECK);
   let mut args = vec!["check".to_string()];
@@ -255,8 +253,8 @@ pub fn build_ruff_check_args(
 #[must_use]
 pub fn build_ruff_format_args(
   inline_config: &[String],
-  files: &[PathBuf],
-  lang: &ResolvedLangConfig,
+  files: &[path::PathBuf],
+  lang: &config::ResolvedLangConfig,
 ) -> Vec<String> {
   let mut args = vec!["format".to_string()];
   args.extend(inline_config.iter().cloned());
@@ -278,7 +276,7 @@ pub fn build_ruff_format_args(
 /// output instead of `--fix`.
 #[must_use]
 pub fn build_ruff_check_json_args(
-  files: &[PathBuf],
+  files: &[path::PathBuf],
   extra_args: &[String],
 ) -> Vec<String> {
   let mut args = vec!["check".to_string(), "--output-format=json".to_string()];
@@ -387,8 +385,11 @@ impl LanguageSurface for PythonSurface {
     ]
   }
 
-  fn tool_info(&self, _config: &ResolvedLangConfig) -> Vec<ToolInfo> {
-    vec![ToolInfo {
+  fn tool_info(
+    &self,
+    _config: &config::ResolvedLangConfig,
+  ) -> Vec<surfaces::ToolInfo> {
+    vec![surfaces::ToolInfo {
       binary: "ruff",
       description: "Fast Python linter and code formatter",
       install_hint: None,
@@ -402,10 +403,15 @@ impl LanguageSurface for PythonSurface {
     clippy::too_many_lines,
     reason = "orchestrates Ruff formatting across check, diff, and in-place write modes"
   )]
-  fn format(&self, ctx: &ExecutionContext) -> SurfaceResult {
-    let start = Instant::now();
+  fn format(
+    &self,
+    ctx: &surfaces::ExecutionContext,
+  ) -> surfaces::SurfaceResult {
+    let start = time::Instant::now();
 
-    if let Some(res) = tool_missing_guard(self.name(), "ruff", start, None) {
+    if let Some(res) =
+      surfaces::tool_missing_guard(self.name(), "ruff", start, None)
+    {
       return res;
     }
 
@@ -424,11 +430,11 @@ impl LanguageSurface for PythonSurface {
     let widens_selection = extra_args_widen_selection(check_args);
 
     if ctx.check_only {
-      return diff_check_via_tempcopy_classified(
+      return surfaces::diff_check_via_tempcopy_classified(
         &files,
         |scratch| {
           let scratch = [scratch.to_path_buf()];
-          let mut isort_cmd = create_tool_command("ruff");
+          let mut isort_cmd = surfaces::create_tool_command("ruff");
           isort_cmd
             .args(build_ruff_import_sort_args(&scratch, &ctx.lang_config))
             .args(&inline_config);
@@ -438,7 +444,7 @@ impl LanguageSurface for PythonSurface {
             return Ok(isort_out);
           }
 
-          let mut fmt_cmd = create_tool_command("ruff");
+          let mut fmt_cmd = surfaces::create_tool_command("ruff");
           fmt_cmd.args(build_ruff_format_args(
             &inline_config,
             &scratch,
@@ -459,9 +465,9 @@ impl LanguageSurface for PythonSurface {
         // Exit 2 from ruff erroring always remains `ExecutionError`.
         move |code| {
           if widens_selection && code == Some(1) {
-            ExitClass::ViolationsFound
+            surfaces::ExitClass::ViolationsFound
           } else {
-            ExitClass::ExecutionError
+            surfaces::ExitClass::ExecutionError
           }
         },
       );
@@ -469,7 +475,7 @@ impl LanguageSurface for PythonSurface {
 
     let files_to_pass = ctx.files_to_pass(files);
 
-    let mut isort_cmd = create_tool_command("ruff");
+    let mut isort_cmd = surfaces::create_tool_command("ruff");
     isort_cmd.args(build_ruff_import_sort_args(
       &files_to_pass,
       &ctx.lang_config,
@@ -482,7 +488,7 @@ impl LanguageSurface for PythonSurface {
         if !output.status.success() {
           let stderr = String::from_utf8_lossy(&output.stderr).to_string();
           let stdout = String::from_utf8_lossy(&output.stdout).to_string();
-          let msg = merge_tool_streams(
+          let msg = surfaces::merge_tool_streams(
             &stdout,
             &stderr,
             "Import sorting issues found in Python files",
@@ -500,24 +506,24 @@ impl LanguageSurface for PythonSurface {
             check_args,
           );
 
-          return SurfaceResult {
+          return surfaces::SurfaceResult {
             surface_name: self.name(),
             status: if is_violation {
-              SurfaceStatus::ViolationsFound {
+              surfaces::SurfaceStatus::ViolationsFound {
                 message: msg,
                 diff: None,
               }
             } else {
-              SurfaceStatus::ExecutionError { message: msg }
+              surfaces::SurfaceStatus::ExecutionError { message: msg }
             },
             duration: start.elapsed(),
           };
         }
       }
       Err(e) => {
-        return SurfaceResult {
+        return surfaces::SurfaceResult {
           surface_name: self.name(),
-          status: SurfaceStatus::ExecutionError {
+          status: surfaces::SurfaceStatus::ExecutionError {
             message: format!("Failed to execute ruff import sorting: {e}"),
           },
           duration: start.elapsed(),
@@ -525,7 +531,7 @@ impl LanguageSurface for PythonSurface {
       }
     }
 
-    let mut cmd = create_tool_command("ruff");
+    let mut cmd = surfaces::create_tool_command("ruff");
     cmd.args(build_ruff_format_args(
       &inline_config,
       &files_to_pass,
@@ -536,17 +542,23 @@ impl LanguageSurface for PythonSurface {
     // `ruff format` (no `--check`) exits 0 formatted-or-not and only exits 2
     // on a parse/IO/config error, so every non-zero exit here is operational
     // too (Fixes #155).
-    run_tool_command_classified(
+    surfaces::run_tool_command_classified(
       self.name(),
       &mut cmd,
-      classify_all_nonzero_as_error,
+      surfaces::classify_all_nonzero_as_error,
     )
   }
 
-  fn lint(&self, ctx: &ExecutionContext, fix: bool) -> SurfaceResult {
-    let start = Instant::now();
+  fn lint(
+    &self,
+    ctx: &surfaces::ExecutionContext,
+    fix: bool,
+  ) -> surfaces::SurfaceResult {
+    let start = time::Instant::now();
 
-    if let Some(res) = tool_missing_guard(self.name(), "ruff", start, None) {
+    if let Some(res) =
+      surfaces::tool_missing_guard(self.name(), "ruff", start, None)
+    {
       return res;
     }
 
@@ -560,12 +572,12 @@ impl LanguageSurface for PythonSurface {
     let lint_config =
       build_ruff_inline_lint_config_args(&RuffConfig::from_context(ctx));
 
-    let mut cmd = create_tool_command("ruff");
+    let mut cmd = surfaces::create_tool_command("ruff");
     cmd.args(build_ruff_check_args(&files_to_pass, fix, &ctx.lang_config));
     cmd.args(&lint_config);
     cmd.current_dir(ctx.root.as_path());
 
-    run_tool_command(self.name(), &mut cmd)
+    surfaces::run_tool_command(self.name(), &mut cmd)
   }
 
   // `fml fmt`/`fml lint` no longer go through this path (Fixes #151 [pre-recreation]): they
@@ -574,26 +586,26 @@ impl LanguageSurface for PythonSurface {
   // `build_ruff_inline_lint_config_args`, used in `format()`/`lint()`
   // above). This method is now reached only by `fml sync`, for users who
   // explicitly want `ruff.toml` materialized on disk.
-  fn sync_config(&self, ctx: &ExecutionContext, check: bool) -> SurfaceResult {
-    let start = Instant::now();
-    sync_native_config::<RuffConfig>(ctx, check, start, self.name())
+  fn sync_config(
+    &self,
+    ctx: &surfaces::ExecutionContext,
+    check: bool,
+  ) -> surfaces::SurfaceResult {
+    let start = time::Instant::now();
+    surfaces::sync_native_config::<RuffConfig>(ctx, check, start, self.name())
   }
 }
 
 #[cfg(test)]
 mod tests {
   use super::*;
-  use crate::config::{
-    PythonOptions, ResolvedGlobalConfig, ResolvedLangConfig,
-  };
-  use crate::surfaces::{check_binary_exists, test_ctx};
-  use std::path::Path;
-  use std::sync::Arc;
-  use tempfile::TempDir;
+  use crate::config;
+  use crate::surfaces;
+  use std::path;
 
   /// A python config whose `extra_args` sets `args` for `tool` only.
-  fn lang_with(tool: &str, args: &[&str]) -> ResolvedLangConfig {
-    let mut lang = ResolvedLangConfig::new("python");
+  fn lang_with(tool: &str, args: &[&str]) -> config::ResolvedLangConfig {
+    let mut lang = config::ResolvedLangConfig::new("python");
     lang.extra_args = [(
       tool.to_string(),
       args.iter().map(ToString::to_string).collect(),
@@ -610,7 +622,7 @@ mod tests {
     lang
       .extra_args
       .insert(RUFF_FORMAT.to_string(), vec!["--preview".to_string()]);
-    let files = [PathBuf::from("a.py")];
+    let files = [path::PathBuf::from("a.py")];
     let inline = ["--config".to_string(), "line-length=100".to_string()];
 
     assert_eq!(
@@ -637,11 +649,14 @@ mod tests {
 
   #[test]
   fn test_build_ruff_check_args_with_and_without_fix() {
-    let no_fix =
-      build_ruff_check_args(&[], false, &ResolvedLangConfig::new("python"));
+    let no_fix = build_ruff_check_args(
+      &[],
+      false,
+      &config::ResolvedLangConfig::new("python"),
+    );
     assert_eq!(no_fix, vec!["check".to_string(), ".".to_string()]);
 
-    let files = vec![PathBuf::from("a.py"), PathBuf::from("b.py")];
+    let files = vec![path::PathBuf::from("a.py"), path::PathBuf::from("b.py")];
     let extra = lang_with(RUFF_CHECK, &["--isolated"]);
     let with_fix = build_ruff_check_args(&files, true, &extra);
     assert_eq!(
@@ -658,18 +673,18 @@ mod tests {
 
   #[test]
   fn test_python_sync_config_lint_table_and_quote_style() {
-    let temp = TempDir::new().unwrap();
+    let temp = tempfile::TempDir::new().unwrap();
     let surface = PythonSurface;
-    let mut lang_cfg = ResolvedLangConfig::new("python");
+    let mut lang_cfg = config::ResolvedLangConfig::new("python");
     lang_cfg.line_length = 100;
     lang_cfg.indent_size = 4;
-    lang_cfg.python = Some(PythonOptions {
+    lang_cfg.python = Some(config::PythonOptions {
       quote_style: Some("single".to_string()),
       target_version: Some("py312".to_string()),
       ignore_rules: Some(vec!["E501".to_string(), "F401".to_string()]),
     });
 
-    let ctx = test_ctx(temp.path(), lang_cfg);
+    let ctx = surfaces::test_ctx(temp.path(), lang_cfg);
 
     let res = surface.sync_config(&ctx, false);
     assert_eq!(res.status.created_file_names(), ["ruff.toml"]);
@@ -693,16 +708,16 @@ mod tests {
 
   #[test]
   fn test_python_sync_config_default_omitted_ignore_rules() {
-    let temp = TempDir::new().unwrap();
+    let temp = tempfile::TempDir::new().unwrap();
     let surface = PythonSurface;
-    let mut lang_cfg = ResolvedLangConfig::new("python");
-    lang_cfg.python = Some(PythonOptions {
+    let mut lang_cfg = config::ResolvedLangConfig::new("python");
+    lang_cfg.python = Some(config::PythonOptions {
       quote_style: Some("double".to_string()),
       target_version: None,
       ignore_rules: None,
     });
 
-    let ctx = test_ctx(temp.path(), lang_cfg);
+    let ctx = surfaces::test_ctx(temp.path(), lang_cfg);
 
     let res = surface.sync_config(&ctx, false);
     assert_eq!(res.status.created_file_names(), ["ruff.toml"]);
@@ -732,7 +747,7 @@ mod tests {
       },
     };
     let rendered = cfg.render().unwrap();
-    assert!(rendered.starts_with(crate::surfaces::AUTO_GENERATED_HEADER));
+    assert!(rendered.starts_with(surfaces::AUTO_GENERATED_HEADER));
     assert!(rendered.contains("line-length = 100"));
     assert!(rendered.contains("indent-width = 4"));
     assert!(rendered.contains("target-version = \"py311\""));
@@ -746,18 +761,20 @@ mod tests {
     let surface = PythonSurface;
     assert_eq!(surface.file_extensions(), &["py", "pyi"]);
 
-    let temp = TempDir::new().unwrap();
-    assert!(!crate::surfaces::detect_in(&surface, temp.path()));
+    let temp = tempfile::TempDir::new().unwrap();
+    assert!(!surfaces::detect_in(&surface, temp.path()));
 
     // Create a .pyi stub file
     let pyi_file = temp.path().join("types.pyi");
     std::fs::write(&pyi_file, "def foo(x: int) -> str: ...").unwrap();
-    assert!(crate::surfaces::detect_in(&surface, temp.path()));
+    assert!(surfaces::detect_in(&surface, temp.path()));
   }
   #[test]
   fn test_build_ruff_import_sort_args() {
-    let no_files =
-      build_ruff_import_sort_args(&[], &ResolvedLangConfig::new("python"));
+    let no_files = build_ruff_import_sort_args(
+      &[],
+      &config::ResolvedLangConfig::new("python"),
+    );
     assert_eq!(
       no_files,
       vec![
@@ -769,7 +786,7 @@ mod tests {
       ]
     );
 
-    let files = vec![PathBuf::from("a.py"), PathBuf::from("b.py")];
+    let files = vec![path::PathBuf::from("a.py"), path::PathBuf::from("b.py")];
     let extra = lang_with(RUFF_CHECK, &["--isolated"]);
     let with_files = build_ruff_import_sort_args(&files, &extra);
     assert_eq!(
@@ -788,29 +805,34 @@ mod tests {
 
   #[test]
   fn test_python_format_with_import_sorting() {
-    if !check_binary_exists("ruff") {
+    if !surfaces::check_binary_exists("ruff") {
       return;
     }
-    let temp = TempDir::new().unwrap();
+    let temp = tempfile::TempDir::new().unwrap();
     let file = temp.path().join("test.py");
     let unformatted = "import sys\nimport os\n\ndef   foo( ):\n  pass\n";
     std::fs::write(&file, unformatted).unwrap();
 
     let surface = PythonSurface;
-    let mut ctx_check =
-      test_ctx(temp.path(), ResolvedLangConfig::new("python"));
+    let mut ctx_check = surfaces::test_ctx(
+      temp.path(),
+      config::ResolvedLangConfig::new("python"),
+    );
     ctx_check.check_only = true;
 
     let check_res = surface.format(&ctx_check);
     assert!(matches!(
       check_res.status,
-      SurfaceStatus::ViolationsFound { .. }
+      surfaces::SurfaceStatus::ViolationsFound { .. }
     ));
 
-    let ctx_fix = test_ctx(temp.path(), ResolvedLangConfig::new("python"));
+    let ctx_fix = surfaces::test_ctx(
+      temp.path(),
+      config::ResolvedLangConfig::new("python"),
+    );
 
     let fix_res = surface.format(&ctx_fix);
-    assert!(matches!(fix_res.status, SurfaceStatus::Passed));
+    assert!(matches!(fix_res.status, surfaces::SurfaceStatus::Passed));
 
     let formatted = std::fs::read_to_string(&file).unwrap();
     let os_idx = formatted.find("import os").unwrap();
@@ -818,7 +840,10 @@ mod tests {
     assert!(os_idx < sys_idx);
 
     let check_clean = surface.format(&ctx_check);
-    assert!(matches!(check_clean.status, SurfaceStatus::Passed));
+    assert!(matches!(
+      check_clean.status,
+      surfaces::SurfaceStatus::Passed
+    ));
   }
 
   #[test]
@@ -864,18 +889,20 @@ mod tests {
 
   #[test]
   fn test_ruff_config_from_context_ignore_rules() {
-    let mut lang_cfg = ResolvedLangConfig::new("python");
-    lang_cfg.python = Some(PythonOptions {
+    let mut lang_cfg = config::ResolvedLangConfig::new("python");
+    lang_cfg.python = Some(config::PythonOptions {
       quote_style: Some("double".to_string()),
       target_version: Some("py311".to_string()),
       ignore_rules: Some(vec!["E501".to_string(), "SIM101".to_string()]),
     });
-    let ctx = test_ctx(Path::new("."), lang_cfg);
+    let ctx = surfaces::test_ctx(path::Path::new("."), lang_cfg);
     let cfg = RuffConfig::from_context(&ctx);
     assert_eq!(cfg.lint.ignore, vec!["E501", "SIM101"]);
 
-    let ctx_default =
-      test_ctx(Path::new("."), ResolvedLangConfig::new("python"));
+    let ctx_default = surfaces::test_ctx(
+      path::Path::new("."),
+      config::ResolvedLangConfig::new("python"),
+    );
     let cfg_default = RuffConfig::from_context(&ctx_default);
     assert!(cfg_default.lint.ignore.is_empty());
   }
@@ -884,14 +911,17 @@ mod tests {
   fn test_python_format_and_lint_do_not_write_ruff_toml() {
     // Fixes #151 [pre-recreation]: `fml fmt`/`fml lint` must not write `ruff.toml` as a side
     // effect; only `fml sync` should materialize the native config file.
-    if !check_binary_exists("ruff") {
+    if !surfaces::check_binary_exists("ruff") {
       return;
     }
-    let temp = TempDir::new().unwrap();
+    let temp = tempfile::TempDir::new().unwrap();
     std::fs::write(temp.path().join("a.py"), "x=1\n").unwrap();
 
     let surface = PythonSurface;
-    let ctx = test_ctx(temp.path(), ResolvedLangConfig::new("python"));
+    let ctx = surfaces::test_ctx(
+      temp.path(),
+      config::ResolvedLangConfig::new("python"),
+    );
 
     let _ = surface.format(&ctx);
     let _ = surface.lint(&ctx, false);
@@ -902,12 +932,15 @@ mod tests {
 
   #[test]
   fn test_ruff_config_line_ending_cr_fallback() {
-    let global = ResolvedGlobalConfig {
+    let global = config::ResolvedGlobalConfig {
       end_of_line: "cr".to_string(),
       ..Default::default()
     };
-    let mut ctx = test_ctx(Path::new("."), ResolvedLangConfig::new("python"));
-    ctx.global_config = Arc::new(global);
+    let mut ctx = surfaces::test_ctx(
+      path::Path::new("."),
+      config::ResolvedLangConfig::new("python"),
+    );
+    ctx.global_config = std::sync::Arc::new(global);
     let cfg = RuffConfig::from_context(&ctx);
     assert_eq!(cfg.format.line_ending, "lf");
   }
@@ -919,20 +952,23 @@ mod tests {
     // non-zero, `ruff format` exits 2). That must classify as
     // `ExecutionError` (`[ERR]`), not a lint-style `ViolationsFound`
     // (`[FAIL]`) — nothing on this path is a formatting result.
-    if !check_binary_exists("ruff") {
+    if !surfaces::check_binary_exists("ruff") {
       return;
     }
-    let temp = TempDir::new().unwrap();
+    let temp = tempfile::TempDir::new().unwrap();
     std::fs::write(temp.path().join("broken.py"), "def (:\n    return\n")
       .unwrap();
 
     let surface = PythonSurface;
-    let mut ctx = test_ctx(temp.path(), ResolvedLangConfig::new("python"));
+    let mut ctx = surfaces::test_ctx(
+      temp.path(),
+      config::ResolvedLangConfig::new("python"),
+    );
     ctx.check_only = true;
 
     let res = surface.format(&ctx);
     assert!(
-      matches!(res.status, SurfaceStatus::ExecutionError { .. }),
+      matches!(res.status, surfaces::SurfaceStatus::ExecutionError { .. }),
       "a formatter failure on --check must be ExecutionError, got: {:?}",
       res.status
     );
@@ -945,19 +981,22 @@ mod tests {
     // ruff failures as `ExecutionError`, not `ViolationsFound`.
     // On a syntax-error file, the isort pass (`ruff check --select I --fix`)
     // fails first and exercises the isort return branch of the write path.
-    if !check_binary_exists("ruff") {
+    if !surfaces::check_binary_exists("ruff") {
       return;
     }
-    let temp = TempDir::new().unwrap();
+    let temp = tempfile::TempDir::new().unwrap();
     std::fs::write(temp.path().join("broken.py"), "def (:\n    return\n")
       .unwrap();
 
     let surface = PythonSurface;
-    let ctx = test_ctx(temp.path(), ResolvedLangConfig::new("python"));
+    let ctx = surfaces::test_ctx(
+      temp.path(),
+      config::ResolvedLangConfig::new("python"),
+    );
 
     let res = surface.format(&ctx);
     assert!(
-      matches!(res.status, SurfaceStatus::ExecutionError { .. }),
+      matches!(res.status, surfaces::SurfaceStatus::ExecutionError { .. }),
       "a formatter failure on the write path must be ExecutionError, got: {:?}",
       res.status
     );
@@ -971,20 +1010,20 @@ mod tests {
     // to the trailing `ruff format` pass. `ruff format` rejects `--ignore`
     // (exiting 2), asserting that `run_tool_command_classified` at the tail
     // of the write path classifies it as `ExecutionError`.
-    if !check_binary_exists("ruff") {
+    if !surfaces::check_binary_exists("ruff") {
       return;
     }
-    let temp = TempDir::new().unwrap();
+    let temp = tempfile::TempDir::new().unwrap();
     std::fs::write(temp.path().join("valid.py"), "x = 1\n").unwrap();
 
     let surface = PythonSurface;
     // `ruff format` rejects `--ignore`, so the format pass specifically fails.
     let config = lang_with(RUFF_FORMAT, &["--ignore", "E501"]);
-    let ctx = test_ctx(temp.path(), config);
+    let ctx = surfaces::test_ctx(temp.path(), config);
 
     let res = surface.format(&ctx);
     assert!(
-      matches!(res.status, SurfaceStatus::ExecutionError { .. }),
+      matches!(res.status, surfaces::SurfaceStatus::ExecutionError { .. }),
       "a ruff format failure on the write path must be ExecutionError, got: {:?}",
       res.status
     );
@@ -1038,26 +1077,26 @@ mod tests {
     // Fixes #208: `--extend-select <rule>` in extra_args widens rule selection during
     // the `ruff check --select I --fix` import pass. When violations are found, ruff exits 1.
     // This must be classified as `ViolationsFound` (`[FAIL]`), not `ExecutionError` (`[ERR]`).
-    if !check_binary_exists("ruff") {
+    if !surfaces::check_binary_exists("ruff") {
       return;
     }
-    let temp = TempDir::new().unwrap();
+    let temp = tempfile::TempDir::new().unwrap();
     // Valid Python syntax, but triggers F821 Undefined name
     std::fs::write(temp.path().join("naming.py"), "x = undefined_var\n")
       .unwrap();
 
     let surface = PythonSurface;
     let config = lang_with(RUFF_CHECK, &["--extend-select", "F"]);
-    let ctx = test_ctx(temp.path(), config);
+    let ctx = surfaces::test_ctx(temp.path(), config);
 
     let res = surface.format(&ctx);
     assert!(
-      !matches!(res.status, SurfaceStatus::ExecutionError { .. }),
+      !matches!(res.status, surfaces::SurfaceStatus::ExecutionError { .. }),
       "ruff exit 1 with --extend-select must not be ExecutionError, got: {:?}",
       res.status
     );
     assert!(
-      matches!(res.status, SurfaceStatus::ViolationsFound { .. }),
+      matches!(res.status, surfaces::SurfaceStatus::ViolationsFound { .. }),
       "ruff exit 1 with --extend-select must be ViolationsFound, got: {:?}",
       res.status
     );
@@ -1067,26 +1106,26 @@ mod tests {
   #[test]
   fn test_python_check_extend_select_reports_violations_not_execution_error() {
     // Fixes #208: Same reproduction on the `--check` path (`ctx.check_only = true`).
-    if !check_binary_exists("ruff") {
+    if !surfaces::check_binary_exists("ruff") {
       return;
     }
-    let temp = TempDir::new().unwrap();
+    let temp = tempfile::TempDir::new().unwrap();
     std::fs::write(temp.path().join("naming.py"), "x = undefined_var\n")
       .unwrap();
 
     let surface = PythonSurface;
     let config = lang_with(RUFF_CHECK, &["--extend-select", "F"]);
-    let mut ctx = test_ctx(temp.path(), config);
+    let mut ctx = surfaces::test_ctx(temp.path(), config);
     ctx.check_only = true;
 
     let res = surface.format(&ctx);
     assert!(
-      !matches!(res.status, SurfaceStatus::ExecutionError { .. }),
+      !matches!(res.status, surfaces::SurfaceStatus::ExecutionError { .. }),
       "ruff exit 1 with --extend-select on --check must not be ExecutionError, got: {:?}",
       res.status
     );
     assert!(
-      matches!(res.status, SurfaceStatus::ViolationsFound { .. }),
+      matches!(res.status, surfaces::SurfaceStatus::ViolationsFound { .. }),
       "ruff exit 1 with --extend-select on --check must be ViolationsFound, got: {:?}",
       res.status
     );

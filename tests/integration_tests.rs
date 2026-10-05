@@ -4,26 +4,20 @@
 
 mod common;
 
-use common::{
-  BinaryOverride, fmt_cmd, init_cmd, init_git_repo, run_cli, run_cli_no_root,
-  sync_cmd, temp_repo,
-};
-use fml::cli::Commands;
-use fml::config::FormalityConfig;
-use fml::errors::ExitStatus;
-use fml::surfaces::{
-  SurfaceRegistry, all_surfaces, default_registry, detect_surfaces_smart,
-  get_surface_by_name,
-};
 use std::fs;
-use std::path::PathBuf;
+use std::path;
+
+use fml::cli;
+use fml::config;
+use fml::errors;
+use fml::surfaces;
 
 #[test]
 fn test_surface_registry_and_aliases() {
-  let surfaces = all_surfaces();
+  let surfaces = surfaces::all_surfaces();
   assert_eq!(surfaces.len(), 12);
 
-  let registry = SurfaceRegistry::default();
+  let registry = surfaces::SurfaceRegistry::default();
   let names: Vec<&str> = registry.surfaces().iter().map(|s| s.name()).collect();
   assert_eq!(
     names,
@@ -85,11 +79,11 @@ fn test_surface_registry_and_aliases() {
   ];
 
   for (query, canonical) in cases {
-    let surface = get_surface_by_name(query);
+    let surface = surfaces::get_surface_by_name(query);
     assert!(surface.is_some(), "Lookup failed for query '{query}'");
     assert_eq!(surface.unwrap().name(), canonical);
     assert_eq!(
-      default_registry().resolve_canonical_name(query),
+      surfaces::default_registry().resolve_canonical_name(query),
       Some(canonical)
     );
 
@@ -98,9 +92,9 @@ fn test_surface_registry_and_aliases() {
     assert_eq!(reg_surface.unwrap().name(), canonical);
   }
 
-  assert!(get_surface_by_name("nonexistent").is_none());
+  assert!(surfaces::get_surface_by_name("nonexistent").is_none());
   assert!(
-    default_registry()
+    surfaces::default_registry()
       .resolve_canonical_name("nonexistent")
       .is_none()
   );
@@ -108,11 +102,11 @@ fn test_surface_registry_and_aliases() {
 
 #[test]
 fn test_surface_detection_in_fixtures() {
-  let manifest_dir = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
-  let config = FormalityConfig::with_defaults();
+  let manifest_dir = path::PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+  let config = config::FormalityConfig::with_defaults();
 
   // Rust fixture
-  let rust_detected = detect_surfaces_smart(
+  let rust_detected = surfaces::detect_surfaces_smart(
     &manifest_dir.join("tests/fixtures/rust_repo"),
     &config,
   );
@@ -120,7 +114,7 @@ fn test_surface_detection_in_fixtures() {
   assert!(rust_names.contains(&"rust"));
 
   // Python fixture
-  let py_detected = detect_surfaces_smart(
+  let py_detected = surfaces::detect_surfaces_smart(
     &manifest_dir.join("tests/fixtures/python_repo"),
     &config,
   );
@@ -128,7 +122,7 @@ fn test_surface_detection_in_fixtures() {
   assert!(py_names.contains(&"python"));
 
   // C++ fixture
-  let cpp_detected = detect_surfaces_smart(
+  let cpp_detected = surfaces::detect_surfaces_smart(
     &manifest_dir.join("tests/fixtures/cpp_repo"),
     &config,
   );
@@ -136,7 +130,7 @@ fn test_surface_detection_in_fixtures() {
   assert!(cpp_names.contains(&"cpp"));
 
   // Typst fixture
-  let typ_detected = detect_surfaces_smart(
+  let typ_detected = surfaces::detect_surfaces_smart(
     &manifest_dir.join("tests/fixtures/typst_repo"),
     &config,
   );
@@ -144,7 +138,7 @@ fn test_surface_detection_in_fixtures() {
   assert!(typ_names.contains(&"typst"));
 
   // Java fixture
-  let java_detected = detect_surfaces_smart(
+  let java_detected = surfaces::detect_surfaces_smart(
     &manifest_dir.join("tests/fixtures/java_repo"),
     &config,
   );
@@ -152,7 +146,7 @@ fn test_surface_detection_in_fixtures() {
   assert!(java_names.contains(&"java"));
 
   // Go fixture
-  let go_detected = detect_surfaces_smart(
+  let go_detected = surfaces::detect_surfaces_smart(
     &manifest_dir.join("tests/fixtures/go_repo"),
     &config,
   );
@@ -160,7 +154,7 @@ fn test_surface_detection_in_fixtures() {
   assert!(go_names.contains(&"go"));
 
   // Kotlin fixture
-  let kotlin_detected = detect_surfaces_smart(
+  let kotlin_detected = surfaces::detect_surfaces_smart(
     &manifest_dir.join("tests/fixtures/kotlin_repo"),
     &config,
   );
@@ -169,7 +163,7 @@ fn test_surface_detection_in_fixtures() {
   assert!(kotlin_names.contains(&"kotlin"));
 
   // JavaScript fixture
-  let js_detected = detect_surfaces_smart(
+  let js_detected = surfaces::detect_surfaces_smart(
     &manifest_dir.join("tests/fixtures/javascript_repo"),
     &config,
   );
@@ -177,7 +171,7 @@ fn test_surface_detection_in_fixtures() {
   assert!(js_names.contains(&"javascript"));
 
   // TOML fixture
-  let toml_detected = detect_surfaces_smart(
+  let toml_detected = surfaces::detect_surfaces_smart(
     &manifest_dir.join("tests/fixtures/toml_repo"),
     &config,
   );
@@ -185,7 +179,7 @@ fn test_surface_detection_in_fixtures() {
   assert!(toml_names.contains(&"toml"));
 
   // Polyglot fixture
-  let poly_detected = detect_surfaces_smart(
+  let poly_detected = surfaces::detect_surfaces_smart(
     &manifest_dir.join("tests/fixtures/polyglot_repo"),
     &config,
   );
@@ -200,11 +194,11 @@ fn test_surface_detection_in_fixtures() {
 
 #[test]
 fn test_init_command() {
-  let temp = temp_repo(&[("script.py", "print('hi')")]);
+  let temp = common::temp_repo(&[("script.py", "print('hi')")]);
   let root = temp.path();
 
   // 1. Default init creates formality.toml
-  assert_eq!(run_cli(root, init_cmd(false, false)), 0);
+  assert_eq!(common::run_cli(root, common::init_cmd(false, false)), 0);
 
   let config_file = root.join("formality.toml");
   assert!(config_file.is_file());
@@ -219,16 +213,16 @@ fn test_init_command() {
   assert!(content.contains("indent_size = 2"));
 
   // 2. Running init again without --force refuses to overwrite existing config
-  assert_eq!(run_cli(root, init_cmd(false, false)), 1);
+  assert_eq!(common::run_cli(root, common::init_cmd(false, false)), 1);
 
   // 3. Test --hidden creates .formality.toml with --force
-  assert_eq!(run_cli(root, init_cmd(true, true)), 0);
+  assert_eq!(common::run_cli(root, common::init_cmd(true, true)), 0);
   assert!(root.join(".formality.toml").is_file());
 }
 
 #[test]
 fn test_sync_config_workflow() {
-  let temp = temp_repo(&[
+  let temp = common::temp_repo(&[
     (
       "Cargo.toml",
       "[package]\nname = \"dummy\"\nversion = \"0.1.0\"",
@@ -242,10 +236,10 @@ fn test_sync_config_workflow() {
   let root = temp.path();
 
   // 1. Initial sync --check should detect missing native files (drift)
-  assert_eq!(run_cli(root, sync_cmd(true, &[])), 1);
+  assert_eq!(common::run_cli(root, common::sync_cmd(true, &[])), 1);
 
   // 2. Run sync (write mode)
-  assert_eq!(run_cli(root, sync_cmd(false, &[])), 0);
+  assert_eq!(common::run_cli(root, common::sync_cmd(false, &[])), 0);
 
   // Verify native files were created
   assert!(root.join(".rustfmt.toml").is_file());
@@ -285,7 +279,7 @@ fn test_sync_config_workflow() {
   assert!(clang_content.contains("Auto-generated by formality. DO NOT EDIT."));
 
   // 3. Now sync --check should pass completely
-  assert_eq!(run_cli(root, sync_cmd(true, &[])), 0);
+  assert_eq!(common::run_cli(root, common::sync_cmd(true, &[])), 0);
 
   // 4. Manually drift a file and check that drift is reported
   fs::write(
@@ -293,12 +287,12 @@ fn test_sync_config_workflow() {
     "tab_spaces = 8\nmax_width = 120",
   )
   .unwrap();
-  assert_eq!(run_cli(root, sync_cmd(true, &["rust"])), 1);
+  assert_eq!(common::run_cli(root, common::sync_cmd(true, &["rust"])), 1);
 }
 
 #[test]
 fn test_doctor_command() {
-  let _code = run_cli_no_root(Commands::Doctor {
+  let _code = common::run_cli_no_root(cli::Commands::Doctor {
     all: false,
     install: false,
   });
@@ -306,9 +300,9 @@ fn test_doctor_command() {
 
 #[test]
 fn test_doctor_command_prints_sync_optional_notice() {
-  use std::process::Command;
+  use std::process;
 
-  let output = Command::new(env!("CARGO_BIN_EXE_fml"))
+  let output = process::Command::new(env!("CARGO_BIN_EXE_fml"))
     .arg("doctor")
     .output()
     .expect("failed to run fml doctor");
@@ -337,11 +331,14 @@ fn test_doctor_command_prints_sync_optional_notice() {
 
 #[test]
 fn test_schema_command() {
-  assert_eq!(run_cli_no_root(Commands::Schema { output: None }), 0);
+  assert_eq!(
+    common::run_cli_no_root(cli::Commands::Schema { output: None }),
+    0
+  );
 
   let temp = tempfile::NamedTempFile::new().unwrap();
   assert_eq!(
-    run_cli_no_root(Commands::Schema {
+    common::run_cli_no_root(cli::Commands::Schema {
       output: Some(temp.path().to_path_buf()),
     }),
     0
@@ -355,7 +352,7 @@ fn test_schema_command() {
 
 #[test]
 fn test_fmt_and_lint_lifecycle() {
-  let temp = temp_repo(&[
+  let temp = common::temp_repo(&[
     (
       "Cargo.toml",
       "[package]\nname = \"lifecycle_test\"\nversion = \"0.1.0\"\nedition = \
@@ -366,15 +363,15 @@ fn test_fmt_and_lint_lifecycle() {
   let root = temp.path();
 
   // 1. Format the codebase
-  assert_eq!(run_cli(root, fmt_cmd(false, &["rust"])), 0);
+  assert_eq!(common::run_cli(root, common::fmt_cmd(false, &["rust"])), 0);
 
   // 2. Check formatting (should be clean now)
-  assert_eq!(run_cli(root, fmt_cmd(true, &["rust"])), 0);
+  assert_eq!(common::run_cli(root, common::fmt_cmd(true, &["rust"])), 0);
 }
 
 #[test]
 fn test_targeted_file_and_dir_formatting() {
-  let temp = temp_repo(&[
+  let temp = common::temp_repo(&[
     (
       "nested/target.rs",
       "fn target() {\nprintln!(\"target\");\n}\n",
@@ -389,7 +386,7 @@ fn test_targeted_file_and_dir_formatting() {
   let sub = root.join("nested");
 
   // Format only target_file
-  let fmt_single = Commands::Fmt {
+  let fmt_single = cli::Commands::Fmt {
     check: false,
     staged: false,
     changed: false,
@@ -397,10 +394,10 @@ fn test_targeted_file_and_dir_formatting() {
     allow_missing: false,
     paths: vec![target_file],
   };
-  assert_eq!(run_cli(root, fmt_single), 0);
+  assert_eq!(common::run_cli(root, fmt_single), 0);
 
   // Format nested directory
-  let fmt_dir = Commands::Fmt {
+  let fmt_dir = cli::Commands::Fmt {
     check: false,
     staged: false,
     changed: false,
@@ -408,25 +405,25 @@ fn test_targeted_file_and_dir_formatting() {
     allow_missing: false,
     paths: vec![sub],
   };
-  assert_eq!(run_cli(root, fmt_dir), 0);
+  assert_eq!(common::run_cli(root, fmt_dir), 0);
 }
 
 #[test]
 fn test_ignore_languages_filtering() {
-  let manifest_dir = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+  let manifest_dir = path::PathBuf::from(env!("CARGO_MANIFEST_DIR"));
   let poly_root = manifest_dir.join("tests/fixtures/polyglot_repo");
 
   let config_str = r#"
     [global]
     ignore_languages = ["markdown", "yaml", "json"]
   "#;
-  let config = FormalityConfig::parse_str(
+  let config = config::FormalityConfig::parse_str(
     config_str,
-    std::path::Path::new("formality.toml"),
+    path::Path::new("formality.toml"),
   )
   .unwrap();
 
-  let detected = detect_surfaces_smart(&poly_root, &config);
+  let detected = surfaces::detect_surfaces_smart(&poly_root, &config);
   let names: Vec<&str> = detected.iter().map(|s| s.name()).collect();
 
   assert!(names.contains(&"rust"));
@@ -438,14 +435,14 @@ fn test_ignore_languages_filtering() {
 
 #[test]
 fn test_autodetect_all_workspace_surfaces_by_default() {
-  let manifest_dir = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+  let manifest_dir = path::PathBuf::from(env!("CARGO_MANIFEST_DIR"));
   let poly_root = manifest_dir.join("tests/fixtures/polyglot_repo");
 
   // Default config without explicit languages list — auto-detect mode
-  let config = FormalityConfig::with_defaults();
+  let config = config::FormalityConfig::with_defaults();
   assert_eq!(config.resolve_global().languages, None);
 
-  let detected = detect_surfaces_smart(&poly_root, &config);
+  let detected = surfaces::detect_surfaces_smart(&poly_root, &config);
   let names: Vec<&str> = detected.iter().map(|s| s.name()).collect();
 
   assert!(names.contains(&"rust"));
@@ -466,7 +463,7 @@ fn test_fmt_python_import_sorting_lifecycle() {
     return;
   }
 
-  let temp = temp_repo(&[
+  let temp = common::temp_repo(&[
     ("pyproject.toml", "[project]\nname = \"test\"\n"),
     ("main.py", "import sys\nimport os\n\ndef greet():\n  pass\n"),
   ]);
@@ -474,10 +471,13 @@ fn test_fmt_python_import_sorting_lifecycle() {
   let py_file = root.join("main.py");
 
   // 1. fmt --check should fail because imports are not sorted
-  assert_eq!(run_cli(root, fmt_cmd(true, &["python"])), 1);
+  assert_eq!(common::run_cli(root, common::fmt_cmd(true, &["python"])), 1);
 
   // 2. fmt (write mode) should sort imports
-  assert_eq!(run_cli(root, fmt_cmd(false, &["python"])), 0);
+  assert_eq!(
+    common::run_cli(root, common::fmt_cmd(false, &["python"])),
+    0
+  );
 
   let formatted = fs::read_to_string(&py_file).unwrap();
   let os_pos = formatted.find("import os").expect("import os present");
@@ -488,7 +488,7 @@ fn test_fmt_python_import_sorting_lifecycle() {
   );
 
   // 3. fmt --check should now pass
-  assert_eq!(run_cli(root, fmt_cmd(true, &["python"])), 0);
+  assert_eq!(common::run_cli(root, common::fmt_cmd(true, &["python"])), 0);
 }
 
 #[test]
@@ -501,7 +501,7 @@ fn test_fmt_markdown_prettier_extra_args_converge() {
     return;
   }
 
-  let temp = temp_repo(&[
+  let temp = common::temp_repo(&[
     (
       "formality.toml",
       "[lang.markdown]\nline_length = 80\nprose_wrap = \"always\"\n\n\
@@ -515,18 +515,24 @@ fn test_fmt_markdown_prettier_extra_args_converge() {
   ]);
   let root = temp.path();
 
-  assert_eq!(run_cli(root, fmt_cmd(false, &["markdown"])), 0);
+  assert_eq!(
+    common::run_cli(root, common::fmt_cmd(false, &["markdown"])),
+    0
+  );
   let formatted = fs::read_to_string(root.join("a.md")).unwrap();
   assert!(
     formatted.lines().all(|l| l.len() <= 40),
     "the user's --print-width must win on the write path:\n{formatted}"
   );
-  assert_eq!(run_cli(root, fmt_cmd(true, &["markdown"])), 0);
+  assert_eq!(
+    common::run_cli(root, common::fmt_cmd(true, &["markdown"])),
+    0
+  );
 }
 
 #[test]
 fn test_fmt_rust_import_reordering_lifecycle() {
-  let temp = temp_repo(&[
+  let temp = common::temp_repo(&[
     (
       "Cargo.toml",
       "[package]\nname = \"reorder_test\"\nversion = \"0.1.0\"\nedition = \
@@ -543,10 +549,10 @@ fn test_fmt_rust_import_reordering_lifecycle() {
   let main_rs = root.join("src/main.rs");
 
   // 1. fmt --check should report formatting issues due to unsorted imports
-  assert_eq!(run_cli(root, fmt_cmd(true, &["rust"])), 1);
+  assert_eq!(common::run_cli(root, common::fmt_cmd(true, &["rust"])), 1);
 
   // 2. fmt (write mode) should reorder imports
-  assert_eq!(run_cli(root, fmt_cmd(false, &["rust"])), 0);
+  assert_eq!(common::run_cli(root, common::fmt_cmd(false, &["rust"])), 0);
 
   let formatted = fs::read_to_string(&main_rs).unwrap();
   let hashmap_pos = formatted
@@ -562,7 +568,7 @@ fn test_fmt_rust_import_reordering_lifecycle() {
   assert!(path_pos < instant_pos, "Path must precede Instant");
 
   // 3. fmt --check should now pass
-  assert_eq!(run_cli(root, fmt_cmd(true, &["rust"])), 0);
+  assert_eq!(common::run_cli(root, common::fmt_cmd(true, &["rust"])), 0);
 }
 
 // `--install` was removed from `fmt`/`lint`/`fix` in v0.3.0 (#282): it is
@@ -574,7 +580,7 @@ fn test_fmt_rust_import_reordering_lifecycle() {
 // dispatch).
 #[test]
 fn test_doctor_install_flag_paths() {
-  let temp = temp_repo(&[
+  let temp = common::temp_repo(&[
     (
       "Cargo.toml",
       "[package]\nname = \"install_flag_test\"\nversion = \"0.1.0\"\nedition \
@@ -587,9 +593,9 @@ fn test_doctor_install_flag_paths() {
   ]);
   let root = temp.path();
 
-  let doc_code = run_cli(
+  let doc_code = common::run_cli(
     root,
-    Commands::Doctor {
+    cli::Commands::Doctor {
       all: false,
       install: true,
     },
@@ -599,13 +605,13 @@ fn test_doctor_install_flag_paths() {
 
 #[test]
 fn test_fmt_staged_and_changed_with_explicit_paths_filtering() {
-  let temp = temp_repo(&[
+  let temp = common::temp_repo(&[
     ("a.toml", "[package]\nname = \"a\"\n"),
     ("b.toml", "[package]\nname = \"b\"\n"),
   ]);
   let root = temp.path();
 
-  if !init_git_repo(root) {
+  if !common::init_git_repo(root) {
     return;
   }
 
@@ -630,7 +636,7 @@ fn test_fmt_staged_and_changed_with_explicit_paths_filtering() {
     .output();
 
   // fmt only a.toml
-  let fmt_args = Commands::Fmt {
+  let fmt_args = cli::Commands::Fmt {
     check: false,
     staged: true,
     changed: false,
@@ -638,7 +644,7 @@ fn test_fmt_staged_and_changed_with_explicit_paths_filtering() {
     allow_missing: false,
     paths: vec![file_a.clone()],
   };
-  assert_eq!(run_cli(root, fmt_args), 0);
+  assert_eq!(common::run_cli(root, fmt_args), 0);
 
   assert_eq!(
     fs::read_to_string(&file_a).unwrap(),
@@ -677,7 +683,7 @@ fn test_table_library_api_json_valid_and_invalid_syntax() {
 
 #[test]
 fn test_relative_root_preserves_ancestor_manifest_walks_and_display() {
-  let temp = temp_repo(&[
+  let temp = common::temp_repo(&[
     (
       "Cargo.toml",
       "[package]\nname = \"root_pkg\"\nversion = \"0.1.0\"\nedition = \"2021\"\n",
@@ -768,10 +774,10 @@ fn test_relative_root_preserves_ancestor_manifest_walks_and_display() {
 
 #[test]
 fn test_missing_tool_exit_code_parity_staged_vs_unstaged() {
-  let temp = temp_repo(&[("README.md", "# Test Project\n")]);
+  let temp = common::temp_repo(&[("README.md", "# Test Project\n")]);
   let root = temp.path();
 
-  if !init_git_repo(root) {
+  if !common::init_git_repo(root) {
     return;
   }
 
@@ -781,12 +787,12 @@ fn test_missing_tool_exit_code_parity_staged_vs_unstaged() {
     .output();
 
   // Simulate missing markdownlint tools
-  let mut cache = BinaryOverride::lock();
+  let mut cache = common::BinaryOverride::lock();
   cache.hide("markdownlint-cli2");
   cache.hide("markdownlint");
 
   // 1. Lint staged vs unstaged parity with missing tool
-  let lint_staged = Commands::Lint {
+  let lint_staged = cli::Commands::Lint {
     check: false,
     staged: true,
     changed: false,
@@ -794,7 +800,7 @@ fn test_missing_tool_exit_code_parity_staged_vs_unstaged() {
     allow_missing: false,
     paths: vec![],
   };
-  let lint_unstaged = Commands::Lint {
+  let lint_unstaged = cli::Commands::Lint {
     check: false,
     staged: false,
     changed: false,
@@ -808,12 +814,12 @@ fn test_missing_tool_exit_code_parity_staged_vs_unstaged() {
 
   assert_eq!(
     lint_staged_status,
-    ExitStatus::Violations,
+    errors::ExitStatus::Violations,
     "fml lint --staged must not exit clean on missing tool (Fixes #252)"
   );
   assert_eq!(
     lint_unstaged_status,
-    ExitStatus::Violations,
+    errors::ExitStatus::Violations,
     "fml lint must not exit clean on missing tool (Fixes #252)"
   );
   assert_eq!(
@@ -824,7 +830,7 @@ fn test_missing_tool_exit_code_parity_staged_vs_unstaged() {
   // 2. Fmt staged vs unstaged parity with missing tool (prettier)
   cache.hide("prettier");
 
-  let fmt_staged = Commands::Fmt {
+  let fmt_staged = cli::Commands::Fmt {
     check: false,
     staged: true,
     changed: false,
@@ -832,7 +838,7 @@ fn test_missing_tool_exit_code_parity_staged_vs_unstaged() {
     allow_missing: false,
     paths: vec![],
   };
-  let fmt_unstaged = Commands::Fmt {
+  let fmt_unstaged = cli::Commands::Fmt {
     check: false,
     staged: false,
     changed: false,
@@ -846,12 +852,12 @@ fn test_missing_tool_exit_code_parity_staged_vs_unstaged() {
 
   assert_eq!(
     fmt_staged_status,
-    ExitStatus::Violations,
+    errors::ExitStatus::Violations,
     "fml fmt --staged must not exit clean on missing tool (Fixes #252)"
   );
   assert_eq!(
     fmt_unstaged_status,
-    ExitStatus::Violations,
+    errors::ExitStatus::Violations,
     "fml fmt must not exit clean on missing tool (Fixes #252)"
   );
   assert_eq!(

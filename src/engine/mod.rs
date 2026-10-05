@@ -1,5 +1,8 @@
-//! Formatting/linting engine: subprocess orchestration, diffing, tool
-//! version detection, and self-update checking.
+//! Formatting/linting engine orchestration.
+//!
+//! Coordinates subprocess dispatch, diffing, and tool version detection.
+//! Pass dispatch lives in `runner`, diffing lives in `diff`, and version
+//! checking lives in `version`.
 
 /// Unified diff generation and rendering.
 pub mod diff;
@@ -14,19 +17,19 @@ pub use diff::render_diff;
 pub use runner::{Mode, Pass, Plan, Runner, Scope};
 pub use update::{UpdateNotifier, print_update_notice, spawn_update_check};
 
-use std::path::PathBuf;
+use std::path;
 
 /// Returns the cross-platform cache directory for formality.
 #[must_use]
-pub fn cache_dir() -> PathBuf {
+pub fn cache_dir() -> path::PathBuf {
   if let Ok(local_app_data) = std::env::var("LOCALAPPDATA") {
-    PathBuf::from(local_app_data).join("formality")
+    path::PathBuf::from(local_app_data).join("formality")
   } else if let Ok(cache_home) = std::env::var("XDG_CACHE_HOME") {
-    PathBuf::from(cache_home).join("formality")
+    path::PathBuf::from(cache_home).join("formality")
   } else if let Ok(home) =
     std::env::var("HOME").or_else(|_| std::env::var("USERPROFILE"))
   {
-    PathBuf::from(home).join(".cache").join("formality")
+    path::PathBuf::from(home).join(".cache").join("formality")
   } else {
     std::env::temp_dir().join("formality")
   }
@@ -34,6 +37,6 @@ pub fn cache_dir() -> PathBuf {
 
 /// Returns the full path to a named cache file in formality's cache directory.
 #[must_use]
-pub fn cache_path(filename: &str) -> PathBuf {
+pub fn cache_path(filename: &str) -> path::PathBuf {
   cache_dir().join(filename)
 }

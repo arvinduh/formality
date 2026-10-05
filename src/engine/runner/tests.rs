@@ -1,44 +1,44 @@
 use super::*;
-use std::time::Duration;
+use std::time;
 
 #[test]
 fn test_combine_pass_results_passed_and_skipped() {
-  let lint_res = SurfaceResult {
+  let lint_res = surfaces::SurfaceResult {
     surface_name: "yaml",
-    status: SurfaceStatus::Skipped {
+    status: surfaces::SurfaceStatus::Skipped {
       reason: "Tool does not support autofix".to_string(),
     },
-    duration: Duration::from_millis(10),
+    duration: time::Duration::from_millis(10),
   };
-  let fmt_res = SurfaceResult {
+  let fmt_res = surfaces::SurfaceResult {
     surface_name: "yaml",
-    status: SurfaceStatus::Passed,
-    duration: Duration::from_millis(20),
+    status: surfaces::SurfaceStatus::Passed,
+    duration: time::Duration::from_millis(20),
   };
 
   let combined = combine_pass_results(apply_recheck(lint_res, None), fmt_res);
   assert_eq!(combined.surface_name, "yaml");
-  assert_eq!(combined.duration, Duration::from_millis(30));
-  assert!(matches!(combined.status, SurfaceStatus::Passed));
+  assert_eq!(combined.duration, time::Duration::from_millis(30));
+  assert!(matches!(combined.status, surfaces::SurfaceStatus::Passed));
 }
 
 #[test]
 fn test_combine_pass_results_both_passed() {
-  let lint_res = SurfaceResult {
+  let lint_res = surfaces::SurfaceResult {
     surface_name: "python",
-    status: SurfaceStatus::Passed,
-    duration: Duration::from_millis(15),
+    status: surfaces::SurfaceStatus::Passed,
+    duration: time::Duration::from_millis(15),
   };
-  let fmt_res = SurfaceResult {
+  let fmt_res = surfaces::SurfaceResult {
     surface_name: "python",
-    status: SurfaceStatus::Passed,
-    duration: Duration::from_millis(25),
+    status: surfaces::SurfaceStatus::Passed,
+    duration: time::Duration::from_millis(25),
   };
 
   let combined = combine_pass_results(apply_recheck(lint_res, None), fmt_res);
   assert_eq!(combined.surface_name, "python");
-  assert_eq!(combined.duration, Duration::from_millis(40));
-  assert!(matches!(combined.status, SurfaceStatus::Passed));
+  assert_eq!(combined.duration, time::Duration::from_millis(40));
+  assert!(matches!(combined.status, surfaces::SurfaceStatus::Passed));
 }
 
 #[test]
@@ -46,163 +46,163 @@ fn test_combine_pass_results_recheck_clears_lint_violation() {
   // Issue #116: the lint pass reported a violation, but the post-format
   // re-check came back clean. The re-check supersedes the stale lint status,
   // so the surface reports Passed and its duration folds in all three passes.
-  let lint_res = SurfaceResult {
+  let lint_res = surfaces::SurfaceResult {
     surface_name: "markdown",
-    status: SurfaceStatus::ViolationsFound {
+    status: surfaces::SurfaceStatus::ViolationsFound {
       message: "MD013/line-length".to_string(),
       diff: None,
     },
-    duration: Duration::from_millis(40),
+    duration: time::Duration::from_millis(40),
   };
-  let fmt_res = SurfaceResult {
+  let fmt_res = surfaces::SurfaceResult {
     surface_name: "markdown",
-    status: SurfaceStatus::Passed,
-    duration: Duration::from_millis(30),
+    status: surfaces::SurfaceStatus::Passed,
+    duration: time::Duration::from_millis(30),
   };
-  let recheck = SurfaceResult {
+  let recheck = surfaces::SurfaceResult {
     surface_name: "markdown",
-    status: SurfaceStatus::Passed,
-    duration: Duration::from_millis(20),
+    status: surfaces::SurfaceStatus::Passed,
+    duration: time::Duration::from_millis(20),
   };
 
   let combined =
     combine_pass_results(apply_recheck(lint_res, Some(recheck)), fmt_res);
-  assert!(matches!(combined.status, SurfaceStatus::Passed));
-  assert_eq!(combined.duration, Duration::from_millis(90));
+  assert!(matches!(combined.status, surfaces::SurfaceStatus::Passed));
+  assert_eq!(combined.duration, time::Duration::from_millis(90));
 }
 
 #[test]
 fn test_combine_pass_results_recheck_preserves_surviving_violation() {
   // Issue #116 inverse: the violation survived the format pass, so the
   // re-check still reports it and the surface still fails.
-  let lint_res = SurfaceResult {
+  let lint_res = surfaces::SurfaceResult {
     surface_name: "markdown",
-    status: SurfaceStatus::ViolationsFound {
+    status: surfaces::SurfaceStatus::ViolationsFound {
       message: "MD025/single-title".to_string(),
       diff: None,
     },
-    duration: Duration::from_millis(40),
+    duration: time::Duration::from_millis(40),
   };
-  let fmt_res = SurfaceResult {
+  let fmt_res = surfaces::SurfaceResult {
     surface_name: "markdown",
-    status: SurfaceStatus::Passed,
-    duration: Duration::from_millis(30),
+    status: surfaces::SurfaceStatus::Passed,
+    duration: time::Duration::from_millis(30),
   };
-  let recheck = SurfaceResult {
+  let recheck = surfaces::SurfaceResult {
     surface_name: "markdown",
-    status: SurfaceStatus::ViolationsFound {
+    status: surfaces::SurfaceStatus::ViolationsFound {
       message: "MD025/single-title".to_string(),
       diff: None,
     },
-    duration: Duration::from_millis(20),
+    duration: time::Duration::from_millis(20),
   };
 
   let combined =
     combine_pass_results(apply_recheck(lint_res, Some(recheck)), fmt_res);
   assert!(matches!(
     combined.status,
-    SurfaceStatus::ViolationsFound { message, .. }
+    surfaces::SurfaceStatus::ViolationsFound { message, .. }
       if message.contains("MD025")
   ));
-  assert_eq!(combined.duration, Duration::from_millis(90));
+  assert_eq!(combined.duration, time::Duration::from_millis(90));
 }
 
 #[test]
 fn test_combine_pass_results_violations_precedence() {
-  let lint_res = SurfaceResult {
+  let lint_res = surfaces::SurfaceResult {
     surface_name: "rust",
-    status: SurfaceStatus::ViolationsFound {
+    status: surfaces::SurfaceStatus::ViolationsFound {
       message: "warning: unused".to_string(),
       diff: None,
     },
-    duration: Duration::from_millis(50),
+    duration: time::Duration::from_millis(50),
   };
-  let fmt_res = SurfaceResult {
+  let fmt_res = surfaces::SurfaceResult {
     surface_name: "rust",
-    status: SurfaceStatus::Passed,
-    duration: Duration::from_millis(30),
+    status: surfaces::SurfaceStatus::Passed,
+    duration: time::Duration::from_millis(30),
   };
 
   let combined = combine_pass_results(apply_recheck(lint_res, None), fmt_res);
   assert!(matches!(
     combined.status,
-    SurfaceStatus::ViolationsFound { message, .. } if message.contains("warning: unused")
+    surfaces::SurfaceStatus::ViolationsFound { message, .. } if message.contains("warning: unused")
   ));
 }
 
 #[test]
 fn test_combine_pass_results_tool_missing_precedence() {
-  let lint_res = SurfaceResult {
+  let lint_res = surfaces::SurfaceResult {
     surface_name: "python",
-    status: SurfaceStatus::ToolMissing {
+    status: surfaces::SurfaceStatus::ToolMissing {
       binary: "ruff".to_string(),
       install_hint: "pip install ruff".to_string(),
     },
-    duration: Duration::from_millis(5),
+    duration: time::Duration::from_millis(5),
   };
-  let fmt_res = SurfaceResult {
+  let fmt_res = surfaces::SurfaceResult {
     surface_name: "python",
-    status: SurfaceStatus::Passed,
-    duration: Duration::from_millis(5),
+    status: surfaces::SurfaceStatus::Passed,
+    duration: time::Duration::from_millis(5),
   };
 
   let combined = combine_pass_results(apply_recheck(lint_res, None), fmt_res);
   assert!(matches!(
     combined.status,
-    SurfaceStatus::ToolMissing { binary, .. } if binary == "ruff"
+    surfaces::SurfaceStatus::ToolMissing { binary, .. } if binary == "ruff"
   ));
 }
 
 #[test]
 fn test_combine_pass_results_execution_error_precedence() {
-  let lint_res = SurfaceResult {
+  let lint_res = surfaces::SurfaceResult {
     surface_name: "cpp",
-    status: SurfaceStatus::ExecutionError {
+    status: surfaces::SurfaceStatus::ExecutionError {
       message: "clang-tidy crashed".to_string(),
     },
-    duration: Duration::from_millis(10),
+    duration: time::Duration::from_millis(10),
   };
-  let fmt_res = SurfaceResult {
+  let fmt_res = surfaces::SurfaceResult {
     surface_name: "cpp",
-    status: SurfaceStatus::Passed,
-    duration: Duration::from_millis(10),
+    status: surfaces::SurfaceStatus::Passed,
+    duration: time::Duration::from_millis(10),
   };
 
   let combined = combine_pass_results(apply_recheck(lint_res, None), fmt_res);
   assert!(matches!(
     combined.status,
-    SurfaceStatus::ExecutionError { message } if message.contains("clang-tidy crashed")
+    surfaces::SurfaceStatus::ExecutionError { message } if message.contains("clang-tidy crashed")
   ));
 }
 
-/// One status per `SurfaceStatus` variant, every payload tagged with `tag`,
+/// One status per `surfaces::SurfaceStatus` variant, every payload tagged with `tag`,
 /// ordered from lowest to highest `combine_pass_results` precedence.
-fn every_status_by_precedence(tag: &str) -> Vec<SurfaceStatus> {
+fn every_status_by_precedence(tag: &str) -> Vec<surfaces::SurfaceStatus> {
   vec![
-    SurfaceStatus::Skipped {
+    surfaces::SurfaceStatus::Skipped {
       reason: tag.to_string(),
     },
-    SurfaceStatus::Passed,
-    SurfaceStatus::ConfigSynced {
-      files: vec![crate::surfaces::SyncedConfigFile::new(tag, true)],
+    surfaces::SurfaceStatus::Passed,
+    surfaces::SurfaceStatus::ConfigSynced {
+      files: vec![surfaces::SyncedConfigFile::new(tag, true)],
     },
-    SurfaceStatus::ToolMissing {
+    surfaces::SurfaceStatus::ToolMissing {
       binary: tag.to_string(),
       install_hint: tag.to_string(),
     },
-    SurfaceStatus::ManualConfig {
+    surfaces::SurfaceStatus::ManualConfig {
       file: tag.to_string(),
       suggestion: tag.to_string(),
     },
-    SurfaceStatus::ConfigDrifted {
+    surfaces::SurfaceStatus::ConfigDrifted {
       file: tag.to_string(),
       diff: tag.to_string(),
     },
-    SurfaceStatus::ViolationsFound {
+    surfaces::SurfaceStatus::ViolationsFound {
       message: tag.to_string(),
       diff: Some(tag.to_string()),
     },
-    SurfaceStatus::ExecutionError {
+    surfaces::SurfaceStatus::ExecutionError {
       message: tag.to_string(),
     },
   ]
@@ -210,22 +210,22 @@ fn every_status_by_precedence(tag: &str) -> Vec<SurfaceStatus> {
 
 /// The position `status` holds in [`every_status_by_precedence`].
 ///
-/// Exhaustive with no wildcard, so a new `SurfaceStatus` does not compile
+/// Exhaustive with no wildcard, so a new `surfaces::SurfaceStatus` does not compile
 /// until it is given a position here; placing it shifts every later arm,
 /// which fails `test_every_status_by_precedence_lists_each_variant_in_order`
 /// until the fixture lists it at that position too. A variant placed last
 /// shifts nothing, and stable Rust cannot count an enum's variants, so that
 /// one case still needs its fixture entry added by hand.
-fn variant_index(status: &SurfaceStatus) -> usize {
+fn variant_index(status: &surfaces::SurfaceStatus) -> usize {
   match status {
-    SurfaceStatus::Skipped { .. } => 0,
-    SurfaceStatus::Passed => 1,
-    SurfaceStatus::ConfigSynced { .. } => 2,
-    SurfaceStatus::ToolMissing { .. } => 3,
-    SurfaceStatus::ManualConfig { .. } => 4,
-    SurfaceStatus::ConfigDrifted { .. } => 5,
-    SurfaceStatus::ViolationsFound { .. } => 6,
-    SurfaceStatus::ExecutionError { .. } => 7,
+    surfaces::SurfaceStatus::Skipped { .. } => 0,
+    surfaces::SurfaceStatus::Passed => 1,
+    surfaces::SurfaceStatus::ConfigSynced { .. } => 2,
+    surfaces::SurfaceStatus::ToolMissing { .. } => 3,
+    surfaces::SurfaceStatus::ManualConfig { .. } => 4,
+    surfaces::SurfaceStatus::ConfigDrifted { .. } => 5,
+    surfaces::SurfaceStatus::ViolationsFound { .. } => 6,
+    surfaces::SurfaceStatus::ExecutionError { .. } => 7,
   }
 }
 
@@ -239,13 +239,13 @@ fn test_every_status_by_precedence_lists_each_variant_in_order() {
 }
 
 fn combine_statuses(
-  first: SurfaceStatus,
-  second: SurfaceStatus,
-) -> SurfaceStatus {
-  let result = |status| SurfaceResult {
+  first: surfaces::SurfaceStatus,
+  second: surfaces::SurfaceStatus,
+) -> surfaces::SurfaceStatus {
+  let result = |status| surfaces::SurfaceResult {
     surface_name: "test",
     status,
-    duration: Duration::ZERO,
+    duration: time::Duration::ZERO,
   };
   combine_pass_results(result(first), result(second)).status
 }
@@ -273,16 +273,22 @@ fn test_combine_pass_results_same_variant_merges_or_keeps_first() {
   let seconds = every_status_by_precedence("b");
   for (first, second) in firsts.into_iter().zip(seconds) {
     let expected = match &first {
-      SurfaceStatus::Skipped { .. } => SurfaceStatus::Skipped {
-        reason: "a; b".to_string(),
-      },
-      SurfaceStatus::ViolationsFound { .. } => SurfaceStatus::ViolationsFound {
-        message: "a\nb".to_string(),
-        diff: Some("a\nb".to_string()),
-      },
-      SurfaceStatus::ExecutionError { .. } => SurfaceStatus::ExecutionError {
-        message: "a\nb".to_string(),
-      },
+      surfaces::SurfaceStatus::Skipped { .. } => {
+        surfaces::SurfaceStatus::Skipped {
+          reason: "a; b".to_string(),
+        }
+      }
+      surfaces::SurfaceStatus::ViolationsFound { .. } => {
+        surfaces::SurfaceStatus::ViolationsFound {
+          message: "a\nb".to_string(),
+          diff: Some("a\nb".to_string()),
+        }
+      }
+      surfaces::SurfaceStatus::ExecutionError { .. } => {
+        surfaces::SurfaceStatus::ExecutionError {
+          message: "a\nb".to_string(),
+        }
+      }
       other => other.clone(),
     };
     let combined = combine_statuses(first, second);
@@ -295,10 +301,10 @@ fn test_exit_floor_agrees_with_is_success_and_rises_with_precedence() {
   let mut previous_floor = 0;
   for status in every_status_by_precedence("x") {
     let floor = exit_floor(&status.severity(), false);
-    let result = SurfaceResult {
+    let result = surfaces::SurfaceResult {
       surface_name: "test",
       status,
-      duration: Duration::ZERO,
+      duration: time::Duration::ZERO,
     };
     assert_eq!(result.is_success(), floor == 0, "{:?}", result.status);
     assert!(floor >= previous_floor, "{:?}", result.status);
@@ -442,16 +448,16 @@ fn test_tool_output_detail_message_alone_when_no_diff() {
 
 #[test]
 fn test_collect_diagnostics_execution_error_arm_normalizes() {
-  // Issue #146, #175: build a real ExecutionError SurfaceResult with noisy raw
+  // Issue #146, #175: build a real ExecutionError surfaces::SurfaceResult with noisy raw
   // tool output and check the detail `collect_diagnostics` computes for it,
   // confirming the ExecutionError arm is wired to normalize diagnostics.
   let raw = "Checking formatting...\n\n  fatal: crashed   \n\nAll checks passed!\nCommand failed with exit code 2\n";
-  let exec_result = SurfaceResult {
+  let exec_result = surfaces::SurfaceResult {
     surface_name: "go",
-    status: SurfaceStatus::ExecutionError {
+    status: surfaces::SurfaceStatus::ExecutionError {
       message: raw.to_string(),
     },
-    duration: Duration::from_millis(5),
+    duration: time::Duration::from_millis(5),
   };
 
   let diags = collect_diagnostics(&[exec_result]);
@@ -486,12 +492,12 @@ main.worker(0xc00008e000)
 
 Command failed with exit code 2
 ";
-  let exec_result = SurfaceResult {
+  let exec_result = surfaces::SurfaceResult {
     surface_name: "go",
-    status: SurfaceStatus::ExecutionError {
+    status: surfaces::SurfaceStatus::ExecutionError {
       message: raw.to_string(),
     },
-    duration: Duration::from_millis(10),
+    duration: time::Duration::from_millis(10),
   };
 
   let diags = collect_diagnostics(&[exec_result]);
@@ -514,17 +520,17 @@ Command failed with exit code 2";
 
 #[test]
 fn test_collect_diagnostics_violations_found_arm_normalizes() {
-  // Issue #146, #175: build a real ViolationsFound SurfaceResult with noisy raw
+  // Issue #146, #175: build a real ViolationsFound surfaces::SurfaceResult with noisy raw
   // tool output and diff, confirming the ViolationsFound arm is wired to normalize
   // diagnostics and format diffs.
   let raw = "Checking formatting...\n\nsrc/x.js: error   \n  2:1  Delete `;`\n\nAll checks passed!\nCommand failed with exit code 2\n";
-  let violations_result = SurfaceResult {
+  let violations_result = surfaces::SurfaceResult {
     surface_name: "javascript",
-    status: SurfaceStatus::ViolationsFound {
+    status: surfaces::SurfaceStatus::ViolationsFound {
       message: raw.to_string(),
       diff: Some("- old\n+ new".to_string()),
     },
-    duration: Duration::from_millis(5),
+    duration: time::Duration::from_millis(5),
   };
 
   let diags = collect_diagnostics(&[violations_result]);
@@ -548,20 +554,20 @@ fn test_collect_diagnostics_execution_error_and_violations_parity() {
   // ExecutionError not; reverse asymmetry: ExecutionError normalized but
   // ViolationsFound not) causes this parity assertion to fail.
   let raw = "Checking formatting...\n\nsrc/x.js: error   \n  2:1  Delete `;`\n\nAll checks passed!\nCommand failed with exit code 2\n";
-  let violations_res = SurfaceResult {
+  let violations_res = surfaces::SurfaceResult {
     surface_name: "js",
-    status: SurfaceStatus::ViolationsFound {
+    status: surfaces::SurfaceStatus::ViolationsFound {
       message: raw.to_string(),
       diff: None,
     },
-    duration: Duration::from_millis(5),
+    duration: time::Duration::from_millis(5),
   };
-  let exec_error_res = SurfaceResult {
+  let exec_error_res = surfaces::SurfaceResult {
     surface_name: "js",
-    status: SurfaceStatus::ExecutionError {
+    status: surfaces::SurfaceStatus::ExecutionError {
       message: raw.to_string(),
     },
-    duration: Duration::from_millis(5),
+    duration: time::Duration::from_millis(5),
   };
 
   let violations_diags = collect_diagnostics(&[violations_res]);
@@ -582,51 +588,49 @@ fn test_collect_diagnostics_execution_error_and_violations_parity() {
 
 #[test]
 fn test_collect_diagnostics_all_statuses() {
-  use crate::surfaces::SyncedConfigFile;
-
   let results = vec![
-    SurfaceResult {
+    surfaces::SurfaceResult {
       surface_name: "clean",
-      status: SurfaceStatus::Passed,
-      duration: Duration::from_millis(1),
+      status: surfaces::SurfaceStatus::Passed,
+      duration: time::Duration::from_millis(1),
     },
-    SurfaceResult {
+    surfaces::SurfaceResult {
       surface_name: "synced",
-      status: SurfaceStatus::ConfigSynced {
-        files: vec![SyncedConfigFile::new(".prettierrc", true)],
+      status: surfaces::SurfaceStatus::ConfigSynced {
+        files: vec![surfaces::SyncedConfigFile::new(".prettierrc", true)],
       },
-      duration: Duration::from_millis(1),
+      duration: time::Duration::from_millis(1),
     },
-    SurfaceResult {
+    surfaces::SurfaceResult {
       surface_name: "skipped",
-      status: SurfaceStatus::Skipped {
+      status: surfaces::SurfaceStatus::Skipped {
         reason: "not installed".to_string(),
       },
-      duration: Duration::from_millis(1),
+      duration: time::Duration::from_millis(1),
     },
-    SurfaceResult {
+    surfaces::SurfaceResult {
       surface_name: "drifted",
-      status: SurfaceStatus::ConfigDrifted {
+      status: surfaces::SurfaceStatus::ConfigDrifted {
         file: ".rustfmt.toml".to_string(),
         diff: "- old\n+ new".to_string(),
       },
-      duration: Duration::from_millis(1),
+      duration: time::Duration::from_millis(1),
     },
-    SurfaceResult {
+    surfaces::SurfaceResult {
       surface_name: "manual",
-      status: SurfaceStatus::ManualConfig {
+      status: surfaces::SurfaceStatus::ManualConfig {
         file: "tsconfig.json".to_string(),
         suggestion: "Please update tsconfig.json manually".to_string(),
       },
-      duration: Duration::from_millis(1),
+      duration: time::Duration::from_millis(1),
     },
-    SurfaceResult {
+    surfaces::SurfaceResult {
       surface_name: "missing",
-      status: SurfaceStatus::ToolMissing {
+      status: surfaces::SurfaceStatus::ToolMissing {
         binary: "biome".to_string(),
         install_hint: "npm i -g @biomejs/biome".to_string(),
       },
-      duration: Duration::from_millis(1),
+      duration: time::Duration::from_millis(1),
     },
   ];
 
@@ -648,11 +652,11 @@ fn test_collect_diagnostics_all_statuses() {
 
 #[test]
 fn test_runner_single_walk_polyglot_repo() {
-  let manifest_dir = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+  let manifest_dir = path::PathBuf::from(env!("CARGO_MANIFEST_DIR"));
   let fixture = manifest_dir.join("tests/fixtures/polyglot_repo");
 
   // Single candidate filesystem walk
-  let candidates = crate::surfaces::walk_candidate_files(&fixture, &[]);
+  let candidates = surfaces::walk_candidate_files(&fixture, &[]);
   assert!(
     candidates.len() >= 7,
     "Expected at least 7 files in polyglot_repo, found {}",
@@ -660,28 +664,30 @@ fn test_runner_single_walk_polyglot_repo() {
   );
 
   // Filter in-memory for each surface
-  let rust_files = crate::surfaces::filter_candidates_with_ext(
+  let rust_files = surfaces::filter_candidates_with_ext(
     &candidates,
-    LanguageSurface::file_extensions(&crate::surfaces::rust::RustSurface),
+    surfaces::LanguageSurface::file_extensions(&surfaces::rust::RustSurface),
     &[],
     &[],
   );
   assert_eq!(rust_files.len(), 1);
   assert!(rust_files[0].ends_with("main.rs"));
 
-  let py_files = crate::surfaces::filter_candidates_with_ext(
+  let py_files = surfaces::filter_candidates_with_ext(
     &candidates,
-    LanguageSurface::file_extensions(&crate::surfaces::python::PythonSurface),
+    surfaces::LanguageSurface::file_extensions(
+      &surfaces::python::PythonSurface,
+    ),
     &[],
     &[],
   );
   assert_eq!(py_files.len(), 1);
   assert!(py_files[0].ends_with("script.py"));
 
-  let md_files = crate::surfaces::filter_candidates_with_ext(
+  let md_files = surfaces::filter_candidates_with_ext(
     &candidates,
-    LanguageSurface::file_extensions(
-      &crate::surfaces::markdown::MarkdownSurface,
+    surfaces::LanguageSurface::file_extensions(
+      &surfaces::markdown::MarkdownSurface,
     ),
     &[],
     &[],
@@ -689,36 +695,36 @@ fn test_runner_single_walk_polyglot_repo() {
   assert_eq!(md_files.len(), 1);
   assert!(md_files[0].ends_with("README.md"));
 
-  let yaml_files = crate::surfaces::filter_candidates_with_ext(
+  let yaml_files = surfaces::filter_candidates_with_ext(
     &candidates,
-    LanguageSurface::file_extensions(&crate::surfaces::yaml::YamlSurface),
+    surfaces::LanguageSurface::file_extensions(&surfaces::yaml::YamlSurface),
     &[],
     &[],
   );
   assert_eq!(yaml_files.len(), 1);
   assert!(yaml_files[0].ends_with("config.yaml"));
 
-  let json_files = crate::surfaces::filter_candidates_with_ext(
+  let json_files = surfaces::filter_candidates_with_ext(
     &candidates,
-    LanguageSurface::file_extensions(&crate::surfaces::json::JsonSurface),
+    surfaces::LanguageSurface::file_extensions(&surfaces::json::JsonSurface),
     &[],
     &[],
   );
   assert_eq!(json_files.len(), 1);
   assert!(json_files[0].ends_with("data.json"));
 
-  let typst_files = crate::surfaces::filter_candidates_with_ext(
+  let typst_files = surfaces::filter_candidates_with_ext(
     &candidates,
-    LanguageSurface::file_extensions(&crate::surfaces::typst::TypstSurface),
+    surfaces::LanguageSurface::file_extensions(&surfaces::typst::TypstSurface),
     &[],
     &[],
   );
   assert_eq!(typst_files.len(), 1);
   assert!(typst_files[0].ends_with("doc.typ"));
 
-  let toml_files = crate::surfaces::filter_candidates_with_ext(
+  let toml_files = surfaces::filter_candidates_with_ext(
     &candidates,
-    LanguageSurface::file_extensions(&crate::surfaces::toml::TomlSurface),
+    surfaces::LanguageSurface::file_extensions(&surfaces::toml::TomlSurface),
     &[],
     &[],
   );
@@ -728,20 +734,20 @@ fn test_runner_single_walk_polyglot_repo() {
 
 #[test]
 fn test_execution_context_candidate_files_filtering() {
-  let candidates = Arc::new(vec![
-    PathBuf::from("/ws/src/main.rs"),
-    PathBuf::from("/ws/src/lib.rs"),
-    PathBuf::from("/ws/src/ignored.rs"),
-    PathBuf::from("/ws/script.py"),
+  let candidates = sync::Arc::new(vec![
+    path::PathBuf::from("/ws/src/main.rs"),
+    path::PathBuf::from("/ws/src/lib.rs"),
+    path::PathBuf::from("/ws/src/ignored.rs"),
+    path::PathBuf::from("/ws/script.py"),
   ]);
 
-  let mut lang_config = crate::config::ResolvedLangConfig::new("rust");
-  lang_config.exclude = vec![PathBuf::from("ignored.rs")];
+  let mut lang_config = config::ResolvedLangConfig::new("rust");
+  lang_config.exclude = vec![path::PathBuf::from("ignored.rs")];
 
-  let ctx = ExecutionContext {
-    root: Arc::new(PathBuf::from("/ws")),
-    paths: Arc::new(Vec::new()),
-    global_config: Arc::new(crate::config::ResolvedGlobalConfig::default()),
+  let ctx = surfaces::ExecutionContext {
+    root: sync::Arc::new(path::PathBuf::from("/ws")),
+    paths: sync::Arc::new(Vec::new()),
+    global_config: sync::Arc::new(config::ResolvedGlobalConfig::default()),
     lang_config,
     check_only: false,
     candidate_files: candidates,
@@ -749,10 +755,10 @@ fn test_execution_context_candidate_files_filtering() {
 
   let matched = ctx.matched_files(&["rs"]);
   assert_eq!(matched.len(), 2);
-  assert!(matched.contains(&PathBuf::from("/ws/src/main.rs")));
-  assert!(matched.contains(&PathBuf::from("/ws/src/lib.rs")));
-  assert!(!matched.contains(&PathBuf::from("/ws/src/ignored.rs")));
-  assert!(!matched.contains(&PathBuf::from("/ws/script.py")));
+  assert!(matched.contains(&path::PathBuf::from("/ws/src/main.rs")));
+  assert!(matched.contains(&path::PathBuf::from("/ws/src/lib.rs")));
+  assert!(!matched.contains(&path::PathBuf::from("/ws/src/ignored.rs")));
+  assert!(!matched.contains(&path::PathBuf::from("/ws/script.py")));
 }
 
 #[test]
@@ -776,18 +782,18 @@ fn test_execution_context_staged_files_filtering() {
   std::fs::write(&py_file, "print('hi')\n").unwrap();
 
   let staged_paths =
-    Arc::new(vec![main_rs.clone(), excluded_rs, fixture_rs, py_file]);
+    sync::Arc::new(vec![main_rs.clone(), excluded_rs, fixture_rs, py_file]);
 
-  let mut lang_config = crate::config::ResolvedLangConfig::new("rust");
-  lang_config.exclude = vec![PathBuf::from("src/generated.rs")];
+  let mut lang_config = config::ResolvedLangConfig::new("rust");
+  lang_config.exclude = vec![path::PathBuf::from("src/generated.rs")];
 
-  let ctx = ExecutionContext {
-    root: Arc::new(root.to_path_buf()),
-    paths: Arc::clone(&staged_paths),
-    global_config: Arc::new(crate::config::ResolvedGlobalConfig::default()),
+  let ctx = surfaces::ExecutionContext {
+    root: sync::Arc::new(root.to_path_buf()),
+    paths: sync::Arc::clone(&staged_paths),
+    global_config: sync::Arc::new(config::ResolvedGlobalConfig::default()),
     lang_config,
     check_only: false,
-    candidate_files: Arc::new(crate::surfaces::glob::expand_targets(
+    candidate_files: sync::Arc::new(surfaces::glob::expand_targets(
       root,
       &staged_paths,
     )),
@@ -820,16 +826,18 @@ fn test_header_count_label_pluralizes_on_the_row_count() {
 
 #[test]
 fn test_synced_files_detail_names_every_file() {
-  use crate::surfaces::SyncedConfigFile;
   assert_eq!(
     synced_files_detail(&[
-      SyncedConfigFile::new(".clang-format", true),
-      SyncedConfigFile::new(".clang-tidy", false),
+      surfaces::SyncedConfigFile::new(".clang-format", true),
+      surfaces::SyncedConfigFile::new(".clang-tidy", false),
     ]),
     "Created .clang-format, Synced .clang-tidy"
   );
   assert_eq!(
-    synced_files_detail(&[SyncedConfigFile::new(".rustfmt.toml", true)]),
+    synced_files_detail(&[surfaces::SyncedConfigFile::new(
+      ".rustfmt.toml",
+      true
+    )]),
     "Created .rustfmt.toml"
   );
 }
@@ -837,16 +845,13 @@ fn test_synced_files_detail_names_every_file() {
 #[derive(Debug, Clone)]
 struct MockMissingSurface;
 
-impl crate::surfaces::DeclaresFacets for MockMissingSurface {
-  fn facet_support(
-    &self,
-    _: crate::surfaces::Facet,
-  ) -> crate::surfaces::FacetSupport {
-    crate::surfaces::FacetSupport::Unsupported
+impl surfaces::DeclaresFacets for MockMissingSurface {
+  fn facet_support(&self, _: surfaces::Facet) -> surfaces::FacetSupport {
+    surfaces::FacetSupport::Unsupported
   }
 }
 
-impl LanguageSurface for MockMissingSurface {
+impl surfaces::LanguageSurface for MockMissingSurface {
   fn name(&self) -> &'static str {
     "mock_missing"
   }
@@ -855,38 +860,46 @@ impl LanguageSurface for MockMissingSurface {
   }
   fn tool_info(
     &self,
-    _: &crate::config::ResolvedLangConfig,
-  ) -> Vec<crate::surfaces::ToolInfo> {
+    _: &config::ResolvedLangConfig,
+  ) -> Vec<surfaces::ToolInfo> {
     vec![]
   }
-  fn format(&self, _: &ExecutionContext) -> SurfaceResult {
-    SurfaceResult {
+  fn format(&self, _: &surfaces::ExecutionContext) -> surfaces::SurfaceResult {
+    surfaces::SurfaceResult {
       surface_name: self.name(),
-      status: SurfaceStatus::ToolMissing {
+      status: surfaces::SurfaceStatus::ToolMissing {
         binary: "mock-tool".to_string(),
         install_hint: "echo install".to_string(),
       },
-      duration: Duration::from_millis(1),
+      duration: time::Duration::from_millis(1),
     }
   }
-  fn lint(&self, _: &ExecutionContext, _: bool) -> SurfaceResult {
-    SurfaceResult {
+  fn lint(
+    &self,
+    _: &surfaces::ExecutionContext,
+    _: bool,
+  ) -> surfaces::SurfaceResult {
+    surfaces::SurfaceResult {
       surface_name: self.name(),
-      status: SurfaceStatus::ToolMissing {
+      status: surfaces::SurfaceStatus::ToolMissing {
         binary: "mock-tool".to_string(),
         install_hint: "echo install".to_string(),
       },
-      duration: Duration::from_millis(1),
+      duration: time::Duration::from_millis(1),
     }
   }
-  fn sync_config(&self, _: &ExecutionContext, _: bool) -> SurfaceResult {
-    SurfaceResult {
+  fn sync_config(
+    &self,
+    _: &surfaces::ExecutionContext,
+    _: bool,
+  ) -> surfaces::SurfaceResult {
+    surfaces::SurfaceResult {
       surface_name: self.name(),
-      status: SurfaceStatus::Passed,
-      duration: Duration::from_millis(1),
+      status: surfaces::SurfaceStatus::Passed,
+      duration: time::Duration::from_millis(1),
     }
   }
-  fn clone_box(&self) -> Box<dyn LanguageSurface> {
+  fn clone_box(&self) -> Box<dyn surfaces::LanguageSurface> {
     Box::new(self.clone())
   }
 }
@@ -899,19 +912,20 @@ fn test_runner_missing_tool_exit_code_is_violations() {
   // a real violation, not an operational fault. Exercised across `lint` and
   // `fmt`, staged and unstaged, and both `--check`/write forms, since the
   // fix is unconditional on mode.
-  let root = PathBuf::from(".");
-  let config = FormalityConfig::default();
-  let staged_paths = Scope::resolve(&root, &[PathBuf::from("test.mock")], &[]);
+  let root = path::PathBuf::from(".");
+  let config = config::FormalityConfig::default();
+  let staged_paths =
+    Scope::resolve(&root, &[path::PathBuf::from("test.mock")], &[]);
 
   // Lint unstaged & staged
   let unstaged_lint = Runner::run(
     &[Box::new(MockMissingSurface)],
     &root,
-    &Scope::Workspace(Arc::default()),
+    &Scope::Workspace(sync::Arc::default()),
     &Plan::lint(false),
     &config,
   );
-  assert_eq!(unstaged_lint, ExitStatus::Violations);
+  assert_eq!(unstaged_lint, errors::ExitStatus::Violations);
 
   let staged_lint = Runner::run(
     &[Box::new(MockMissingSurface)],
@@ -920,18 +934,18 @@ fn test_runner_missing_tool_exit_code_is_violations() {
     &Plan::lint(false),
     &config,
   );
-  assert_eq!(staged_lint, ExitStatus::Violations);
+  assert_eq!(staged_lint, errors::ExitStatus::Violations);
   assert_eq!(unstaged_lint, staged_lint);
 
   // Fmt unstaged & staged, write mode
   let unstaged_fmt = Runner::run(
     &[Box::new(MockMissingSurface)],
     &root,
-    &Scope::Workspace(Arc::default()),
+    &Scope::Workspace(sync::Arc::default()),
     &Plan::fmt(false, false),
     &config,
   );
-  assert_eq!(unstaged_fmt, ExitStatus::Violations);
+  assert_eq!(unstaged_fmt, errors::ExitStatus::Violations);
 
   let staged_fmt = Runner::run(
     &[Box::new(MockMissingSurface)],
@@ -940,7 +954,7 @@ fn test_runner_missing_tool_exit_code_is_violations() {
     &Plan::fmt(false, false),
     &config,
   );
-  assert_eq!(staged_fmt, ExitStatus::Violations);
+  assert_eq!(staged_fmt, errors::ExitStatus::Violations);
   assert_eq!(unstaged_fmt, staged_fmt);
 
   // Fmt --check (Mode::Report) — the fix is unconditional on mode, so this
@@ -948,21 +962,21 @@ fn test_runner_missing_tool_exit_code_is_violations() {
   let check_fmt = Runner::run(
     &[Box::new(MockMissingSurface)],
     &root,
-    &Scope::Workspace(Arc::default()),
+    &Scope::Workspace(sync::Arc::default()),
     &Plan::fmt(true, false),
     &config,
   );
-  assert_eq!(check_fmt, ExitStatus::Violations);
+  assert_eq!(check_fmt, errors::ExitStatus::Violations);
 
   // Fix (Lint + Format) — a plan neither prior case exercises directly.
   let fix = Runner::run(
     &[Box::new(MockMissingSurface)],
     &root,
-    &Scope::Workspace(Arc::default()),
+    &Scope::Workspace(sync::Arc::default()),
     &Plan::fix(false, false),
     &config,
   );
-  assert_eq!(fix, ExitStatus::Violations);
+  assert_eq!(fix, errors::ExitStatus::Violations);
 }
 
 /// A surface whose format/lint pass always reports a real violation --
@@ -970,16 +984,13 @@ fn test_runner_missing_tool_exit_code_is_violations() {
 #[derive(Debug, Clone)]
 struct MockViolatingSurface;
 
-impl crate::surfaces::DeclaresFacets for MockViolatingSurface {
-  fn facet_support(
-    &self,
-    _: crate::surfaces::Facet,
-  ) -> crate::surfaces::FacetSupport {
-    crate::surfaces::FacetSupport::Unsupported
+impl surfaces::DeclaresFacets for MockViolatingSurface {
+  fn facet_support(&self, _: surfaces::Facet) -> surfaces::FacetSupport {
+    surfaces::FacetSupport::Unsupported
   }
 }
 
-impl LanguageSurface for MockViolatingSurface {
+impl surfaces::LanguageSurface for MockViolatingSurface {
   fn name(&self) -> &'static str {
     "mock_violating"
   }
@@ -988,38 +999,46 @@ impl LanguageSurface for MockViolatingSurface {
   }
   fn tool_info(
     &self,
-    _: &crate::config::ResolvedLangConfig,
-  ) -> Vec<crate::surfaces::ToolInfo> {
+    _: &config::ResolvedLangConfig,
+  ) -> Vec<surfaces::ToolInfo> {
     vec![]
   }
-  fn format(&self, _: &ExecutionContext) -> SurfaceResult {
-    SurfaceResult {
+  fn format(&self, _: &surfaces::ExecutionContext) -> surfaces::SurfaceResult {
+    surfaces::SurfaceResult {
       surface_name: self.name(),
-      status: SurfaceStatus::ViolationsFound {
+      status: surfaces::SurfaceStatus::ViolationsFound {
         message: "unformatted".to_string(),
         diff: None,
       },
-      duration: Duration::from_millis(1),
+      duration: time::Duration::from_millis(1),
     }
   }
-  fn lint(&self, _: &ExecutionContext, _: bool) -> SurfaceResult {
-    SurfaceResult {
+  fn lint(
+    &self,
+    _: &surfaces::ExecutionContext,
+    _: bool,
+  ) -> surfaces::SurfaceResult {
+    surfaces::SurfaceResult {
       surface_name: self.name(),
-      status: SurfaceStatus::ViolationsFound {
+      status: surfaces::SurfaceStatus::ViolationsFound {
         message: "lint violation".to_string(),
         diff: None,
       },
-      duration: Duration::from_millis(1),
+      duration: time::Duration::from_millis(1),
     }
   }
-  fn sync_config(&self, _: &ExecutionContext, _: bool) -> SurfaceResult {
-    SurfaceResult {
+  fn sync_config(
+    &self,
+    _: &surfaces::ExecutionContext,
+    _: bool,
+  ) -> surfaces::SurfaceResult {
+    surfaces::SurfaceResult {
       surface_name: self.name(),
-      status: SurfaceStatus::Passed,
-      duration: Duration::from_millis(1),
+      status: surfaces::SurfaceStatus::Passed,
+      duration: time::Duration::from_millis(1),
     }
   }
-  fn clone_box(&self) -> Box<dyn LanguageSurface> {
+  fn clone_box(&self) -> Box<dyn surfaces::LanguageSurface> {
     Box::new(self.clone())
   }
 }
@@ -1030,16 +1049,13 @@ impl LanguageSurface for MockViolatingSurface {
 #[derive(Debug, Clone)]
 struct MockErroringSurface;
 
-impl crate::surfaces::DeclaresFacets for MockErroringSurface {
-  fn facet_support(
-    &self,
-    _: crate::surfaces::Facet,
-  ) -> crate::surfaces::FacetSupport {
-    crate::surfaces::FacetSupport::Unsupported
+impl surfaces::DeclaresFacets for MockErroringSurface {
+  fn facet_support(&self, _: surfaces::Facet) -> surfaces::FacetSupport {
+    surfaces::FacetSupport::Unsupported
   }
 }
 
-impl LanguageSurface for MockErroringSurface {
+impl surfaces::LanguageSurface for MockErroringSurface {
   fn name(&self) -> &'static str {
     "mock_erroring"
   }
@@ -1048,36 +1064,44 @@ impl LanguageSurface for MockErroringSurface {
   }
   fn tool_info(
     &self,
-    _: &crate::config::ResolvedLangConfig,
-  ) -> Vec<crate::surfaces::ToolInfo> {
+    _: &config::ResolvedLangConfig,
+  ) -> Vec<surfaces::ToolInfo> {
     vec![]
   }
-  fn format(&self, _: &ExecutionContext) -> SurfaceResult {
-    SurfaceResult {
+  fn format(&self, _: &surfaces::ExecutionContext) -> surfaces::SurfaceResult {
+    surfaces::SurfaceResult {
       surface_name: self.name(),
-      status: SurfaceStatus::ExecutionError {
+      status: surfaces::SurfaceStatus::ExecutionError {
         message: "tool crashed".to_string(),
       },
-      duration: Duration::from_millis(1),
+      duration: time::Duration::from_millis(1),
     }
   }
-  fn lint(&self, _: &ExecutionContext, _: bool) -> SurfaceResult {
-    SurfaceResult {
+  fn lint(
+    &self,
+    _: &surfaces::ExecutionContext,
+    _: bool,
+  ) -> surfaces::SurfaceResult {
+    surfaces::SurfaceResult {
       surface_name: self.name(),
-      status: SurfaceStatus::ExecutionError {
+      status: surfaces::SurfaceStatus::ExecutionError {
         message: "tool crashed".to_string(),
       },
-      duration: Duration::from_millis(1),
+      duration: time::Duration::from_millis(1),
     }
   }
-  fn sync_config(&self, _: &ExecutionContext, _: bool) -> SurfaceResult {
-    SurfaceResult {
+  fn sync_config(
+    &self,
+    _: &surfaces::ExecutionContext,
+    _: bool,
+  ) -> surfaces::SurfaceResult {
+    surfaces::SurfaceResult {
       surface_name: self.name(),
-      status: SurfaceStatus::Passed,
-      duration: Duration::from_millis(1),
+      status: surfaces::SurfaceStatus::Passed,
+      duration: time::Duration::from_millis(1),
     }
   }
-  fn clone_box(&self) -> Box<dyn LanguageSurface> {
+  fn clone_box(&self) -> Box<dyn surfaces::LanguageSurface> {
     Box::new(self.clone())
   }
 }
@@ -1089,28 +1113,28 @@ fn test_runner_allow_missing_silences_tool_missing_but_not_violations() {
   // leaving a real violation elsewhere fatal, and leaving the missing-tool
   // row itself visible either way (the whole point is not recreating the
   // original silent-pass bug).
-  let root = PathBuf::from(".");
-  let config = FormalityConfig::default();
+  let root = path::PathBuf::from(".");
+  let config = config::FormalityConfig::default();
 
   // A missing tool alone: exit 1 without --allow-missing.
   let without_flag = Runner::run(
     &[Box::new(MockMissingSurface)],
     &root,
-    &Scope::Workspace(Arc::default()),
+    &Scope::Workspace(sync::Arc::default()),
     &Plan::fmt(false, false),
     &config,
   );
-  assert_eq!(without_flag, ExitStatus::Violations);
+  assert_eq!(without_flag, errors::ExitStatus::Violations);
 
   // ...and exit 0 with --allow-missing.
   let with_flag = Runner::run(
     &[Box::new(MockMissingSurface)],
     &root,
-    &Scope::Workspace(Arc::default()),
+    &Scope::Workspace(sync::Arc::default()),
     &Plan::fmt(false, true),
     &config,
   );
-  assert_eq!(with_flag, ExitStatus::Clean);
+  assert_eq!(with_flag, errors::ExitStatus::Clean);
 
   // A missing tool AND a real violation (on a different surface): still
   // exit 1 even with --allow-missing -- the flag only silences the
@@ -1118,11 +1142,11 @@ fn test_runner_allow_missing_silences_tool_missing_but_not_violations() {
   let missing_and_violating = Runner::run(
     &[Box::new(MockMissingSurface), Box::new(MockViolatingSurface)],
     &root,
-    &Scope::Workspace(Arc::default()),
+    &Scope::Workspace(sync::Arc::default()),
     &Plan::fmt(false, true),
     &config,
   );
-  assert_eq!(missing_and_violating, ExitStatus::Violations);
+  assert_eq!(missing_and_violating, errors::ExitStatus::Violations);
 
   // A missing tool AND an execution error (on a different surface): exit 2
   // even with --allow-missing -- the flag only silences the ToolMissing arm,
@@ -1130,36 +1154,36 @@ fn test_runner_allow_missing_silences_tool_missing_but_not_violations() {
   let missing_and_erroring = Runner::run(
     &[Box::new(MockMissingSurface), Box::new(MockErroringSurface)],
     &root,
-    &Scope::Workspace(Arc::default()),
+    &Scope::Workspace(sync::Arc::default()),
     &Plan::fmt(false, true),
     &config,
   );
-  assert_eq!(missing_and_erroring, ExitStatus::Error);
+  assert_eq!(missing_and_erroring, errors::ExitStatus::Error);
 }
 
 #[test]
 fn test_combine_pass_results_violations_over_tool_missing() {
-  let lint_res = SurfaceResult {
+  let lint_res = surfaces::SurfaceResult {
     surface_name: "markdown",
-    status: SurfaceStatus::ToolMissing {
+    status: surfaces::SurfaceStatus::ToolMissing {
       binary: "markdownlint-cli2".to_string(),
       install_hint: "npm install -g markdownlint-cli2".to_string(),
     },
-    duration: Duration::from_millis(10),
+    duration: time::Duration::from_millis(10),
   };
-  let fmt_res = SurfaceResult {
+  let fmt_res = surfaces::SurfaceResult {
     surface_name: "markdown",
-    status: SurfaceStatus::ViolationsFound {
+    status: surfaces::SurfaceStatus::ViolationsFound {
       message: "unformatted".to_string(),
       diff: Some("diff".to_string()),
     },
-    duration: Duration::from_millis(20),
+    duration: time::Duration::from_millis(20),
   };
 
   let combined = combine_pass_results(apply_recheck(lint_res, None), fmt_res);
   assert!(matches!(
     combined.status,
-    SurfaceStatus::ViolationsFound { .. }
+    surfaces::SurfaceStatus::ViolationsFound { .. }
   ));
-  assert_eq!(combined.duration, Duration::from_millis(30));
+  assert_eq!(combined.duration, time::Duration::from_millis(30));
 }

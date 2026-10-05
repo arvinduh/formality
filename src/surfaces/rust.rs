@@ -1,17 +1,21 @@
-//! Rust language surface: formats via `rustfmt`/`cargo fmt` and lints via
-//! `cargo clippy`, syncing the managed `.rustfmt.toml` from `formality.toml`.
+//! Rust language surface: formats via `rustfmt` and lints via Clippy.
+//!
+//! Implements `super::LanguageSurface` for Rust, syncing `.rustfmt.toml`.
+//! Fleet registration is owned by `super::registry`.
 
-use super::{
-  DeclaresFacets, ExecutionContext, Facet, FacetSupport, LanguageSurface,
-  NativeConfig, SurfaceResult, SurfaceStatus, ToolInfo, check_binary_exists,
-  create_tool_command, find_manifest_upwards, install_hint_for,
-  render_native_config, run_tool_command, sync_native_config,
-  tool_missing_guard, tool_missing_result,
-};
-use serde::{Deserialize, Serialize};
-use std::path::PathBuf;
-use std::process::Command;
-use std::time::Instant;
+use std::path;
+use std::process;
+use std::time;
+
+use serde;
+
+use crate::config;
+use crate::config::facets;
+use crate::config::facets::DeclaresFacets;
+use crate::errors;
+use crate::surfaces;
+use crate::surfaces::LanguageSurface;
+use crate::surfaces::NativeConfig;
 
 /// Single source for `cargo`'s manual install hint: it has no `ALL_CHAINS`
 /// row (it ships with the Rust toolchain itself, via rustup, not through
@@ -25,7 +29,7 @@ use std::time::Instant;
 const CARGO_INSTALL_HINT: &str = "Install Rust via rustup: https://rustup.rs";
 
 /// Native `.rustfmt.toml` configuration representation for Rust formatting.
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize, PartialEq, Eq)]
 pub struct RustfmtConfig {
   /// Indentation spaces count per level.
   pub tab_spaces: usize,
@@ -44,7 +48,7 @@ pub struct RustfmtConfig {
 impl NativeConfig for RustfmtConfig {
   const FILE_NAME: &'static str = ".rustfmt.toml";
 
-  fn from_context(ctx: &ExecutionContext) -> Self {
+  fn from_context(ctx: &surfaces::ExecutionContext) -> Self {
     let newline_style = match ctx.lang_config.indent_size {
       _ if ctx.global_config.end_of_line.eq_ignore_ascii_case("crlf") => {
         "Windows"
@@ -70,8 +74,8 @@ impl NativeConfig for RustfmtConfig {
     }
   }
 
-  fn render(&self) -> Result<String, crate::errors::FormalityError> {
-    render_native_config(self)
+  fn render(&self) -> Result<String, errors::FormalityError> {
+    surfaces::render_native_config(self)
   }
 }
 
@@ -80,17 +84,17 @@ impl NativeConfig for RustfmtConfig {
 pub struct RustSurface;
 
 impl DeclaresFacets for RustSurface {
-  fn facet_support(&self, facet: Facet) -> FacetSupport {
+  fn facet_support(&self, facet: facets::Facet) -> facets::FacetSupport {
     match facet {
-      Facet::IndentTabs => FacetSupport::Fixed("spaces"),
-      Facet::IndentWidth
-      | Facet::LineLength
-      | Facet::ImportSort
-      | Facet::Edition => FacetSupport::Configurable,
-      Facet::QuoteStyle
-      | Facet::TrailingComma
-      | Facet::ProseWrap
-      | Facet::Standard => FacetSupport::Unsupported,
+      facets::Facet::IndentTabs => facets::FacetSupport::Fixed("spaces"),
+      facets::Facet::IndentWidth
+      | facets::Facet::LineLength
+      | facets::Facet::ImportSort
+      | facets::Facet::Edition => facets::FacetSupport::Configurable,
+      facets::Facet::QuoteStyle
+      | facets::Facet::TrailingComma
+      | facets::Facet::ProseWrap
+      | facets::Facet::Standard => facets::FacetSupport::Unsupported,
     }
   }
 }
@@ -154,9 +158,9 @@ pub(crate) fn build_rustfmt_fallback_cmd(
   edition: &str,
   inline_config: &str,
   check_only: bool,
-  files: &[PathBuf],
-) -> Command {
-  let mut c = create_tool_command("rustfmt");
+  files: &[path::PathBuf],
+) -> process::Command {
+  let mut c = surfaces::create_tool_command("rustfmt");
   c.arg("--edition").arg(edition);
   c.arg("--config").arg(inline_config);
   if check_only {
@@ -202,10 +206,10 @@ impl LanguageSurface for RustSurface {
 
   fn tool_info(
     &self,
-    _config: &crate::config::ResolvedLangConfig,
-  ) -> Vec<ToolInfo> {
+    _config: &config::ResolvedLangConfig,
+  ) -> Vec<surfaces::ToolInfo> {
     vec![
-      ToolInfo {
+      surfaces::ToolInfo {
         binary: "cargo",
         description: "Rust package manager & build tool",
         // No ALL_CHAINS row: cargo ships with the Rust toolchain itself
@@ -214,14 +218,14 @@ impl LanguageSurface for RustSurface {
         is_required_for_fmt: true,
         is_required_for_lint: true,
       },
-      ToolInfo {
+      surfaces::ToolInfo {
         binary: "rustfmt",
         description: "Rust code formatter",
         install_hint: None,
         is_required_for_fmt: true,
         is_required_for_lint: false,
       },
-      ToolInfo {
+      surfaces::ToolInfo {
         binary: "clippy-driver",
         description: "Rust linter (cargo clippy)",
         install_hint: None,
@@ -232,15 +236,20 @@ impl LanguageSurface for RustSurface {
   }
 
   // Dispatches rustfmt formatting with Cargo.toml discovery, check vs write modes, and error parsing.
-  fn format(&self, ctx: &ExecutionContext) -> SurfaceResult {
-    let start = Instant::now();
+  fn format(
+    &self,
+    ctx: &surfaces::ExecutionContext,
+  ) -> surfaces::SurfaceResult {
+    let start = time::Instant::now();
 
-    if !check_binary_exists("cargo") && !check_binary_exists("rustfmt") {
-      return tool_missing_result(
+    if !surfaces::check_binary_exists("cargo")
+      && !surfaces::check_binary_exists("rustfmt")
+    {
+      return surfaces::tool_missing_result(
         self.name(),
         start,
         "cargo / rustfmt",
-        &install_hint_for("rustfmt"),
+        &surfaces::install_hint_for("rustfmt"),
       );
     }
 
@@ -275,10 +284,10 @@ impl LanguageSurface for RustSurface {
     let inline_config =
       build_rustfmt_inline_config(&RustfmtConfig::from_context(ctx));
 
-    let mut cmd = if check_binary_exists("cargo")
-      && find_manifest_upwards(&ctx.root, "Cargo.toml")
+    let mut cmd = if surfaces::check_binary_exists("cargo")
+      && surfaces::find_manifest_upwards(&ctx.root, "Cargo.toml")
     {
-      let mut c = create_tool_command("cargo");
+      let mut c = surfaces::create_tool_command("cargo");
       c.arg("fmt");
       if ctx.check_only {
         c.arg("--")
@@ -309,15 +318,22 @@ impl LanguageSurface for RustSurface {
     cmd.args(ctx.lang_config.tool_args("rustfmt"));
     cmd.current_dir(ctx.root.as_path());
 
-    run_tool_command(self.name(), &mut cmd)
+    surfaces::run_tool_command(self.name(), &mut cmd)
   }
 
-  fn lint(&self, ctx: &ExecutionContext, fix: bool) -> SurfaceResult {
-    let start = Instant::now();
+  fn lint(
+    &self,
+    ctx: &surfaces::ExecutionContext,
+    fix: bool,
+  ) -> surfaces::SurfaceResult {
+    let start = time::Instant::now();
 
-    if let Some(res) =
-      tool_missing_guard(self.name(), "cargo", start, Some(CARGO_INSTALL_HINT))
-    {
+    if let Some(res) = surfaces::tool_missing_guard(
+      self.name(),
+      "cargo",
+      start,
+      Some(CARGO_INSTALL_HINT),
+    ) {
       return res;
     }
 
@@ -330,10 +346,10 @@ impl LanguageSurface for RustSurface {
     // must do the same via `find_manifest_upwards` (Fixes #185) — checking
     // only `ctx.root` produced false errors for any subdirectory of a real
     // crate, despite the message below already claiming to check parents.
-    if !find_manifest_upwards(&ctx.root, "Cargo.toml") {
-      return SurfaceResult {
+    if !surfaces::find_manifest_upwards(&ctx.root, "Cargo.toml") {
+      return surfaces::SurfaceResult {
         surface_name: self.name(),
-        status: SurfaceStatus::ExecutionError {
+        status: surfaces::SurfaceStatus::ExecutionError {
           message: format!(
             "No Cargo.toml found in {} (or any parent directory). `cargo \
              clippy` needs a Cargo manifest to lint against — run `cargo \
@@ -345,14 +361,14 @@ impl LanguageSurface for RustSurface {
       };
     }
 
-    let mut cmd = create_tool_command("cargo");
+    let mut cmd = surfaces::create_tool_command("cargo");
     cmd.args(build_clippy_args(
       fix,
       ctx.lang_config.tool_args("clippy-driver"),
     ));
     cmd.current_dir(ctx.root.as_path());
 
-    run_tool_command(self.name(), &mut cmd)
+    surfaces::run_tool_command(self.name(), &mut cmd)
   }
 
   // `fml fmt`/`fml lint` no longer go through this path (Fixes #151 [pre-recreation]): they
@@ -361,29 +377,38 @@ impl LanguageSurface for RustSurface {
   // now reached only by `fml sync`, for users who explicitly want
   // `.rustfmt.toml` materialized on disk (e.g. for editor/rust-analyzer
   // integration outside of `fml`).
-  fn sync_config(&self, ctx: &ExecutionContext, check: bool) -> SurfaceResult {
-    let start = Instant::now();
-    sync_native_config::<RustfmtConfig>(ctx, check, start, self.name())
+  fn sync_config(
+    &self,
+    ctx: &surfaces::ExecutionContext,
+    check: bool,
+  ) -> surfaces::SurfaceResult {
+    let start = time::Instant::now();
+    surfaces::sync_native_config::<RustfmtConfig>(
+      ctx,
+      check,
+      start,
+      self.name(),
+    )
   }
 }
 
 #[cfg(test)]
 mod tests {
   use super::*;
-  use crate::config::ResolvedLangConfig;
-  use crate::surfaces::test_ctx;
-  use tempfile::TempDir;
+  use crate::config;
+  use crate::surfaces;
 
   #[test]
   fn test_lint_without_cargo_toml_is_execution_error_not_violation() {
-    let temp = TempDir::new().unwrap();
+    let temp = tempfile::TempDir::new().unwrap();
     // No Cargo.toml written — mirrors a bare `.rs` file with no crate manifest.
     let surface = RustSurface;
-    let ctx = test_ctx(temp.path(), ResolvedLangConfig::new("rust"));
+    let ctx =
+      surfaces::test_ctx(temp.path(), config::ResolvedLangConfig::new("rust"));
 
     let res = surface.lint(&ctx, false);
     match res.status {
-      SurfaceStatus::ExecutionError { message } => {
+      surfaces::SurfaceStatus::ExecutionError { message } => {
         assert!(message.contains("Cargo.toml"));
       }
       other => {
@@ -400,10 +425,10 @@ mod tests {
     // resolves a manifest by walking upward from the working directory
     // exactly the same way, so the guard must mirror that instead of
     // checking only `ctx.root`.
-    if !check_binary_exists("cargo") {
+    if !surfaces::check_binary_exists("cargo") {
       return;
     }
-    let temp = TempDir::new().unwrap();
+    let temp = tempfile::TempDir::new().unwrap();
     std::fs::write(
       temp.path().join("Cargo.toml"),
       "[package]\nname = \"testcrate\"\nversion = \"0.1.0\"\nedition = \"2021\"\n",
@@ -416,10 +441,11 @@ mod tests {
     std::fs::write(nested.join("mod.rs"), "pub fn f() {}\n").unwrap();
 
     let surface = RustSurface;
-    let ctx = test_ctx(&nested, ResolvedLangConfig::new("rust"));
+    let ctx =
+      surfaces::test_ctx(&nested, config::ResolvedLangConfig::new("rust"));
     let res = surface.lint(&ctx, false);
 
-    if let SurfaceStatus::ExecutionError { message } = &res.status {
+    if let surfaces::SurfaceStatus::ExecutionError { message } = &res.status {
       assert!(
         !message.contains("No Cargo.toml found"),
         "Cargo.toml in an ancestor directory must not trip the \
@@ -432,15 +458,16 @@ mod tests {
   fn test_lint_directory_named_cargo_toml_is_not_treated_as_manifest() {
     // `.is_file()`, not `.exists()` (Fixes #185): a directory that happens
     // to be named `Cargo.toml` must not be mistaken for the manifest.
-    let temp = TempDir::new().unwrap();
+    let temp = tempfile::TempDir::new().unwrap();
     std::fs::create_dir(temp.path().join("Cargo.toml")).unwrap();
 
     let surface = RustSurface;
-    let ctx = test_ctx(temp.path(), ResolvedLangConfig::new("rust"));
+    let ctx =
+      surfaces::test_ctx(temp.path(), config::ResolvedLangConfig::new("rust"));
     let res = surface.lint(&ctx, false);
 
     match res.status {
-      SurfaceStatus::ExecutionError { message } => {
+      surfaces::SurfaceStatus::ExecutionError { message } => {
         assert!(message.contains("No Cargo.toml found"));
       }
       other => panic!(
@@ -455,10 +482,12 @@ mod tests {
     // `.is_file()`, not `.exists()` (Fixes #204): a directory that happens
     // to be named `Cargo.toml` must not be mistaken for the manifest and
     // cause `cargo fmt` to be chosen over bare `rustfmt`.
-    if !check_binary_exists("rustfmt") && !check_binary_exists("cargo") {
+    if !surfaces::check_binary_exists("rustfmt")
+      && !surfaces::check_binary_exists("cargo")
+    {
       return;
     }
-    let temp = TempDir::new().unwrap();
+    let temp = tempfile::TempDir::new().unwrap();
     std::fs::create_dir(temp.path().join("Cargo.toml")).unwrap();
     let src = temp.path().join("src");
     std::fs::create_dir_all(&src).unwrap();
@@ -466,11 +495,12 @@ mod tests {
     std::fs::write(&file, "fn main() {}\n").unwrap();
 
     let surface = RustSurface;
-    let ctx = test_ctx(temp.path(), ResolvedLangConfig::new("rust"));
+    let ctx =
+      surfaces::test_ctx(temp.path(), config::ResolvedLangConfig::new("rust"));
     let res = surface.format(&ctx);
 
     assert!(
-      !matches!(res.status, SurfaceStatus::ExecutionError { .. }),
+      !matches!(res.status, surfaces::SurfaceStatus::ExecutionError { .. }),
       "directory named Cargo.toml must not trigger cargo fmt failure, got: {:?}",
       res.status
     );
@@ -481,10 +511,10 @@ mod tests {
     // A subdirectory of a real crate (Cargo.toml in ancestor) must find
     // the manifest via `find_manifest_upwards` rather than taking the
     // bare-rustfmt fallback (Fixes #204).
-    if !check_binary_exists("cargo") {
+    if !surfaces::check_binary_exists("cargo") {
       return;
     }
-    let temp = TempDir::new().unwrap();
+    let temp = tempfile::TempDir::new().unwrap();
     std::fs::write(
       temp.path().join("Cargo.toml"),
       "[package]\nname = \"test_format_ancestor_crate\"\nversion = \"0.1.0\"\nedition = \"2021\"\n",
@@ -496,11 +526,12 @@ mod tests {
     std::fs::write(&file, "pub fn foo() {}\n").unwrap();
 
     let surface = RustSurface;
-    let ctx = test_ctx(&nested, ResolvedLangConfig::new("rust"));
+    let ctx =
+      surfaces::test_ctx(&nested, config::ResolvedLangConfig::new("rust"));
     let res = surface.format(&ctx);
 
     assert!(
-      !matches!(res.status, SurfaceStatus::ExecutionError { .. }),
+      !matches!(res.status, surfaces::SurfaceStatus::ExecutionError { .. }),
       "ancestor Cargo.toml must be detected for cargo fmt, got: {:?}",
       res.status
     );
@@ -541,9 +572,10 @@ mod tests {
 
   #[test]
   fn test_sync_config_generates_edition_2024() {
-    let temp = TempDir::new().unwrap();
+    let temp = tempfile::TempDir::new().unwrap();
     let surface = RustSurface;
-    let ctx = test_ctx(temp.path(), ResolvedLangConfig::new("rust"));
+    let ctx =
+      surfaces::test_ctx(temp.path(), config::ResolvedLangConfig::new("rust"));
 
     let res = surface.sync_config(&ctx, false);
     assert_eq!(res.status.created_file_names(), [".rustfmt.toml"]);
@@ -559,10 +591,11 @@ mod tests {
     assert!(content.contains("reorder_imports = true"));
 
     // Check mode should pass when file is up-to-date
-    let mut check_ctx = test_ctx(temp.path(), ResolvedLangConfig::new("rust"));
+    let mut check_ctx =
+      surfaces::test_ctx(temp.path(), config::ResolvedLangConfig::new("rust"));
     check_ctx.check_only = true;
     let check_res = surface.sync_config(&check_ctx, true);
-    assert!(matches!(check_res.status, SurfaceStatus::Passed));
+    assert!(matches!(check_res.status, surfaces::SurfaceStatus::Passed));
   }
 
   #[test]
@@ -576,7 +609,7 @@ mod tests {
       reorder_imports: true,
     };
     let rendered = cfg.render().unwrap();
-    assert!(rendered.starts_with(crate::surfaces::AUTO_GENERATED_HEADER));
+    assert!(rendered.starts_with(surfaces::AUTO_GENERATED_HEADER));
     assert!(rendered.contains("tab_spaces = 4"));
     assert!(rendered.contains("max_width = 100"));
     assert!(rendered.contains("newline_style = \"Windows\""));
@@ -586,7 +619,10 @@ mod tests {
 
   #[test]
   fn test_rustfmt_fallback_command_args() {
-    let files = vec![PathBuf::from("src/main.rs"), PathBuf::from("src/lib.rs")];
+    let files = vec![
+      path::PathBuf::from("src/main.rs"),
+      path::PathBuf::from("src/lib.rs"),
+    ];
 
     // check_only = false
     let cmd = build_rustfmt_fallback_cmd("2024", "max_width=80", false, &files);
@@ -660,16 +696,19 @@ mod tests {
   fn test_rust_format_does_not_write_rustfmt_toml() {
     // Fixes #151 [pre-recreation]: `fml fmt` must not write `.rustfmt.toml` as a side effect;
     // only `fml sync` should materialize the native config file.
-    if !check_binary_exists("rustfmt") && !check_binary_exists("cargo") {
+    if !surfaces::check_binary_exists("rustfmt")
+      && !surfaces::check_binary_exists("cargo")
+    {
       return;
     }
-    let temp = TempDir::new().unwrap();
+    let temp = tempfile::TempDir::new().unwrap();
     let src = temp.path().join("src");
     std::fs::create_dir_all(&src).unwrap();
     std::fs::write(src.join("main.rs"), "fn main(){let x=1;}\n").unwrap();
 
     let surface = RustSurface;
-    let ctx = test_ctx(temp.path(), ResolvedLangConfig::new("rust"));
+    let ctx =
+      surfaces::test_ctx(temp.path(), config::ResolvedLangConfig::new("rust"));
     let _ = surface.format(&ctx);
 
     assert!(
@@ -677,11 +716,13 @@ mod tests {
       "fml fmt must not write .rustfmt.toml"
     );
   }
+
   #[test]
   fn test_rust_fallback_edition_without_cargo_toml() {
-    let temp = TempDir::new().unwrap();
+    let temp = tempfile::TempDir::new().unwrap();
     // Without Cargo.toml and without explicit edition in config -> defaults to 2021
-    let ctx = test_ctx(temp.path(), ResolvedLangConfig::new("rust"));
+    let ctx =
+      surfaces::test_ctx(temp.path(), config::ResolvedLangConfig::new("rust"));
     let edition = ctx
       .lang_config
       .rust
@@ -692,8 +733,8 @@ mod tests {
 
     // With explicit edition in config -> resolves to configured edition
     let mut ctx_configured =
-      test_ctx(temp.path(), ResolvedLangConfig::new("rust"));
-    ctx_configured.lang_config.rust = Some(crate::config::RustOptions {
+      surfaces::test_ctx(temp.path(), config::ResolvedLangConfig::new("rust"));
+    ctx_configured.lang_config.rust = Some(config::RustOptions {
       edition: Some("2018".to_string()),
     });
     let edition_configured = ctx_configured
@@ -704,12 +745,15 @@ mod tests {
       .unwrap_or("2021");
     assert_eq!(edition_configured, "2018");
   }
+
   #[test]
   fn test_rust_format_reorders_imports() {
-    if !check_binary_exists("rustfmt") && !check_binary_exists("cargo") {
+    if !surfaces::check_binary_exists("rustfmt")
+      && !surfaces::check_binary_exists("cargo")
+    {
       return;
     }
-    let temp = TempDir::new().unwrap();
+    let temp = tempfile::TempDir::new().unwrap();
     let src = temp.path().join("src");
     std::fs::create_dir_all(&src).unwrap();
     let file = src.join("main.rs");
@@ -717,9 +761,10 @@ mod tests {
     std::fs::write(&file, unformatted).unwrap();
 
     let surface = RustSurface;
-    let ctx_fix = test_ctx(temp.path(), ResolvedLangConfig::new("rust"));
+    let ctx_fix =
+      surfaces::test_ctx(temp.path(), config::ResolvedLangConfig::new("rust"));
     let fix_res = surface.format(&ctx_fix);
-    assert!(matches!(fix_res.status, SurfaceStatus::Passed));
+    assert!(matches!(fix_res.status, surfaces::SurfaceStatus::Passed));
 
     let formatted = std::fs::read_to_string(&file).unwrap();
     let hashmap_idx = formatted.find("use std::collections::HashMap;").unwrap();

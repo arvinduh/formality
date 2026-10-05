@@ -1,31 +1,35 @@
-//! Typst language surface: formats via `typstyle`. Typst has no lint tool or
-//! managed native config file in this crate today, so this surface only
-//! implements formatting.
+//! Typst language surface: formats via `typstyle`.
+//!
+//! Implements `super::LanguageSurface` for Typst. Structured LSP diagnostics
+//! are owned by `crate::commands::lsp_diagnostics`.
 
-use super::tooling::no_native_config;
-use super::{
-  DeclaresFacets, ExecutionContext, Facet, FacetSupport, LanguageSurface,
-  SurfaceResult, ToolInfo, create_tool_command, diff_check_via_tempcopy,
-  lint_fix_unsupported, run_tool_command, tool_missing_guard,
-};
-use std::path::Path;
-use std::time::Instant;
+use std::path;
+use std::time;
+
+use crate::config;
+use crate::config::facets;
+use crate::config::facets::DeclaresFacets;
+use crate::surfaces;
+use crate::surfaces::LanguageSurface;
+use crate::surfaces::tooling;
 
 /// Typst language surface implementation.
 #[derive(Debug, Default, Clone, Copy)]
 pub struct TypstSurface;
 
 impl DeclaresFacets for TypstSurface {
-  fn facet_support(&self, facet: Facet) -> FacetSupport {
+  fn facet_support(&self, facet: facets::Facet) -> facets::FacetSupport {
     match facet {
-      Facet::IndentTabs => FacetSupport::Fixed("spaces"),
-      Facet::IndentWidth | Facet::LineLength => FacetSupport::Configurable,
-      Facet::QuoteStyle
-      | Facet::TrailingComma
-      | Facet::ImportSort
-      | Facet::ProseWrap
-      | Facet::Edition
-      | Facet::Standard => FacetSupport::Unsupported,
+      facets::Facet::IndentTabs => facets::FacetSupport::Fixed("spaces"),
+      facets::Facet::IndentWidth | facets::Facet::LineLength => {
+        facets::FacetSupport::Configurable
+      }
+      facets::Facet::QuoteStyle
+      | facets::Facet::TrailingComma
+      | facets::Facet::ImportSort
+      | facets::Facet::ProseWrap
+      | facets::Facet::Edition
+      | facets::Facet::Standard => facets::FacetSupport::Unsupported,
     }
   }
 }
@@ -46,7 +50,10 @@ const TYPST_EXTENSIONS: &[&str] = &["typ"];
 /// scratch path (the caller discards it) since `compile` always needs
 /// somewhere to write, even when only the diagnostics are wanted.
 #[must_use]
-pub fn build_typst_check_args(file: &Path, output: &Path) -> Vec<String> {
+pub fn build_typst_check_args(
+  file: &path::Path,
+  output: &path::Path,
+) -> Vec<String> {
   vec![
     "compile".to_string(),
     "--diagnostic-format".to_string(),
@@ -81,9 +88,9 @@ impl LanguageSurface for TypstSurface {
 
   fn tool_info(
     &self,
-    _config: &crate::config::ResolvedLangConfig,
-  ) -> Vec<ToolInfo> {
-    vec![ToolInfo {
+    _config: &config::ResolvedLangConfig,
+  ) -> Vec<surfaces::ToolInfo> {
+    vec![surfaces::ToolInfo {
       binary: "typstyle",
       description: "Beautiful and reliable code formatter for Typst",
       install_hint: None,
@@ -92,10 +99,14 @@ impl LanguageSurface for TypstSurface {
     }]
   }
 
-  fn format(&self, ctx: &ExecutionContext) -> SurfaceResult {
-    let start = Instant::now();
+  fn format(
+    &self,
+    ctx: &surfaces::ExecutionContext,
+  ) -> surfaces::SurfaceResult {
+    let start = time::Instant::now();
 
-    if let Some(res) = tool_missing_guard(self.name(), "typstyle", start, None)
+    if let Some(res) =
+      surfaces::tool_missing_guard(self.name(), "typstyle", start, None)
     {
       return res;
     }
@@ -106,10 +117,10 @@ impl LanguageSurface for TypstSurface {
     }
 
     if ctx.check_only {
-      return diff_check_via_tempcopy(
+      return surfaces::diff_check_via_tempcopy(
         &files,
         |scratch| {
-          let mut cmd = create_tool_command("typstyle");
+          let mut cmd = surfaces::create_tool_command("typstyle");
           cmd
             .arg("--column")
             .arg(ctx.lang_config.line_length.to_string())
@@ -124,7 +135,7 @@ impl LanguageSurface for TypstSurface {
       );
     }
 
-    let mut cmd = create_tool_command("typstyle");
+    let mut cmd = surfaces::create_tool_command("typstyle");
     cmd
       .arg("--column")
       .arg(ctx.lang_config.line_length.to_string())
@@ -137,14 +148,18 @@ impl LanguageSurface for TypstSurface {
     cmd.args(ctx.lang_config.tool_args("typstyle"));
     cmd.current_dir(ctx.root.as_path());
 
-    run_tool_command(self.name(), &mut cmd)
+    surfaces::run_tool_command(self.name(), &mut cmd)
   }
 
-  fn lint(&self, ctx: &ExecutionContext, fix: bool) -> SurfaceResult {
-    let start = Instant::now();
+  fn lint(
+    &self,
+    ctx: &surfaces::ExecutionContext,
+    fix: bool,
+  ) -> surfaces::SurfaceResult {
+    let start = time::Instant::now();
 
     if fix {
-      return lint_fix_unsupported(self.name(), start);
+      return surfaces::lint_fix_unsupported(self.name(), start);
     }
 
     // Typstyle check serves as format validation & syntax check
@@ -155,12 +170,12 @@ impl LanguageSurface for TypstSurface {
 
   fn sync_config(
     &self,
-    _ctx: &ExecutionContext,
+    _ctx: &surfaces::ExecutionContext,
     _check: bool,
-  ) -> SurfaceResult {
+  ) -> surfaces::SurfaceResult {
     // typstyle is configured via CLI flags (--column) at invocation time;
     // there is no separate config file to generate or verify.
-    no_native_config(
+    tooling::no_native_config(
       self.name(),
       "No config file (settings applied via CLI flags)",
     )
@@ -170,15 +185,14 @@ impl LanguageSurface for TypstSurface {
 #[cfg(test)]
 mod tests {
   use super::*;
-  use crate::config::ResolvedLangConfig;
-  use crate::surfaces::{SurfaceStatus, check_binary_exists, test_ctx};
-  use tempfile::TempDir;
+  use crate::config;
+  use crate::surfaces;
 
   #[test]
   fn test_build_typst_check_args() {
     let args = build_typst_check_args(
-      Path::new("bad.typ"),
-      Path::new("/tmp/scratch/out.pdf"),
+      path::Path::new("bad.typ"),
+      path::Path::new("/tmp/scratch/out.pdf"),
     );
     assert_eq!(
       args,
@@ -205,17 +219,17 @@ mod tests {
   #[test]
   fn test_typst_surface_detect() {
     let surface = TypstSurface;
-    let temp = TempDir::new().unwrap();
-    assert!(!crate::surfaces::detect_in(&surface, temp.path()));
+    let temp = tempfile::TempDir::new().unwrap();
+    assert!(!surfaces::detect_in(&surface, temp.path()));
 
     std::fs::write(temp.path().join("main.typ"), "= Title").unwrap();
-    assert!(crate::surfaces::detect_in(&surface, temp.path()));
+    assert!(surfaces::detect_in(&surface, temp.path()));
   }
 
   #[test]
   fn test_typst_tool_info() {
     let surface = TypstSurface;
-    let tools = surface.tool_info(&ResolvedLangConfig::new("typst"));
+    let tools = surface.tool_info(&config::ResolvedLangConfig::new("typst"));
     assert_eq!(tools.len(), 1);
     assert_eq!(tools[0].binary, "typstyle");
     assert!(tools[0].is_required_for_fmt);
@@ -224,15 +238,19 @@ mod tests {
 
   #[test]
   fn test_typst_format_empty_project_passes_or_tool_missing() {
-    let temp = TempDir::new().unwrap();
+    let temp = tempfile::TempDir::new().unwrap();
     let surface = TypstSurface;
-    let ctx = test_ctx(temp.path(), ResolvedLangConfig::new("typst"));
+    let ctx =
+      surfaces::test_ctx(temp.path(), config::ResolvedLangConfig::new("typst"));
 
     let res = surface.format(&ctx);
-    if check_binary_exists("typstyle") {
-      assert!(matches!(res.status, SurfaceStatus::Passed));
+    if surfaces::check_binary_exists("typstyle") {
+      assert!(matches!(res.status, surfaces::SurfaceStatus::Passed));
     } else {
-      assert!(matches!(res.status, SurfaceStatus::ToolMissing { .. }));
+      assert!(matches!(
+        res.status,
+        surfaces::SurfaceStatus::ToolMissing { .. }
+      ));
     }
   }
 
@@ -241,23 +259,31 @@ mod tests {
     // typstyle has no separate autofix-capable linter; lint(fix=true) must
     // be a no-op Skipped, matching every other CLI-only formatter surface
     // (JSON, and typstyle's own "no autofix linter" contract).
-    let temp = TempDir::new().unwrap();
+    let temp = tempfile::TempDir::new().unwrap();
     let surface = TypstSurface;
-    let ctx = test_ctx(temp.path(), ResolvedLangConfig::new("typst"));
+    let ctx =
+      surfaces::test_ctx(temp.path(), config::ResolvedLangConfig::new("typst"));
     let res = surface.lint(&ctx, true);
-    assert!(matches!(res.status, SurfaceStatus::Skipped { .. }));
+    assert!(matches!(
+      res.status,
+      surfaces::SurfaceStatus::Skipped { .. }
+    ));
   }
 
   #[test]
   fn test_typst_lint_delegates_to_format_check() {
-    let temp = TempDir::new().unwrap();
+    let temp = tempfile::TempDir::new().unwrap();
     let surface = TypstSurface;
-    let ctx = test_ctx(temp.path(), ResolvedLangConfig::new("typst"));
+    let ctx =
+      surfaces::test_ctx(temp.path(), config::ResolvedLangConfig::new("typst"));
     let res = surface.lint(&ctx, false);
-    if check_binary_exists("typstyle") {
-      assert!(matches!(res.status, SurfaceStatus::Passed));
+    if surfaces::check_binary_exists("typstyle") {
+      assert!(matches!(res.status, surfaces::SurfaceStatus::Passed));
     } else {
-      assert!(matches!(res.status, SurfaceStatus::ToolMissing { .. }));
+      assert!(matches!(
+        res.status,
+        surfaces::SurfaceStatus::ToolMissing { .. }
+      ));
     }
   }
 
@@ -266,11 +292,15 @@ mod tests {
     // Unlike every other surface, Typst has no native config file to sync
     // (typstyle takes its settings as CLI flags) — sync_config must report
     // Skipped rather than ConfigSynced, and must not write any file.
-    let temp = TempDir::new().unwrap();
+    let temp = tempfile::TempDir::new().unwrap();
     let surface = TypstSurface;
-    let ctx = test_ctx(temp.path(), ResolvedLangConfig::new("typst"));
+    let ctx =
+      surfaces::test_ctx(temp.path(), config::ResolvedLangConfig::new("typst"));
     let res = surface.sync_config(&ctx, false);
-    assert!(matches!(res.status, SurfaceStatus::Skipped { .. }));
+    assert!(matches!(
+      res.status,
+      surfaces::SurfaceStatus::Skipped { .. }
+    ));
 
     let entries: Vec<_> = std::fs::read_dir(temp.path()).unwrap().collect();
     assert!(entries.is_empty(), "sync_config must not write any file");
@@ -284,40 +314,40 @@ mod tests {
     // Unsupported (everything else).
     let surface = TypstSurface;
     assert_eq!(
-      surface.facet_support(Facet::IndentTabs),
-      FacetSupport::Fixed("spaces")
+      surface.facet_support(facets::Facet::IndentTabs),
+      facets::FacetSupport::Fixed("spaces")
     );
     assert_eq!(
-      surface.facet_support(Facet::IndentWidth),
-      FacetSupport::Configurable
+      surface.facet_support(facets::Facet::IndentWidth),
+      facets::FacetSupport::Configurable
     );
     assert_eq!(
-      surface.facet_support(Facet::LineLength),
-      FacetSupport::Configurable
+      surface.facet_support(facets::Facet::LineLength),
+      facets::FacetSupport::Configurable
     );
     assert_eq!(
-      surface.facet_support(Facet::QuoteStyle),
-      FacetSupport::Unsupported
+      surface.facet_support(facets::Facet::QuoteStyle),
+      facets::FacetSupport::Unsupported
     );
     assert_eq!(
-      surface.facet_support(Facet::TrailingComma),
-      FacetSupport::Unsupported
+      surface.facet_support(facets::Facet::TrailingComma),
+      facets::FacetSupport::Unsupported
     );
     assert_eq!(
-      surface.facet_support(Facet::ImportSort),
-      FacetSupport::Unsupported
+      surface.facet_support(facets::Facet::ImportSort),
+      facets::FacetSupport::Unsupported
     );
     assert_eq!(
-      surface.facet_support(Facet::ProseWrap),
-      FacetSupport::Unsupported
+      surface.facet_support(facets::Facet::ProseWrap),
+      facets::FacetSupport::Unsupported
     );
     assert_eq!(
-      surface.facet_support(Facet::Edition),
-      FacetSupport::Unsupported
+      surface.facet_support(facets::Facet::Edition),
+      facets::FacetSupport::Unsupported
     );
     assert_eq!(
-      surface.facet_support(Facet::Standard),
-      FacetSupport::Unsupported
+      surface.facet_support(facets::Facet::Standard),
+      facets::FacetSupport::Unsupported
     );
   }
 }

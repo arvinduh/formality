@@ -1,20 +1,23 @@
-//! YAML language surface: formats via `prettier` and lints via `yamllint`,
-//! syncing the managed `.yamllint.yaml` from `formality.toml`.
+//! YAML language surface: formats via Prettier and lints via yamllint.
+//!
+//! Implements `super::LanguageSurface` for YAML, syncing `.yamllint.yaml`.
+//! Fleet registration is owned by `super::registry`.
 
-use super::{
-  DeclaresFacets, ExecutionContext, Facet, FacetSupport, LanguageSurface,
-  NativeConfig, PrettierConfig, SurfaceResult, ToolInfo,
-  build_prettier_inline_args, classify_all_nonzero_as_error,
-  create_tool_command, diff_check_via_tempcopy_classified,
-  lint_fix_unsupported, render_native_config, run_tool_command,
-  run_tool_command_classified, sync_native_config, tool_missing_guard,
-};
-use serde::{Deserialize, Serialize};
-use std::path::Path;
-use std::time::Instant;
+use std::path;
+use std::time;
+
+use serde;
+use serde_yaml;
+
+use crate::config;
+use crate::config::facets;
+use crate::config::facets::DeclaresFacets;
+use crate::surfaces;
+use crate::surfaces::LanguageSurface;
+use crate::surfaces::NativeConfig;
 
 /// Toggle state enum for yamllint rules (`"enable"` or `"disable"`).
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "lowercase")]
 pub enum YamllintRuleToggle {
   /// Enable rule.
@@ -24,14 +27,14 @@ pub enum YamllintRuleToggle {
 }
 
 /// Line length rule parameters for yamllint.
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize, PartialEq, Eq)]
 pub struct YamllintLineLengthRule {
   /// Maximum line length limit.
   pub max: usize,
 }
 
 /// Indentation rule parameters for yamllint.
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize, PartialEq, Eq)]
 pub struct YamllintIndentationRule {
   /// Number of spaces per indent level.
   pub spaces: usize,
@@ -41,7 +44,7 @@ pub struct YamllintIndentationRule {
 }
 
 /// Rules configuration subsection for `.yamllint.yaml`.
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize, PartialEq, Eq)]
 pub struct YamllintRulesConfig {
   /// Line length rule options.
   #[serde(rename = "line-length")]
@@ -56,7 +59,7 @@ pub struct YamllintRulesConfig {
 }
 
 /// Native `.yamllint.yaml` configuration representation for YAML linting.
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize, PartialEq, Eq)]
 pub struct YamllintConfig {
   /// Parent configuration preset name to extend.
   pub extends: String,
@@ -67,7 +70,7 @@ pub struct YamllintConfig {
 impl NativeConfig for YamllintConfig {
   const FILE_NAME: &'static str = ".yamllint.yaml";
 
-  fn from_context(ctx: &ExecutionContext) -> Self {
+  fn from_context(ctx: &surfaces::ExecutionContext) -> Self {
     let yaml_opts = ctx.lang_config.yaml.as_ref();
     let indent_sequences =
       yaml_opts.and_then(|y| y.indent_sequence).unwrap_or(true);
@@ -97,7 +100,7 @@ impl NativeConfig for YamllintConfig {
   }
 
   fn render(&self) -> Result<String, crate::errors::FormalityError> {
-    render_native_config(self)
+    surfaces::render_native_config(self)
   }
 }
 
@@ -124,7 +127,7 @@ pub fn build_yamllint_inline_config(cfg: &YamllintConfig) -> String {
 /// `formality.toml` settings — the same known simplification noted in this
 /// module's callers (see `lsp_diagnostics.rs` module docs).
 #[must_use]
-pub fn build_yamllint_parsable_args(file: &Path) -> Vec<String> {
+pub fn build_yamllint_parsable_args(file: &path::Path) -> Vec<String> {
   vec![
     "-f".to_string(),
     "parsable".to_string(),
@@ -137,17 +140,17 @@ pub fn build_yamllint_parsable_args(file: &Path) -> Vec<String> {
 pub struct YamlSurface;
 
 impl DeclaresFacets for YamlSurface {
-  fn facet_support(&self, facet: Facet) -> FacetSupport {
+  fn facet_support(&self, facet: facets::Facet) -> facets::FacetSupport {
     match facet {
-      Facet::IndentTabs => FacetSupport::Fixed("spaces"),
-      Facet::IndentWidth
-      | Facet::LineLength
-      | Facet::QuoteStyle
-      | Facet::ProseWrap => FacetSupport::Configurable,
-      Facet::TrailingComma
-      | Facet::ImportSort
-      | Facet::Edition
-      | Facet::Standard => FacetSupport::Unsupported,
+      facets::Facet::IndentTabs => facets::FacetSupport::Fixed("spaces"),
+      facets::Facet::IndentWidth
+      | facets::Facet::LineLength
+      | facets::Facet::QuoteStyle
+      | facets::Facet::ProseWrap => facets::FacetSupport::Configurable,
+      facets::Facet::TrailingComma
+      | facets::Facet::ImportSort
+      | facets::Facet::Edition
+      | facets::Facet::Standard => facets::FacetSupport::Unsupported,
     }
   }
 }
@@ -181,17 +184,17 @@ impl LanguageSurface for YamlSurface {
 
   fn tool_info(
     &self,
-    _config: &crate::config::ResolvedLangConfig,
-  ) -> Vec<ToolInfo> {
+    _config: &config::ResolvedLangConfig,
+  ) -> Vec<surfaces::ToolInfo> {
     vec![
-      ToolInfo {
+      surfaces::ToolInfo {
         binary: "prettier",
         description: "YAML formatter",
         install_hint: None,
         is_required_for_fmt: true,
         is_required_for_lint: false,
       },
-      ToolInfo {
+      surfaces::ToolInfo {
         binary: "yamllint",
         description: "YAML linter",
         install_hint: None,
@@ -201,10 +204,14 @@ impl LanguageSurface for YamlSurface {
     ]
   }
 
-  fn format(&self, ctx: &ExecutionContext) -> SurfaceResult {
-    let start = Instant::now();
+  fn format(
+    &self,
+    ctx: &surfaces::ExecutionContext,
+  ) -> surfaces::SurfaceResult {
+    let start = time::Instant::now();
 
-    if let Some(res) = tool_missing_guard(self.name(), "prettier", start, None)
+    if let Some(res) =
+      surfaces::tool_missing_guard(self.name(), "prettier", start, None)
     {
       return res;
     }
@@ -217,14 +224,15 @@ impl LanguageSurface for YamlSurface {
     // Inline `--tab-width`/`--print-width`/etc. instead of writing
     // `.prettierrc.json` to disk — see `build_prettier_inline_args` (Fixes
     // #151 [pre-recreation]). `fml sync` remains the only path that materializes the file.
-    let inline_config =
-      build_prettier_inline_args(&PrettierConfig::from_context(ctx));
+    let inline_config = surfaces::build_prettier_inline_args(
+      &surfaces::PrettierConfig::from_context(ctx),
+    );
 
     if ctx.check_only {
-      return diff_check_via_tempcopy_classified(
+      return surfaces::diff_check_via_tempcopy_classified(
         &files,
         |scratch| {
-          let mut cmd = create_tool_command("prettier");
+          let mut cmd = surfaces::create_tool_command("prettier");
           cmd
             .arg("--write")
             .arg("--parser")
@@ -237,11 +245,11 @@ impl LanguageSurface for YamlSurface {
         },
         self.name(),
         start,
-        classify_all_nonzero_as_error,
+        surfaces::classify_all_nonzero_as_error,
       );
     }
 
-    let mut cmd = create_tool_command("prettier");
+    let mut cmd = surfaces::create_tool_command("prettier");
     cmd.arg("--write");
     cmd.args(&inline_config);
 
@@ -257,21 +265,26 @@ impl LanguageSurface for YamlSurface {
     // — never `1`, which is `--check`-only. So every non-zero exit here is
     // a tool failure (`ExecutionError`), not formatting drift, and the
     // `--check` path above classifies identically (Fixes #107).
-    run_tool_command_classified(
+    surfaces::run_tool_command_classified(
       self.name(),
       &mut cmd,
-      classify_all_nonzero_as_error,
+      surfaces::classify_all_nonzero_as_error,
     )
   }
 
-  fn lint(&self, ctx: &ExecutionContext, fix: bool) -> SurfaceResult {
-    let start = Instant::now();
+  fn lint(
+    &self,
+    ctx: &surfaces::ExecutionContext,
+    fix: bool,
+  ) -> surfaces::SurfaceResult {
+    let start = time::Instant::now();
 
     if fix {
-      return lint_fix_unsupported(self.name(), start);
+      return surfaces::lint_fix_unsupported(self.name(), start);
     }
 
-    if let Some(res) = tool_missing_guard(self.name(), "yamllint", start, None)
+    if let Some(res) =
+      surfaces::tool_missing_guard(self.name(), "yamllint", start, None)
     {
       return res;
     }
@@ -287,7 +300,7 @@ impl LanguageSurface for YamlSurface {
     let inline_config =
       build_yamllint_inline_config(&YamllintConfig::from_context(ctx));
 
-    let mut cmd = create_tool_command("yamllint");
+    let mut cmd = surfaces::create_tool_command("yamllint");
     cmd.arg("-d").arg(&inline_config);
     if !ctx.paths.is_empty()
       || !ctx.lang_config.files.is_empty()
@@ -303,7 +316,7 @@ impl LanguageSurface for YamlSurface {
     cmd.args(ctx.lang_config.tool_args("yamllint"));
     cmd.current_dir(ctx.root.as_path());
 
-    run_tool_command(self.name(), &mut cmd)
+    surfaces::run_tool_command(self.name(), &mut cmd)
   }
 
   fn uses_prettier(&self) -> bool {
@@ -323,11 +336,15 @@ impl LanguageSurface for YamlSurface {
   // the JSON and Markdown surfaces and has exactly one writer, the shared
   // pass `sync_shared_prettier_config` (#130). `uses_prettier` above is this
   // surface's declaration that it consumes that file.
-  fn sync_config(&self, ctx: &ExecutionContext, check: bool) -> SurfaceResult {
-    sync_native_config::<YamllintConfig>(
+  fn sync_config(
+    &self,
+    ctx: &surfaces::ExecutionContext,
+    check: bool,
+  ) -> surfaces::SurfaceResult {
+    surfaces::sync_native_config::<YamllintConfig>(
       ctx,
       check,
-      Instant::now(),
+      time::Instant::now(),
       self.name(),
     )
   }
@@ -336,9 +353,6 @@ impl LanguageSurface for YamlSurface {
 #[cfg(test)]
 mod tests {
   use super::*;
-  use crate::config::ResolvedLangConfig;
-  use crate::surfaces::{check_binary_exists, test_ctx};
-  use tempfile::TempDir;
 
   #[test]
   fn test_yamllint_config_typed_serialization() {
@@ -355,7 +369,7 @@ mod tests {
       },
     };
     let rendered = cfg.render().unwrap();
-    assert!(rendered.starts_with(crate::surfaces::AUTO_GENERATED_HEADER));
+    assert!(rendered.starts_with(surfaces::AUTO_GENERATED_HEADER));
     assert!(rendered.contains("extends: default"));
     assert!(rendered.contains("line-length:"));
     assert!(rendered.contains("max: 120"));
@@ -367,7 +381,7 @@ mod tests {
 
   #[test]
   fn test_build_yamllint_parsable_args() {
-    let args = build_yamllint_parsable_args(Path::new("config/app.yaml"));
+    let args = build_yamllint_parsable_args(path::Path::new("config/app.yaml"));
     assert_eq!(
       args,
       vec![
@@ -380,8 +394,9 @@ mod tests {
 
   #[test]
   fn test_yamllint_config_from_context_rules_disabled_by_default() {
-    let temp = TempDir::new().unwrap();
-    let ctx = test_ctx(temp.path(), ResolvedLangConfig::new("yaml"));
+    let temp = tempfile::TempDir::new().unwrap();
+    let ctx =
+      surfaces::test_ctx(temp.path(), config::ResolvedLangConfig::new("yaml"));
     let cfg = YamllintConfig::from_context(&ctx);
     assert_eq!(cfg.rules.document_start, YamllintRuleToggle::Disable);
     assert_eq!(cfg.rules.truthy, YamllintRuleToggle::Disable);
@@ -395,15 +410,15 @@ mod tests {
 
   #[test]
   fn test_yamllint_config_from_context_rules_enabled() {
-    let temp = TempDir::new().unwrap();
-    let mut lang_cfg = ResolvedLangConfig::new("yaml");
-    lang_cfg.yaml = Some(crate::config::YamlOptions {
+    let temp = tempfile::TempDir::new().unwrap();
+    let mut lang_cfg = config::ResolvedLangConfig::new("yaml");
+    lang_cfg.yaml = Some(config::YamlOptions {
       indent_sequence: Some(false),
       document_start: Some(true),
       truthy: Some(true),
     });
 
-    let ctx = test_ctx(temp.path(), lang_cfg);
+    let ctx = surfaces::test_ctx(temp.path(), lang_cfg);
     let cfg = YamllintConfig::from_context(&ctx);
     assert_eq!(cfg.rules.document_start, YamllintRuleToggle::Enable);
     assert_eq!(cfg.rules.truthy, YamllintRuleToggle::Enable);
@@ -417,18 +432,18 @@ mod tests {
 
   #[test]
   fn test_yaml_sync_config_writes_yamllint_config() {
-    let temp = TempDir::new().unwrap();
+    let temp = tempfile::TempDir::new().unwrap();
     let surface = YamlSurface;
-    let mut lang_cfg = ResolvedLangConfig::new("yaml");
+    let mut lang_cfg = config::ResolvedLangConfig::new("yaml");
     lang_cfg.line_length = 100;
     lang_cfg.indent_size = 4;
-    lang_cfg.yaml = Some(crate::config::YamlOptions {
+    lang_cfg.yaml = Some(config::YamlOptions {
       indent_sequence: Some(false),
       document_start: Some(true),
       truthy: Some(true),
     });
 
-    let ctx = test_ctx(temp.path(), lang_cfg);
+    let ctx = surfaces::test_ctx(temp.path(), lang_cfg);
 
     let res = surface.sync_config(&ctx, false);
     // Fixes #130: the file this surface writes is named in its result, and
@@ -441,7 +456,7 @@ mod tests {
     let yamllint_path = temp.path().join(".yamllint.yaml");
     assert!(yamllint_path.is_file());
     let content = std::fs::read_to_string(&yamllint_path).unwrap();
-    assert!(content.starts_with(crate::surfaces::AUTO_GENERATED_HEADER));
+    assert!(content.starts_with(surfaces::AUTO_GENERATED_HEADER));
     assert!(content.contains("extends: default"));
     assert!(content.contains("max: 100"));
     assert!(content.contains("spaces: 4"));
@@ -467,7 +482,7 @@ mod tests {
     let inline = build_yamllint_inline_config(&cfg);
     assert!(inline.contains("max: 120"));
     assert!(inline.contains("spaces: 4"));
-    assert!(!inline.starts_with(crate::surfaces::AUTO_GENERATED_HEADER));
+    assert!(!inline.starts_with(surfaces::AUTO_GENERATED_HEADER));
   }
 
   #[test]
@@ -475,16 +490,17 @@ mod tests {
     // Fixes #151 [pre-recreation]: `fml fmt`/`fml lint` must not write `.prettierrc.json` or
     // `.yamllint.yaml` as a side effect; only `fml sync` writes those files
     // (see `sync_config`, Fixes #158 [pre-recreation]).
-    let temp = TempDir::new().unwrap();
+    let temp = tempfile::TempDir::new().unwrap();
     std::fs::write(temp.path().join("a.yaml"), "a: 1\n").unwrap();
 
     let surface = YamlSurface;
-    let ctx = test_ctx(temp.path(), ResolvedLangConfig::new("yaml"));
+    let ctx =
+      surfaces::test_ctx(temp.path(), config::ResolvedLangConfig::new("yaml"));
 
-    if check_binary_exists("prettier") {
+    if surfaces::check_binary_exists("prettier") {
       let _ = surface.format(&ctx);
     }
-    if check_binary_exists("yamllint") {
+    if surfaces::check_binary_exists("yamllint") {
       let _ = surface.lint(&ctx, false);
     }
 

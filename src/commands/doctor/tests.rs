@@ -1,11 +1,10 @@
 use super::*;
-use crate::ui::table::strip_ansi_escapes;
-use std::path::Path;
-use tempfile::tempdir;
+use crate::ui::table;
+use std::path;
 
 #[test]
 fn test_detect_virtualenv_from_env_var() {
-  let temp = tempdir().unwrap();
+  let temp = tempfile::tempdir().unwrap();
   let mock_venv = temp.path().join("custom_venv");
   std::fs::create_dir_all(&mock_venv).unwrap();
 
@@ -18,7 +17,7 @@ fn test_detect_virtualenv_from_env_var() {
 #[test]
 fn test_detect_virtualenv_from_workspace_dirs() {
   for dir_name in &[".venv", "venv", "env", ".env"] {
-    let temp = tempdir().unwrap();
+    let temp = tempfile::tempdir().unwrap();
     let venv_dir = temp.path().join(dir_name);
     std::fs::create_dir_all(&venv_dir).unwrap();
 
@@ -34,7 +33,7 @@ fn test_detect_virtualenv_from_workspace_dirs() {
 
 #[test]
 fn test_detect_virtualenv_precedence() {
-  let temp = tempdir().unwrap();
+  let temp = tempfile::tempdir().unwrap();
   let dot_venv = temp.path().join(".venv");
   let venv = temp.path().join("venv");
   std::fs::create_dir_all(&dot_venv).unwrap();
@@ -50,7 +49,7 @@ fn test_detect_virtualenv_precedence() {
 
 #[test]
 fn test_detect_virtualenv_none() {
-  let temp = tempdir().unwrap();
+  let temp = tempfile::tempdir().unwrap();
   let info = detect_virtualenv_with_env(temp.path(), None);
   assert!(!info.is_active);
   assert_eq!(info.venv_path, None);
@@ -59,7 +58,7 @@ fn test_detect_virtualenv_none() {
 
 #[test]
 fn test_find_venv_interpreter() {
-  let temp = tempdir().unwrap();
+  let temp = tempfile::tempdir().unwrap();
   let bin_dir = temp.path().join("bin");
   std::fs::create_dir_all(&bin_dir).unwrap();
   let python_bin = bin_dir.join("python");
@@ -253,8 +252,8 @@ fn test_lookup_tool_info_clippy_live_probe() {
 fn test_stale_unpinnable_explanation() {
   let expl = stale_unpinnable_explanation(
     "prettier",
-    &Version::new(3, 8, 1),
-    &Version::new(3, 9, 6),
+    &version::Version::new(3, 8, 1),
+    &version::Version::new(3, 9, 6),
   );
   assert!(expl.contains("prettier is stale (v3.8.1 != pinned v3.9.6)"));
   assert!(expl.contains("can't pin to v3.9.6"));
@@ -264,8 +263,8 @@ fn test_stale_unpinnable_explanation() {
 #[test]
 fn test_pinned_version_for_golangci_lint() {
   assert_eq!(
-    pinned_version_for("golangci-lint"),
-    Some(Version::new(2, 13, 2))
+    surfaces::pinned_version_for("golangci-lint"),
+    Some(version::Version::new(2, 13, 2))
   );
 }
 
@@ -276,12 +275,12 @@ fn test_scan_tools_and_build_table_surfaces_unprobeable_status_not_ready() {
     bin: &'static str,
   }
 
-  impl crate::config::facets::DeclaresFacets for UnprobeableSurface {
+  impl config::facets::DeclaresFacets for UnprobeableSurface {
     fn facet_support(
       &self,
-      _facet: crate::config::facets::Facet,
-    ) -> crate::config::facets::FacetSupport {
-      crate::config::facets::FacetSupport::Unsupported
+      _facet: config::facets::Facet,
+    ) -> config::facets::FacetSupport {
+      config::facets::FacetSupport::Unsupported
     }
   }
 
@@ -291,16 +290,16 @@ fn test_scan_tools_and_build_table_surfaces_unprobeable_status_not_ready() {
     }
     fn detect(
       &self,
-      _: &Path,
-      _: &crate::surfaces::glob::PresentExtensions,
+      _: &path::Path,
+      _: &surfaces::glob::PresentExtensions,
     ) -> bool {
       true
     }
     fn tool_info(
       &self,
-      _resolved: &crate::config::ResolvedLangConfig,
-    ) -> Vec<ToolInfo> {
-      vec![ToolInfo {
+      _resolved: &config::ResolvedLangConfig,
+    ) -> Vec<surfaces::ToolInfo> {
+      vec![surfaces::ToolInfo {
         binary: self.bin,
         description: "Mock Unprobeable Binary",
         install_hint: Some("Cannot install"),
@@ -310,22 +309,22 @@ fn test_scan_tools_and_build_table_surfaces_unprobeable_status_not_ready() {
     }
     fn format(
       &self,
-      _ctx: &crate::surfaces::ExecutionContext,
-    ) -> crate::surfaces::SurfaceResult {
+      _ctx: &surfaces::ExecutionContext,
+    ) -> surfaces::SurfaceResult {
       unimplemented!()
     }
     fn lint(
       &self,
-      _ctx: &crate::surfaces::ExecutionContext,
+      _ctx: &surfaces::ExecutionContext,
       _fix: bool,
-    ) -> crate::surfaces::SurfaceResult {
+    ) -> surfaces::SurfaceResult {
       unimplemented!()
     }
     fn sync_config(
       &self,
-      _ctx: &crate::surfaces::ExecutionContext,
+      _ctx: &surfaces::ExecutionContext,
       _check: bool,
-    ) -> crate::surfaces::SurfaceResult {
+    ) -> surfaces::SurfaceResult {
       unimplemented!()
     }
     fn clone_box(&self) -> Box<dyn LanguageSurface> {
@@ -341,15 +340,15 @@ fn test_scan_tools_and_build_table_surfaces_unprobeable_status_not_ready() {
 
   let surfaces: Vec<Box<dyn LanguageSurface>> =
     vec![Box::new(UnprobeableSurface { bin: binary_name })];
-  let config = FormalityConfig::default();
+  let config = config::FormalityConfig::default();
 
   let present = std::cell::LazyCell::new(|| {
-    crate::surfaces::glob::PresentExtensions::from_paths(&[])
+    surfaces::glob::PresentExtensions::from_paths(&[])
   });
   let scan = scan_tools_and_build_table(
-    Path::new("."),
+    path::Path::new("."),
     &surfaces,
-    &HashSet::new(),
+    &collections::HashSet::new(),
     &present,
     &config,
   );
@@ -360,7 +359,7 @@ fn test_scan_tools_and_build_table_surfaces_unprobeable_status_not_ready() {
   assert!(scan.stale.is_empty());
   assert!(scan.unknown.contains(binary_name));
 
-  let rendered = render(&scan.table, &Palette::none());
+  let rendered = table::render(&scan.table, &table::Palette::none());
   assert!(
     rendered.contains("[UNKNOWN]"),
     "Expected [UNKNOWN] badge in table for unprobeable binary, got:\n{rendered}"
@@ -375,8 +374,8 @@ fn test_scan_tools_and_build_table_surfaces_unprobeable_status_not_ready() {
 fn test_format_stale_tool_warning() {
   let warning = format_stale_tool_warning(
     "prettier",
-    &Version::new(3, 8, 1),
-    &Version::new(3, 9, 6),
+    &version::Version::new(3, 8, 1),
+    &version::Version::new(3, 9, 6),
   );
   assert_eq!(
     warning,
@@ -386,7 +385,7 @@ fn test_format_stale_tool_warning() {
 
 #[test]
 fn test_install_missing_tools_framed_fails_for_tool_without_installer() {
-  let missing_tool = ToolInfo {
+  let missing_tool = surfaces::ToolInfo {
     binary: "__missing_dummy_binary_test__",
     description: "Dummy Missing Tool Test",
     install_hint: Some("Run npm install -g dummy"),
@@ -394,7 +393,8 @@ fn test_install_missing_tools_framed_fails_for_tool_without_installer() {
     is_required_for_lint: true,
   };
 
-  let report = install_missing_tools_framed(&[missing_tool], Frame::capped());
+  let report =
+    install_missing_tools_framed(&[missing_tool], table::Frame::capped());
   assert!(
     !report.all_ok,
     "Should report failure when tool cannot be auto-installed"
@@ -403,7 +403,7 @@ fn test_install_missing_tools_framed_fails_for_tool_without_installer() {
 
 #[test]
 fn test_preflight_warn_stale_tools_empty_surfaces() {
-  let config = FormalityConfig::default();
+  let config = config::FormalityConfig::default();
   // Must execute cleanly without panicking
   preflight_warn_stale_tools(&[], &config, true, true);
   preflight_warn_stale_tools(&[], &config, true, false);
@@ -412,8 +412,8 @@ fn test_preflight_warn_stale_tools_empty_surfaces() {
 
 #[test]
 fn test_preflight_warn_stale_tools_with_surfaces() {
-  let config = FormalityConfig::default();
-  let surfaces = all_surfaces();
+  let config = config::FormalityConfig::default();
+  let surfaces = surfaces::all_surfaces();
   // Runs against real/registered surfaces cleanly without panicking
   preflight_warn_stale_tools(&surfaces, &config, true, false);
   preflight_warn_stale_tools(&surfaces, &config, false, true);
@@ -452,8 +452,8 @@ fn install_row(
 }
 
 /// Throwaway [`ToolInfo`] for the tally tests — only `binary` is read.
-fn doctor_tool_info(binary: &'static str) -> ToolInfo {
-  ToolInfo {
+fn doctor_tool_info(binary: &'static str) -> surfaces::ToolInfo {
+  surfaces::ToolInfo {
     binary,
     description: "",
     install_hint: None,
@@ -492,7 +492,7 @@ fn test_tool_tally_footer_reflects_post_install_state() {
   );
 
   // What the pre-install snapshot says — the bug, verbatim.
-  let before = strip_ansi_escapes(&tally.render(false));
+  let before = table::strip_ansi_escapes(&tally.render(false));
   assert_eq!(before.trim(), "7 installed (1 unknown), 1 missing");
 
   tally.apply_install_run(&InstallRunReport {
@@ -500,7 +500,7 @@ fn test_tool_tally_footer_reflects_post_install_state() {
     rows: vec![install_row("prettier", InstallOutcome::Ok)],
   });
 
-  let after = strip_ansi_escapes(&tally.render(false));
+  let after = table::strip_ansi_escapes(&tally.render(false));
   assert_eq!(
     after.trim(),
     "8 installed (1 unknown), 0 missing",
@@ -620,7 +620,7 @@ fn test_tool_tally_footer_after_multiple_successful_installs() {
   });
 
   assert_eq!(
-    strip_ansi_escapes(&tally.render(false)).trim(),
+    table::strip_ansi_escapes(&tally.render(false)).trim(),
     "8 installed, 0 missing"
   );
 }
@@ -642,7 +642,7 @@ fn test_tool_tally_failed_install_stays_missing() {
   });
 
   assert_eq!(
-    strip_ansi_escapes(&tally.render(false)).trim(),
+    table::strip_ansi_escapes(&tally.render(false)).trim(),
     "2 installed, 1 missing"
   );
   assert!(tally.missing.contains("taplo"));
@@ -660,7 +660,7 @@ fn test_tool_tally_uninstallable_tool_stays_missing() {
   });
 
   assert_eq!(
-    strip_ansi_escapes(&tally.render(false)).trim(),
+    table::strip_ansi_escapes(&tally.render(false)).trim(),
     "1 installed, 1 missing"
   );
 }
@@ -672,7 +672,7 @@ fn test_tool_tally_uninstallable_tool_stays_missing() {
 fn test_tool_tally_reinstalled_stale_tool_drops_from_stale() {
   let mut tally = pre_install_tally(&["rustfmt", "taplo"], &["taplo"], &[], 0);
   assert_eq!(
-    strip_ansi_escapes(&tally.render(false)).trim(),
+    table::strip_ansi_escapes(&tally.render(false)).trim(),
     "2 installed (1 stale), 0 missing"
   );
 
@@ -682,7 +682,7 @@ fn test_tool_tally_reinstalled_stale_tool_drops_from_stale() {
   });
 
   assert_eq!(
-    strip_ansi_escapes(&tally.render(false)).trim(),
+    table::strip_ansi_escapes(&tally.render(false)).trim(),
     "2 installed, 0 missing"
   );
 }
@@ -701,7 +701,7 @@ fn test_tool_tally_version_mismatched_install_counts_as_stale() {
   });
 
   assert_eq!(
-    strip_ansi_escapes(&tally.render(false)).trim(),
+    table::strip_ansi_escapes(&tally.render(false)).trim(),
     "2 installed (1 stale), 0 missing"
   );
 }
@@ -729,7 +729,8 @@ fn test_classify_install_outcome_unpinned_absent_binary_is_not_ok() {
 /// not read like a chain whose package managers are all missing.
 #[test]
 fn test_miss_headline_distinguishes_no_install_path_from_no_installer() {
-  let headline = |binary, os| strip_ansi_escapes(&miss_headline(binary, os));
+  let headline =
+    |binary, os| table::strip_ansi_escapes(&miss_headline(binary, os));
   let no_installer =
     |binary| format!("No automatic package manager found for {binary}.");
   let no_path =
@@ -751,7 +752,7 @@ fn test_miss_headline_distinguishes_no_install_path_from_no_installer() {
 /// into an `[OK]` row.
 #[test]
 fn test_classify_install_outcome_path_check_precedes_version_check() {
-  let pinned = Version::new(1, 2, 3);
+  let pinned = version::Version::new(1, 2, 3);
   assert_eq!(
     classify_install_outcome(false, Some(&pinned), Some(&pinned)),
     InstallOutcome::NotOnPath
@@ -776,8 +777,8 @@ fn test_classify_install_outcome_unpinned_present_binary_is_ok() {
 /// convergence guard.
 #[test]
 fn test_classify_install_outcome_pinned_compares_versions_when_present() {
-  let pinned = Version::new(0, 9, 0);
-  let other = Version::new(0, 8, 0);
+  let pinned = version::Version::new(0, 9, 0);
+  let other = version::Version::new(0, 8, 0);
 
   assert_eq!(
     classify_install_outcome(true, Some(&pinned), Some(&pinned)),
@@ -807,7 +808,7 @@ fn test_tool_tally_not_on_path_install_stays_missing() {
   });
 
   assert_eq!(
-    strip_ansi_escapes(&tally.render(false)).trim(),
+    table::strip_ansi_escapes(&tally.render(false)).trim(),
     "1 installed, 1 missing",
     "a tool whose installer exited 0 without putting it on PATH must stay \
      counted as missing (#106)"
@@ -901,10 +902,10 @@ fn test_tool_tally_apply_install_run_is_idempotent() {
   };
 
   tally.apply_install_run(&report);
-  let once = strip_ansi_escapes(&tally.render(false));
+  let once = table::strip_ansi_escapes(&tally.render(false));
   tally.apply_install_run(&report);
 
-  assert_eq!(strip_ansi_escapes(&tally.render(false)), once);
+  assert_eq!(table::strip_ansi_escapes(&tally.render(false)), once);
 }
 
 /// An empty install run (nothing left to install) leaves the tally untouched,
@@ -912,32 +913,32 @@ fn test_tool_tally_apply_install_run_is_idempotent() {
 #[test]
 fn test_tool_tally_empty_install_run_leaves_tally_untouched() {
   let mut tally = pre_install_tally(&["rustfmt", "ruff"], &[], &[], 1);
-  let before = strip_ansi_escapes(&tally.render(false));
+  let before = table::strip_ansi_escapes(&tally.render(false));
 
   tally.apply_install_run(&InstallRunReport {
     all_ok: true,
     rows: Vec::new(),
   });
 
-  assert_eq!(strip_ansi_escapes(&tally.render(false)), before);
+  assert_eq!(table::strip_ansi_escapes(&tally.render(false)), before);
 }
 
 /// `ToolTally::from_scan` carries every scan bucket across.
 #[test]
 fn test_tool_tally_from_scan_carries_every_bucket() {
   let scan = DoctorScanResult {
-    table: Table::new(vec![Column::new(Cell::text(""))]),
+    table: table::Table::new(vec![table::Column::new(table::Cell::text(""))]),
     missing: vec![doctor_tool_info("prettier")],
-    installed: HashSet::from(["rustfmt", "taplo"]),
-    outdated: HashSet::from(["rustfmt"]),
+    installed: collections::HashSet::from(["rustfmt", "taplo"]),
+    outdated: collections::HashSet::from(["rustfmt"]),
     stale: vec![doctor_tool_info("taplo")],
-    unknown: HashSet::from(["taplo"]),
+    unknown: collections::HashSet::from(["taplo"]),
   };
 
   let tally = ToolTally::from_scan(&scan);
 
   assert_eq!(
-    strip_ansi_escapes(&tally.render(false)).trim(),
+    table::strip_ansi_escapes(&tally.render(false)).trim(),
     "2 installed (1 outdated) (1 stale) (1 unknown), 1 missing"
   );
 }
@@ -948,14 +949,14 @@ fn test_tool_tally_render_install_hint() {
   let tally = pre_install_tally(&["rustfmt"], &[], &["prettier"], 0);
 
   assert_eq!(
-    strip_ansi_escapes(&tally.render(true)).trim(),
+    table::strip_ansi_escapes(&tally.render(true)).trim(),
     "1 installed, 1 missing\n  (run 'fml doctor --install' to install missing/stale tools)"
   );
 }
 
 #[test]
 fn test_doctor_table_shows_detected_vs_undetected_status_for_surfaces() {
-  let temp = tempdir().unwrap();
+  let temp = tempfile::tempdir().unwrap();
   let cargo_toml = temp.path().join("Cargo.toml");
   std::fs::write(
     &cargo_toml,
@@ -966,16 +967,17 @@ fn test_doctor_table_shows_detected_vs_undetected_status_for_surfaces() {
   std::fs::create_dir_all(&src_dir).unwrap();
   std::fs::write(src_dir.join("main.rs"), "fn main() {}\n").unwrap();
 
-  let config = FormalityConfig::default();
-  let surfaces = all_surfaces();
+  let config = config::FormalityConfig::default();
+  let surfaces = surfaces::all_surfaces();
   let present = std::cell::LazyCell::new(|| {
-    crate::surfaces::glob::PresentExtensions::scan(temp.path(), &[])
+    surfaces::glob::PresentExtensions::scan(temp.path(), &[])
   });
-  let detected: HashSet<&'static str> = default_registry()
-    .detect_surfaces_in(temp.path(), &config, &present)
-    .iter()
-    .map(|s| s.name())
-    .collect();
+  let detected: collections::HashSet<&'static str> =
+    surfaces::default_registry()
+      .detect_surfaces_in(temp.path(), &config, &present)
+      .iter()
+      .map(|s| s.name())
+      .collect();
   let scan = scan_tools_and_build_table(
     temp.path(),
     &surfaces,
@@ -984,7 +986,10 @@ fn test_doctor_table_shows_detected_vs_undetected_status_for_surfaces() {
     &config,
   );
 
-  let rendered = strip_ansi_escapes(&render(&scan.table, &Palette::none()));
+  let rendered = table::strip_ansi_escapes(&table::render(
+    &scan.table,
+    &table::Palette::none(),
+  ));
 
   // In this workspace, rust is detected; other languages (e.g. python, go) are not.
   assert!(
@@ -1049,7 +1054,7 @@ fn test_find_system_python() {
 fn test_format_version_details_distro_suffix_renders_both_forms() {
   // Compatible: both normalized version and raw banner version rendered
   let ready_info = format_version_details(
-    &Version::new(14, 0, 0),
+    &version::Version::new(14, 0, 0),
     None,
     Some("clang-tidy version 14.0.0-1ubuntu1"),
   );
@@ -1057,7 +1062,7 @@ fn test_format_version_details_distro_suffix_renders_both_forms() {
 
   // Outdated branch: both normalized comparison and reported version rendered
   let outdated_info = format_version_details(
-    &Version::new(13, 0, 0),
+    &version::Version::new(13, 0, 0),
     Some("< MSTV v14.0.0"),
     Some("clang-tidy version 13.0.0-1ubuntu1"),
   );
@@ -1068,7 +1073,7 @@ fn test_format_version_details_distro_suffix_renders_both_forms() {
 
   // Stale branch: both normalized comparison and reported version rendered
   let stale_info = format_version_details(
-    &Version::new(13, 0, 0),
+    &version::Version::new(13, 0, 0),
     Some("!= pinned v14.0.0"),
     Some("clang-tidy version 13.0.0-1ubuntu1"),
   );
@@ -1082,7 +1087,7 @@ fn test_format_version_details_distro_suffix_renders_both_forms() {
 fn test_format_version_details_identical_when_versions_match() {
   // Compatible: matches -> identical output without "reported"
   let ready_info = format_version_details(
-    &Version::new(14, 0, 0),
+    &version::Version::new(14, 0, 0),
     None,
     Some("clang-tidy version 14.0.0"),
   );
@@ -1090,7 +1095,7 @@ fn test_format_version_details_identical_when_versions_match() {
 
   // Compatible with leading 'v' in banner token
   let ready_v_info = format_version_details(
-    &Version::new(14, 0, 0),
+    &version::Version::new(14, 0, 0),
     None,
     Some("clang-tidy version v14.0.0"),
   );
@@ -1098,7 +1103,7 @@ fn test_format_version_details_identical_when_versions_match() {
 
   // Outdated: matches -> identical output without "reported"
   let outdated_info = format_version_details(
-    &Version::new(13, 0, 0),
+    &version::Version::new(13, 0, 0),
     Some("< MSTV v14.0.0"),
     Some("clang-tidy version 13.0.0"),
   );
@@ -1106,56 +1111,68 @@ fn test_format_version_details_identical_when_versions_match() {
 
   // Stale: matches -> identical output without "reported"
   let stale_info = format_version_details(
-    &Version::new(13, 0, 0),
+    &version::Version::new(13, 0, 0),
     Some("!= pinned v14.0.0"),
     Some("clang-tidy version 13.0.0"),
   );
   assert_eq!(stale_info, " (v13.0.0 != pinned v14.0.0)");
 
   // None raw banner -> identical output
-  let no_banner = format_version_details(&Version::new(14, 0, 0), None, None);
+  let no_banner =
+    format_version_details(&version::Version::new(14, 0, 0), None, None);
   assert_eq!(no_banner, " (v14.0.0)");
 }
 
 #[test]
 fn test_doctor_table_layout_budget_with_reported_distro_version() {
-  let mut doctor_table = Table::new(vec![
-    Column::new(Cell::text("")).width(WidthPolicy::Fixed(10)),
-    Column::new(Cell::text("")).width(WidthPolicy::Fixed(20)),
-    Column::new(Cell::text("")).width(WidthPolicy::Fixed(10)),
-    Column::new(Cell::text("")).width(WidthPolicy::Auto),
+  let mut doctor_table = table::Table::new(vec![
+    table::Column::new(table::Cell::text(""))
+      .width(table::WidthPolicy::Fixed(10)),
+    table::Column::new(table::Cell::text(""))
+      .width(table::WidthPolicy::Fixed(20)),
+    table::Column::new(table::Cell::text(""))
+      .width(table::WidthPolicy::Fixed(10)),
+    table::Column::new(table::Cell::text("")).width(table::WidthPolicy::Auto),
   ])
-  .layout(Layout::compact().indent(2).padding(0, 1).max_width(80));
+  .layout(
+    table::Layout::compact()
+      .indent(2)
+      .padding(0, 1)
+      .max_width(80),
+  );
 
   let v_info_reported = format_version_details(
-    &Version::new(14, 0, 0),
+    &version::Version::new(14, 0, 0),
     None,
     Some("clang-tidy version 14.0.0-1ubuntu1"),
   );
-  let v_info_matched =
-    format_version_details(&Version::new(1, 8, 0), None, Some("rustfmt 1.8.0"));
+  let v_info_matched = format_version_details(
+    &version::Version::new(1, 8, 0),
+    None,
+    Some("rustfmt 1.8.0"),
+  );
 
-  doctor_table.add_row(Row::new(vec![
-    Cell::styled("[READY]", Style::Ok),
-    Cell::styled("clang-tidy", Style::Tool),
-    Cell::styled("cpp", Style::Dim),
-    Cell::new(vec![
-      Span::styled("/usr/bin/clang-tidy", Style::Dim),
-      Span::styled(v_info_reported, Style::Info),
+  doctor_table.add_row(table::Row::new(vec![
+    table::Cell::styled("[READY]", table::Style::Ok),
+    table::Cell::styled("clang-tidy", table::Style::Tool),
+    table::Cell::styled("cpp", table::Style::Dim),
+    table::Cell::new(vec![
+      table::Span::styled("/usr/bin/clang-tidy", table::Style::Dim),
+      table::Span::styled(v_info_reported, table::Style::Info),
     ]),
   ]));
 
-  doctor_table.add_row(Row::new(vec![
-    Cell::styled("[READY]", Style::Ok),
-    Cell::styled("rustfmt", Style::Tool),
-    Cell::styled("rust", Style::Dim),
-    Cell::new(vec![
-      Span::styled("/home/user/.cargo/bin/rustfmt", Style::Dim),
-      Span::styled(v_info_matched, Style::Info),
+  doctor_table.add_row(table::Row::new(vec![
+    table::Cell::styled("[READY]", table::Style::Ok),
+    table::Cell::styled("rustfmt", table::Style::Tool),
+    table::Cell::styled("rust", table::Style::Dim),
+    table::Cell::new(vec![
+      table::Span::styled("/home/user/.cargo/bin/rustfmt", table::Style::Dim),
+      table::Span::styled(v_info_matched, table::Style::Info),
     ]),
   ]));
 
-  let rendered = render(&doctor_table, &Palette::none());
+  let rendered = table::render(&doctor_table, &table::Palette::none());
   assert!(rendered.contains("[READY]"));
   assert!(rendered.contains("clang-tidy"));
   assert!(rendered.contains("v14.0.0"));
@@ -1175,26 +1192,27 @@ fn test_doctor_table_layout_budget_with_reported_distro_version() {
 
 #[test]
 fn test_run_doctor_walks_the_workspace_at_most_once() {
-  let temp = tempdir().unwrap();
+  let temp = tempfile::tempdir().unwrap();
   std::fs::write(temp.path().join("main.rs"), "fn main() {}\n").unwrap();
 
-  let _ = run_doctor(temp.path(), false, false, &FormalityConfig::empty());
+  let _ =
+    run_doctor(temp.path(), false, false, &config::FormalityConfig::empty());
 
   // Detection and the table's detected column share one walk.
-  assert_eq!(crate::surfaces::glob::walk_count::of(temp.path()), 1);
+  assert_eq!(surfaces::glob::walk_count::of(temp.path()), 1);
 }
 
 #[test]
 fn test_doctor_detects_the_surfaces_fmt_runs_under_global_exclude() {
-  let temp = tempdir().unwrap();
+  let temp = tempfile::tempdir().unwrap();
   let root = temp.path();
   std::fs::write(root.join("pyproject.toml"), "[project]\n").unwrap();
   std::fs::write(root.join("main.rs"), "fn main() {}\n").unwrap();
   std::fs::create_dir(root.join("ci")).unwrap();
   std::fs::write(root.join("ci/build.yaml"), "a: 1\n").unwrap();
-  let config = FormalityConfig::parse_str(
+  let config = config::FormalityConfig::parse_str(
     "[global]\nexclude = [\"ci\", \"pyproject.toml\"]\n",
-    Path::new("formality.toml"),
+    path::Path::new("formality.toml"),
   )
   .unwrap();
 
