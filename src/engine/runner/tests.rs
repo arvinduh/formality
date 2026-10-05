@@ -925,7 +925,7 @@ fn test_runner_missing_tool_exit_code_is_violations() {
     &Plan::lint(false),
     &config,
   );
-  assert_eq!(unstaged_lint, ExitStatus::Violations);
+  assert_eq!(unstaged_lint, errors::ExitStatus::Violations);
 
   let staged_lint = Runner::run(
     &[Box::new(MockMissingSurface)],
@@ -934,7 +934,7 @@ fn test_runner_missing_tool_exit_code_is_violations() {
     &Plan::lint(false),
     &config,
   );
-  assert_eq!(staged_lint, ExitStatus::Violations);
+  assert_eq!(staged_lint, errors::ExitStatus::Violations);
   assert_eq!(unstaged_lint, staged_lint);
 
   // Fmt unstaged & staged, write mode
@@ -945,7 +945,7 @@ fn test_runner_missing_tool_exit_code_is_violations() {
     &Plan::fmt(false, false),
     &config,
   );
-  assert_eq!(unstaged_fmt, ExitStatus::Violations);
+  assert_eq!(unstaged_fmt, errors::ExitStatus::Violations);
 
   let staged_fmt = Runner::run(
     &[Box::new(MockMissingSurface)],
@@ -954,7 +954,7 @@ fn test_runner_missing_tool_exit_code_is_violations() {
     &Plan::fmt(false, false),
     &config,
   );
-  assert_eq!(staged_fmt, ExitStatus::Violations);
+  assert_eq!(staged_fmt, errors::ExitStatus::Violations);
   assert_eq!(unstaged_fmt, staged_fmt);
 
   // Fmt --check (Mode::Report) — the fix is unconditional on mode, so this
@@ -966,7 +966,7 @@ fn test_runner_missing_tool_exit_code_is_violations() {
     &Plan::fmt(true, false),
     &config,
   );
-  assert_eq!(check_fmt, ExitStatus::Violations);
+  assert_eq!(check_fmt, errors::ExitStatus::Violations);
 
   // Fix (Lint + Format) — a plan neither prior case exercises directly.
   let fix = Runner::run(
@@ -976,7 +976,7 @@ fn test_runner_missing_tool_exit_code_is_violations() {
     &Plan::fix(false, false),
     &config,
   );
-  assert_eq!(fix, ExitStatus::Violations);
+  assert_eq!(fix, errors::ExitStatus::Violations);
 }
 
 /// A surface whose format/lint pass always reports a real violation --
@@ -1124,7 +1124,7 @@ fn test_runner_allow_missing_silences_tool_missing_but_not_violations() {
     &Plan::fmt(false, false),
     &config,
   );
-  assert_eq!(without_flag, ExitStatus::Violations);
+  assert_eq!(without_flag, errors::ExitStatus::Violations);
 
   // ...and exit 0 with --allow-missing.
   let with_flag = Runner::run(
@@ -1134,7 +1134,7 @@ fn test_runner_allow_missing_silences_tool_missing_but_not_violations() {
     &Plan::fmt(false, true),
     &config,
   );
-  assert_eq!(with_flag, ExitStatus::Clean);
+  assert_eq!(with_flag, errors::ExitStatus::Clean);
 
   // A missing tool AND a real violation (on a different surface): still
   // exit 1 even with --allow-missing -- the flag only silences the
@@ -1146,7 +1146,7 @@ fn test_runner_allow_missing_silences_tool_missing_but_not_violations() {
     &Plan::fmt(false, true),
     &config,
   );
-  assert_eq!(missing_and_violating, ExitStatus::Violations);
+  assert_eq!(missing_and_violating, errors::ExitStatus::Violations);
 
   // A missing tool AND an execution error (on a different surface): exit 2
   // even with --allow-missing -- the flag only silences the ToolMissing arm,
@@ -1158,7 +1158,7 @@ fn test_runner_allow_missing_silences_tool_missing_but_not_violations() {
     &Plan::fmt(false, true),
     &config,
   );
-  assert_eq!(missing_and_erroring, ExitStatus::Error);
+  assert_eq!(missing_and_erroring, errors::ExitStatus::Error);
 }
 
 #[test]

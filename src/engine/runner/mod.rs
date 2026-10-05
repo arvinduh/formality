@@ -20,7 +20,9 @@ use rayon::iter::IntoParallelRefIterator;
 use rayon::iter::ParallelIterator;
 
 use crate::config;
+use crate::errors;
 use crate::surfaces;
+use crate::ui::table;
 
 /// One unit of work the runner can dispatch to a [`LanguageSurface`].
 ///
@@ -157,8 +159,6 @@ const fn mode_for(check: bool) -> Mode {
   if check { Mode::Report } else { Mode::Write }
 }
 
-use crate::errors::ExitStatus;
-
 /// The files one run acts on, resolved once by the command layer and shared
 /// by surface detection and every surface's file selection.
 pub enum Scope {
@@ -211,7 +211,7 @@ impl Runner {
     scope: &Scope,
     plan: &Plan,
     config: &config::FormalityConfig,
-  ) -> ExitStatus {
+  ) -> errors::ExitStatus {
     Self::run_into(&mut std::io::stdout(), surfaces, root, scope, plan, config)
   }
 
@@ -234,11 +234,11 @@ impl Runner {
     scope: &Scope,
     plan: &Plan,
     config: &config::FormalityConfig,
-  ) -> ExitStatus {
+  ) -> errors::ExitStatus {
     if surfaces.is_empty() {
       let _ =
         writeln!(out, "{}", "No matching language surfaces found.".yellow());
-      return ExitStatus::Clean;
+      return errors::ExitStatus::Clean;
     }
 
     let start_time = time::Instant::now();
@@ -396,19 +396,18 @@ impl Runner {
     // above it, so the two can never drift.
     let mut remaining = RemainingViolations::default();
 
-    let mut runner_table = crate::ui::table::Table::new(vec![
-      crate::ui::table::Column::new(crate::ui::table::Cell::text(""))
-        .width(crate::ui::table::WidthPolicy::Fixed(8)),
-      crate::ui::table::Column::new(crate::ui::table::Cell::text(""))
-        .width(crate::ui::table::WidthPolicy::Fixed(14)),
-      crate::ui::table::Column::new(crate::ui::table::Cell::text(""))
-        .width(crate::ui::table::WidthPolicy::Auto),
-      crate::ui::table::Column::new(crate::ui::table::Cell::text(""))
-        .align(crate::ui::table::Align::Right)
-        .width(crate::ui::table::WidthPolicy::Fixed(12)),
+    let mut runner_table = table::Table::new(vec![
+      table::Column::new(table::Cell::text(""))
+        .width(table::WidthPolicy::Fixed(8)),
+      table::Column::new(table::Cell::text(""))
+        .width(table::WidthPolicy::Fixed(14)),
+      table::Column::new(table::Cell::text("")).width(table::WidthPolicy::Auto),
+      table::Column::new(table::Cell::text(""))
+        .align(table::Align::Right)
+        .width(table::WidthPolicy::Fixed(12)),
     ])
     .layout(
-      crate::ui::table::Layout::compact()
+      table::Layout::compact()
         .indent(2)
         .padding(0, 1)
         .max_width(80),
@@ -442,21 +441,18 @@ impl Runner {
       }
       exit_code = exit_code.max(exit_floor(&severity, plan.allow_missing));
 
-      runner_table.add_row(crate::ui::table::Row::new(vec![
-        crate::ui::table::Cell::styled(spec.tag, spec.tag_style),
-        crate::ui::table::Cell::styled(res.surface_name, spec.name_style),
-        crate::ui::table::Cell::styled(spec.detail, spec.detail_style),
-        crate::ui::table::Cell::styled(
-          duration_str,
-          crate::ui::table::Style::Dim,
-        )
-        .align(crate::ui::table::Align::Right),
+      runner_table.add_row(table::Row::new(vec![
+        table::Cell::styled(spec.tag, spec.tag_style),
+        table::Cell::styled(res.surface_name, spec.name_style),
+        table::Cell::styled(spec.detail, spec.detail_style),
+        table::Cell::styled(duration_str, table::Style::Dim)
+          .align(table::Align::Right),
       ]));
     }
 
-    let palette = crate::ui::table::Palette::detect();
-    let rendered_table = crate::ui::table::render(&runner_table, &palette);
-    let frame = crate::ui::table::Frame::for_body(&rendered_table);
+    let palette = table::Palette::detect();
+    let rendered_table = table::render(&runner_table, &palette);
+    let frame = table::Frame::for_body(&rendered_table);
 
     let title = format!(
       "{} {} {}",
@@ -541,7 +537,7 @@ impl Runner {
     let _ =
       writeln!(out, "  {} in {:.2?}\n", summary_text, start_time.elapsed());
 
-    ExitStatus::try_from(exit_code).unwrap_or(ExitStatus::Error)
+    errors::ExitStatus::try_from(exit_code).unwrap_or(errors::ExitStatus::Error)
   }
 }
 
@@ -579,10 +575,10 @@ fn exit_floor(severity: &surfaces::Severity, allow_missing: bool) -> i32 {
 /// from [`surfaces::SurfaceStatus::severity`], not from here.
 struct RowSpec {
   tag: &'static str,
-  tag_style: crate::ui::table::Style,
-  name_style: crate::ui::table::Style,
+  tag_style: table::Style,
+  name_style: table::Style,
   detail: String,
-  detail_style: crate::ui::table::Style,
+  detail_style: table::Style,
 }
 
 /// Builds the row data for one surface's [`surfaces::SurfaceStatus`] (#277).
@@ -596,68 +592,66 @@ fn row_spec(
   plan: &Plan,
   tally: Option<violations::ViolationTally>,
 ) -> RowSpec {
-  use crate::ui::table::Style;
-
   match status {
     surfaces::SurfaceStatus::Passed => RowSpec {
       tag: "[PASS] ",
-      tag_style: Style::Ok,
-      name_style: Style::Strong,
+      tag_style: table::Style::Ok,
+      name_style: table::Style::Strong,
       detail: passed_detail(plan).to_string(),
-      detail_style: Style::Dim,
+      detail_style: table::Style::Dim,
     },
     surfaces::SurfaceStatus::ConfigSynced { files } => RowSpec {
       tag: "[SYNC] ",
-      tag_style: Style::Ok,
-      name_style: Style::Strong,
+      tag_style: table::Style::Ok,
+      name_style: table::Style::Strong,
       // Every file the surface wrote is named, not just the last one
       // (#130) — a config created on disk but absent from this row is the
       // worst failure available to a command whose whole job is writing
       // config files.
       detail: synced_files_detail(files),
-      detail_style: Style::Info,
+      detail_style: table::Style::Info,
     },
     surfaces::SurfaceStatus::ConfigDrifted { file, .. } => RowSpec {
       tag: "[DRIFT]",
-      tag_style: Style::Warn,
-      name_style: Style::Strong,
+      tag_style: table::Style::Warn,
+      name_style: table::Style::Strong,
       detail: format!("{file} out of sync"),
-      detail_style: Style::Warn,
+      detail_style: table::Style::Warn,
     },
     surfaces::SurfaceStatus::ManualConfig { file, .. } => RowSpec {
       tag: "[MANUAL]",
-      tag_style: Style::Warn,
-      name_style: Style::Strong,
+      tag_style: table::Style::Warn,
+      name_style: table::Style::Strong,
       detail: format!("{file} is manually managed"),
-      detail_style: Style::Warn,
+      detail_style: table::Style::Warn,
     },
     surfaces::SurfaceStatus::ViolationsFound { .. } => RowSpec {
       tag: "[FAIL] ",
-      tag_style: Style::Error,
-      name_style: Style::Strong,
+      tag_style: table::Style::Error,
+      name_style: table::Style::Strong,
       detail: violations_detail(tally),
-      detail_style: Style::Error,
+      detail_style: table::Style::Error,
     },
     surfaces::SurfaceStatus::ToolMissing { binary, .. } => RowSpec {
       tag: "[MISS] ",
-      tag_style: Style::Warn,
-      name_style: Style::Strong,
+      tag_style: table::Style::Warn,
+      name_style: table::Style::Strong,
       detail: format!("Missing binary: {binary}"),
-      detail_style: Style::Warn,
+      detail_style: table::Style::Warn,
     },
     surfaces::SurfaceStatus::ExecutionError { .. } => RowSpec {
       tag: "[ERR]  ",
-      tag_style: Style::Error,
-      name_style: Style::Strong,
+      tag_style: table::Style::Error,
+      name_style: table::Style::Strong,
       detail: "Execution error".to_string(),
-      detail_style: Style::Error,
+      detail_style: table::Style::Error,
     },
     surfaces::SurfaceStatus::Skipped { reason } => RowSpec {
       tag: "[SKIP] ",
-      tag_style: Style::Dim,
-      name_style: Style::Dim,
+      tag_style: table::Style::Dim,
+      name_style: table::Style::Dim,
       detail: reason.clone(),
-      detail_style: Style::Dim,
+      detail_style: table::Style::Dim,
     },
   }
 }

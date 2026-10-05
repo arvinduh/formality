@@ -300,9 +300,9 @@ fn test_doctor_command() {
 
 #[test]
 fn test_doctor_command_prints_sync_optional_notice() {
-  use std::process::Command;
+  use std::process;
 
-  let output = Command::new(env!("CARGO_BIN_EXE_fml"))
+  let output = process::Command::new(env!("CARGO_BIN_EXE_fml"))
     .arg("doctor")
     .output()
     .expect("failed to run fml doctor");

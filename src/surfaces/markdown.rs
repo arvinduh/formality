@@ -7,8 +7,10 @@ use crate::config;
 use crate::config::facets;
 use crate::config::facets::DeclaresFacets;
 use crate::surfaces;
-use crate::surfaces::{LanguageSurface, NativeConfig};
-use rayon::iter::{IntoParallelRefIterator, ParallelIterator};
+use crate::surfaces::LanguageSurface;
+use crate::surfaces::NativeConfig;
+use rayon::iter::IntoParallelRefIterator;
+use rayon::iter::ParallelIterator;
 use std::path;
 use std::time;
 

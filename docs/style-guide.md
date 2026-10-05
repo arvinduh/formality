@@ -65,6 +65,13 @@ One crate-root re-export remains, load-bearing:
 by `tests/schema_drift.rs`. A re-export earns a place at the crate root only by
 being reached that way by real code.
 
+### Module-only imports
+
+**Tier 2 (enforced by `test_no_item_imports` in `src/lib.rs`):** every `use`
+statement in `src/` and `tests/` must import a module, never an item. The only
+permitted exceptions are named traits (imported when method syntax requires them
+in scope), internal X-macros, and `use super::*;` inside test modules.
+
 ---
 
 ## 2. Naming conventions

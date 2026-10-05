@@ -550,10 +550,6 @@ impl Clone for Box<dyn LanguageSurface> {
 #[cfg(test)]
 mod tests {
   use super::*;
-  use crate::surfaces::{
-    cpp, go, java, javascript, json, kotlin, markdown, python, rust, toml,
-    typst, yaml,
-  };
 
   #[test]
   fn test_surface_supports_lint_fix() {

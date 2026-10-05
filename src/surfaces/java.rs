@@ -5,7 +5,8 @@
 use crate::config::facets;
 use crate::config::facets::DeclaresFacets;
 use crate::surfaces;
-use crate::surfaces::{LanguageSurface, NativeConfig};
+use crate::surfaces::LanguageSurface;
+use crate::surfaces::NativeConfig;
 use std::io::Write;
 use std::path;
 use std::time;
