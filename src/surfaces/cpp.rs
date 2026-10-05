@@ -2,21 +2,18 @@
 //! `clang-tidy`, syncing the managed `.clang-format` / `.clang-tidy` from
 //! `formality.toml`.
 
-use super::{
-  DeclaresFacets, ExecutionContext, Facet, FacetSupport, LanguageSurface,
-  NativeConfig, SurfaceResult, SurfaceStatus, ToolInfo,
-  classify_all_nonzero_as_error, create_tool_command,
-  diff_check_via_tempcopy_classified, merge_sync_results, render_native_config,
-  run_tool_command_classified, sync_native_config, tool_missing_guard,
-};
-use serde::{Deserialize, Serialize};
-use std::collections::HashSet;
-use std::hash::BuildHasher;
-use std::path::{Path, PathBuf};
-use std::time::Instant;
+use crate::config::facets;
+use crate::config::facets::DeclaresFacets;
+use crate::surfaces;
+use crate::surfaces::{LanguageSurface, NativeConfig};
+use std::collections;
+use std::fmt::Write;
+use std::hash;
+use std::path;
+use std::time;
 
 /// Native `.clang-format` configuration representation for C/C++ formatting.
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 #[serde(rename_all = "PascalCase")]
 pub struct ClangFormatConfig {
   /// Target language specification.
@@ -45,7 +42,7 @@ pub struct ClangFormatConfig {
 impl NativeConfig for ClangFormatConfig {
   const FILE_NAME: &'static str = ".clang-format";
 
-  fn from_context(ctx: &ExecutionContext) -> Self {
+  fn from_context(ctx: &surfaces::ExecutionContext) -> Self {
     let use_tab = if ctx.lang_config.use_tabs {
       "Always"
     } else {
@@ -92,12 +89,12 @@ impl NativeConfig for ClangFormatConfig {
   }
 
   fn render(&self) -> Result<String, crate::errors::FormalityError> {
-    render_native_config(self)
+    surfaces::render_native_config(self)
   }
 }
 
 /// Native `.clang-tidy` configuration representation for C/C++ linting.
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 #[serde(rename_all = "PascalCase")]
 pub struct ClangTidyConfig {
   /// Enabled clang-tidy check patterns.
@@ -126,12 +123,12 @@ impl Default for ClangTidyConfig {
 impl NativeConfig for ClangTidyConfig {
   const FILE_NAME: &'static str = ".clang-tidy";
 
-  fn from_context(_ctx: &ExecutionContext) -> Self {
+  fn from_context(_ctx: &surfaces::ExecutionContext) -> Self {
     Self::default()
   }
 
   fn render(&self) -> Result<String, crate::errors::FormalityError> {
-    render_native_config(self)
+    surfaces::render_native_config(self)
   }
 }
 
@@ -140,17 +137,17 @@ impl NativeConfig for ClangTidyConfig {
 pub struct CppSurface;
 
 impl DeclaresFacets for CppSurface {
-  fn facet_support(&self, facet: Facet) -> FacetSupport {
+  fn facet_support(&self, facet: facets::Facet) -> facets::FacetSupport {
     match facet {
-      Facet::IndentTabs
-      | Facet::IndentWidth
-      | Facet::LineLength
-      | Facet::ImportSort
-      | Facet::Standard => FacetSupport::Configurable,
-      Facet::QuoteStyle
-      | Facet::TrailingComma
-      | Facet::ProseWrap
-      | Facet::Edition => FacetSupport::Unsupported,
+      facets::Facet::IndentTabs
+      | facets::Facet::IndentWidth
+      | facets::Facet::LineLength
+      | facets::Facet::ImportSort
+      | facets::Facet::Standard => facets::FacetSupport::Configurable,
+      facets::Facet::QuoteStyle
+      | facets::Facet::TrailingComma
+      | facets::Facet::ProseWrap
+      | facets::Facet::Edition => facets::FacetSupport::Unsupported,
     }
   }
 }
@@ -177,7 +174,6 @@ pub fn build_clang_format_inline_style(cfg: &ClangFormatConfig) -> String {
     cfg.sort_includes,
   );
   if let Some(ref standard) = cfg.standard {
-    use std::fmt::Write as _;
     let _ = write!(style, ", Standard: {standard}");
   }
   style.push('}');
@@ -222,8 +218,10 @@ pub fn is_c_extension(ext: &str) -> bool {
 /// Scans the provided file list and directories on disk once upfront for C++ files.
 /// Returns the set of directory paths that contain at least one C++ file.
 #[must_use]
-pub fn scan_cpp_dirs(all_files: &[PathBuf]) -> HashSet<PathBuf> {
-  let mut cpp_dirs = HashSet::new();
+pub fn scan_cpp_dirs(
+  all_files: &[path::PathBuf],
+) -> collections::HashSet<path::PathBuf> {
+  let mut cpp_dirs = collections::HashSet::new();
 
   // 1. Mark directories of known C++ files in `all_files`.
   for f in all_files {
@@ -239,17 +237,17 @@ pub fn scan_cpp_dirs(all_files: &[PathBuf]) -> HashSet<PathBuf> {
 
   // 2. For headers in `all_files` whose parent directory isn't already known
   // to contain C++ files, scan the directory on disk once.
-  let mut scanned_dirs = HashSet::new();
+  let mut scanned_dirs = collections::HashSet::new();
   for f in all_files {
     let ext = f.extension().and_then(|e| e.to_str()).unwrap_or("");
     if ext.eq_ignore_ascii_case("h")
       && let Some(parent) = f.parent()
       && !cpp_dirs.contains(parent)
       && scanned_dirs.insert(parent.to_path_buf())
-      && (parent != Path::new("") || f.is_absolute())
+      && (parent != path::Path::new("") || f.is_absolute())
     {
-      let dir_to_read = if parent == Path::new("") {
-        Path::new(".")
+      let dir_to_read = if parent == path::Path::new("") {
+        path::Path::new(".")
       } else {
         parent
       };
@@ -275,9 +273,9 @@ pub fn scan_cpp_dirs(all_files: &[PathBuf]) -> HashSet<PathBuf> {
 /// Determines the appropriate `-std=` compiler flag (`-std=c++17` or `-std=c17`) for a target file,
 /// using a precomputed set of directories known to contain C++ files.
 #[must_use]
-pub fn std_flag_for_file_with_dirs<S: BuildHasher>(
-  file: &Path,
-  cpp_dirs: &HashSet<PathBuf, S>,
+pub fn std_flag_for_file_with_dirs<S: hash::BuildHasher>(
+  file: &path::Path,
+  cpp_dirs: &collections::HashSet<path::PathBuf, S>,
 ) -> &'static str {
   let ext = file.extension().and_then(|e| e.to_str()).unwrap_or("");
   if is_cpp_extension(ext) {
@@ -285,7 +283,7 @@ pub fn std_flag_for_file_with_dirs<S: BuildHasher>(
   } else if is_c_extension(ext) {
     "-std=c17"
   } else if ext.eq_ignore_ascii_case("h") {
-    let parent = file.parent().unwrap_or(Path::new(""));
+    let parent = file.parent().unwrap_or(path::Path::new(""));
     if cpp_dirs.contains(parent) {
       "-std=c++17"
     } else {
@@ -298,20 +296,23 @@ pub fn std_flag_for_file_with_dirs<S: BuildHasher>(
 
 /// Determines the appropriate `-std=` compiler flag (`-std=c++17` or `-std=c17`) for a target file.
 #[must_use]
-pub fn std_flag_for_file(file: &Path, all_files: &[PathBuf]) -> &'static str {
+pub fn std_flag_for_file(
+  file: &path::Path,
+  all_files: &[path::PathBuf],
+) -> &'static str {
   let ext = file.extension().and_then(|e| e.to_str()).unwrap_or("");
   if is_cpp_extension(ext) {
     "-std=c++17"
   } else if is_c_extension(ext) {
     "-std=c17"
   } else if ext.eq_ignore_ascii_case("h") {
-    let parent = file.parent().unwrap_or(Path::new(""));
+    let parent = file.parent().unwrap_or(path::Path::new(""));
     let cpp_dirs = scan_cpp_dirs(all_files);
     if cpp_dirs.contains(parent) {
       "-std=c++17"
-    } else if (parent != Path::new("") || file.is_absolute())
-      && let Ok(entries) = std::fs::read_dir(if parent == Path::new("") {
-        Path::new(".")
+    } else if (parent != path::Path::new("") || file.is_absolute())
+      && let Ok(entries) = std::fs::read_dir(if parent == path::Path::new("") {
+        path::Path::new(".")
       } else {
         parent
       })
@@ -340,7 +341,7 @@ pub fn std_flag_for_file(file: &Path, all_files: &[PathBuf]) -> &'static str {
 /// Builds argument vector for clang-tidy invocation.
 #[must_use]
 pub fn build_clang_tidy_args(
-  files: &[PathBuf],
+  files: &[path::PathBuf],
   fix: bool,
   std_flag: &str,
   extra_args: &[String],
@@ -397,16 +398,16 @@ impl LanguageSurface for CppSurface {
   fn tool_info(
     &self,
     _config: &crate::config::ResolvedLangConfig,
-  ) -> Vec<ToolInfo> {
+  ) -> Vec<surfaces::ToolInfo> {
     vec![
-      ToolInfo {
+      surfaces::ToolInfo {
         binary: "clang-format",
         description: "C/C++ code formatter",
         install_hint: None,
         is_required_for_fmt: true,
         is_required_for_lint: false,
       },
-      ToolInfo {
+      surfaces::ToolInfo {
         binary: "clang-tidy",
         description: "C/C++ linter and static analyzer",
         install_hint: None,
@@ -416,11 +417,14 @@ impl LanguageSurface for CppSurface {
     ]
   }
 
-  fn format(&self, ctx: &ExecutionContext) -> SurfaceResult {
-    let start = Instant::now();
+  fn format(
+    &self,
+    ctx: &surfaces::ExecutionContext,
+  ) -> surfaces::SurfaceResult {
+    let start = time::Instant::now();
 
     if let Some(res) =
-      tool_missing_guard(self.name(), "clang-format", start, None)
+      surfaces::tool_missing_guard(self.name(), "clang-format", start, None)
     {
       return res;
     }
@@ -437,10 +441,10 @@ impl LanguageSurface for CppSurface {
       build_clang_format_inline_style(&ClangFormatConfig::from_context(ctx));
 
     if ctx.check_only {
-      return diff_check_via_tempcopy_classified(
+      return surfaces::diff_check_via_tempcopy_classified(
         &files,
         |scratch| {
-          let mut cmd = create_tool_command("clang-format");
+          let mut cmd = surfaces::create_tool_command("clang-format");
           cmd.arg(format!("-style={inline_style}"));
           cmd.arg("-i").arg(scratch);
           cmd.args(ctx.lang_config.tool_args("clang-format"));
@@ -457,11 +461,11 @@ impl LanguageSurface for CppSurface {
         // `extra_args` — so every non-zero exit is an `ExecutionError`
         // (Fixes #151). Same reasoning applies verbatim to the non-`--check`
         // write branch below (Fixes #155).
-        classify_all_nonzero_as_error,
+        surfaces::classify_all_nonzero_as_error,
       );
     }
 
-    let mut cmd = create_tool_command("clang-format");
+    let mut cmd = surfaces::create_tool_command("clang-format");
     cmd.arg(format!("-style={inline_style}"));
     cmd.arg("-i");
 
@@ -472,10 +476,10 @@ impl LanguageSurface for CppSurface {
     cmd.args(ctx.lang_config.tool_args("clang-format"));
     cmd.current_dir(ctx.root.as_path());
 
-    run_tool_command_classified(
+    surfaces::run_tool_command_classified(
       self.name(),
       &mut cmd,
-      classify_all_nonzero_as_error,
+      surfaces::classify_all_nonzero_as_error,
     )
   }
 
@@ -483,11 +487,15 @@ impl LanguageSurface for CppSurface {
     clippy::too_many_lines,
     reason = "orchestrates clang-tidy execution across C and C++ files with std detection"
   )]
-  fn lint(&self, ctx: &ExecutionContext, fix: bool) -> SurfaceResult {
-    let start = Instant::now();
+  fn lint(
+    &self,
+    ctx: &surfaces::ExecutionContext,
+    fix: bool,
+  ) -> surfaces::SurfaceResult {
+    let start = time::Instant::now();
 
     if let Some(res) =
-      tool_missing_guard(self.name(), "clang-tidy", start, None)
+      surfaces::tool_missing_guard(self.name(), "clang-tidy", start, None)
     {
       return res;
     }
@@ -533,7 +541,7 @@ impl LanguageSurface for CppSurface {
       }
     }
 
-    let groups: Vec<(Vec<PathBuf>, String)> =
+    let groups: Vec<(Vec<path::PathBuf>, String)> =
       [(c_files, c_std_flag), (cpp_files, cpp_std_flag)]
         .into_iter()
         .filter(|(flist, _)| !flist.is_empty())
@@ -548,7 +556,7 @@ impl LanguageSurface for CppSurface {
     let mut failed_outputs = Vec::new();
 
     for (flist, std_flag) in groups {
-      let mut cmd = create_tool_command("clang-tidy");
+      let mut cmd = surfaces::create_tool_command("clang-tidy");
       cmd.arg(format!("--config={inline_config}"));
       let args = build_clang_tidy_args(
         &flist,
@@ -566,9 +574,9 @@ impl LanguageSurface for CppSurface {
           }
         }
         Err(e) => {
-          return SurfaceResult {
+          return surfaces::SurfaceResult {
             surface_name: self.name(),
-            status: SurfaceStatus::ExecutionError {
+            status: surfaces::SurfaceStatus::ExecutionError {
               message: format!("Failed to execute clang-tidy: {e}"),
             },
             duration: start.elapsed(),
@@ -578,9 +586,9 @@ impl LanguageSurface for CppSurface {
     }
 
     if failed_outputs.is_empty() {
-      SurfaceResult {
+      surfaces::SurfaceResult {
         surface_name: self.name(),
-        status: SurfaceStatus::Passed,
+        status: surfaces::SurfaceStatus::Passed,
         duration: start.elapsed(),
       }
     } else {
@@ -603,9 +611,9 @@ impl LanguageSurface for CppSurface {
         msgs.join("\n")
       };
 
-      SurfaceResult {
+      surfaces::SurfaceResult {
         surface_name: self.name(),
-        status: SurfaceStatus::ViolationsFound {
+        status: surfaces::SurfaceStatus::ViolationsFound {
           message: final_msg,
           diff: None,
         },
@@ -628,14 +636,18 @@ impl LanguageSurface for CppSurface {
   // `.clang-tidy` file. This method is now reached only by `fml sync`, for
   // users who explicitly want the native files materialized on disk (e.g.
   // for editor/clangd integration outside of `fml`).
-  fn sync_config(&self, ctx: &ExecutionContext, check: bool) -> SurfaceResult {
+  fn sync_config(
+    &self,
+    ctx: &surfaces::ExecutionContext,
+    check: bool,
+  ) -> surfaces::SurfaceResult {
     // Each file is timed from its own `Instant` because
     // `merge_sync_results` sums the durations it is given; sharing one start
     // would double-count the first file's time.
-    let format_res = sync_native_config::<ClangFormatConfig>(
+    let format_res = surfaces::sync_native_config::<ClangFormatConfig>(
       ctx,
       check,
-      Instant::now(),
+      time::Instant::now(),
       self.name(),
     );
 
@@ -644,44 +656,51 @@ impl LanguageSurface for CppSurface {
     }
 
     let tidy_res =
-      sync_clang_tidy_config(ctx, check, Instant::now(), self.name());
+      sync_clang_tidy_config(ctx, check, time::Instant::now(), self.name());
 
     // Both filenames are reported, not just whichever happened to be
     // written (#130): `.clang-format` used to be dropped whenever
     // `.clang-tidy` was also synced.
-    merge_sync_results(&[format_res, tidy_res])
+    surfaces::merge_sync_results(&[format_res, tidy_res])
   }
 }
 
 /// Synchronizes `.clang-tidy` native configuration file.
 #[must_use]
 pub fn sync_clang_tidy_config(
-  ctx: &ExecutionContext,
+  ctx: &surfaces::ExecutionContext,
   check: bool,
-  start: Instant,
+  start: time::Instant,
   surface_name: &'static str,
-) -> SurfaceResult {
-  sync_native_config::<ClangTidyConfig>(ctx, check, start, surface_name)
+) -> surfaces::SurfaceResult {
+  surfaces::sync_native_config::<ClangTidyConfig>(
+    ctx,
+    check,
+    start,
+    surface_name,
+  )
 }
 
 #[cfg(test)]
 mod tests {
   use super::*;
-  use crate::config::FormalityConfig;
-  use crate::surfaces::{check_binary_exists, test_ctx};
-  use std::sync::Arc;
-  use tempfile::tempdir;
+  use crate::config;
+  use crate::surfaces;
+  use std::path;
+  use std::sync;
 
   #[test]
   fn test_std_flag_for_c_files() {
-    let all_files =
-      vec![PathBuf::from("src/main.c"), PathBuf::from("src/utils.c")];
+    let all_files = vec![
+      path::PathBuf::from("src/main.c"),
+      path::PathBuf::from("src/utils.c"),
+    ];
     assert_eq!(
-      std_flag_for_file(Path::new("src/main.c"), &all_files),
+      std_flag_for_file(path::Path::new("src/main.c"), &all_files),
       "-std=c17"
     );
     assert_eq!(
-      std_flag_for_file(Path::new("src/utils.c"), &all_files),
+      std_flag_for_file(path::Path::new("src/utils.c"), &all_files),
       "-std=c17"
     );
   }
@@ -689,57 +708,61 @@ mod tests {
   #[test]
   fn test_std_flag_for_cpp_files() {
     let all_files = vec![
-      PathBuf::from("src/main.cpp"),
-      PathBuf::from("src/app.cc"),
-      PathBuf::from("src/engine.cxx"),
-      PathBuf::from("src/math.hpp"),
-      PathBuf::from("src/types.hxx"),
+      path::PathBuf::from("src/main.cpp"),
+      path::PathBuf::from("src/app.cc"),
+      path::PathBuf::from("src/engine.cxx"),
+      path::PathBuf::from("src/math.hpp"),
+      path::PathBuf::from("src/types.hxx"),
     ];
     assert_eq!(
-      std_flag_for_file(Path::new("src/main.cpp"), &all_files),
+      std_flag_for_file(path::Path::new("src/main.cpp"), &all_files),
       "-std=c++17"
     );
     assert_eq!(
-      std_flag_for_file(Path::new("src/app.cc"), &all_files),
+      std_flag_for_file(path::Path::new("src/app.cc"), &all_files),
       "-std=c++17"
     );
     assert_eq!(
-      std_flag_for_file(Path::new("src/engine.cxx"), &all_files),
+      std_flag_for_file(path::Path::new("src/engine.cxx"), &all_files),
       "-std=c++17"
     );
     assert_eq!(
-      std_flag_for_file(Path::new("src/math.hpp"), &all_files),
+      std_flag_for_file(path::Path::new("src/math.hpp"), &all_files),
       "-std=c++17"
     );
     assert_eq!(
-      std_flag_for_file(Path::new("src/types.hxx"), &all_files),
+      std_flag_for_file(path::Path::new("src/types.hxx"), &all_files),
       "-std=c++17"
     );
   }
 
   #[test]
   fn test_std_flag_for_header_without_cpp_siblings() {
-    let all_files =
-      vec![PathBuf::from("src/main.c"), PathBuf::from("src/utils.h")];
+    let all_files = vec![
+      path::PathBuf::from("src/main.c"),
+      path::PathBuf::from("src/utils.h"),
+    ];
     assert_eq!(
-      std_flag_for_file(Path::new("src/utils.h"), &all_files),
+      std_flag_for_file(path::Path::new("src/utils.h"), &all_files),
       "-std=c17"
     );
   }
 
   #[test]
   fn test_std_flag_for_header_with_cpp_siblings() {
-    let all_files =
-      vec![PathBuf::from("src/main.cpp"), PathBuf::from("src/utils.h")];
+    let all_files = vec![
+      path::PathBuf::from("src/main.cpp"),
+      path::PathBuf::from("src/utils.h"),
+    ];
     assert_eq!(
-      std_flag_for_file(Path::new("src/utils.h"), &all_files),
+      std_flag_for_file(path::Path::new("src/utils.h"), &all_files),
       "-std=c++17"
     );
   }
 
   #[test]
   fn test_std_flag_for_header_on_disk_detection() {
-    let dir = tempdir().unwrap();
+    let dir = tempfile::tempdir().unwrap();
     let c_dir = dir.path().join("c_code");
     std::fs::create_dir_all(&c_dir).unwrap();
     let c_header = c_dir.join("header.h");
@@ -760,7 +783,7 @@ mod tests {
 
   #[test]
   fn test_scan_cpp_dirs_and_std_flag_for_file_with_dirs() {
-    let dir = tempdir().unwrap();
+    let dir = tempfile::tempdir().unwrap();
     let c_dir = dir.path().join("c_pkg");
     std::fs::create_dir_all(&c_dir).unwrap();
     let c_header = c_dir.join("c_header.h");
@@ -806,7 +829,10 @@ mod tests {
 
   #[test]
   fn test_build_clang_tidy_args_without_fix() {
-    let files = vec![PathBuf::from("src/main.c"), PathBuf::from("src/utils.c")];
+    let files = vec![
+      path::PathBuf::from("src/main.c"),
+      path::PathBuf::from("src/utils.c"),
+    ];
     let extra_args = vec!["--checks=*".to_string()];
     let args = build_clang_tidy_args(&files, false, "-std=c17", &extra_args);
     assert_eq!(
@@ -823,7 +849,7 @@ mod tests {
 
   #[test]
   fn test_build_clang_tidy_args_with_fix() {
-    let files = vec![PathBuf::from("src/app.cpp")];
+    let files = vec![path::PathBuf::from("src/app.cpp")];
     let args = build_clang_tidy_args(&files, true, "-std=c++17", &[]);
     assert_eq!(
       args,
@@ -839,12 +865,12 @@ mod tests {
 
   #[test]
   fn test_sync_config_generates_clang_tidy_and_clang_format() {
-    let dir = tempdir().unwrap();
+    let dir = tempfile::tempdir().unwrap();
     let root = dir.path().to_path_buf();
 
-    let cfg = FormalityConfig::default();
-    let mut ctx = test_ctx(&root, cfg.resolve_for_lang("cpp"));
-    ctx.global_config = Arc::new(cfg.resolve_global());
+    let cfg = config::FormalityConfig::default();
+    let mut ctx = surfaces::test_ctx(&root, cfg.resolve_for_lang("cpp"));
+    ctx.global_config = sync::Arc::new(cfg.resolve_global());
 
     let surface = CppSurface;
     let res = surface.sync_config(&ctx, false);
@@ -869,7 +895,7 @@ mod tests {
     assert!(tidy_content.contains("Checks: '*,-fuchsia-*,-google-readability-todo,-llvm-header-guard,-llvmlibc-*'"));
 
     let check_res = surface.sync_config(&ctx, true);
-    assert!(matches!(check_res.status, SurfaceStatus::Passed));
+    assert!(matches!(check_res.status, surfaces::SurfaceStatus::Passed));
   }
   #[test]
   fn test_clang_format_config_typed_serialization() {
@@ -886,7 +912,7 @@ mod tests {
       standard: Some("c++17".to_string()),
     };
     let rendered = cfg.render().unwrap();
-    assert!(rendered.starts_with(crate::surfaces::AUTO_GENERATED_HEADER));
+    assert!(rendered.starts_with(surfaces::AUTO_GENERATED_HEADER));
     assert!(rendered.contains("Language: Cpp"));
     assert!(rendered.contains("BasedOnStyle: LLVM"));
     assert!(rendered.contains("IndentWidth: 4"));
@@ -903,13 +929,13 @@ mod tests {
   fn test_clang_tidy_config_typed_serialization() {
     let cfg = ClangTidyConfig::default();
     let rendered = cfg.render().unwrap();
-    assert!(rendered.starts_with(crate::surfaces::AUTO_GENERATED_HEADER));
+    assert!(rendered.starts_with(surfaces::AUTO_GENERATED_HEADER));
     assert!(rendered.contains("Checks:"));
     assert!(rendered.contains("FormatStyle: none"));
   }
   #[test]
   fn test_build_clang_tidy_args_with_fix_and_extra_args() {
-    let files = vec![PathBuf::from("src/app.cpp")];
+    let files = vec![path::PathBuf::from("src/app.cpp")];
     let extra_args = vec![
       "--checks=-*,llvm-*".to_string(),
       "--warnings-as-errors=*".to_string(),
@@ -930,7 +956,7 @@ mod tests {
   }
   #[test]
   fn test_sync_config_with_custom_style_knobs() {
-    let dir = tempdir().unwrap();
+    let dir = tempfile::tempdir().unwrap();
     let root = dir.path().to_path_buf();
 
     let toml_str = r#"
@@ -945,10 +971,13 @@ mod tests {
       break_before_braces = "Allman"
       sort_includes = false
     "#;
-    let cfg = FormalityConfig::parse_str(toml_str, Path::new("formality.toml"))
-      .unwrap();
-    let mut ctx = test_ctx(&root, cfg.resolve_for_lang("cpp"));
-    ctx.global_config = Arc::new(cfg.resolve_global());
+    let cfg = config::FormalityConfig::parse_str(
+      toml_str,
+      path::Path::new("formality.toml"),
+    )
+    .unwrap();
+    let mut ctx = surfaces::test_ctx(&root, cfg.resolve_for_lang("cpp"));
+    ctx.global_config = sync::Arc::new(cfg.resolve_global());
 
     let surface = CppSurface;
     let res = surface.sync_config(&ctx, false);
@@ -969,7 +998,7 @@ mod tests {
     assert!(format_content.contains("SortIncludes: false"));
 
     let check_res = surface.sync_config(&ctx, true);
-    assert!(matches!(check_res.status, SurfaceStatus::Passed));
+    assert!(matches!(check_res.status, surfaces::SurfaceStatus::Passed));
   }
 
   #[test]
@@ -1005,15 +1034,15 @@ mod tests {
 
   #[test]
   fn test_clang_format_config_line_ending_cr_fallback() {
-    let global = crate::config::ResolvedGlobalConfig {
+    let global = config::ResolvedGlobalConfig {
       end_of_line: "cr".to_string(),
       ..Default::default()
     };
-    let mut ctx = test_ctx(
-      Path::new("."),
-      crate::config::ResolvedLangConfig::new("cpp"),
+    let mut ctx = surfaces::test_ctx(
+      path::Path::new("."),
+      config::ResolvedLangConfig::new("cpp"),
     );
-    ctx.global_config = Arc::new(global);
+    ctx.global_config = sync::Arc::new(global);
     let cfg = ClangFormatConfig::from_context(&ctx);
     assert_eq!(cfg.line_ending, "LF");
   }
@@ -1030,16 +1059,16 @@ mod tests {
   fn test_cpp_format_does_not_write_clang_format() {
     // Fixes #157 [pre-recreation]: `fml fmt` must not write `.clang-format` as a side
     // effect; only `fml sync` should materialize the native config file.
-    if !check_binary_exists("clang-format") {
+    if !surfaces::check_binary_exists("clang-format") {
       return;
     }
-    let temp = tempdir().unwrap();
+    let temp = tempfile::tempdir().unwrap();
     std::fs::write(temp.path().join("main.cpp"), "int main(){return 0;}\n")
       .unwrap();
 
-    let cfg = FormalityConfig::default();
-    let mut ctx = test_ctx(temp.path(), cfg.resolve_for_lang("cpp"));
-    ctx.global_config = Arc::new(cfg.resolve_global());
+    let cfg = config::FormalityConfig::default();
+    let mut ctx = surfaces::test_ctx(temp.path(), cfg.resolve_for_lang("cpp"));
+    ctx.global_config = sync::Arc::new(cfg.resolve_global());
 
     let surface = CppSurface;
     let _ = surface.format(&ctx);
@@ -1054,16 +1083,16 @@ mod tests {
   fn test_cpp_lint_does_not_write_clang_tidy() {
     // Fixes #157 [pre-recreation]: `fml lint` must not write `.clang-tidy` as a side effect;
     // only `fml sync` should materialize the native config file.
-    if !check_binary_exists("clang-tidy") {
+    if !surfaces::check_binary_exists("clang-tidy") {
       return;
     }
-    let temp = tempdir().unwrap();
+    let temp = tempfile::tempdir().unwrap();
     std::fs::write(temp.path().join("main.cpp"), "int main() { return 0; }\n")
       .unwrap();
 
-    let cfg = FormalityConfig::default();
-    let mut ctx = test_ctx(temp.path(), cfg.resolve_for_lang("cpp"));
-    ctx.global_config = Arc::new(cfg.resolve_global());
+    let cfg = config::FormalityConfig::default();
+    let mut ctx = surfaces::test_ctx(temp.path(), cfg.resolve_for_lang("cpp"));
+    ctx.global_config = sync::Arc::new(cfg.resolve_global());
 
     let surface = CppSurface;
     let _ = surface.lint(&ctx, false);
@@ -1081,28 +1110,28 @@ mod tests {
     // classify that as `ExecutionError` (`[ERR]`), not a lint-style
     // `ViolationsFound` (`[FAIL]`). `clang-format -i` has no
     // "differences found" exit code, so any non-zero exit is operational.
-    if !check_binary_exists("clang-format") {
+    if !surfaces::check_binary_exists("clang-format") {
       return;
     }
-    let temp = tempdir().unwrap();
+    let temp = tempfile::tempdir().unwrap();
     std::fs::write(temp.path().join("a.cpp"), "int main(){return 0;}\n")
       .unwrap();
 
-    let cfg = FormalityConfig::default();
+    let cfg = config::FormalityConfig::default();
     let mut lang = cfg.resolve_for_lang("cpp");
     lang.extra_args = [(
       "clang-format".to_string(),
       vec!["--this-flag-does-not-exist-fml151".to_string()],
     )]
     .into();
-    let mut ctx = test_ctx(temp.path(), lang);
-    ctx.global_config = Arc::new(cfg.resolve_global());
+    let mut ctx = surfaces::test_ctx(temp.path(), lang);
+    ctx.global_config = sync::Arc::new(cfg.resolve_global());
     ctx.check_only = true;
 
     let surface = CppSurface;
     let res = surface.format(&ctx);
     assert!(
-      matches!(res.status, SurfaceStatus::ExecutionError { .. }),
+      matches!(res.status, surfaces::SurfaceStatus::ExecutionError { .. }),
       "a formatter failure on --check must be ExecutionError, got: {:?}",
       res.status
     );
@@ -1115,27 +1144,27 @@ mod tests {
     // operational clang-format failure as `ExecutionError`, not
     // `ViolationsFound` — mirroring
     // `test_cpp_check_reports_execution_error_on_formatter_failure` above.
-    if !check_binary_exists("clang-format") {
+    if !surfaces::check_binary_exists("clang-format") {
       return;
     }
-    let temp = tempdir().unwrap();
+    let temp = tempfile::tempdir().unwrap();
     std::fs::write(temp.path().join("a.cpp"), "int main(){return 0;}\n")
       .unwrap();
 
-    let cfg = FormalityConfig::default();
+    let cfg = config::FormalityConfig::default();
     let mut lang = cfg.resolve_for_lang("cpp");
     lang.extra_args = [(
       "clang-format".to_string(),
       vec!["--this-flag-does-not-exist-fml151".to_string()],
     )]
     .into();
-    let mut ctx = test_ctx(temp.path(), lang);
-    ctx.global_config = Arc::new(cfg.resolve_global());
+    let mut ctx = surfaces::test_ctx(temp.path(), lang);
+    ctx.global_config = sync::Arc::new(cfg.resolve_global());
 
     let surface = CppSurface;
     let res = surface.format(&ctx);
     assert!(
-      matches!(res.status, SurfaceStatus::ExecutionError { .. }),
+      matches!(res.status, surfaces::SurfaceStatus::ExecutionError { .. }),
       "a formatter failure on the write path must be ExecutionError, got: {:?}",
       res.status
     );

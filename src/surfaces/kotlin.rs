@@ -2,37 +2,38 @@
 //! managed native config file — `ktlint` reads its own `.editorconfig`
 //! conventions directly, so there is no `NativeConfig` to sync here.
 
-use super::tooling::no_native_config;
-use super::{
-  DeclaresFacets, ExecutionContext, Facet, FacetSupport, LanguageSurface,
-  SurfaceResult, ToolInfo, classify_exit_one_as_violation, create_tool_command,
-  diff_check_via_tempcopy_classified, run_tool_command,
-  run_tool_command_classified, tool_missing_guard,
-};
-use std::time::Instant;
+use std::path;
+use std::time;
+
+use crate::config;
+use crate::config::facets;
+use crate::config::facets::DeclaresFacets;
+use crate::surfaces;
+use crate::surfaces::LanguageSurface;
+use crate::surfaces::tooling;
 
 /// Kotlin language surface implementation.
 #[derive(Debug, Default, Clone, Copy)]
 pub struct KotlinSurface;
 
 impl DeclaresFacets for KotlinSurface {
-  fn facet_support(&self, facet: Facet) -> FacetSupport {
+  fn facet_support(&self, facet: facets::Facet) -> facets::FacetSupport {
     match facet {
       // ktlint's default (official) code style enforces 4-space indentation
       // and does not offer a tab-based mode.
-      Facet::IndentTabs => FacetSupport::Fixed("spaces"),
+      facets::Facet::IndentTabs => facets::FacetSupport::Fixed("spaces"),
       // ktlint's standard ruleset enforces double-quoted strings.
-      Facet::QuoteStyle => FacetSupport::Fixed("double"),
+      facets::Facet::QuoteStyle => facets::FacetSupport::Fixed("double"),
       // "Smart Format": `ktlint -F` organizes/sorts imports as part of the
       // same pass that reformats code, so this always runs together with
       // format().
-      Facet::IndentWidth
-      | Facet::LineLength
-      | Facet::TrailingComma
-      | Facet::ImportSort => FacetSupport::Configurable,
-      Facet::ProseWrap | Facet::Edition | Facet::Standard => {
-        FacetSupport::Unsupported
-      }
+      facets::Facet::IndentWidth
+      | facets::Facet::LineLength
+      | facets::Facet::TrailingComma
+      | facets::Facet::ImportSort => facets::FacetSupport::Configurable,
+      facets::Facet::ProseWrap
+      | facets::Facet::Edition
+      | facets::Facet::Standard => facets::FacetSupport::Unsupported,
     }
   }
 }
@@ -44,7 +45,7 @@ pub const KOTLIN_EXTENSIONS: &[&str] = &["kt", "kts"];
 /// invocation: `-F` fixes both style violations and import order in one pass.
 #[must_use]
 pub fn build_ktlint_format_args(
-  files: &[std::path::PathBuf],
+  files: &[path::PathBuf],
   extra_args: &[String],
 ) -> Vec<String> {
   let mut args = vec!["-F".to_string()];
@@ -65,7 +66,7 @@ pub fn build_ktlint_format_args(
 /// separate autofix mode distinct from formatting.
 #[must_use]
 pub fn build_ktlint_lint_args(
-  files: &[std::path::PathBuf],
+  files: &[path::PathBuf],
   fix: bool,
   extra_args: &[String],
 ) -> Vec<String> {
@@ -98,7 +99,7 @@ pub fn build_ktlint_lint_args(
 /// byte zero.
 #[must_use]
 pub fn build_ktlint_json_args(
-  files: &[std::path::PathBuf],
+  files: &[path::PathBuf],
   extra_args: &[String],
 ) -> Vec<String> {
   let mut args = vec!["--reporter=json".to_string()];
@@ -145,9 +146,9 @@ impl LanguageSurface for KotlinSurface {
 
   fn tool_info(
     &self,
-    _config: &crate::config::ResolvedLangConfig,
-  ) -> Vec<ToolInfo> {
-    vec![ToolInfo {
+    _config: &config::ResolvedLangConfig,
+  ) -> Vec<surfaces::ToolInfo> {
+    vec![surfaces::ToolInfo {
       binary: "ktlint",
       description: "Kotlin linter and formatter (Smart Format: style + import organization in one pass)",
       install_hint: None,
@@ -156,10 +157,15 @@ impl LanguageSurface for KotlinSurface {
     }]
   }
 
-  fn format(&self, ctx: &ExecutionContext) -> SurfaceResult {
-    let start = Instant::now();
+  fn format(
+    &self,
+    ctx: &surfaces::ExecutionContext,
+  ) -> surfaces::SurfaceResult {
+    let start = time::Instant::now();
 
-    if let Some(res) = tool_missing_guard(self.name(), "ktlint", start, None) {
+    if let Some(res) =
+      surfaces::tool_missing_guard(self.name(), "ktlint", start, None)
+    {
       return res;
     }
 
@@ -169,10 +175,10 @@ impl LanguageSurface for KotlinSurface {
     }
 
     if ctx.check_only {
-      return diff_check_via_tempcopy_classified(
+      return surfaces::diff_check_via_tempcopy_classified(
         &files,
         |scratch| {
-          let mut cmd = create_tool_command("ktlint");
+          let mut cmd = surfaces::create_tool_command("ktlint");
           cmd.arg("-F").arg(scratch);
           cmd.args(ctx.lang_config.tool_args("ktlint"));
           cmd.current_dir(ctx.root.as_path());
@@ -200,30 +206,36 @@ impl LanguageSurface for KotlinSurface {
         // relying on `run_tool_command`'s default all-nonzero-is-violation
         // behavior, which happened to agree on exit 1 but silently mapped
         // any other non-zero exit to `ViolationsFound` too.
-        classify_exit_one_as_violation,
+        surfaces::classify_exit_one_as_violation,
       );
     }
 
     let files_to_pass = ctx.files_to_pass(files);
 
-    let mut cmd = create_tool_command("ktlint");
+    let mut cmd = surfaces::create_tool_command("ktlint");
     cmd.args(build_ktlint_format_args(
       &files_to_pass,
       ctx.lang_config.tool_args("ktlint"),
     ));
     cmd.current_dir(ctx.root.as_path());
 
-    run_tool_command_classified(
+    surfaces::run_tool_command_classified(
       self.name(),
       &mut cmd,
-      classify_exit_one_as_violation,
+      surfaces::classify_exit_one_as_violation,
     )
   }
 
-  fn lint(&self, ctx: &ExecutionContext, fix: bool) -> SurfaceResult {
-    let start = Instant::now();
+  fn lint(
+    &self,
+    ctx: &surfaces::ExecutionContext,
+    fix: bool,
+  ) -> surfaces::SurfaceResult {
+    let start = time::Instant::now();
 
-    if let Some(res) = tool_missing_guard(self.name(), "ktlint", start, None) {
+    if let Some(res) =
+      surfaces::tool_missing_guard(self.name(), "ktlint", start, None)
+    {
       return res;
     }
 
@@ -234,7 +246,7 @@ impl LanguageSurface for KotlinSurface {
 
     let files_to_pass = ctx.files_to_pass(files);
 
-    let mut cmd = create_tool_command("ktlint");
+    let mut cmd = surfaces::create_tool_command("ktlint");
     cmd.args(build_ktlint_lint_args(
       &files_to_pass,
       fix,
@@ -242,20 +254,20 @@ impl LanguageSurface for KotlinSurface {
     ));
     cmd.current_dir(ctx.root.as_path());
 
-    run_tool_command(self.name(), &mut cmd)
+    surfaces::run_tool_command(self.name(), &mut cmd)
   }
 
   fn sync_config(
     &self,
-    _ctx: &ExecutionContext,
+    _ctx: &surfaces::ExecutionContext,
     _check: bool,
-  ) -> SurfaceResult {
+  ) -> surfaces::SurfaceResult {
     // ktlint reads its layout configuration (indent size, max line length,
     // code style, disabled rules, ...) exclusively from `.editorconfig`,
     // which formality already synthesizes centrally for every surface (see
     // `crate::surfaces::editorconfig::sync_editorconfig`). There is no separate
     // native ktlint config file to generate, so this is a no-op.
-    no_native_config(
+    tooling::no_native_config(
       self.name(),
       "No config of its own (reads layout from .editorconfig)",
     )
@@ -265,25 +277,22 @@ impl LanguageSurface for KotlinSurface {
 #[cfg(test)]
 mod tests {
   use super::*;
-  use crate::config::ResolvedLangConfig;
-  use crate::surfaces::{
-    SurfaceStatus, check_binary_exists, forget_binary, test_ctx,
-  };
-  use std::path::{Path, PathBuf};
-  use std::sync::{Mutex, MutexGuard, PoisonError};
-  use tempfile::TempDir;
+  use crate::config;
+  use crate::surfaces;
+  use std::path;
+  use std::sync;
 
-  static KTLINT_TEST_GUARD: Mutex<()> = Mutex::new(());
+  static KTLINT_TEST_GUARD: sync::Mutex<()> = sync::Mutex::new(());
 
-  fn ktlint_test_lock() -> MutexGuard<'static, ()> {
+  fn ktlint_test_lock() -> sync::MutexGuard<'static, ()> {
     KTLINT_TEST_GUARD
       .lock()
-      .unwrap_or_else(PoisonError::into_inner)
+      .unwrap_or_else(sync::PoisonError::into_inner)
   }
 
   fn with_ktlint_stub<F>(exit_code: i32, test: F)
   where
-    F: FnOnce(&Path),
+    F: FnOnce(&path::Path),
   {
     struct Cleanup {
       orig_path: Option<std::ffi::OsString>,
@@ -301,13 +310,13 @@ mod tests {
             std::env::remove_var("PATH");
           }
         }
-        forget_binary("ktlint");
+        surfaces::forget_binary("ktlint");
       }
     }
 
     let _guard = ktlint_test_lock();
 
-    let temp = TempDir::new().unwrap();
+    let temp = tempfile::TempDir::new().unwrap();
     let stub_dir = temp.path().join("bin");
     std::fs::create_dir(&stub_dir).unwrap();
 
@@ -345,7 +354,7 @@ mod tests {
       new_path.push(p);
     }
 
-    forget_binary("ktlint");
+    surfaces::forget_binary("ktlint");
     // SAFETY: serialized by `KTLINT_TEST_GUARD`; no other thread runs ktlint
     // concurrently in this test harness.
     unsafe {
@@ -365,28 +374,28 @@ mod tests {
   fn test_kotlin_surface_facets() {
     let surface = KotlinSurface;
     assert_eq!(
-      surface.facet_support(Facet::IndentTabs),
-      FacetSupport::Fixed("spaces")
+      surface.facet_support(facets::Facet::IndentTabs),
+      facets::FacetSupport::Fixed("spaces")
     );
     assert_eq!(
-      surface.facet_support(Facet::IndentWidth),
-      FacetSupport::Configurable
+      surface.facet_support(facets::Facet::IndentWidth),
+      facets::FacetSupport::Configurable
     );
     assert_eq!(
-      surface.facet_support(Facet::LineLength),
-      FacetSupport::Configurable
+      surface.facet_support(facets::Facet::LineLength),
+      facets::FacetSupport::Configurable
     );
     assert_eq!(
-      surface.facet_support(Facet::QuoteStyle),
-      FacetSupport::Fixed("double")
+      surface.facet_support(facets::Facet::QuoteStyle),
+      facets::FacetSupport::Fixed("double")
     );
     assert_eq!(
-      surface.facet_support(Facet::ImportSort),
-      FacetSupport::Configurable
+      surface.facet_support(facets::Facet::ImportSort),
+      facets::FacetSupport::Configurable
     );
     assert_eq!(
-      surface.facet_support(Facet::ProseWrap),
-      FacetSupport::Unsupported
+      surface.facet_support(facets::Facet::ProseWrap),
+      facets::FacetSupport::Unsupported
     );
   }
 
@@ -402,7 +411,7 @@ mod tests {
   #[test]
   fn test_kotlin_surface_tool_info() {
     let surface = KotlinSurface;
-    let cfg = ResolvedLangConfig::new("kotlin");
+    let cfg = config::ResolvedLangConfig::new("kotlin");
     let tools = surface.tool_info(&cfg);
     assert_eq!(tools.len(), 1);
     assert_eq!(tools[0].binary, "ktlint");
@@ -413,20 +422,20 @@ mod tests {
   #[test]
   fn test_kotlin_surface_detect() {
     let surface = KotlinSurface;
-    let temp = TempDir::new().unwrap();
-    assert!(!crate::surfaces::detect_in(&surface, temp.path()));
+    let temp = tempfile::TempDir::new().unwrap();
+    assert!(!surfaces::detect_in(&surface, temp.path()));
 
     let kt_file = temp.path().join("Main.kt");
     std::fs::write(&kt_file, "fun main() {}\n").unwrap();
-    assert!(crate::surfaces::detect_in(&surface, temp.path()));
+    assert!(surfaces::detect_in(&surface, temp.path()));
   }
 
   #[test]
   fn test_kotlin_surface_detect_gradle_kts() {
     let surface = KotlinSurface;
-    let temp = TempDir::new().unwrap();
+    let temp = tempfile::TempDir::new().unwrap();
     std::fs::write(temp.path().join("build.gradle.kts"), "").unwrap();
-    assert!(crate::surfaces::detect_in(&surface, temp.path()));
+    assert!(surfaces::detect_in(&surface, temp.path()));
   }
 
   #[test]
@@ -441,7 +450,10 @@ mod tests {
       ]
     );
 
-    let files = vec![PathBuf::from("Main.kt"), PathBuf::from("Util.kt")];
+    let files = vec![
+      path::PathBuf::from("Main.kt"),
+      path::PathBuf::from("Util.kt"),
+    ];
     let extra = vec!["--relative".to_string()];
     let with_files = build_ktlint_format_args(&files, &extra);
     assert_eq!(
@@ -460,7 +472,7 @@ mod tests {
     let no_fix = build_ktlint_lint_args(&[], false, &[]);
     assert_eq!(no_fix, vec!["**/*.kt".to_string(), "**/*.kts".to_string()]);
 
-    let files = vec![PathBuf::from("Main.kt")];
+    let files = vec![path::PathBuf::from("Main.kt")];
     let with_fix = build_ktlint_lint_args(&files, true, &[]);
     assert_eq!(with_fix, vec!["-F".to_string(), "Main.kt".to_string()]);
   }
@@ -477,7 +489,7 @@ mod tests {
       ]
     );
 
-    let files = vec![PathBuf::from("Main.kt")];
+    let files = vec![path::PathBuf::from("Main.kt")];
     let extra = vec!["--relative".to_string()];
     let with_files = build_ktlint_json_args(&files, &extra);
     assert_eq!(
@@ -497,66 +509,86 @@ mod tests {
     // presence is still checked first (matching every other surface's
     // convention, e.g. Python/ruff) — so this only asserts Passed when the
     // tool is actually installed; otherwise it should report ToolMissing.
-    let temp = TempDir::new().unwrap();
+    let temp = tempfile::TempDir::new().unwrap();
     let surface = KotlinSurface;
-    let ctx = test_ctx(temp.path(), ResolvedLangConfig::new("kotlin"));
+    let ctx = surfaces::test_ctx(
+      temp.path(),
+      config::ResolvedLangConfig::new("kotlin"),
+    );
 
     let fmt_res = surface.format(&ctx);
     let lint_res = surface.lint(&ctx, false);
-    if check_binary_exists("ktlint") {
-      assert!(matches!(fmt_res.status, SurfaceStatus::Passed));
-      assert!(matches!(lint_res.status, SurfaceStatus::Passed));
+    if surfaces::check_binary_exists("ktlint") {
+      assert!(matches!(fmt_res.status, surfaces::SurfaceStatus::Passed));
+      assert!(matches!(lint_res.status, surfaces::SurfaceStatus::Passed));
     } else {
-      assert!(matches!(fmt_res.status, SurfaceStatus::ToolMissing { .. }));
-      assert!(matches!(lint_res.status, SurfaceStatus::ToolMissing { .. }));
+      assert!(matches!(
+        fmt_res.status,
+        surfaces::SurfaceStatus::ToolMissing { .. }
+      ));
+      assert!(matches!(
+        lint_res.status,
+        surfaces::SurfaceStatus::ToolMissing { .. }
+      ));
     }
   }
 
   #[test]
   fn test_kotlin_sync_config_is_noop() {
-    let temp = TempDir::new().unwrap();
+    let temp = tempfile::TempDir::new().unwrap();
     let surface = KotlinSurface;
-    let ctx = test_ctx(temp.path(), ResolvedLangConfig::new("kotlin"));
+    let ctx = surfaces::test_ctx(
+      temp.path(),
+      config::ResolvedLangConfig::new("kotlin"),
+    );
 
     let res = surface.sync_config(&ctx, false);
     // No native config file of its own (ktlint reads layout from
     // .editorconfig), so this reports Skipped like every other surface
     // with nothing to sync — not Passed (Fixes #271).
-    assert!(matches!(res.status, SurfaceStatus::Skipped { .. }));
+    assert!(matches!(
+      res.status,
+      surfaces::SurfaceStatus::Skipped { .. }
+    ));
   }
 
   #[test]
   fn test_kotlin_format_with_real_ktlint() {
     let _guard = ktlint_test_lock();
-    if !check_binary_exists("ktlint")
-      || !create_tool_command("ktlint")
+    if !surfaces::check_binary_exists("ktlint")
+      || !surfaces::create_tool_command("ktlint")
         .arg("--version")
         .output()
         .is_ok_and(|o| o.status.success())
     {
       return;
     }
-    let temp = TempDir::new().unwrap();
+    let temp = tempfile::TempDir::new().unwrap();
     let file = temp.path().join("Main.kt");
     let unformatted = "import kotlin.math.min\nimport kotlin.math.max\n\nfun main() {\nval x=1\nprintln(x)\n}\n";
     std::fs::write(&file, unformatted).unwrap();
 
     let surface = KotlinSurface;
-    let mut ctx_check =
-      test_ctx(temp.path(), ResolvedLangConfig::new("kotlin"));
+    let mut ctx_check = surfaces::test_ctx(
+      temp.path(),
+      config::ResolvedLangConfig::new("kotlin"),
+    );
     ctx_check.check_only = true;
     let check_res = surface.format(&ctx_check);
     assert!(matches!(
       check_res.status,
-      SurfaceStatus::ViolationsFound { .. }
+      surfaces::SurfaceStatus::ViolationsFound { .. }
     ));
 
-    let ctx_fix = test_ctx(temp.path(), ResolvedLangConfig::new("kotlin"));
+    let ctx_fix = surfaces::test_ctx(
+      temp.path(),
+      config::ResolvedLangConfig::new("kotlin"),
+    );
     let fix_res = surface.format(&ctx_fix);
-    assert!(matches!(fix_res.status, SurfaceStatus::Passed));
+    assert!(matches!(fix_res.status, surfaces::SurfaceStatus::Passed));
 
     let lint_res = surface.lint(&ctx_check, false);
-    assert!(matches!(lint_res.status, SurfaceStatus::Passed));
+    assert!(matches!(lint_res.status, surfaces::SurfaceStatus::Passed));
   }
 
   #[test]
@@ -571,24 +603,30 @@ mod tests {
     // non-zero exit (signal kill, or a hypothetical future operational code)
     // becomes `ExecutionError`. An unparseable file drives ktlint to exit
     // `1`, so it must not flip to `[ERR]`.
-    if !check_binary_exists("ktlint") {
+    if !surfaces::check_binary_exists("ktlint") {
       return;
     }
-    let temp = TempDir::new().unwrap();
+    let temp = tempfile::TempDir::new().unwrap();
     std::fs::write(temp.path().join("Broken.kt"), "fun main( { val x = }\n")
       .unwrap();
 
     let surface = KotlinSurface;
-    let mut ctx = test_ctx(temp.path(), ResolvedLangConfig::new("kotlin"));
+    let mut ctx = surfaces::test_ctx(
+      temp.path(),
+      config::ResolvedLangConfig::new("kotlin"),
+    );
     ctx.check_only = true;
 
     let res = surface.format(&ctx);
     assert!(
-      !matches!(res.status, SurfaceStatus::ExecutionError { .. }),
+      !matches!(res.status, surfaces::SurfaceStatus::ExecutionError { .. }),
       "ktlint exit 1 must not be reclassified as ExecutionError, got: {:?}",
       res.status
     );
-    assert!(matches!(res.status, SurfaceStatus::ViolationsFound { .. }));
+    assert!(matches!(
+      res.status,
+      surfaces::SurfaceStatus::ViolationsFound { .. }
+    ));
   }
 
   #[test]
@@ -598,16 +636,19 @@ mod tests {
     // which must classify as `ViolationsFound`, not flip to `ExecutionError`.
     with_ktlint_stub(1, |project_dir| {
       let surface = KotlinSurface;
-      let ctx = test_ctx(project_dir, ResolvedLangConfig::new("kotlin"));
+      let ctx = surfaces::test_ctx(
+        project_dir,
+        config::ResolvedLangConfig::new("kotlin"),
+      );
 
       let res = surface.format(&ctx);
       assert!(
-        !matches!(res.status, SurfaceStatus::ExecutionError { .. }),
+        !matches!(res.status, surfaces::SurfaceStatus::ExecutionError { .. }),
         "ktlint exit 1 on the write path must not be reclassified as ExecutionError, got: {:?}",
         res.status
       );
       assert!(
-        matches!(res.status, SurfaceStatus::ViolationsFound { .. }),
+        matches!(res.status, surfaces::SurfaceStatus::ViolationsFound { .. }),
         "ktlint exit 1 on the write path must be ViolationsFound, got: {:?}",
         res.status
       );
@@ -627,11 +668,14 @@ mod tests {
     // fails this test.
     with_ktlint_stub(2, |project_dir| {
       let surface = KotlinSurface;
-      let ctx = test_ctx(project_dir, ResolvedLangConfig::new("kotlin"));
+      let ctx = surfaces::test_ctx(
+        project_dir,
+        config::ResolvedLangConfig::new("kotlin"),
+      );
 
       let res = surface.format(&ctx);
       assert!(
-        matches!(res.status, SurfaceStatus::ExecutionError { .. }),
+        matches!(res.status, surfaces::SurfaceStatus::ExecutionError { .. }),
         "ktlint non-1 exit on the write path must be ExecutionError, got: {:?}",
         res.status
       );
@@ -658,7 +702,7 @@ mod tests {
     // would otherwise go unguarded. Reuses the same `ignore::WalkBuilder`
     // walk `test_no_stray_test_files_outside_sanctioned_pattern` (src/lib.rs)
     // already establishes for this kind of whole-tree source-textual check.
-    let manifest_dir = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+    let manifest_dir = path::PathBuf::from(env!("CARGO_MANIFEST_DIR"));
     let src_dir = manifest_dir.join("src");
     for entry in ignore::WalkBuilder::new(&src_dir)
       .standard_filters(false)

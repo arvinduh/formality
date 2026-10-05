@@ -1,32 +1,35 @@
 //! JSON language surface: formats and lints via `prettier`, reusing the same
 //! `.prettierrc.json` config machinery as the Markdown surface.
 
-use super::tooling::no_native_config;
-use super::{
-  DeclaresFacets, ExecutionContext, Facet, FacetSupport, LanguageSurface,
-  NativeConfig, PrettierConfig, SurfaceResult, ToolInfo,
-  build_prettier_inline_args, classify_all_nonzero_as_error,
-  create_tool_command, diff_check_via_tempcopy_classified,
-  lint_fix_unsupported, run_tool_command_classified, tool_missing_guard,
-};
-use std::path::PathBuf;
-use std::time::Instant;
+use std::path;
+use std::time;
+
+use crate::config;
+use crate::config::facets;
+use crate::config::facets::DeclaresFacets;
+use crate::surfaces;
+use crate::surfaces::LanguageSurface;
+use crate::surfaces::NativeConfig;
+use crate::surfaces::prettier;
+use crate::surfaces::tooling;
 
 /// JSON language surface implementation.
 #[derive(Debug, Default, Clone, Copy)]
 pub struct JsonSurface;
 
 impl DeclaresFacets for JsonSurface {
-  fn facet_support(&self, facet: Facet) -> FacetSupport {
+  fn facet_support(&self, facet: facets::Facet) -> facets::FacetSupport {
     match facet {
-      Facet::IndentTabs | Facet::IndentWidth => FacetSupport::Configurable,
-      Facet::QuoteStyle => FacetSupport::Fixed("double"),
-      Facet::TrailingComma => FacetSupport::Fixed("none"),
-      Facet::LineLength
-      | Facet::ImportSort
-      | Facet::ProseWrap
-      | Facet::Edition
-      | Facet::Standard => FacetSupport::Unsupported,
+      facets::Facet::IndentTabs | facets::Facet::IndentWidth => {
+        facets::FacetSupport::Configurable
+      }
+      facets::Facet::QuoteStyle => facets::FacetSupport::Fixed("double"),
+      facets::Facet::TrailingComma => facets::FacetSupport::Fixed("none"),
+      facets::Facet::LineLength
+      | facets::Facet::ImportSort
+      | facets::Facet::ProseWrap
+      | facets::Facet::Edition
+      | facets::Facet::Standard => facets::FacetSupport::Unsupported,
     }
   }
 }
@@ -56,9 +59,9 @@ impl LanguageSurface for JsonSurface {
 
   fn tool_info(
     &self,
-    _config: &crate::config::ResolvedLangConfig,
-  ) -> Vec<ToolInfo> {
-    vec![ToolInfo {
+    _config: &config::ResolvedLangConfig,
+  ) -> Vec<surfaces::ToolInfo> {
+    vec![surfaces::ToolInfo {
       binary: "prettier",
       description: "JSON formatter",
       install_hint: None,
@@ -67,15 +70,19 @@ impl LanguageSurface for JsonSurface {
     }]
   }
 
-  fn format(&self, ctx: &ExecutionContext) -> SurfaceResult {
-    let start = Instant::now();
+  fn format(
+    &self,
+    ctx: &surfaces::ExecutionContext,
+  ) -> surfaces::SurfaceResult {
+    let start = time::Instant::now();
 
-    if let Some(res) = tool_missing_guard(self.name(), "prettier", start, None)
+    if let Some(res) =
+      surfaces::tool_missing_guard(self.name(), "prettier", start, None)
     {
       return res;
     }
 
-    let files: Vec<PathBuf> = ctx
+    let files: Vec<path::PathBuf> = ctx
       .matched_files(JSON_EXTENSIONS)
       .into_iter()
       .filter(|p| {
@@ -90,11 +97,12 @@ impl LanguageSurface for JsonSurface {
     // Inline `--tab-width`/`--print-width`/etc. instead of writing
     // `.prettierrc.json` to disk — see `build_prettier_inline_args` (Fixes
     // #151 [pre-recreation]). `fml sync` remains the only path that materializes the file.
-    let inline_config =
-      build_prettier_inline_args(&PrettierConfig::from_context(ctx));
+    let inline_config = prettier::build_prettier_inline_args(
+      &prettier::PrettierConfig::from_context(ctx),
+    );
 
     if ctx.check_only {
-      return diff_check_via_tempcopy_classified(
+      return surfaces::diff_check_via_tempcopy_classified(
         &files,
         |scratch| {
           let parser = if scratch.to_string_lossy().contains(".jsonc.") {
@@ -102,7 +110,7 @@ impl LanguageSurface for JsonSurface {
           } else {
             "json"
           };
-          let mut cmd = create_tool_command("prettier");
+          let mut cmd = surfaces::create_tool_command("prettier");
           cmd
             .arg("--write")
             .arg("--parser")
@@ -115,11 +123,11 @@ impl LanguageSurface for JsonSurface {
         },
         self.name(),
         start,
-        classify_all_nonzero_as_error,
+        surfaces::classify_all_nonzero_as_error,
       );
     }
 
-    let mut cmd = create_tool_command("prettier");
+    let mut cmd = surfaces::create_tool_command("prettier");
     cmd.arg("--write");
     cmd.args(&inline_config);
 
@@ -135,18 +143,22 @@ impl LanguageSurface for JsonSurface {
     // file — never `1` (that is `--check`-only). Every non-zero exit here
     // is a tool failure (`ExecutionError`), and the `--check` path above
     // classifies identically (Fixes #107).
-    run_tool_command_classified(
+    surfaces::run_tool_command_classified(
       self.name(),
       &mut cmd,
-      classify_all_nonzero_as_error,
+      surfaces::classify_all_nonzero_as_error,
     )
   }
 
-  fn lint(&self, ctx: &ExecutionContext, fix: bool) -> SurfaceResult {
-    let start = Instant::now();
+  fn lint(
+    &self,
+    ctx: &surfaces::ExecutionContext,
+    fix: bool,
+  ) -> surfaces::SurfaceResult {
+    let start = time::Instant::now();
 
     if fix {
-      return lint_fix_unsupported(self.name(), start);
+      return surfaces::lint_fix_unsupported(self.name(), start);
     }
 
     // Prettier format checking can serve as JSON syntax linting
@@ -168,14 +180,14 @@ impl LanguageSurface for JsonSurface {
   // therefore nothing left for this surface to sync on its own.
   fn sync_config(
     &self,
-    _ctx: &ExecutionContext,
+    _ctx: &surfaces::ExecutionContext,
     _check: bool,
-  ) -> SurfaceResult {
-    no_native_config(
+  ) -> surfaces::SurfaceResult {
+    tooling::no_native_config(
       self.name(),
       &format!(
         "No config of its own (shares {})",
-        PrettierConfig::FILE_NAME
+        prettier::PrettierConfig::FILE_NAME
       ),
     )
   }
@@ -184,9 +196,8 @@ impl LanguageSurface for JsonSurface {
 #[cfg(test)]
 mod tests {
   use super::*;
-  use crate::config::ResolvedLangConfig;
-  use crate::surfaces::{SurfaceStatus, check_binary_exists, test_ctx};
-  use tempfile::TempDir;
+  use crate::config;
+  use crate::surfaces;
 
   #[test]
   fn test_json_surface_identity() {
@@ -199,25 +210,25 @@ mod tests {
   #[test]
   fn test_json_surface_detect() {
     let surface = JsonSurface;
-    let temp = TempDir::new().unwrap();
-    assert!(!crate::surfaces::detect_in(&surface, temp.path()));
+    let temp = tempfile::TempDir::new().unwrap();
+    assert!(!surfaces::detect_in(&surface, temp.path()));
 
     std::fs::write(temp.path().join("config.json"), "{}").unwrap();
-    assert!(crate::surfaces::detect_in(&surface, temp.path()));
+    assert!(surfaces::detect_in(&surface, temp.path()));
   }
 
   #[test]
   fn test_json_surface_detect_jsonc() {
     let surface = JsonSurface;
-    let temp = TempDir::new().unwrap();
+    let temp = tempfile::TempDir::new().unwrap();
     std::fs::write(temp.path().join("tsconfig.jsonc"), "{ /* c */ }").unwrap();
-    assert!(crate::surfaces::detect_in(&surface, temp.path()));
+    assert!(surfaces::detect_in(&surface, temp.path()));
   }
 
   #[test]
   fn test_json_tool_info() {
     let surface = JsonSurface;
-    let tools = surface.tool_info(&ResolvedLangConfig::new("json"));
+    let tools = surface.tool_info(&config::ResolvedLangConfig::new("json"));
     assert_eq!(tools.len(), 1);
     assert_eq!(tools[0].binary, "prettier");
     assert!(tools[0].is_required_for_fmt);
@@ -230,15 +241,19 @@ mod tests {
     // (e.g. Kotlin, Python): assert the deterministic outcome for whichever
     // branch the test environment is actually in, rather than assuming
     // prettier is installed.
-    let temp = TempDir::new().unwrap();
+    let temp = tempfile::TempDir::new().unwrap();
     let surface = JsonSurface;
-    let ctx = test_ctx(temp.path(), ResolvedLangConfig::new("json"));
+    let ctx =
+      surfaces::test_ctx(temp.path(), config::ResolvedLangConfig::new("json"));
 
     let res = surface.format(&ctx);
-    if check_binary_exists("prettier") {
-      assert!(matches!(res.status, SurfaceStatus::Passed));
+    if surfaces::check_binary_exists("prettier") {
+      assert!(matches!(res.status, surfaces::SurfaceStatus::Passed));
     } else {
-      assert!(matches!(res.status, SurfaceStatus::ToolMissing { .. }));
+      assert!(matches!(
+        res.status,
+        surfaces::SurfaceStatus::ToolMissing { .. }
+      ));
     }
   }
 
@@ -251,17 +266,21 @@ mod tests {
     // *reachable* assertion is "no lockfile ever gets passed to prettier",
     // not "Passed unconditionally" — branch on tool presence like every
     // other prettier-backed test in this file.
-    let temp = TempDir::new().unwrap();
+    let temp = tempfile::TempDir::new().unwrap();
     std::fs::write(temp.path().join("package-lock.json"), "{}").unwrap();
     std::fs::write(temp.path().join("npm-shrinkwrap.json"), "{}").unwrap();
 
     let surface = JsonSurface;
-    let ctx = test_ctx(temp.path(), ResolvedLangConfig::new("json"));
+    let ctx =
+      surfaces::test_ctx(temp.path(), config::ResolvedLangConfig::new("json"));
     let res = surface.format(&ctx);
-    if check_binary_exists("prettier") {
-      assert!(matches!(res.status, SurfaceStatus::Passed));
+    if surfaces::check_binary_exists("prettier") {
+      assert!(matches!(res.status, surfaces::SurfaceStatus::Passed));
     } else {
-      assert!(matches!(res.status, SurfaceStatus::ToolMissing { .. }));
+      assert!(matches!(
+        res.status,
+        surfaces::SurfaceStatus::ToolMissing { .. }
+      ));
     }
   }
 
@@ -269,11 +288,15 @@ mod tests {
   fn test_json_lint_fix_is_unsupported() {
     // JSON has no autofix-capable linter of its own; lint(fix=true) must be
     // a no-op Skipped rather than silently doing nothing or erroring.
-    let temp = TempDir::new().unwrap();
+    let temp = tempfile::TempDir::new().unwrap();
     let surface = JsonSurface;
-    let ctx = test_ctx(temp.path(), ResolvedLangConfig::new("json"));
+    let ctx =
+      surfaces::test_ctx(temp.path(), config::ResolvedLangConfig::new("json"));
     let res = surface.lint(&ctx, true);
-    assert!(matches!(res.status, SurfaceStatus::Skipped { .. }));
+    assert!(matches!(
+      res.status,
+      surfaces::SurfaceStatus::Skipped { .. }
+    ));
   }
 
   #[test]
@@ -281,14 +304,18 @@ mod tests {
     // lint(fix=false) is documented as reusing prettier's check-mode as a
     // syntax/format lint; assert it produces the same class of outcome as
     // format() in check mode rather than diverging.
-    let temp = TempDir::new().unwrap();
+    let temp = tempfile::TempDir::new().unwrap();
     let surface = JsonSurface;
-    let ctx = test_ctx(temp.path(), ResolvedLangConfig::new("json"));
+    let ctx =
+      surfaces::test_ctx(temp.path(), config::ResolvedLangConfig::new("json"));
     let res = surface.lint(&ctx, false);
-    if check_binary_exists("prettier") {
-      assert!(matches!(res.status, SurfaceStatus::Passed));
+    if surfaces::check_binary_exists("prettier") {
+      assert!(matches!(res.status, surfaces::SurfaceStatus::Passed));
     } else {
-      assert!(matches!(res.status, SurfaceStatus::ToolMissing { .. }));
+      assert!(matches!(
+        res.status,
+        surfaces::SurfaceStatus::ToolMissing { .. }
+      ));
     }
   }
 
@@ -299,14 +326,18 @@ mod tests {
     // which the runner calls under `par_iter()`. The file now has exactly
     // one writer — `sync_shared_prettier_config`, outside the fan-out — so
     // this surface writes nothing and says so.
-    let temp = TempDir::new().unwrap();
+    let temp = tempfile::TempDir::new().unwrap();
     let surface = JsonSurface;
     assert!(surface.uses_prettier());
 
-    let ctx = test_ctx(temp.path(), ResolvedLangConfig::new("json"));
+    let ctx =
+      surfaces::test_ctx(temp.path(), config::ResolvedLangConfig::new("json"));
     let res = surface.sync_config(&ctx, false);
 
-    assert!(matches!(res.status, SurfaceStatus::Skipped { .. }));
+    assert!(matches!(
+      res.status,
+      surfaces::SurfaceStatus::Skipped { .. }
+    ));
     assert!(
       !temp.path().join(".prettierrc.json").exists(),
       "the shared config must not be written from inside the fan-out"
@@ -321,40 +352,40 @@ mod tests {
     // Configurable, Fixed, and Unsupported.
     let surface = JsonSurface;
     assert_eq!(
-      surface.facet_support(Facet::IndentTabs),
-      FacetSupport::Configurable
+      surface.facet_support(facets::Facet::IndentTabs),
+      facets::FacetSupport::Configurable
     );
     assert_eq!(
-      surface.facet_support(Facet::IndentWidth),
-      FacetSupport::Configurable
+      surface.facet_support(facets::Facet::IndentWidth),
+      facets::FacetSupport::Configurable
     );
     assert_eq!(
-      surface.facet_support(Facet::QuoteStyle),
-      FacetSupport::Fixed("double")
+      surface.facet_support(facets::Facet::QuoteStyle),
+      facets::FacetSupport::Fixed("double")
     );
     assert_eq!(
-      surface.facet_support(Facet::TrailingComma),
-      FacetSupport::Fixed("none")
+      surface.facet_support(facets::Facet::TrailingComma),
+      facets::FacetSupport::Fixed("none")
     );
     assert_eq!(
-      surface.facet_support(Facet::LineLength),
-      FacetSupport::Unsupported
+      surface.facet_support(facets::Facet::LineLength),
+      facets::FacetSupport::Unsupported
     );
     assert_eq!(
-      surface.facet_support(Facet::ImportSort),
-      FacetSupport::Unsupported
+      surface.facet_support(facets::Facet::ImportSort),
+      facets::FacetSupport::Unsupported
     );
     assert_eq!(
-      surface.facet_support(Facet::ProseWrap),
-      FacetSupport::Unsupported
+      surface.facet_support(facets::Facet::ProseWrap),
+      facets::FacetSupport::Unsupported
     );
     assert_eq!(
-      surface.facet_support(Facet::Edition),
-      FacetSupport::Unsupported
+      surface.facet_support(facets::Facet::Edition),
+      facets::FacetSupport::Unsupported
     );
     assert_eq!(
-      surface.facet_support(Facet::Standard),
-      FacetSupport::Unsupported
+      surface.facet_support(facets::Facet::Standard),
+      facets::FacetSupport::Unsupported
     );
   }
 
@@ -362,14 +393,15 @@ mod tests {
   fn test_json_format_does_not_write_prettierrc() {
     // Fixes #151 [pre-recreation]: `fml fmt` must not write `.prettierrc.json` as a side
     // effect; only `fml sync` should materialize the native config file.
-    if !check_binary_exists("prettier") {
+    if !surfaces::check_binary_exists("prettier") {
       return;
     }
-    let temp = TempDir::new().unwrap();
+    let temp = tempfile::TempDir::new().unwrap();
     std::fs::write(temp.path().join("a.json"), "{\"a\":1}").unwrap();
 
     let surface = JsonSurface;
-    let ctx = test_ctx(temp.path(), ResolvedLangConfig::new("json"));
+    let ctx =
+      surfaces::test_ctx(temp.path(), config::ResolvedLangConfig::new("json"));
     let _ = surface.format(&ctx);
 
     assert!(!temp.path().join(".prettierrc.json").exists());

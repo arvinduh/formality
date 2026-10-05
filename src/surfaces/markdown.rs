@@ -3,38 +3,31 @@
 //! unavailable), syncing the managed `.prettierrc.json` /
 //! `.markdownlint.json` from `formality.toml`.
 
-use super::{
-  AUTO_GENERATED_JSON_COMMENT, DeclaresFacets, ExecutionContext, Facet,
-  FacetSupport, LanguageSurface, NativeConfig, PrettierConfig, SurfaceResult,
-  SurfaceStatus, ToolInfo, build_prettier_inline_args, check_binary_exists,
-  classify_all_nonzero_as_error, classify_exit_one_as_violation,
-  create_tool_command, diff_check_via_local_tempcopy_classified,
-  install_hint_for, render_native_config, run_tool_command,
-  run_tool_command_classified, sync_native_config, tool_missing_guard,
-  tool_missing_result,
-};
-use crate::config::ResolvedLangConfig;
+use crate::config;
+use crate::config::facets;
+use crate::config::facets::DeclaresFacets;
+use crate::surfaces;
+use crate::surfaces::{LanguageSurface, NativeConfig};
 use rayon::iter::{IntoParallelRefIterator, ParallelIterator};
-use serde::{Deserialize, Serialize};
-use std::path::{Path, PathBuf};
-use std::time::Instant;
+use std::path;
+use std::time;
 
 /// Comment field container for markdownlint config.
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize, PartialEq, Eq)]
 pub struct MarkdownlintComment {
   /// Comment description string.
   pub description: String,
 }
 
 /// MD007 (ul-indent) rule options for markdownlint.
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize, PartialEq, Eq)]
 pub struct MarkdownlintMd007 {
   /// Number of spaces for list indentation.
   pub indent: usize,
 }
 
 /// MD013 (line length) rule options for markdownlint.
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize, PartialEq, Eq)]
 pub struct MarkdownlintMd013 {
   /// Maximum line length allowed.
   pub line_length: usize,
@@ -49,7 +42,7 @@ pub struct MarkdownlintMd013 {
   clippy::struct_excessive_bools,
   reason = "mirrors markdownlint's native per-rule keys"
 )]
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize, PartialEq, Eq)]
 pub struct MarkdownlintConfig {
   /// Warning comment header block.
   #[serde(rename = "$comment")]
@@ -109,23 +102,23 @@ pub struct MarkdownlintConfig {
 impl NativeConfig for MarkdownlintConfig {
   const FILE_NAME: &'static str = ".markdownlint.json";
 
-  fn from_context(ctx: &ExecutionContext) -> Self {
+  fn from_context(ctx: &surfaces::ExecutionContext) -> Self {
     markdownlint_config_for_lang(&ctx.lang_config)
   }
 
   fn render(&self) -> Result<String, crate::errors::FormalityError> {
-    render_native_config(self)
+    surfaces::render_native_config(self)
   }
 }
 
-/// Builds the resolved [`MarkdownlintConfig`] from a [`ResolvedLangConfig`]
+/// Builds the resolved [`MarkdownlintConfig`] from a [`config::ResolvedLangConfig`]
 /// alone — the shared logic behind both [`NativeConfig::from_context`]
 /// (used by `fml sync`/`fml fmt`/`fml lint`, which all have a full
-/// [`ExecutionContext`] on hand) and [`write_markdownlint_temp_config`]
+/// [`surfaces::ExecutionContext`] on hand) and [`write_markdownlint_temp_config`]
 /// (also called from `fml lsp`'s `markdownlint_diagnostics`, which only
 /// ever resolves a per-language config, not a full `ExecutionContext`).
 fn markdownlint_config_for_lang(
-  lang_config: &ResolvedLangConfig,
+  lang_config: &config::ResolvedLangConfig,
 ) -> MarkdownlintConfig {
   // MD033/no-inline-html is a house-style rule, not a correctness one —
   // there is no markdown equivalent for centered badge blocks
@@ -141,7 +134,7 @@ fn markdownlint_config_for_lang(
 
   MarkdownlintConfig {
     comment: MarkdownlintComment {
-      description: AUTO_GENERATED_JSON_COMMENT.to_string(),
+      description: surfaces::AUTO_GENERATED_JSON_COMMENT.to_string(),
     },
     default: true,
     md007: MarkdownlintMd007 {
@@ -168,9 +161,9 @@ fn markdownlint_config_for_lang(
 /// [`write_markdownlint_temp_config`]).
 #[must_use]
 pub fn build_markdownlint_args(
-  files: &[PathBuf],
+  files: &[path::PathBuf],
   fix: bool,
-  config_path: Option<&Path>,
+  config_path: Option<&path::Path>,
   extra_args: &[String],
 ) -> Vec<String> {
   let mut args = Vec::new();
@@ -205,9 +198,9 @@ pub fn build_markdownlint_args(
 /// Only the `markdownlint-cli2` extra args are forwarded; the `prettier`
 /// ones go to [`build_prettier_fmt_args`] alone (#210).
 fn build_markdownlint_fix_argv(
-  files: &[PathBuf],
-  config_path: Option<&Path>,
-  lang: &ResolvedLangConfig,
+  files: &[path::PathBuf],
+  config_path: Option<&path::Path>,
+  lang: &config::ResolvedLangConfig,
 ) -> Vec<String> {
   build_markdownlint_args(
     files,
@@ -239,7 +232,7 @@ fn build_markdownlint_fix_argv(
 /// sync` writes the persistent `.markdownlint.json` now (see
 /// [`MarkdownSurface::sync_config`]).
 pub(crate) fn write_markdownlint_temp_config(
-  lang_config: &ResolvedLangConfig,
+  lang_config: &config::ResolvedLangConfig,
 ) -> std::io::Result<tempfile::NamedTempFile> {
   use std::io::Write;
 
@@ -266,8 +259,8 @@ pub(crate) fn write_markdownlint_temp_config(
 #[must_use]
 pub fn build_prettier_fmt_args(
   inline_config: &[String],
-  files: &[PathBuf],
-  lang: &ResolvedLangConfig,
+  files: &[path::PathBuf],
+  lang: &config::ResolvedLangConfig,
 ) -> Vec<String> {
   let mut args = vec!["--write".to_string()];
   args.extend(inline_config.iter().cloned());
@@ -740,9 +733,9 @@ fn escape_line_hashes(content: &str, lines: &[usize]) -> String {
 /// for a file that passes [`has_unspaced_hash_line`].
 fn escape_continuation_hashes(
   bin: &str,
-  config: &Path,
-  file: &Path,
-  root: &Path,
+  config: &path::Path,
+  file: &path::Path,
+  root: &path::Path,
 ) -> std::io::Result<()> {
   use std::io::Write;
 
@@ -758,7 +751,7 @@ fn escape_continuation_hashes(
   } else {
     "-"
   };
-  let mut child = create_tool_command(bin)
+  let mut child = surfaces::create_tool_command(bin)
     .arg("--config")
     .arg(config)
     .arg(stdin_arg)
@@ -797,9 +790,9 @@ fn escape_continuation_hashes(
 /// Returns the first error [`escape_continuation_hashes`] hits.
 fn escape_all(
   bin: &str,
-  config: &Path,
-  files: &[PathBuf],
-  root: &Path,
+  config: &path::Path,
+  files: &[path::PathBuf],
+  root: &path::Path,
 ) -> std::io::Result<()> {
   files
     .par_iter()
@@ -809,12 +802,12 @@ fn escape_all(
 /// The `ExecutionError` result for a failed [`escape_all`].
 fn escape_failed(
   surface_name: &'static str,
-  start: Instant,
+  start: time::Instant,
   e: &std::io::Error,
-) -> SurfaceResult {
-  SurfaceResult {
+) -> surfaces::SurfaceResult {
+  surfaces::SurfaceResult {
     surface_name,
-    status: SurfaceStatus::ExecutionError {
+    status: surfaces::SurfaceStatus::ExecutionError {
       message: format!("Failed to escape a paragraph-continuation `#`: {e}"),
     },
     duration: start.elapsed(),
@@ -888,17 +881,17 @@ fn filter_markdownlint_noise(message: &str) -> String {
 pub struct MarkdownSurface;
 
 impl DeclaresFacets for MarkdownSurface {
-  fn facet_support(&self, facet: Facet) -> FacetSupport {
+  fn facet_support(&self, facet: facets::Facet) -> facets::FacetSupport {
     match facet {
-      Facet::IndentTabs
-      | Facet::IndentWidth
-      | Facet::LineLength
-      | Facet::ProseWrap => FacetSupport::Configurable,
-      Facet::QuoteStyle
-      | Facet::TrailingComma
-      | Facet::ImportSort
-      | Facet::Edition
-      | Facet::Standard => FacetSupport::Unsupported,
+      facets::Facet::IndentTabs
+      | facets::Facet::IndentWidth
+      | facets::Facet::LineLength
+      | facets::Facet::ProseWrap => facets::FacetSupport::Configurable,
+      facets::Facet::QuoteStyle
+      | facets::Facet::TrailingComma
+      | facets::Facet::ImportSort
+      | facets::Facet::Edition
+      | facets::Facet::Standard => facets::FacetSupport::Unsupported,
     }
   }
 }
@@ -941,16 +934,19 @@ impl LanguageSurface for MarkdownSurface {
     &[".markdownlint.json", ".markdownlint.yaml"]
   }
 
-  fn tool_info(&self, _config: &ResolvedLangConfig) -> Vec<ToolInfo> {
+  fn tool_info(
+    &self,
+    _config: &config::ResolvedLangConfig,
+  ) -> Vec<surfaces::ToolInfo> {
     vec![
-      ToolInfo {
+      surfaces::ToolInfo {
         binary: "prettier",
         description: "Opinionated code/markdown formatter",
         install_hint: None,
         is_required_for_fmt: true,
         is_required_for_lint: false,
       },
-      ToolInfo {
+      surfaces::ToolInfo {
         binary: "markdownlint-cli2",
         description: "Fast markdown linter",
         install_hint: None,
@@ -965,10 +961,14 @@ impl LanguageSurface for MarkdownSurface {
     clippy::too_many_lines,
     reason = "orchestrates prettier markdown formatting across check and write modes with tempcopy handling"
   )]
-  fn format(&self, ctx: &ExecutionContext) -> SurfaceResult {
-    let start = Instant::now();
+  fn format(
+    &self,
+    ctx: &surfaces::ExecutionContext,
+  ) -> surfaces::SurfaceResult {
+    let start = time::Instant::now();
 
-    if let Some(res) = tool_missing_guard(self.name(), "prettier", start, None)
+    if let Some(res) =
+      surfaces::tool_missing_guard(self.name(), "prettier", start, None)
     {
       return res;
     }
@@ -978,9 +978,9 @@ impl LanguageSurface for MarkdownSurface {
       return res;
     }
 
-    let md_binary = if check_binary_exists("markdownlint-cli2") {
+    let md_binary = if surfaces::check_binary_exists("markdownlint-cli2") {
       Some("markdownlint-cli2")
-    } else if check_binary_exists("markdownlint") {
+    } else if surfaces::check_binary_exists("markdownlint") {
       Some("markdownlint")
     } else {
       None
@@ -989,8 +989,9 @@ impl LanguageSurface for MarkdownSurface {
     // Inline `--tab-width`/`--print-width`/etc. instead of writing
     // `.prettierrc.json` to disk — see `build_prettier_inline_args` (Fixes
     // #151 [pre-recreation]). `fml sync` remains the only path that materializes the file.
-    let inline_config =
-      build_prettier_inline_args(&PrettierConfig::from_context(ctx));
+    let inline_config = surfaces::build_prettier_inline_args(
+      &surfaces::PrettierConfig::from_context(ctx),
+    );
 
     // markdownlint-cli2's own `--fix` pass has no per-flag inline config
     // (it only accepts `--config <path>`), so the resolved settings are
@@ -1006,9 +1007,9 @@ impl LanguageSurface for MarkdownSurface {
       {
         Ok(f) => Some(f),
         Err(e) => {
-          return SurfaceResult {
+          return surfaces::SurfaceResult {
             surface_name: self.name(),
-            status: SurfaceStatus::ExecutionError {
+            status: surfaces::SurfaceStatus::ExecutionError {
               message: format!(
                 "Failed to write temporary markdownlint config: {e}"
               ),
@@ -1024,7 +1025,7 @@ impl LanguageSurface for MarkdownSurface {
     let hash_cfg_path = md_temp_cfgs.as_ref().map(|(_, h)| h.path());
 
     if ctx.check_only {
-      return diff_check_via_local_tempcopy_classified(
+      return surfaces::diff_check_via_local_tempcopy_classified(
         &files,
         |scratch| {
           if let Some(bin) = md_binary {
@@ -1037,7 +1038,7 @@ impl LanguageSurface for MarkdownSurface {
                 ctx.root.as_path(),
               )?;
             }
-            let mut md_cmd = create_tool_command(bin);
+            let mut md_cmd = surfaces::create_tool_command(bin);
             // Fixes #150: this argv used to be hand-assembled here, and the
             // hand-assembled copy omitted `extra_args`. See
             // `build_markdownlint_fix_argv` — one builder shared with the
@@ -1067,7 +1068,7 @@ impl LanguageSurface for MarkdownSurface {
             }
           }
 
-          let mut cmd = create_tool_command("prettier");
+          let mut cmd = surfaces::create_tool_command("prettier");
           cmd
             .arg("--parser")
             .arg("markdown")
@@ -1089,7 +1090,7 @@ impl LanguageSurface for MarkdownSurface {
         },
         self.name(),
         start,
-        classify_all_nonzero_as_error,
+        surfaces::classify_all_nonzero_as_error,
       );
     }
 
@@ -1101,7 +1102,7 @@ impl LanguageSurface for MarkdownSurface {
       {
         return escape_failed(self.name(), start, &e);
       }
-      let mut md_cmd = create_tool_command(bin);
+      let mut md_cmd = surfaces::create_tool_command(bin);
       // Fixes #150: same builder as the `check_only` branch above, differing
       // only in the paths handed to the tool. See
       // `build_markdownlint_fix_argv`.
@@ -1121,17 +1122,20 @@ impl LanguageSurface for MarkdownSurface {
       // on that basis — so `classify_exit_one_as_violation` maps only a non-1
       // non-zero exit (or a spawn failure) to `ExecutionError`, the one
       // outcome surfaced here.
-      let md_res = run_tool_command_classified(
+      let md_res = surfaces::run_tool_command_classified(
         self.name(),
         &mut md_cmd,
-        classify_exit_one_as_violation,
+        surfaces::classify_exit_one_as_violation,
       );
-      if matches!(md_res.status, SurfaceStatus::ExecutionError { .. }) {
+      if matches!(
+        md_res.status,
+        surfaces::SurfaceStatus::ExecutionError { .. }
+      ) {
         return md_res;
       }
     }
 
-    let mut cmd = create_tool_command("prettier");
+    let mut cmd = surfaces::create_tool_command("prettier");
     cmd.args(build_prettier_fmt_args(
       &inline_config,
       &files,
@@ -1144,10 +1148,10 @@ impl LanguageSurface for MarkdownSurface {
     // `--config`, unreadable file) — no "found drift" exit code, same as the
     // `--check` path above. Every non-zero exit here is therefore an
     // `ExecutionError`, not a lint-style `ViolationsFound` (Fixes #155).
-    let res = run_tool_command_classified(
+    let res = surfaces::run_tool_command_classified(
       self.name(),
       &mut cmd,
-      classify_all_nonzero_as_error,
+      surfaces::classify_all_nonzero_as_error,
     );
     if !res.is_success() {
       return res;
@@ -1163,19 +1167,23 @@ impl LanguageSurface for MarkdownSurface {
     res
   }
 
-  fn lint(&self, ctx: &ExecutionContext, fix: bool) -> SurfaceResult {
-    let start = Instant::now();
+  fn lint(
+    &self,
+    ctx: &surfaces::ExecutionContext,
+    fix: bool,
+  ) -> surfaces::SurfaceResult {
+    let start = time::Instant::now();
 
-    let binary = if check_binary_exists("markdownlint-cli2") {
+    let binary = if surfaces::check_binary_exists("markdownlint-cli2") {
       "markdownlint-cli2"
-    } else if check_binary_exists("markdownlint") {
+    } else if surfaces::check_binary_exists("markdownlint") {
       "markdownlint"
     } else {
-      return tool_missing_result(
+      return surfaces::tool_missing_result(
         self.name(),
         start,
         "markdownlint-cli2",
-        &install_hint_for("markdownlint-cli2"),
+        &surfaces::install_hint_for("markdownlint-cli2"),
       );
     };
 
@@ -1192,9 +1200,9 @@ impl LanguageSurface for MarkdownSurface {
     let md_temp_cfg = match write_markdownlint_temp_config(&ctx.lang_config) {
       Ok(f) => f,
       Err(e) => {
-        return SurfaceResult {
+        return surfaces::SurfaceResult {
           surface_name: self.name(),
-          status: SurfaceStatus::ExecutionError {
+          status: surfaces::SurfaceStatus::ExecutionError {
             message: format!(
               "Failed to write temporary markdownlint config: {e}"
             ),
@@ -1214,7 +1222,7 @@ impl LanguageSurface for MarkdownSurface {
       return escape_failed(self.name(), start, &e);
     }
 
-    let mut cmd = create_tool_command(binary);
+    let mut cmd = surfaces::create_tool_command(binary);
     cmd.args(build_markdownlint_args(
       &files,
       fix,
@@ -1223,10 +1231,10 @@ impl LanguageSurface for MarkdownSurface {
     ));
     cmd.current_dir(ctx.root.as_path());
 
-    let mut res = run_tool_command(self.name(), &mut cmd);
+    let mut res = surfaces::run_tool_command(self.name(), &mut cmd);
     match &mut res.status {
-      SurfaceStatus::ViolationsFound { message, .. }
-      | SurfaceStatus::ExecutionError { message } => {
+      surfaces::SurfaceStatus::ViolationsFound { message, .. }
+      | surfaces::SurfaceStatus::ExecutionError { message } => {
         *message = filter_markdownlint_noise(message);
       }
       _ => {}
@@ -1249,11 +1257,15 @@ impl LanguageSurface for MarkdownSurface {
   // (`sync_shared_prettier_config`) owns it; `uses_prettier` above is this
   // surface's declaration that it consumes it. `fml fmt` is unaffected — it
   // passes prettier's settings inline (Fixes #151 [pre-recreation]).
-  fn sync_config(&self, ctx: &ExecutionContext, check: bool) -> SurfaceResult {
-    sync_native_config::<MarkdownlintConfig>(
+  fn sync_config(
+    &self,
+    ctx: &surfaces::ExecutionContext,
+    check: bool,
+  ) -> surfaces::SurfaceResult {
+    surfaces::sync_native_config::<MarkdownlintConfig>(
       ctx,
       check,
-      Instant::now(),
+      time::Instant::now(),
       self.name(),
     )
   }
@@ -1262,13 +1274,13 @@ impl LanguageSurface for MarkdownSurface {
 #[cfg(test)]
 mod tests {
   use super::*;
-  use crate::config::ResolvedLangConfig;
-  use crate::surfaces::test_ctx;
-  use tempfile::TempDir;
+  use crate::config;
+  use crate::surfaces;
+  use std::path;
 
   #[test]
   fn test_prettier_config_typed_serialization() {
-    let cfg = PrettierConfig {
+    let cfg = surfaces::PrettierConfig {
       comment: "warning".to_string(),
       tab_width: 4,
       print_width: 100,
@@ -1325,7 +1337,7 @@ mod tests {
     let no_fix = build_markdownlint_args(&[], false, None, &[]);
     assert_eq!(no_fix, Vec::<String>::new());
 
-    let files = vec![PathBuf::from("a.md"), PathBuf::from("b.md")];
+    let files = vec![path::PathBuf::from("a.md"), path::PathBuf::from("b.md")];
     let extra = vec!["--loglevel".to_string(), "warn".to_string()];
     let with_fix = build_markdownlint_args(&files, true, None, &extra);
     assert_eq!(
@@ -1342,8 +1354,8 @@ mod tests {
 
   #[test]
   fn test_build_markdownlint_args_with_config_path() {
-    let files = vec![PathBuf::from("a.md")];
-    let cfg_path = PathBuf::from("/tmp/some-config.json");
+    let files = vec![path::PathBuf::from("a.md")];
+    let cfg_path = path::PathBuf::from("/tmp/some-config.json");
     let args =
       build_markdownlint_args(&files, true, Some(cfg_path.as_path()), &[]);
     assert_eq!(
@@ -1363,8 +1375,8 @@ mod tests {
     // project-supplied `extra_args = ["--config", "mine.json"]` must land
     // after the injected temp-config path to actually override it (see
     // `write_markdownlint_temp_config`'s doc comment).
-    let files = vec![PathBuf::from("a.md")];
-    let injected = PathBuf::from("/tmp/.markdownlint-abc123.json");
+    let files = vec![path::PathBuf::from("a.md")];
+    let injected = path::PathBuf::from("/tmp/.markdownlint-abc123.json");
     let extra = vec!["--config".to_string(), "mine.json".to_string()];
     let args =
       build_markdownlint_args(&files, false, Some(injected.as_path()), &extra);
@@ -1391,7 +1403,7 @@ mod tests {
     // stricter built-in defaults — MD013 `code_blocks`/`tables: true` — if
     // that file was absent). The temp-file config must carry
     // formality.toml's actual resolved MD013 settings.
-    let mut lang_cfg = ResolvedLangConfig::new("markdown");
+    let mut lang_cfg = config::ResolvedLangConfig::new("markdown");
     lang_cfg.line_length = 100;
 
     let temp_cfg = write_markdownlint_temp_config(&lang_cfg).unwrap();
@@ -1408,7 +1420,7 @@ mod tests {
     // Issue #120: MD033/no-inline-html fires unfixably on ordinary README
     // idioms (centered badge blocks, `<details>` disclosure widgets), so the
     // shipped default must disable it.
-    let lang_cfg = ResolvedLangConfig::new("markdown");
+    let lang_cfg = config::ResolvedLangConfig::new("markdown");
     let cfg = markdownlint_config_for_lang(&lang_cfg);
     assert!(!cfg.md033, "MD033 must be disabled by default");
   }
@@ -1417,8 +1429,8 @@ mod tests {
   fn test_markdownlint_config_for_lang_reenables_md033_from_formality_toml() {
     // Issue #120 acceptance criterion: MD033 must be re-enablable, not just
     // removed — `[lang.markdown] no_inline_html = true`.
-    let mut lang_cfg = ResolvedLangConfig::new("markdown");
-    lang_cfg.markdown = Some(crate::config::MarkdownOptions {
+    let mut lang_cfg = config::ResolvedLangConfig::new("markdown");
+    lang_cfg.markdown = Some(config::MarkdownOptions {
       prose_wrap: None,
       no_inline_html: Some(true),
     });
@@ -1430,7 +1442,7 @@ mod tests {
   fn test_markdownlint_config_for_lang_syncs_md007_indent_with_indent_size() {
     // Issue #394: prettier indents nested lists using tabWidth (indent_size),
     // so markdownlint's MD007 indent must match indent_size to avoid oscillation.
-    let mut lang_cfg = ResolvedLangConfig::new("markdown");
+    let mut lang_cfg = config::ResolvedLangConfig::new("markdown");
     lang_cfg.indent_size = 4;
     let cfg = markdownlint_config_for_lang(&lang_cfg);
     assert_eq!(cfg.md007.indent, 4);
@@ -1444,21 +1456,21 @@ mod tests {
   fn test_markdown_nested_list_indent_agrees_at_configured_indent_size() {
     // Issue #394 acceptance criterion: fml fix followed by fml lint passes
     // on a nested list fixture at indent_size 2 and 4 without oscillation.
-    if !check_binary_exists("prettier")
-      || (!check_binary_exists("markdownlint-cli2")
-        && !check_binary_exists("markdownlint"))
+    if !surfaces::check_binary_exists("prettier")
+      || (!surfaces::check_binary_exists("markdownlint-cli2")
+        && !surfaces::check_binary_exists("markdownlint"))
     {
       return;
     }
 
     for indent_size in [2, 4] {
-      let temp = TempDir::new().unwrap();
+      let temp = tempfile::TempDir::new().unwrap();
       let file = temp.path().join("list.md");
       std::fs::write(&file, "# Title\n\n* item\n    * nested\n").unwrap();
 
-      let mut lang_cfg = ResolvedLangConfig::new("markdown");
+      let mut lang_cfg = config::ResolvedLangConfig::new("markdown");
       lang_cfg.indent_size = indent_size;
-      let ctx = test_ctx(temp.path(), lang_cfg);
+      let ctx = surfaces::test_ctx(temp.path(), lang_cfg);
       let surface = MarkdownSurface;
 
       let fmt_res = surface.format(&ctx);
@@ -1496,19 +1508,22 @@ Extra detail text.\n\n\
   fn test_lint_md033_does_not_fire_by_default_on_readme_with_inline_html() {
     // Issue #120 acceptance criterion: a README fixture with real inline
     // HTML must lint clean by default now that MD033 ships disabled.
-    if !check_binary_exists("markdownlint-cli2")
-      && !check_binary_exists("markdownlint")
+    if !surfaces::check_binary_exists("markdownlint-cli2")
+      && !surfaces::check_binary_exists("markdownlint")
     {
       return;
     }
 
-    let temp = TempDir::new().unwrap();
+    let temp = tempfile::TempDir::new().unwrap();
     std::fs::write(temp.path().join("README.md"), README_WITH_INLINE_HTML)
       .unwrap();
     assert!(!temp.path().join(".markdownlint.json").exists());
 
     let surface = MarkdownSurface;
-    let ctx = test_ctx(temp.path(), ResolvedLangConfig::new("markdown"));
+    let ctx = surfaces::test_ctx(
+      temp.path(),
+      config::ResolvedLangConfig::new("markdown"),
+    );
 
     let res = surface.lint(&ctx, false);
     assert!(
@@ -1523,23 +1538,23 @@ Extra detail text.\n\n\
     // Issue #120 acceptance criterion: opting back in via
     // `[lang.markdown] no_inline_html = true` must restore MD033
     // enforcement on the very same fixture that lints clean by default.
-    if !check_binary_exists("markdownlint-cli2")
-      && !check_binary_exists("markdownlint")
+    if !surfaces::check_binary_exists("markdownlint-cli2")
+      && !surfaces::check_binary_exists("markdownlint")
     {
       return;
     }
 
-    let temp = TempDir::new().unwrap();
+    let temp = tempfile::TempDir::new().unwrap();
     std::fs::write(temp.path().join("README.md"), README_WITH_INLINE_HTML)
       .unwrap();
 
-    let mut lang_cfg = ResolvedLangConfig::new("markdown");
-    lang_cfg.markdown = Some(crate::config::MarkdownOptions {
+    let mut lang_cfg = config::ResolvedLangConfig::new("markdown");
+    lang_cfg.markdown = Some(config::MarkdownOptions {
       prose_wrap: None,
       no_inline_html: Some(true),
     });
     let surface = MarkdownSurface;
-    let ctx = test_ctx(temp.path(), lang_cfg);
+    let ctx = surfaces::test_ctx(temp.path(), lang_cfg);
 
     let res = surface.lint(&ctx, false);
     assert!(
@@ -1561,13 +1576,13 @@ Extra detail text.\n\n\
     // own root after issue #1), `lint()` must still enforce formality.toml's
     // MD013 settings (via the temp-config `--config` pass), not
     // markdownlint-cli2's stricter built-in defaults.
-    if !check_binary_exists("markdownlint-cli2")
-      && !check_binary_exists("markdownlint")
+    if !surfaces::check_binary_exists("markdownlint-cli2")
+      && !surfaces::check_binary_exists("markdownlint")
     {
       return;
     }
 
-    let temp = TempDir::new().unwrap();
+    let temp = tempfile::TempDir::new().unwrap();
     // A code fence line over 80 chars, made of real words with spaces
     // (NOT a single unbroken token like "x".repeat(90) — MD013's default
     // `strict: false` exempts any line with no spaces past the limit, so an
@@ -1586,7 +1601,10 @@ Extra detail text.\n\n\
     assert!(!temp.path().join(".markdownlint.json").exists());
 
     let surface = MarkdownSurface;
-    let ctx = test_ctx(temp.path(), ResolvedLangConfig::new("markdown"));
+    let ctx = surfaces::test_ctx(
+      temp.path(),
+      config::ResolvedLangConfig::new("markdown"),
+    );
 
     let res = surface.lint(&ctx, false);
     assert!(
@@ -1630,7 +1648,7 @@ README.md:7 error MD025/single-title/single-h1 Multiple top-level headings";
     // ...and is relativized exactly once downstream, by the same shared
     // helper the runner calls on every surface's diagnostics.
     let relativized =
-      crate::ui::paths::relativize_text(Path::new("/home/u/proj"), &out);
+      crate::ui::paths::relativize_text(path::Path::new("/home/u/proj"), &out);
     assert!(
       relativized.contains("README.md:7:3 error MD019"),
       "downstream relativize_text should strip the leading root path, got: \
@@ -1662,13 +1680,13 @@ README.md:7 error MD025/single-title/single-h1 Multiple top-level headings";
     // End-to-end regression for issue #109: a fixture with a known MD-rule
     // violation must produce a diagnostic that carries the rule id and
     // carries neither the `Finding:` echo nor the input file list.
-    if !check_binary_exists("markdownlint-cli2")
-      && !check_binary_exists("markdownlint")
+    if !surfaces::check_binary_exists("markdownlint-cli2")
+      && !surfaces::check_binary_exists("markdownlint")
     {
       return;
     }
 
-    let temp = TempDir::new().unwrap();
+    let temp = tempfile::TempDir::new().unwrap();
     std::fs::write(
       temp.path().join("bad.md"),
       "#  Bad Heading\n\nsome text\n\n# Another Top Heading\n",
@@ -1676,10 +1694,14 @@ README.md:7 error MD025/single-title/single-h1 Multiple top-level headings";
     .unwrap();
 
     let surface = MarkdownSurface;
-    let ctx = test_ctx(temp.path(), ResolvedLangConfig::new("markdown"));
+    let ctx = surfaces::test_ctx(
+      temp.path(),
+      config::ResolvedLangConfig::new("markdown"),
+    );
 
     let res = surface.lint(&ctx, false);
-    let SurfaceStatus::ViolationsFound { message, .. } = &res.status else {
+    let surfaces::SurfaceStatus::ViolationsFound { message, .. } = &res.status
+    else {
       panic!("expected ViolationsFound, got: {:?}", res.status);
     };
 
@@ -1851,14 +1873,15 @@ README.md:7 error MD025/single-title/single-h1 Multiple top-level headings";
 
   /// Runs the markdown half of `fml fix`: the fixing lint pass, then the
   /// format pass.
-  fn fix_once(ctx: &ExecutionContext) {
+  fn fix_once(ctx: &surfaces::ExecutionContext) {
     let _ = MarkdownSurface.lint(ctx, true);
     let res = MarkdownSurface.format(ctx);
     assert!(res.is_success(), "format failed: {:?}", res.status);
   }
 
   fn have_markdown_tools() -> bool {
-    check_binary_exists("markdownlint-cli2") && check_binary_exists("prettier")
+    surfaces::check_binary_exists("markdownlint-cli2")
+      && surfaces::check_binary_exists("prettier")
   }
 
   #[test]
@@ -1871,10 +1894,13 @@ README.md:7 error MD025/single-title/single-h1 Multiple top-level headings";
     }
 
     for token in WRAPPED_TOKENS {
-      let temp = TempDir::new().unwrap();
+      let temp = tempfile::TempDir::new().unwrap();
       let file = temp.path().join("doc.md");
       std::fs::write(&file, format!("# T\n\n{WRAP_LEAD} {token}\n")).unwrap();
-      let ctx = test_ctx(temp.path(), ResolvedLangConfig::new("markdown"));
+      let ctx = surfaces::test_ctx(
+        temp.path(),
+        config::ResolvedLangConfig::new("markdown"),
+      );
 
       fix_once(&ctx);
       let first = std::fs::read_to_string(&file).unwrap();
@@ -1914,12 +1940,15 @@ README.md:7 error MD025/single-title/single-h1 Multiple top-level headings";
       return;
     }
 
-    let temp = TempDir::new().unwrap();
+    let temp = tempfile::TempDir::new().unwrap();
     let dir = temp.path().join("my docs");
     std::fs::create_dir(&dir).unwrap();
     let file = dir.join("doc.md");
     std::fs::write(&file, format!("# T\n\n{WRAP_LEAD} #299) ok.\n")).unwrap();
-    let ctx = test_ctx(temp.path(), ResolvedLangConfig::new("markdown"));
+    let ctx = surfaces::test_ctx(
+      temp.path(),
+      config::ResolvedLangConfig::new("markdown"),
+    );
 
     let res = MarkdownSurface.format(&ctx);
     assert!(res.is_success(), "format failed: {:?}", res.status);
@@ -1935,7 +1964,7 @@ README.md:7 error MD025/single-title/single-h1 Multiple top-level headings";
       return;
     }
 
-    let temp = TempDir::new().unwrap();
+    let temp = tempfile::TempDir::new().unwrap();
     std::fs::write(
       temp.path().join(".markdownlint-cli2.jsonc"),
       "{\"fix\": true}\n",
@@ -1943,7 +1972,10 @@ README.md:7 error MD025/single-title/single-h1 Multiple top-level headings";
     .unwrap();
     let file = temp.path().join("doc.md");
     std::fs::write(&file, format!("# T\n\n{WRAP_LEAD} #299) ok.\n")).unwrap();
-    let ctx = test_ctx(temp.path(), ResolvedLangConfig::new("markdown"));
+    let ctx = surfaces::test_ctx(
+      temp.path(),
+      config::ResolvedLangConfig::new("markdown"),
+    );
 
     let res = MarkdownSurface.format(&ctx);
     assert!(res.is_success(), "format failed: {:?}", res.status);
@@ -1959,17 +1991,20 @@ README.md:7 error MD025/single-title/single-h1 Multiple top-level headings";
       return;
     }
 
-    let temp = TempDir::new().unwrap();
+    let temp = tempfile::TempDir::new().unwrap();
     std::fs::write(
       temp.path().join("doc.md"),
       format!("# T\n\n{WRAP_LEAD} #299) ok.\n"),
     )
     .unwrap();
-    let mut ctx = test_ctx(temp.path(), ResolvedLangConfig::new("markdown"));
+    let mut ctx = surfaces::test_ctx(
+      temp.path(),
+      config::ResolvedLangConfig::new("markdown"),
+    );
     ctx.check_only = true;
 
     let res = MarkdownSurface.format(&ctx);
-    let SurfaceStatus::ViolationsFound {
+    let surfaces::SurfaceStatus::ViolationsFound {
       diff: Some(diff), ..
     } = &res.status
     else {
@@ -1997,14 +2032,17 @@ README.md:7 error MD025/single-title/single-h1 Multiple top-level headings";
       return;
     }
 
-    let temp = TempDir::new().unwrap();
+    let temp = tempfile::TempDir::new().unwrap();
     let file = temp.path().join("doc.md");
     std::fs::write(&file, HAND_WRAPPED).unwrap();
-    let mut ctx = test_ctx(temp.path(), ResolvedLangConfig::new("markdown"));
+    let mut ctx = surfaces::test_ctx(
+      temp.path(),
+      config::ResolvedLangConfig::new("markdown"),
+    );
 
     ctx.check_only = true;
     let check = MarkdownSurface.format(&ctx);
-    let SurfaceStatus::ViolationsFound {
+    let surfaces::SurfaceStatus::ViolationsFound {
       diff: Some(diff), ..
     } = &check.status
     else {
@@ -2034,10 +2072,13 @@ README.md:7 error MD025/single-title/single-h1 Multiple top-level headings";
       return;
     }
 
-    let temp = TempDir::new().unwrap();
+    let temp = tempfile::TempDir::new().unwrap();
     let file = temp.path().join("doc.md");
     std::fs::write(&file, HAND_WRAPPED).unwrap();
-    let ctx = test_ctx(temp.path(), ResolvedLangConfig::new("markdown"));
+    let ctx = surfaces::test_ctx(
+      temp.path(),
+      config::ResolvedLangConfig::new("markdown"),
+    );
 
     for run in 1..=2 {
       fix_once(&ctx);
@@ -2057,10 +2098,13 @@ README.md:7 error MD025/single-title/single-h1 Multiple top-level headings";
       return;
     }
 
-    let temp = TempDir::new().unwrap();
+    let temp = tempfile::TempDir::new().unwrap();
     let file = temp.path().join("doc.md");
     std::fs::write(&file, "#Title\n\nText.\n").unwrap();
-    let ctx = test_ctx(temp.path(), ResolvedLangConfig::new("markdown"));
+    let ctx = surfaces::test_ctx(
+      temp.path(),
+      config::ResolvedLangConfig::new("markdown"),
+    );
 
     let res = MarkdownSurface.format(&ctx);
     assert!(res.is_success(), "format failed: {:?}", res.status);
@@ -2116,10 +2160,13 @@ README.md:7 error MD025/single-title/single-h1 Multiple top-level headings";
     }
 
     for (src, want) in LIST_RENDER_CASES {
-      let temp = TempDir::new().unwrap();
+      let temp = tempfile::TempDir::new().unwrap();
       let file = temp.path().join("doc.md");
       std::fs::write(&file, src).unwrap();
-      let ctx = test_ctx(temp.path(), ResolvedLangConfig::new("markdown"));
+      let ctx = surfaces::test_ctx(
+        temp.path(),
+        config::ResolvedLangConfig::new("markdown"),
+      );
 
       let res = MarkdownSurface.format(&ctx);
       assert!(res.is_success(), "format failed: {:?}", res.status);
@@ -2138,7 +2185,7 @@ README.md:7 error MD025/single-title/single-h1 Multiple top-level headings";
       return;
     }
 
-    let temp = TempDir::new().unwrap();
+    let temp = tempfile::TempDir::new().unwrap();
     let docs_dir = temp.path().join("docs");
     std::fs::create_dir_all(&docs_dir).unwrap();
     std::fs::write(docs_dir.join(".markdownlint.json"), "{\"MD018\": false}\n")
@@ -2147,7 +2194,10 @@ README.md:7 error MD025/single-title/single-h1 Multiple top-level headings";
     let content = "# T\n\npara\n\n#299) ok.\n";
     std::fs::write(&file, content).unwrap();
 
-    let mut ctx = test_ctx(temp.path(), ResolvedLangConfig::new("markdown"));
+    let mut ctx = surfaces::test_ctx(
+      temp.path(),
+      config::ResolvedLangConfig::new("markdown"),
+    );
 
     ctx.check_only = false;
     let res = MarkdownSurface.format(&ctx);
@@ -2169,8 +2219,8 @@ README.md:7 error MD025/single-title/single-h1 Multiple top-level headings";
 
   #[test]
   fn test_build_prettier_fmt_args() {
-    let files = vec![PathBuf::from("readme.md")];
-    let mut lang = ResolvedLangConfig::new("markdown");
+    let files = vec![path::PathBuf::from("readme.md")];
+    let mut lang = config::ResolvedLangConfig::new("markdown");
     lang.extra_args = [(
       PRETTIER.to_string(),
       vec!["--loglevel".to_string(), "warn".to_string()],
@@ -2194,13 +2244,13 @@ README.md:7 error MD025/single-title/single-h1 Multiple top-level headings";
 
   #[test]
   fn test_markdown_sync_config() {
-    let temp = TempDir::new().unwrap();
+    let temp = tempfile::TempDir::new().unwrap();
     let surface = MarkdownSurface;
-    let mut lang_cfg = ResolvedLangConfig::new("markdown");
+    let mut lang_cfg = config::ResolvedLangConfig::new("markdown");
     lang_cfg.line_length = 100;
     lang_cfg.indent_size = 2;
 
-    let ctx = test_ctx(temp.path(), lang_cfg);
+    let ctx = surfaces::test_ctx(temp.path(), lang_cfg);
 
     let res = surface.sync_config(&ctx, false);
     // Fixes #130: the file this surface writes is named in its result. It
@@ -2223,7 +2273,7 @@ README.md:7 error MD025/single-title/single-h1 Multiple top-level headings";
 
   #[test]
   fn test_build_prettier_inline_args_shape() {
-    let cfg = PrettierConfig {
+    let cfg = surfaces::PrettierConfig {
       comment: "warning".to_string(),
       tab_width: 4,
       print_width: 100,
@@ -2231,7 +2281,7 @@ README.md:7 error MD025/single-title/single-h1 Multiple top-level headings";
       end_of_line: "crlf".to_string(),
       prose_wrap: "preserve".to_string(),
     };
-    let args = build_prettier_inline_args(&cfg);
+    let args = surfaces::build_prettier_inline_args(&cfg);
     assert!(args.contains(&"--tab-width=4".to_string()));
     assert!(args.contains(&"--print-width=100".to_string()));
     assert!(args.contains(&"--end-of-line=crlf".to_string()));
@@ -2243,14 +2293,17 @@ README.md:7 error MD025/single-title/single-h1 Multiple top-level headings";
   fn test_markdown_format_does_not_write_prettierrc() {
     // Fixes #151 [pre-recreation]: `fml fmt` must not write `.prettierrc.json` as a side
     // effect; only `fml sync` should materialize the native config file.
-    if !check_binary_exists("prettier") {
+    if !surfaces::check_binary_exists("prettier") {
       return;
     }
-    let temp = TempDir::new().unwrap();
+    let temp = tempfile::TempDir::new().unwrap();
     std::fs::write(temp.path().join("a.md"), "# hi\n").unwrap();
 
     let surface = MarkdownSurface;
-    let ctx = test_ctx(temp.path(), ResolvedLangConfig::new("markdown"));
+    let ctx = surfaces::test_ctx(
+      temp.path(),
+      config::ResolvedLangConfig::new("markdown"),
+    );
 
     let _ = surface.format(&ctx);
 
@@ -2261,14 +2314,14 @@ README.md:7 error MD025/single-title/single-h1 Multiple top-level headings";
   fn test_markdownlint_fix_pass_failed_ok_on_clean_exit_zero() {
     // A clean file: markdownlint-cli2 --fix exits 0, which is not a failed
     // pass — format() proceeds to prettier as before.
-    if !check_binary_exists("markdownlint-cli2") {
+    if !surfaces::check_binary_exists("markdownlint-cli2") {
       return;
     }
-    let temp = TempDir::new().unwrap();
+    let temp = tempfile::TempDir::new().unwrap();
     let f = temp.path().join("clean.md");
     std::fs::write(&f, "# Title\n\nA clean paragraph.\n").unwrap();
 
-    let mut cmd = create_tool_command("markdownlint-cli2");
+    let mut cmd = surfaces::create_tool_command("markdownlint-cli2");
     cmd.arg("--fix").arg(&f);
     assert!(!markdownlint_fix_pass_failed(&cmd.output()));
   }
@@ -2280,14 +2333,14 @@ README.md:7 error MD025/single-title/single-h1 Multiple top-level headings";
     // (MD001 heading-increment has no autofixer). Per issue #113's acceptance
     // criteria that is NOT a failed pass: format() must still hand off to
     // prettier rather than failing the run.
-    if !check_binary_exists("markdownlint-cli2") {
+    if !surfaces::check_binary_exists("markdownlint-cli2") {
       return;
     }
-    let temp = TempDir::new().unwrap();
+    let temp = tempfile::TempDir::new().unwrap();
     let f = temp.path().join("unfixable.md");
     std::fs::write(&f, "# Level one\n\n### Skipped level two\n").unwrap();
 
-    let mut cmd = create_tool_command("markdownlint-cli2");
+    let mut cmd = surfaces::create_tool_command("markdownlint-cli2");
     cmd.arg("--fix").arg(&f);
     let outcome = cmd.output();
     assert_eq!(
@@ -2306,14 +2359,14 @@ README.md:7 error MD025/single-title/single-h1 Multiple top-level headings";
     // Acceptance criterion for issue #113: a deliberately invalid `--config`
     // path makes markdownlint-cli2 exit 2 (ENOENT) — a real failure to
     // execute that must be surfaced, not discarded.
-    if !check_binary_exists("markdownlint-cli2") {
+    if !surfaces::check_binary_exists("markdownlint-cli2") {
       return;
     }
-    let temp = TempDir::new().unwrap();
+    let temp = tempfile::TempDir::new().unwrap();
     let f = temp.path().join("a.md");
     std::fs::write(&f, "# Title\n\nHi.\n").unwrap();
 
-    let mut cmd = create_tool_command("markdownlint-cli2");
+    let mut cmd = surfaces::create_tool_command("markdownlint-cli2");
     cmd
       .arg("--fix")
       .arg("--config")
@@ -2327,7 +2380,7 @@ README.md:7 error MD025/single-title/single-h1 Multiple top-level headings";
     // Acceptance criterion for issue #113: an unresolvable markdownlint
     // binary (the spawn itself fails) must count as a failed pass.
     let mut cmd =
-      create_tool_command("markdownlint-cli2-does-not-exist-fml113");
+      surfaces::create_tool_command("markdownlint-cli2-does-not-exist-fml113");
     cmd.arg("--fix");
     assert!(markdownlint_fix_pass_failed(&cmd.output()));
   }
@@ -2339,27 +2392,27 @@ README.md:7 error MD025/single-title/single-h1 Multiple top-level headings";
     // must classify as `ExecutionError` and therefore NOT let the surface
     // report success. Before issue #113 this outcome was `let _ =`-discarded
     // and prettier's later success became the surface's whole result.
-    if !check_binary_exists("markdownlint-cli2") {
+    if !surfaces::check_binary_exists("markdownlint-cli2") {
       return;
     }
-    let temp = TempDir::new().unwrap();
+    let temp = tempfile::TempDir::new().unwrap();
     let f = temp.path().join("a.md");
     std::fs::write(&f, "# Title\n\nHi.\n").unwrap();
 
-    let mut md_cmd = create_tool_command("markdownlint-cli2");
+    let mut md_cmd = surfaces::create_tool_command("markdownlint-cli2");
     md_cmd
       .arg("--fix")
       .arg("--config")
       .arg(temp.path().join("nonexistent-config.json"))
       .arg(&f);
-    let res = run_tool_command_classified(
+    let res = surfaces::run_tool_command_classified(
       "markdown",
       &mut md_cmd,
-      classify_exit_one_as_violation,
+      surfaces::classify_exit_one_as_violation,
     );
 
     assert!(
-      matches!(res.status, SurfaceStatus::ExecutionError { .. }),
+      matches!(res.status, surfaces::SurfaceStatus::ExecutionError { .. }),
       "a bad --config path must classify as ExecutionError, got: {:?}",
       res.status
     );
@@ -2373,13 +2426,13 @@ README.md:7 error MD025/single-title/single-h1 Multiple top-level headings";
     // pass already succeeded) must classify an operational prettier failure
     // as `ExecutionError`, not `ViolationsFound` — `prettier --write` has no
     // "found drift" exit code, same reasoning as the `--check` path.
-    if !check_binary_exists("prettier") {
+    if !surfaces::check_binary_exists("prettier") {
       return;
     }
-    let temp = TempDir::new().unwrap();
+    let temp = tempfile::TempDir::new().unwrap();
     std::fs::write(temp.path().join("a.md"), "# hi\n").unwrap();
 
-    let mut lang = ResolvedLangConfig::new("markdown");
+    let mut lang = config::ResolvedLangConfig::new("markdown");
     let missing = temp
       .path()
       .join("nonexistent-prettier-config-fml155.json")
@@ -2387,12 +2440,12 @@ README.md:7 error MD025/single-title/single-h1 Multiple top-level headings";
       .into_owned();
     lang.extra_args =
       [(PRETTIER.to_string(), vec!["--config".to_string(), missing])].into();
-    let ctx = test_ctx(temp.path(), lang);
+    let ctx = surfaces::test_ctx(temp.path(), lang);
 
     let surface = MarkdownSurface;
     let res = surface.format(&ctx);
     assert!(
-      matches!(res.status, SurfaceStatus::ExecutionError { .. }),
+      matches!(res.status, surfaces::SurfaceStatus::ExecutionError { .. }),
       "a prettier failure on the write path must be ExecutionError, got: {:?}",
       res.status
     );
@@ -2405,7 +2458,7 @@ README.md:7 error MD025/single-title/single-h1 Multiple top-level headings";
     // tool's argv and never the other's: markdownlint-cli2 swallows an unknown
     // flag as a glob and honours the last `--config`, so a leaked prettier
     // flag would fail silently rather than loudly.
-    let mut lang = ResolvedLangConfig::new("markdown");
+    let mut lang = config::ResolvedLangConfig::new("markdown");
     lang.extra_args = [
       (
         MARKDOWNLINT_CLI2.to_string(),
@@ -2418,8 +2471,8 @@ README.md:7 error MD025/single-title/single-h1 Multiple top-level headings";
     ]
     .into();
 
-    let files = vec![PathBuf::from("a.md"), PathBuf::from("b.md")];
-    let injected = PathBuf::from("/tmp/.markdownlint-abc123.json");
+    let files = vec![path::PathBuf::from("a.md"), path::PathBuf::from("b.md")];
+    let injected = path::PathBuf::from("/tmp/.markdownlint-abc123.json");
     assert_eq!(
       build_markdownlint_fix_argv(&files, Some(injected.as_path()), &lang),
       vec![
@@ -2457,15 +2510,15 @@ README.md:7 error MD025/single-title/single-h1 Multiple top-level headings";
     // settings on the `fml fmt` path. Verified against markdownlint-cli2
     // v0.23.2; see `build_markdownlint_fix_argv` and
     // `docs/language-surfaces.md`.
-    let mut lang = ResolvedLangConfig::new("markdown");
+    let mut lang = config::ResolvedLangConfig::new("markdown");
     lang.extra_args = [(
       MARKDOWNLINT_CLI2.to_string(),
       vec!["--config".to_string(), "mine.json".to_string()],
     )]
     .into();
 
-    let scratch = PathBuf::from("/tmp/scratch/a.md");
-    let injected = PathBuf::from("/tmp/.markdownlint-abc123.json");
+    let scratch = path::PathBuf::from("/tmp/scratch/a.md");
+    let injected = path::PathBuf::from("/tmp/.markdownlint-abc123.json");
     let argv = build_markdownlint_fix_argv(
       std::slice::from_ref(&scratch),
       Some(injected.as_path()),
@@ -2498,13 +2551,13 @@ README.md:7 error MD025/single-title/single-h1 Multiple top-level headings";
     // `classify_exit_one_as_violation` maps to `ExecutionError` and the write
     // branch returns early with, before prettier ever runs. Its text is
     // markdownlint's own; prettier reports a JSON parse error instead.
-    if !check_binary_exists("markdownlint-cli2") {
+    if !surfaces::check_binary_exists("markdownlint-cli2") {
       return;
     }
-    let temp = TempDir::new().unwrap();
+    let temp = tempfile::TempDir::new().unwrap();
     std::fs::write(temp.path().join("a.md"), "# hi\n").unwrap();
 
-    let mut lang = ResolvedLangConfig::new("markdown");
+    let mut lang = config::ResolvedLangConfig::new("markdown");
     let missing = temp
       .path()
       .join("nonexistent-markdownlint-config-fml150.json")
@@ -2515,10 +2568,11 @@ README.md:7 error MD025/single-title/single-h1 Multiple top-level headings";
       vec!["--config".to_string(), missing],
     )]
     .into();
-    let ctx = test_ctx(temp.path(), lang);
+    let ctx = surfaces::test_ctx(temp.path(), lang);
 
     let res = MarkdownSurface.format(&ctx);
-    let SurfaceStatus::ExecutionError { message } = &res.status else {
+    let surfaces::SurfaceStatus::ExecutionError { message } = &res.status
+    else {
       panic!(
         "extra_args must reach the markdownlint --fix pass on the write path, got: {:?}",
         res.status

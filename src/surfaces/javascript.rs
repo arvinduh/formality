@@ -1,20 +1,15 @@
 //! JavaScript/TypeScript language surface: formats and lints via `biome`,
 //! syncing the managed `biome.json` from `formality.toml`.
 
-use super::{
-  DeclaresFacets, ExecutionContext, Facet, FacetSupport, LanguageSurface,
-  NativeConfig, SurfaceResult, SurfaceStatus, ToolInfo,
-  classify_all_nonzero_as_error, create_tool_command,
-  diff_check_via_tempcopy_classified, extra_args_set_flag,
-  render_native_config, run_tool_command, run_tool_command_classified,
-  sync_native_config, tool_missing_guard,
-};
-use serde::{Deserialize, Serialize};
-use std::path::{Path, PathBuf};
-use std::time::Instant;
+use crate::config::facets;
+use crate::config::facets::DeclaresFacets;
+use crate::surfaces;
+use crate::surfaces::{LanguageSurface, NativeConfig};
+use std::path;
+use std::time;
 
 /// Formatter configuration block for `biome.json`.
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct BiomeFormatterConfig {
   /// Whether the formatter is enabled.
@@ -28,7 +23,7 @@ pub struct BiomeFormatterConfig {
 }
 
 /// JS-specific formatter options for `biome.json`.
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct BiomeJsFormatterConfig {
   /// Preferred string quote style.
@@ -40,7 +35,7 @@ pub struct BiomeJsFormatterConfig {
 }
 
 /// JS configuration wrapper for `biome.json`.
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub struct BiomeJsConfig {
   /// JavaScript formatter configuration.
   pub formatter: BiomeJsFormatterConfig,
@@ -49,7 +44,7 @@ pub struct BiomeJsConfig {
 /// `assist.actions.source.organizeImports` — the modern (Biome >= 2.0) home
 /// for import sorting, replacing the removed top-level `organizeImports`
 /// config block from Biome 1.x. Value is `"on"` or `"off"`.
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct BiomeAssistSourceActions {
   /// Organize imports action state (`"on"` or `"off"`).
@@ -57,14 +52,14 @@ pub struct BiomeAssistSourceActions {
 }
 
 /// Assist actions sub-block for `biome.json`.
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub struct BiomeAssistActions {
   /// Source assist actions.
   pub source: BiomeAssistSourceActions,
 }
 
 /// Assist configuration block for `biome.json`.
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub struct BiomeAssistConfig {
   /// Whether assist feature is enabled.
   pub enabled: bool,
@@ -73,14 +68,14 @@ pub struct BiomeAssistConfig {
 }
 
 /// Linter rules sub-block for `biome.json`.
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub struct BiomeLinterRules {
   /// Linter rule preset name (e.g. `"recommended"`).
   pub preset: String,
 }
 
 /// Linter configuration block for `biome.json`.
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct BiomeLinterConfig {
   /// Whether the linter is enabled.
@@ -90,7 +85,7 @@ pub struct BiomeLinterConfig {
 }
 
 /// Native `biome.json` configuration representation for JavaScript/TypeScript formatting and linting.
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct BiomeConfig {
   /// JSON Schema reference URI.
@@ -109,7 +104,7 @@ pub struct BiomeConfig {
 impl NativeConfig for BiomeConfig {
   const FILE_NAME: &'static str = "biome.json";
 
-  fn from_context(ctx: &ExecutionContext) -> Self {
+  fn from_context(ctx: &surfaces::ExecutionContext) -> Self {
     let indent_style = if ctx.lang_config.use_tabs {
       "tab"
     } else {
@@ -181,7 +176,7 @@ impl NativeConfig for BiomeConfig {
   }
 
   fn render(&self) -> Result<String, crate::errors::FormalityError> {
-    render_native_config(self)
+    surfaces::render_native_config(self)
   }
 }
 
@@ -190,17 +185,17 @@ impl NativeConfig for BiomeConfig {
 pub struct JavaScriptSurface;
 
 impl DeclaresFacets for JavaScriptSurface {
-  fn facet_support(&self, facet: Facet) -> FacetSupport {
+  fn facet_support(&self, facet: facets::Facet) -> facets::FacetSupport {
     match facet {
-      Facet::IndentTabs
-      | Facet::IndentWidth
-      | Facet::LineLength
-      | Facet::QuoteStyle
-      | Facet::TrailingComma
-      | Facet::ImportSort => FacetSupport::Configurable,
-      Facet::ProseWrap | Facet::Edition | Facet::Standard => {
-        FacetSupport::Unsupported
-      }
+      facets::Facet::IndentTabs
+      | facets::Facet::IndentWidth
+      | facets::Facet::LineLength
+      | facets::Facet::QuoteStyle
+      | facets::Facet::TrailingComma
+      | facets::Facet::ImportSort => facets::FacetSupport::Configurable,
+      facets::Facet::ProseWrap
+      | facets::Facet::Edition
+      | facets::Facet::Standard => facets::FacetSupport::Unsupported,
     }
   }
 }
@@ -284,7 +279,7 @@ fn linter_enabled_override_message(offending: &str) -> String {
 /// Linting itself is handled separately by `lint()`.
 #[must_use]
 pub fn build_biome_format_args(
-  files: &[PathBuf],
+  files: &[path::PathBuf],
   extra_args: &[String],
 ) -> Vec<String> {
   let mut args = vec![
@@ -306,7 +301,7 @@ pub fn build_biome_format_args(
 /// Builds argument vector for biome lint invocation.
 #[must_use]
 pub fn build_biome_lint_args(
-  files: &[PathBuf],
+  files: &[path::PathBuf],
   fix: bool,
   extra_args: &[String],
 ) -> Vec<String> {
@@ -333,7 +328,7 @@ pub fn build_biome_lint_args(
 /// / `.start`/`.end` `{line, column}`, both 1-based) has been stable across
 /// the versions this was verified against.
 #[must_use]
-pub fn build_biome_lint_json_args(file: &Path) -> Vec<String> {
+pub fn build_biome_lint_json_args(file: &path::Path) -> Vec<String> {
   vec![
     "lint".to_string(),
     "--reporter=json".to_string(),
@@ -373,8 +368,8 @@ impl LanguageSurface for JavaScriptSurface {
   fn tool_info(
     &self,
     _config: &crate::config::ResolvedLangConfig,
-  ) -> Vec<ToolInfo> {
-    vec![ToolInfo {
+  ) -> Vec<surfaces::ToolInfo> {
+    vec![surfaces::ToolInfo {
       binary: "biome",
       description: "Fast formatter and linter for JavaScript, TypeScript, JSX and TSX",
       install_hint: None,
@@ -383,8 +378,11 @@ impl LanguageSurface for JavaScriptSurface {
     }]
   }
 
-  fn format(&self, ctx: &ExecutionContext) -> SurfaceResult {
-    let start = Instant::now();
+  fn format(
+    &self,
+    ctx: &surfaces::ExecutionContext,
+  ) -> surfaces::SurfaceResult {
+    let start = time::Instant::now();
 
     let files = ctx.matched_files(JS_TS_EXTENSIONS);
     if let Some(res) = ctx.early_out_if_empty(&files, self.name(), start) {
@@ -399,20 +397,22 @@ impl LanguageSurface for JavaScriptSurface {
     // `formality.toml` is wrong regardless of whether biome happens to be
     // installed, and reporting the config error first is the more useful
     // ordering (it also makes this guard's tests hermetic).
-    if let Some(offending) = extra_args_set_flag(
+    if let Some(offending) = surfaces::extra_args_set_flag(
       BIOME_LINTER_ENABLED_FLAG,
       ctx.lang_config.tool_args("biome"),
     ) {
-      return SurfaceResult {
+      return surfaces::SurfaceResult {
         surface_name: self.name(),
-        status: SurfaceStatus::ExecutionError {
+        status: surfaces::SurfaceStatus::ExecutionError {
           message: linter_enabled_override_message(&offending),
         },
         duration: start.elapsed(),
       };
     }
 
-    if let Some(res) = tool_missing_guard(self.name(), "biome", start, None) {
+    if let Some(res) =
+      surfaces::tool_missing_guard(self.name(), "biome", start, None)
+    {
       return res;
     }
 
@@ -423,10 +423,10 @@ impl LanguageSurface for JavaScriptSurface {
       build_biome_inline_format_args(&BiomeConfig::from_context(ctx));
 
     if ctx.check_only {
-      return diff_check_via_tempcopy_classified(
+      return surfaces::diff_check_via_tempcopy_classified(
         &files,
         |scratch| {
-          let mut cmd = create_tool_command("biome");
+          let mut cmd = surfaces::create_tool_command("biome");
           cmd.args(build_biome_format_args(
             &[scratch.to_path_buf()],
             ctx.lang_config.tool_args("biome"),
@@ -447,13 +447,13 @@ impl LanguageSurface for JavaScriptSurface {
         // the non-`--check` write branch below (Fixes #155): `biome check
         // --write` has no in-place-write variant of a "found drift" exit
         // code either.
-        classify_all_nonzero_as_error,
+        surfaces::classify_all_nonzero_as_error,
       );
     }
 
     let files_to_pass = ctx.files_to_pass(files);
 
-    let mut cmd = create_tool_command("biome");
+    let mut cmd = surfaces::create_tool_command("biome");
     cmd.args(build_biome_format_args(
       &files_to_pass,
       ctx.lang_config.tool_args("biome"),
@@ -461,17 +461,23 @@ impl LanguageSurface for JavaScriptSurface {
     cmd.args(&inline_config);
     cmd.current_dir(ctx.root.as_path());
 
-    run_tool_command_classified(
+    surfaces::run_tool_command_classified(
       self.name(),
       &mut cmd,
-      classify_all_nonzero_as_error,
+      surfaces::classify_all_nonzero_as_error,
     )
   }
 
-  fn lint(&self, ctx: &ExecutionContext, fix: bool) -> SurfaceResult {
-    let start = Instant::now();
+  fn lint(
+    &self,
+    ctx: &surfaces::ExecutionContext,
+    fix: bool,
+  ) -> surfaces::SurfaceResult {
+    let start = time::Instant::now();
 
-    if let Some(res) = tool_missing_guard(self.name(), "biome", start, None) {
+    if let Some(res) =
+      surfaces::tool_missing_guard(self.name(), "biome", start, None)
+    {
       return res;
     }
 
@@ -482,7 +488,7 @@ impl LanguageSurface for JavaScriptSurface {
 
     let files_to_pass = ctx.files_to_pass(files);
 
-    let mut cmd = create_tool_command("biome");
+    let mut cmd = surfaces::create_tool_command("biome");
     cmd.args(build_biome_lint_args(
       &files_to_pass,
       fix,
@@ -490,7 +496,7 @@ impl LanguageSurface for JavaScriptSurface {
     ));
     cmd.current_dir(ctx.root.as_path());
 
-    run_tool_command(self.name(), &mut cmd)
+    surfaces::run_tool_command(self.name(), &mut cmd)
   }
 
   // `fml fmt` no longer goes through this path for the formatting-layout
@@ -501,18 +507,24 @@ impl LanguageSurface for JavaScriptSurface {
   // `fml lint` still relies on biome's own defaults there rather than on
   // this file. This method is now reached only by `fml sync`, for users who
   // explicitly want `biome.json` materialized on disk.
-  fn sync_config(&self, ctx: &ExecutionContext, check: bool) -> SurfaceResult {
-    let start = Instant::now();
-    sync_native_config::<BiomeConfig>(ctx, check, start, self.name())
+  fn sync_config(
+    &self,
+    ctx: &surfaces::ExecutionContext,
+    check: bool,
+  ) -> surfaces::SurfaceResult {
+    let start = time::Instant::now();
+    surfaces::sync_native_config::<BiomeConfig>(ctx, check, start, self.name())
   }
 }
 
 #[cfg(test)]
 mod tests {
   use super::*;
-  use crate::config::{JavaScriptOptions, ResolvedLangConfig};
-  use crate::surfaces::{SurfaceStatus, check_binary_exists, test_ctx};
-  use tempfile::TempDir;
+  use crate::config;
+  use crate::config::facets;
+  use crate::surfaces;
+  use std::fs;
+  use std::path;
 
   #[test]
   fn test_build_biome_format_args_default_and_with_files() {
@@ -527,7 +539,7 @@ mod tests {
       ]
     );
 
-    let files = vec![PathBuf::from("a.ts"), PathBuf::from("b.tsx")];
+    let files = vec![path::PathBuf::from("a.ts"), path::PathBuf::from("b.tsx")];
     let extra = vec!["--no-errors-on-unmatched".to_string()];
     let with_files = build_biome_format_args(&files, &extra);
     assert_eq!(
@@ -545,7 +557,7 @@ mod tests {
 
   #[test]
   fn test_build_biome_lint_json_args() {
-    let args = build_biome_lint_json_args(Path::new("src/a.ts"));
+    let args = build_biome_lint_json_args(path::Path::new("src/a.ts"));
     assert_eq!(
       args,
       vec![
@@ -561,7 +573,7 @@ mod tests {
     let no_fix = build_biome_lint_args(&[], false, &[]);
     assert_eq!(no_fix, vec!["lint".to_string(), ".".to_string()]);
 
-    let files = vec![PathBuf::from("a.js")];
+    let files = vec![path::PathBuf::from("a.js")];
     let extra = vec!["--max-diagnostics=50".to_string()];
     let with_fix = build_biome_lint_args(&files, true, &extra);
     assert_eq!(
@@ -589,13 +601,13 @@ mod tests {
 
   #[test]
   fn test_javascript_surface_detect() {
-    let temp = TempDir::new().unwrap();
+    let temp = tempfile::TempDir::new().unwrap();
     let surface = JavaScriptSurface;
-    assert!(!crate::surfaces::detect_in(&surface, temp.path()));
+    assert!(!surfaces::detect_in(&surface, temp.path()));
 
     let file = temp.path().join("index.ts");
-    std::fs::write(&file, "export const x: number = 1;\n").unwrap();
-    assert!(crate::surfaces::detect_in(&surface, temp.path()));
+    fs::write(&file, "export const x: number = 1;\n").unwrap();
+    assert!(surfaces::detect_in(&surface, temp.path()));
   }
 
   #[test]
@@ -644,20 +656,20 @@ mod tests {
 
   #[test]
   fn test_javascript_sync_config_from_context() {
-    let temp = TempDir::new().unwrap();
+    let temp = tempfile::TempDir::new().unwrap();
     let surface = JavaScriptSurface;
-    let mut lang_cfg = ResolvedLangConfig::new("javascript");
+    let mut lang_cfg = config::ResolvedLangConfig::new("javascript");
     lang_cfg.line_length = 100;
     lang_cfg.indent_size = 4;
     lang_cfg.use_tabs = true;
-    lang_cfg.javascript = Some(JavaScriptOptions {
+    lang_cfg.javascript = Some(config::JavaScriptOptions {
       quote_style: Some("single".to_string()),
       trailing_comma: Some("es5".to_string()),
       semicolons: Some("asNeeded".to_string()),
       organize_imports: Some(true),
     });
 
-    let ctx = test_ctx(temp.path(), lang_cfg);
+    let ctx = surfaces::test_ctx(temp.path(), lang_cfg);
 
     let res = surface.sync_config(&ctx, false);
     assert_eq!(res.status.created_file_names(), ["biome.json"]);
@@ -665,7 +677,7 @@ mod tests {
     let config_path = temp.path().join("biome.json");
     assert!(config_path.is_file());
 
-    let content = std::fs::read_to_string(&config_path).unwrap();
+    let content = fs::read_to_string(&config_path).unwrap();
     assert!(content.contains("\"indentStyle\": \"tab\""));
     assert!(content.contains("\"indentWidth\": 4"));
     assert!(content.contains("\"lineWidth\": 100"));
@@ -680,44 +692,44 @@ mod tests {
   fn test_javascript_facet_declarations() {
     let surface = JavaScriptSurface;
     assert_eq!(
-      surface.facet_support(Facet::QuoteStyle),
-      FacetSupport::Configurable
+      surface.facet_support(facets::Facet::QuoteStyle),
+      facets::FacetSupport::Configurable
     );
     assert_eq!(
-      surface.facet_support(Facet::TrailingComma),
-      FacetSupport::Configurable
+      surface.facet_support(facets::Facet::TrailingComma),
+      facets::FacetSupport::Configurable
     );
     assert_eq!(
-      surface.facet_support(Facet::ImportSort),
-      FacetSupport::Configurable
+      surface.facet_support(facets::Facet::ImportSort),
+      facets::FacetSupport::Configurable
     );
     assert_eq!(
-      surface.facet_support(Facet::IndentTabs),
-      FacetSupport::Configurable
+      surface.facet_support(facets::Facet::IndentTabs),
+      facets::FacetSupport::Configurable
     );
     assert_eq!(
-      surface.facet_support(Facet::ProseWrap),
-      FacetSupport::Unsupported
+      surface.facet_support(facets::Facet::ProseWrap),
+      facets::FacetSupport::Unsupported
     );
     assert_eq!(
-      surface.facet_support(Facet::Standard),
-      FacetSupport::Unsupported
+      surface.facet_support(facets::Facet::Standard),
+      facets::FacetSupport::Unsupported
     );
   }
 
   #[test]
   fn test_build_biome_inline_format_args_shape() {
-    let temp = TempDir::new().unwrap();
-    let mut lang_cfg = ResolvedLangConfig::new("javascript");
+    let temp = tempfile::TempDir::new().unwrap();
+    let mut lang_cfg = config::ResolvedLangConfig::new("javascript");
     lang_cfg.line_length = 100;
     lang_cfg.indent_size = 4;
-    lang_cfg.javascript = Some(JavaScriptOptions {
+    lang_cfg.javascript = Some(config::JavaScriptOptions {
       quote_style: Some("single".to_string()),
       trailing_comma: Some("es5".to_string()),
       semicolons: Some("as-needed".to_string()),
       organize_imports: Some(true),
     });
-    let ctx = test_ctx(temp.path(), lang_cfg);
+    let ctx = surfaces::test_ctx(temp.path(), lang_cfg);
     let cfg = BiomeConfig::from_context(&ctx);
     let args = build_biome_inline_format_args(&cfg);
     assert!(args.contains(&"--indent-width=4".to_string()));
@@ -733,14 +745,17 @@ mod tests {
   fn test_javascript_format_does_not_write_biome_json() {
     // Fixes #151 [pre-recreation]: `fml fmt` must not write `biome.json` as a side effect;
     // only `fml sync` should materialize the native config file.
-    if !check_binary_exists("biome") {
+    if !surfaces::check_binary_exists("biome") {
       return;
     }
-    let temp = TempDir::new().unwrap();
-    std::fs::write(temp.path().join("a.js"), "const x=1;\n").unwrap();
+    let temp = tempfile::TempDir::new().unwrap();
+    fs::write(temp.path().join("a.js"), "const x=1;\n").unwrap();
 
     let surface = JavaScriptSurface;
-    let ctx = test_ctx(temp.path(), ResolvedLangConfig::new("javascript"));
+    let ctx = surfaces::test_ctx(
+      temp.path(),
+      config::ResolvedLangConfig::new("javascript"),
+    );
 
     let _ = surface.format(&ctx);
 
@@ -755,23 +770,26 @@ mod tests {
     // surface must classify that as `ExecutionError` (`[ERR]`), never as a
     // lint-style `ViolationsFound` (`[FAIL]`). `biome check --write` has no
     // "found drift" exit code, so a non-zero exit is always operational.
-    if !check_binary_exists("biome") {
+    if !surfaces::check_binary_exists("biome") {
       return;
     }
-    let temp = TempDir::new().unwrap();
-    std::fs::write(
+    let temp = tempfile::TempDir::new().unwrap();
+    fs::write(
       temp.path().join("broken.ts"),
       "const x: = = ;\nfunction (( {\n",
     )
     .unwrap();
 
     let surface = JavaScriptSurface;
-    let mut ctx = test_ctx(temp.path(), ResolvedLangConfig::new("javascript"));
+    let mut ctx = surfaces::test_ctx(
+      temp.path(),
+      config::ResolvedLangConfig::new("javascript"),
+    );
     ctx.check_only = true;
 
     let res = surface.format(&ctx);
     assert!(
-      matches!(res.status, SurfaceStatus::ExecutionError { .. }),
+      matches!(res.status, surfaces::SurfaceStatus::ExecutionError { .. }),
       "a formatter failure on --check must be ExecutionError, got: {:?}",
       res.status
     );
@@ -784,22 +802,25 @@ mod tests {
     // operational biome failure as `ExecutionError`, not `ViolationsFound`
     // — mirroring `test_javascript_check_reports_execution_error_on_formatter_failure`
     // above.
-    if !check_binary_exists("biome") {
+    if !surfaces::check_binary_exists("biome") {
       return;
     }
-    let temp = TempDir::new().unwrap();
-    std::fs::write(
+    let temp = tempfile::TempDir::new().unwrap();
+    fs::write(
       temp.path().join("broken.ts"),
       "const x: = = ;\nfunction (( {\n",
     )
     .unwrap();
 
     let surface = JavaScriptSurface;
-    let ctx = test_ctx(temp.path(), ResolvedLangConfig::new("javascript"));
+    let ctx = surfaces::test_ctx(
+      temp.path(),
+      config::ResolvedLangConfig::new("javascript"),
+    );
 
     let res = surface.format(&ctx);
     assert!(
-      matches!(res.status, SurfaceStatus::ExecutionError { .. }),
+      matches!(res.status, surfaces::SurfaceStatus::ExecutionError { .. }),
       "a formatter failure on the write path must be ExecutionError, got: {:?}",
       res.status
     );
@@ -808,23 +829,26 @@ mod tests {
 
   /// Builds a context over a lone clean `.ts` file whose `extra_args` carry
   /// `extra`, for the `--linter-enabled` guard tests below.
-  fn ctx_with_extra_args(temp: &TempDir, extra: &[&str]) -> ExecutionContext {
-    std::fs::write(temp.path().join("a.ts"), "const x = 1;\n").unwrap();
-    let mut lang = ResolvedLangConfig::new("javascript");
+  fn ctx_with_extra_args(
+    temp: &tempfile::TempDir,
+    extra: &[&str],
+  ) -> surfaces::ExecutionContext {
+    fs::write(temp.path().join("a.ts"), "const x = 1;\n").unwrap();
+    let mut lang = config::ResolvedLangConfig::new("javascript");
     lang.extra_args = [(
       "biome".to_string(),
       extra.iter().map(|s| (*s).to_string()).collect(),
     )]
     .into();
-    test_ctx(temp.path(), lang)
+    surfaces::test_ctx(temp.path(), lang)
   }
 
   /// Asserts `res` is the `--linter-enabled` override refusal, not some other
   /// `ExecutionError` (a real biome failure would also be `ExecutionError`,
   /// so matching on the variant alone would be a vacuous assertion).
-  fn assert_linter_override_refusal(res: &SurfaceResult) {
+  fn assert_linter_override_refusal(res: &surfaces::SurfaceResult) {
     match &res.status {
-      SurfaceStatus::ExecutionError { message } => {
+      surfaces::SurfaceStatus::ExecutionError { message } => {
         assert!(
           message.contains("--linter-enabled")
             && message.contains("extra_args")
@@ -849,7 +873,7 @@ mod tests {
     // the guard runs before `tool_missing_guard`, so no biome install is
     // needed. Asserted on both the `--check` and write branches, which pass
     // the flag alike.
-    let temp = TempDir::new().unwrap();
+    let temp = tempfile::TempDir::new().unwrap();
     let ctx = ctx_with_extra_args(&temp, &["--linter-enabled=true"]);
     assert_linter_override_refusal(&JavaScriptSurface.format(&ctx));
 
@@ -866,7 +890,7 @@ mod tests {
     // this context") before it parses the value — so this spelling was just
     // as broken as `=true`, and gets the same explanation rather than being
     // let through. Hermetic, per the guard's placement above the tool guard.
-    let temp = TempDir::new().unwrap();
+    let temp = tempfile::TempDir::new().unwrap();
     let ctx = ctx_with_extra_args(&temp, &["--linter-enabled=false"]);
     assert_linter_override_refusal(&JavaScriptSurface.format(&ctx));
   }
@@ -876,10 +900,10 @@ mod tests {
     // The #173 guard is narrow: only the one flag `fml` passes itself is
     // refused. An unrelated `extra_args` entry must still format normally, or
     // the guard would be a regression for every other user.
-    if !check_binary_exists("biome") {
+    if !surfaces::check_binary_exists("biome") {
       return;
     }
-    let temp = TempDir::new().unwrap();
+    let temp = tempfile::TempDir::new().unwrap();
     let ctx = ctx_with_extra_args(&temp, &["--no-errors-on-unmatched"]);
     let res = JavaScriptSurface.format(&ctx);
     assert!(
