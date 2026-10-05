@@ -1,6 +1,7 @@
-//! Kotlin language surface: formats and lints via `ktlint`. Kotlin has no
-//! managed native config file — `ktlint` reads its own `.editorconfig`
-//! conventions directly, so there is no `NativeConfig` to sync here.
+//! Kotlin language surface: formats and lints via `ktlint`.
+//!
+//! Implements [`super::LanguageSurface`] for Kotlin. EditorConfig aggregation
+//! is owned by [`super::editorconfig`].
 
 use std::path;
 use std::time;

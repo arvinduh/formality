@@ -1,4 +1,7 @@
-//! `.gitignore` cache hygiene diagnostics.
+//! `.gitignore` cache hygiene diagnostics for `fml doctor`.
+//!
+//! Validates git ignore rules for cache and temporary files. Virtual environment
+//! checks are owned by [`super::venv`].
 
 use crate::surfaces::LanguageSurface;
 use std::path;

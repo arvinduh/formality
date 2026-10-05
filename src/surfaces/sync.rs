@@ -1,6 +1,7 @@
-//! `fml sync` support: auto-generation-header detection, the generic
-//! expected-vs-current file sync helper, and the tempcopy-based diff-check
-//! used by in-place formatters during `fml fmt --check`.
+//! Configuration file synchronization support.
+//!
+//! Implements expected-versus-current file diffing and auto-generation header checks.
+//! High-level command coordination is owned by [`crate::commands::sync`].
 
 use std::path;
 use std::time;

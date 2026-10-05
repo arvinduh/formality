@@ -1,6 +1,7 @@
-//! Tool-binary discovery and installation: the `InstallMethod` preference
-//! chains for each supported CLI tool, binary-on-PATH detection, and
-//! Windows-aware `Command` construction.
+//! Tool-binary discovery, path resolution, and installation chains.
+//!
+//! Locates executable binaries on `PATH` and builds process commands. Version
+//! parsing and MSTV policy enforcement are owned by [`crate::engine::version`].
 
 use std::collections;
 use std::path;

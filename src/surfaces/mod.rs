@@ -1,6 +1,8 @@
-//! Language surfaces: the `LanguageSurface` trait, the fleet of per-language
-//! implementations, and the shared machinery (registry, glob matching, tool
-//! discovery, config sync) they're all built on.
+//! Language surfaces interface and shared fleet infrastructure.
+//!
+//! Defines the [`LanguageSurface`] trait and shared registry/lookup machinery.
+//! Concrete language implementations live in sibling submodules, while execution
+//! orchestration is owned by [`crate::engine`].
 
 /// C/C++ language surface implementation.
 pub mod cpp;

@@ -1,5 +1,7 @@
-//! JSON language surface: formats and lints via `prettier`, reusing the same
-//! `.prettierrc.json` config machinery as the Markdown surface.
+//! JSON language surface: formats and validates via Prettier.
+//!
+//! Implements [`super::LanguageSurface`] for JSON, reusing [`super::prettier`].
+//! Fleet registration is owned by [`super::registry`].
 
 use std::path;
 use std::time;

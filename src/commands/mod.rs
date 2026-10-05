@@ -1,4 +1,8 @@
 //! Standalone command implementations for the Formality CLI.
+//!
+//! Coordinates user-requested actions by delegating to the execution engine in
+//! [`crate::engine`], config loading in [`crate::config`], and language surfaces
+//! in [`crate::surfaces`].
 
 /// Doctor diagnostic commands for workspace and toolchain verification.
 pub mod doctor;

@@ -1,7 +1,8 @@
-//! `formality.toml` parsing, cascade resolution (user config → project
-//! config → per-language overrides), and the typed config surface every
-//! other module reads through ([`FormalityConfig`], [`ResolvedGlobalConfig`],
-//! [`ResolvedLangConfig`]).
+//! `formality.toml` parsing, cascade resolution, and typed models.
+//!
+//! Owns the configuration schema and layered resolution logic. Strict document
+//! syntax validation lives in [`strict`], option definitions live in [`options`],
+//! and schema generation lives in [`schema`].
 
 /// Formatting and linting layout facet definitions.
 pub mod facets;

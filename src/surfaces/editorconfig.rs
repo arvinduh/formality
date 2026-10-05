@@ -1,6 +1,7 @@
-//! Generates and syncs the shared `.editorconfig` file, aggregating each
-//! detected surface's canonical formatting facets into one cross-language
-//! block per the fleet order in [`CANONICAL_FLEET_ORDER`].
+//! Cross-language `.editorconfig` generation and synchronization.
+//!
+//! Aggregates canonical formatting facets into a unified `.editorconfig`. Individual
+//! surface facet declarations are owned by each language surface in [`crate::surfaces`].
 
 use std::collections;
 use std::fmt::Write;

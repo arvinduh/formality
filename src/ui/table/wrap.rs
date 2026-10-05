@@ -1,7 +1,7 @@
-//! Shared word-wrap tokenizer for both table cells
-//! ([`super::render::wrap_spans`]) and prose blocks
-//! ([`super::frame::wrap_prose_line`]). One break-character policy, one
-//! tokenizer, so tables and prose wrap the same way — see #269.
+//! Word-wrapping and text-flow tokenization.
+//!
+//! Tokenizes and breaks text across table cells and prose blocks. Rendering
+//! cells onto terminal devices is owned by [`super::render`].
 
 use std::mem;
 

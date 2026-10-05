@@ -1,5 +1,7 @@
-//! `fml sync` command: synchronizes, or with `--check` only verifies, the
-//! native tool configs generated from `formality.toml` via [`Runner`].
+//! `fml sync` command: synchronizes native tool configs from `formality.toml`.
+//!
+//! Manages native config file synchronization across surfaces. Formatting and
+//! linting passes are handled by [`super::fmt`] and [`super::lint`].
 
 use std::path;
 

@@ -1,7 +1,7 @@
-//! Config discovery (`find_project_config`/`find_user_config`), file
-//! loading, and the cascade merge that resolves layered `formality.toml`
-//! sources plus per-surface defaults into [`super::ResolvedGlobalConfig`] /
-//! [`super::ResolvedLangConfig`].
+//! Layered configuration file discovery, loading, and merging.
+//!
+//! Resolves configuration cascades across defaults, user settings, and project files.
+//! Strict validation of individual configuration files is owned by [`super::strict`].
 
 use std::collections;
 use std::fmt::Write;

@@ -1,6 +1,7 @@
-//! Java language surface: formats via `google-java-format` and lints via
-//! `checkstyle`, syncing the managed `checkstyle.xml` from
-//! `formality.toml`.
+//! Java language surface: formats via `google-java-format` and lints via `checkstyle`.
+//!
+//! Implements [`super::LanguageSurface`] for Java, syncing `checkstyle.xml`.
+//! Fleet registration is owned by [`super::registry`].
 
 use crate::config::facets;
 use crate::config::facets::DeclaresFacets;

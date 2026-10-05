@@ -1,10 +1,7 @@
-//! `fml schema` command: generates and writes/prints the JSON Schema for
-//! `formality.toml`.
+//! `fml schema` command: generates and writes or prints the configuration schema.
 //!
-//! A supported, user-facing command: it is how anyone working offline, or
-//! vendoring the schema into their own repo, gets the same artifact the
-//! `#:schema` URL serves, and it is what the release pipeline runs to
-//! generate the published schema asset.
+//! Dispatches schema generation to [`crate::config::schema::generate_schema`].
+//! Strict schema parsing and validation live in [`crate::config::strict`].
 
 use colored::Colorize;
 use std::path;

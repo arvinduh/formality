@@ -1,5 +1,7 @@
-//! JavaScript/TypeScript language surface: formats and lints via `biome`,
-//! syncing the managed `biome.json` from `formality.toml`.
+//! JavaScript/TypeScript language surface: formats and lints via `biome`.
+//!
+//! Implements [`super::LanguageSurface`] for JS/TS, syncing `biome.json`.
+//! Fleet registration is owned by [`super::registry`].
 
 use crate::config::facets;
 use crate::config::facets::DeclaresFacets;

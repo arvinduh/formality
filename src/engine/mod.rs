@@ -1,5 +1,8 @@
-//! Formatting/linting engine: subprocess orchestration, diffing, tool
-//! version detection, and self-update checking.
+//! Formatting/linting engine orchestration.
+//!
+//! Coordinates subprocess dispatch, diffing, and tool version detection.
+//! Pass dispatch lives in [`runner`], diffing lives in [`diff`], and version
+//! checking lives in [`version`].
 
 /// Unified diff generation and rendering.
 pub mod diff;

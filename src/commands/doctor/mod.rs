@@ -1,7 +1,8 @@
-//! `fml doctor` command: probes every surface's required
-//! tools against the resolved config, reports version compatibility, and
-//! (with `install`) installs whatever's missing, plus workspace hygiene
-//! checks ([`gitignore`], [`venv`]).
+//! `fml doctor` command: probes toolchains and reports environment health.
+//!
+//! Checks binary existence and versions via [`crate::engine::version`] and
+//! provides installation hints. Execution of linters and formatters is owned
+//! by [`crate::engine::runner`].
 
 /// Gitignore workspace hygiene validation.
 pub mod gitignore;

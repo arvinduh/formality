@@ -1,5 +1,7 @@
-//! File-discovery helpers: extension-based directory walking, exclude-list
-//! matching, and a small dependency-free glob matcher for `exclude` patterns.
+//! File discovery and path filtering helpers.
+//!
+//! Traverses directories and evaluates exclude patterns. Workspace root
+//! resolution is owned by [`crate::lib`].
 
 use std::path;
 

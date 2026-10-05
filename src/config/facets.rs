@@ -1,9 +1,7 @@
-//! Cross-language layout facet definitions ([`LayoutFacet`] and friends) —
-//! the shared vocabulary `formality.toml` uses to describe formatting layout
-//! (indent size, line length, quote style, and similar) independent of any
-//! one surface's native config format, plus the support-level reporting
-//! ([`FacetSupport`]) each surface uses to say whether it can honor a given
-//! facet value.
+//! Cross-language layout facet definitions.
+//!
+//! Defines the shared formatting facet vocabulary ([`Facet`], [`FacetSupport`]).
+//! Language surface implementations honoring these facets live in [`crate::surfaces`].
 
 use schemars;
 use serde;

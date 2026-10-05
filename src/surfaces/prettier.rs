@@ -1,4 +1,7 @@
-//! Shared Prettier configuration model, CLI argument builders, and configuration syncing.
+//! Shared Prettier configuration generator and CLI argument builder.
+//!
+//! Models Prettier options and command-line arguments. Surfaces driving Prettier
+//! include [`super::markdown`], [`super::json`], and [`super::yaml`].
 
 use std::fmt::Write;
 use std::path;

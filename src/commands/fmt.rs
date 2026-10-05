@@ -1,5 +1,8 @@
-//! `fml fmt` command: formats, or with `--check` only reports, the resolved
-//! target surfaces via [`Runner`].
+//! `fml fmt` command: formats, or with `--check` reports, target surfaces.
+//!
+//! Dispatches the `[Format]` pass through [`crate::engine::runner::Runner`].
+//! Linting is handled by [`super::lint`], and autofixing is handled by
+//! [`super::fix`].
 
 use std::path;
 

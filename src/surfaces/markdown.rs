@@ -1,7 +1,7 @@
-//! Markdown language surface: formats via `prettier` and lints via
-//! `markdownlint` (falling back to `prettier --check` if `markdownlint` is
-//! unavailable), syncing the managed `.prettierrc.json` /
-//! `.markdownlint.json` from `formality.toml`.
+//! Markdown language surface: formats via Prettier and lints via markdownlint.
+//!
+//! Implements [`super::LanguageSurface`] for Markdown, syncing `.markdownlint.json`
+//! and `.prettierrc.json`. Fleet registration is owned by [`super::registry`].
 
 use crate::config;
 use crate::config::facets;

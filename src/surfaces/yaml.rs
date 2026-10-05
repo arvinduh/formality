@@ -1,5 +1,7 @@
-//! YAML language surface: formats via `prettier` and lints via `yamllint`,
-//! syncing the managed `.yamllint.yaml` from `formality.toml`.
+//! YAML language surface: formats via Prettier and lints via yamllint.
+//!
+//! Implements [`super::LanguageSurface`] for YAML, syncing `.yamllint.yaml`.
+//! Fleet registration is owned by [`super::registry`].
 
 use std::path;
 use std::time;

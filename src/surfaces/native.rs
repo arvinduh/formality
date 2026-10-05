@@ -1,6 +1,7 @@
-//! Shared machinery for rendering, diffing, and syncing a surface's
-//! `NativeConfig`-backed managed configuration file (`.rustfmt.toml`,
-//! `.golangci.yml`, and similar) from the resolved `formality.toml` state.
+//! Native tool configuration file serializers and diffing.
+//!
+//! Generates and compares tool-specific configurations (e.g. `.rustfmt.toml`).
+//! EditorConfig aggregation is owned by [`super::editorconfig`].
 
 use std::time;
 

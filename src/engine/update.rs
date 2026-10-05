@@ -1,6 +1,7 @@
-//! Background self-update check: a cached, rate-limited probe (spawned once
-//! per invocation, printed after the main command finishes) for whether a
-//! newer `fml` release is available.
+//! Background self-update check for newer releases.
+//!
+//! Probes GitHub releases asynchronously for updates. Toolchain version
+//! compatibility checks for installed linters/formatters are owned by [`super::version`].
 
 use std::path;
 use std::time;

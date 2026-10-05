@@ -1,6 +1,7 @@
-//! Typst language surface: formats via `typstyle`. Typst has no lint tool or
-//! managed native config file in this crate today, so this surface only
-//! implements formatting.
+//! Typst language surface: formats via `typstyle`.
+//!
+//! Implements [`super::LanguageSurface`] for Typst. Structured LSP diagnostics
+//! are owned by [`crate::commands::lsp_diagnostics`].
 
 use std::path;
 use std::time;

@@ -1,7 +1,7 @@
-//! [`Frame`]: the single presentation frame every `fml` command shares for
-//! printed output. A section renders as `header → rule → body → rule`, and one
-//! `Frame`, built once per command from its primary table, guarantees every
-//! rule that command prints is the same width.
+//! Unified output framing for CLI commands.
+//!
+//! Generates consistent borders, headers, and rules. Table content formatting
+//! is owned by [`super::render`].
 
 use unicode_width;
 

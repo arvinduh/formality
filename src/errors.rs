@@ -1,7 +1,8 @@
 //! Crate-wide error type hierarchy and exit-status/diagnostic rendering.
-//! [`FormalityError`] is the single top-level enum every subsystem's error
-//! converts into; see `docs/style-guide.md` §5 for the conventions this file
-//! establishes (no `anyhow`/`thiserror`, one variant per subsystem).
+//!
+//! Owns [`FormalityError`] and [`ExitStatus`] for unified error reporting and
+//! process exit codes. Subsystem-specific error types are owned by their respective
+//! modules (such as [`crate::config::ConfigError`]).
 
 pub use crate::config::ConfigError;
 

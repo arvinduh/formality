@@ -1,5 +1,7 @@
-//! Rust language surface: formats via `rustfmt`/`cargo fmt` and lints via
-//! `cargo clippy`, syncing the managed `.rustfmt.toml` from `formality.toml`.
+//! Rust language surface: formats via `rustfmt` and lints via Clippy.
+//!
+//! Implements [`super::LanguageSurface`] for Rust, syncing `.rustfmt.toml`.
+//! Fleet registration is owned by [`super::registry`].
 
 use std::path;
 use std::process;

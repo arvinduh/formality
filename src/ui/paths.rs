@@ -1,7 +1,7 @@
-//! One shared rendering for filesystem paths in user-facing output: relative
-//! to the run root when the path lies under it, absolute only when it genuinely
-//! does not. Used by both the table cells and the diagnostics block so every
-//! path `fml` prints reads the same way.
+//! Shared path formatting for user-facing output.
+//!
+//! Normalizes filesystem paths relative to the workspace root. Table framing
+//! and rendering are owned by [`super::table`].
 
 use std::cmp;
 use std::env;

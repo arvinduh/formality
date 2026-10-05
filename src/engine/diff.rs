@@ -1,5 +1,7 @@
-//! Colored unified-diff rendering shared by every surface's `--check` /
-//! sync-preview output.
+//! Unified diff generation and rendering.
+//!
+//! Produces colored unified diffs from file comparisons. Multiprocess pass
+//! execution driving these diffs is owned by [`super::runner`].
 
 use std::fmt::Write;
 
