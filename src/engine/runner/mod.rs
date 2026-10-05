@@ -9,18 +9,18 @@
 //! `fml fix --check` therefore needs no execution code of its own — it is
 //! `[Lint, Format]` under `Report`, a plan nobody had spelled before.
 
-use crate::config::FormalityConfig;
-use crate::surfaces::{
-  ExecutionContext, LanguageSurface, Severity, SurfaceResult, SurfaceStatus,
-};
+use std::fmt::Write;
+use std::path;
+use std::sync;
+use std::time;
+
 use colored::Colorize;
 use rayon::iter::IndexedParallelIterator;
 use rayon::iter::IntoParallelRefIterator;
 use rayon::iter::ParallelIterator;
-use std::fmt::Write as _;
-use std::path::{Path, PathBuf};
-use std::sync::Arc;
-use std::time::Instant;
+
+use crate::config;
+use crate::surfaces;
 
 /// One unit of work the runner can dispatch to a [`LanguageSurface`].
 ///
@@ -165,14 +165,14 @@ pub enum Scope {
   /// Explicit path arguments, or the files `--staged`/`--changed` selected.
   Paths {
     /// The arguments as given, which some tools are handed directly.
-    args: Arc<Vec<PathBuf>>,
+    args: sync::Arc<Vec<path::PathBuf>>,
     /// `args` expanded once into candidate files; each surface filters
     /// its own files from them.
-    files: Arc<Vec<PathBuf>>,
+    files: sync::Arc<Vec<path::PathBuf>>,
   },
   /// The whole workspace: every candidate file, `global.exclude` applied,
   /// from one walk.
-  Workspace(Arc<Vec<PathBuf>>),
+  Workspace(sync::Arc<Vec<path::PathBuf>>),
 }
 
 impl Scope {
@@ -180,19 +180,19 @@ impl Scope {
   /// when there are none, to the workspace under `root`, walking it once.
   #[must_use]
   pub fn resolve(
-    root: &Path,
-    paths: &[PathBuf],
-    global_exclude: &[PathBuf],
+    root: &path::Path,
+    paths: &[path::PathBuf],
+    global_exclude: &[path::PathBuf],
   ) -> Self {
     if paths.is_empty() {
-      Self::Workspace(Arc::new(crate::surfaces::walk_candidate_files(
+      Self::Workspace(sync::Arc::new(surfaces::walk_candidate_files(
         root,
         global_exclude,
       )))
     } else {
       Self::Paths {
-        args: Arc::new(paths.to_vec()),
-        files: Arc::new(crate::surfaces::glob::expand_targets(root, paths)),
+        args: sync::Arc::new(paths.to_vec()),
+        files: sync::Arc::new(surfaces::glob::expand_targets(root, paths)),
       }
     }
   }
@@ -206,11 +206,11 @@ impl Runner {
   /// CLI's report.
   #[must_use]
   pub fn run(
-    surfaces: &[Box<dyn LanguageSurface>],
-    root: &Path,
+    surfaces: &[Box<dyn surfaces::LanguageSurface>],
+    root: &path::Path,
     scope: &Scope,
     plan: &Plan,
-    config: &FormalityConfig,
+    config: &config::FormalityConfig,
   ) -> ExitStatus {
     Self::run_into(&mut std::io::stdout(), surfaces, root, scope, plan, config)
   }
@@ -229,11 +229,11 @@ impl Runner {
   #[must_use]
   pub fn run_into(
     out: &mut dyn std::io::Write,
-    surfaces: &[Box<dyn LanguageSurface>],
-    root: &Path,
+    surfaces: &[Box<dyn surfaces::LanguageSurface>],
+    root: &path::Path,
     scope: &Scope,
     plan: &Plan,
-    config: &FormalityConfig,
+    config: &config::FormalityConfig,
   ) -> ExitStatus {
     if surfaces.is_empty() {
       let _ =
@@ -241,20 +241,24 @@ impl Runner {
       return ExitStatus::Clean;
     }
 
-    let start_time = Instant::now();
+    let start_time = time::Instant::now();
     // Shared across every surface's ExecutionContext below. All four are
     // wrapped in Arc so the per-surface parallel dispatch (rayon::par_iter)
     // clones a refcount instead of deep-copying the workspace root, the full
     // candidate path list, the candidate files, or the global config on every
     // one of the (up to 12) surfaces per invocation.
-    let global_config = Arc::new(config.resolve_global());
+    let global_config = sync::Arc::new(config.resolve_global());
     let (paths, candidate_files) = match scope {
-      Scope::Paths { args, files } => (Arc::clone(args), Arc::clone(files)),
-      Scope::Workspace(files) => (Arc::default(), Arc::clone(files)),
+      Scope::Paths { args, files } => {
+        (sync::Arc::clone(args), sync::Arc::clone(files))
+      }
+      Scope::Workspace(files) => {
+        (sync::Arc::default(), sync::Arc::clone(files))
+      }
     };
     let shared = SharedRun {
       config,
-      root: Arc::new(root.to_path_buf()),
+      root: sync::Arc::new(root.to_path_buf()),
       paths,
       global_config,
       candidate_files,
@@ -266,7 +270,8 @@ impl Runner {
     // A later pass sees what an earlier one wrote, which is the whole point
     // of `fix`'s ordering: lint fixes first, then format, so the tree is
     // never left lint-fixed-but-unformatted (Smart Format, `AGENTS.md`).
-    let mut pass_results: Vec<(Pass, Vec<SurfaceResult>)> = Vec::new();
+    let mut pass_results: Vec<(Pass, Vec<surfaces::SurfaceResult>)> =
+      Vec::new();
     for &pass in &plan.passes {
       let results = run_pass(pass, plan.mode, surfaces, &shared);
       pass_results.push((pass, results));
@@ -295,7 +300,9 @@ impl Runner {
       .collect();
     for (_, results) in &pass_results {
       for (slot, res) in fixer_evidence.iter_mut().zip(results) {
-        if let SurfaceStatus::ViolationsFound { message, .. } = &res.status {
+        if let surfaces::SurfaceStatus::ViolationsFound { message, .. } =
+          &res.status
+        {
           *slot = slot.merge(violations::FixerEvidence::from_message(message));
         }
       }
@@ -323,12 +330,14 @@ impl Runner {
         if *pass != Pass::Lint {
           continue;
         }
-        let rechecks: Vec<Option<SurfaceResult>> = surfaces
+        let rechecks: Vec<Option<surfaces::SurfaceResult>> = surfaces
           .par_iter()
           .zip(results.par_iter())
           .map(|(surface, lint_res)| {
-            if matches!(lint_res.status, SurfaceStatus::ViolationsFound { .. })
-            {
+            if matches!(
+              lint_res.status,
+              surfaces::SurfaceStatus::ViolationsFound { .. }
+            ) {
               let ctx = shared.ctx_for(surface.as_ref(), false);
               Some(surface.lint(&ctx, false))
             } else {
@@ -346,7 +355,7 @@ impl Runner {
     }
 
     // Fold each surface's per-pass results left-to-right, in pass order.
-    let mut results: Vec<SurfaceResult> = pass_results
+    let mut results: Vec<surfaces::SurfaceResult> = pass_results
       .into_iter()
       .map(|(_, results)| results)
       .reduce(|acc, next| {
@@ -359,7 +368,7 @@ impl Runner {
       .unwrap_or_default();
 
     if plan.includes(Pass::ConfigSync) {
-      if let Some(prettier_res) = crate::surfaces::sync_shared_prettier_config(
+      if let Some(prettier_res) = surfaces::sync_shared_prettier_config(
         root,
         config,
         surfaces,
@@ -367,7 +376,7 @@ impl Runner {
       ) {
         results.push(prettier_res);
       }
-      let editorconfig_res = crate::surfaces::editorconfig::sync_editorconfig(
+      let editorconfig_res = surfaces::editorconfig::sync_editorconfig(
         root,
         config,
         surfaces,
@@ -412,10 +421,12 @@ impl Runner {
       // and therefore no evidence — `unwrap_or_default` is the correct
       // answer for them, not a fallback.
       let tally = match &res.status {
-        SurfaceStatus::ViolationsFound { message, .. } => violations::tally(
-          message,
-          fixer_evidence.get(idx).copied().unwrap_or_default(),
-        ),
+        surfaces::SurfaceStatus::ViolationsFound { message, .. } => {
+          violations::tally(
+            message,
+            fixer_evidence.get(idx).copied().unwrap_or_default(),
+          )
+        }
         _ => None,
       };
       remaining.record(&res.status, tally);
@@ -423,11 +434,11 @@ impl Runner {
 
       let severity = res.status.severity();
       match severity {
-        Severity::Skipped => {}
-        Severity::Passed => pass_count += 1,
-        Severity::ToolMissing => tool_missing_count += 1,
-        Severity::Violation => violation_count += 1,
-        Severity::Error => error_count += 1,
+        surfaces::Severity::Skipped => {}
+        surfaces::Severity::Passed => pass_count += 1,
+        surfaces::Severity::ToolMissing => tool_missing_count += 1,
+        surfaces::Severity::Violation => violation_count += 1,
+        surfaces::Severity::Error => error_count += 1,
       }
       exit_code = exit_code.max(exit_floor(&severity, plan.allow_missing));
 
@@ -538,14 +549,14 @@ impl Runner {
 ///
 /// The results-row loop in [`Runner::run`] folds it in with
 /// `exit_code.max(..)`, so the worst row decides the exit code.
-fn exit_floor(severity: &Severity, allow_missing: bool) -> i32 {
+fn exit_floor(severity: &surfaces::Severity, allow_missing: bool) -> i32 {
   match severity {
-    Severity::Skipped | Severity::Passed => 0,
+    surfaces::Severity::Skipped | surfaces::Severity::Passed => 0,
     // An unmet precondition, not an operational fault (#252) — the
     // surface correctly determined it could not proceed. Exit 1
     // (`ExitStatus::Violations`), the same as a real violation, so a
     // missing tool never lets the process exit clean; 2 stays reserved
-    // for `Severity::Error`, which still wins if one occurs elsewhere.
+    // for `surfaces::Severity::Error`, which still wins if one occurs elsewhere.
     //
     // `--allow-missing` (#163) is the one opt-out: a machine missing an
     // optional linter must not fail *every* commit that touches that
@@ -555,17 +566,17 @@ fn exit_floor(severity: &Severity, allow_missing: bool) -> i32 {
     // original bug, not the fix). The tally is untouched by this flag:
     // a missing tool is still counted, just not floored into a nonzero
     // exit.
-    Severity::ToolMissing if allow_missing => 0,
-    Severity::ToolMissing | Severity::Violation => 1,
-    Severity::Error => 2,
+    surfaces::Severity::ToolMissing if allow_missing => 0,
+    surfaces::Severity::ToolMissing | surfaces::Severity::Violation => 1,
+    surfaces::Severity::Error => 2,
   }
 }
 
 /// Everything one results-table row renders, decided once per
-/// [`SurfaceStatus`] instead of once per hand-built arm (#277).
+/// [`surfaces::SurfaceStatus`] instead of once per hand-built arm (#277).
 ///
 /// This is display data only: the row's tally bucket and exit floor come
-/// from [`SurfaceStatus::severity`], not from here.
+/// from [`surfaces::SurfaceStatus::severity`], not from here.
 struct RowSpec {
   tag: &'static str,
   tag_style: crate::ui::table::Style,
@@ -574,28 +585,28 @@ struct RowSpec {
   detail_style: crate::ui::table::Style,
 }
 
-/// Builds the row data for one surface's [`SurfaceStatus`] (#277).
+/// Builds the row data for one surface's [`surfaces::SurfaceStatus`] (#277).
 ///
 /// `name_style` is `Strong` for every status except `Skipped`, which is
 /// rendered `Dim` (the surface name of a skipped row was never emphasized —
 /// that's the one place the eight original arms disagreed on a cell other
 /// than tag/detail/counter/exit-floor).
 fn row_spec(
-  status: &SurfaceStatus,
+  status: &surfaces::SurfaceStatus,
   plan: &Plan,
   tally: Option<violations::ViolationTally>,
 ) -> RowSpec {
   use crate::ui::table::Style;
 
   match status {
-    SurfaceStatus::Passed => RowSpec {
+    surfaces::SurfaceStatus::Passed => RowSpec {
       tag: "[PASS] ",
       tag_style: Style::Ok,
       name_style: Style::Strong,
       detail: passed_detail(plan).to_string(),
       detail_style: Style::Dim,
     },
-    SurfaceStatus::ConfigSynced { files } => RowSpec {
+    surfaces::SurfaceStatus::ConfigSynced { files } => RowSpec {
       tag: "[SYNC] ",
       tag_style: Style::Ok,
       name_style: Style::Strong,
@@ -606,42 +617,42 @@ fn row_spec(
       detail: synced_files_detail(files),
       detail_style: Style::Info,
     },
-    SurfaceStatus::ConfigDrifted { file, .. } => RowSpec {
+    surfaces::SurfaceStatus::ConfigDrifted { file, .. } => RowSpec {
       tag: "[DRIFT]",
       tag_style: Style::Warn,
       name_style: Style::Strong,
       detail: format!("{file} out of sync"),
       detail_style: Style::Warn,
     },
-    SurfaceStatus::ManualConfig { file, .. } => RowSpec {
+    surfaces::SurfaceStatus::ManualConfig { file, .. } => RowSpec {
       tag: "[MANUAL]",
       tag_style: Style::Warn,
       name_style: Style::Strong,
       detail: format!("{file} is manually managed"),
       detail_style: Style::Warn,
     },
-    SurfaceStatus::ViolationsFound { .. } => RowSpec {
+    surfaces::SurfaceStatus::ViolationsFound { .. } => RowSpec {
       tag: "[FAIL] ",
       tag_style: Style::Error,
       name_style: Style::Strong,
       detail: violations_detail(tally),
       detail_style: Style::Error,
     },
-    SurfaceStatus::ToolMissing { binary, .. } => RowSpec {
+    surfaces::SurfaceStatus::ToolMissing { binary, .. } => RowSpec {
       tag: "[MISS] ",
       tag_style: Style::Warn,
       name_style: Style::Strong,
       detail: format!("Missing binary: {binary}"),
       detail_style: Style::Warn,
     },
-    SurfaceStatus::ExecutionError { .. } => RowSpec {
+    surfaces::SurfaceStatus::ExecutionError { .. } => RowSpec {
       tag: "[ERR]  ",
       tag_style: Style::Error,
       name_style: Style::Strong,
       detail: "Execution error".to_string(),
       detail_style: Style::Error,
     },
-    SurfaceStatus::Skipped { reason } => RowSpec {
+    surfaces::SurfaceStatus::Skipped { reason } => RowSpec {
       tag: "[SKIP] ",
       tag_style: Style::Dim,
       name_style: Style::Dim,
@@ -721,12 +732,12 @@ impl RemainingViolations {
   /// count; only the latter makes the total incomplete.
   fn record(
     &mut self,
-    status: &SurfaceStatus,
+    status: &surfaces::SurfaceStatus,
     tally: Option<violations::ViolationTally>,
   ) {
     match tally {
       None => {
-        if matches!(status, SurfaceStatus::ViolationsFound { .. }) {
+        if matches!(status, surfaces::SurfaceStatus::ViolationsFound { .. }) {
           self.incomplete = true;
         }
       }
@@ -766,7 +777,7 @@ impl RemainingViolations {
 
 /// Detail text for a `[PASS]` row.
 ///
-/// `SurfaceStatus::Passed` means "there was nothing to do", which for `fml
+/// `surfaces::SurfaceStatus::Passed` means "there was nothing to do", which for `fml
 /// sync` is "this native config file already matches formality.toml" — not
 /// "Clean / Formatted" (#130). Nothing was formatted during a sync, and a
 /// user reading `Clean / Formatted` next to a config filename has to guess
@@ -806,7 +817,7 @@ fn header_count_label(row_count: usize) -> String {
 /// A surface may sync several files (#130), so this is a list rather than
 /// one filename. Ordering follows the surface's own write order, which is
 /// deterministic, so repeated runs render identically.
-fn synced_files_detail(files: &[crate::surfaces::SyncedConfigFile]) -> String {
+fn synced_files_detail(files: &[surfaces::SyncedConfigFile]) -> String {
   files
     .iter()
     .map(|f| {
@@ -839,9 +850,9 @@ fn synced_files_detail(files: &[crate::surfaces::SyncedConfigFile]) -> String {
 fn run_pass(
   pass: Pass,
   mode: Mode,
-  surfaces: &[Box<dyn LanguageSurface>],
+  surfaces: &[Box<dyn surfaces::LanguageSurface>],
   shared: &SharedRun<'_>,
-) -> Vec<SurfaceResult> {
+) -> Vec<surfaces::SurfaceResult> {
   let check_only = mode.is_report();
   surfaces
     .par_iter()
@@ -865,11 +876,11 @@ fn run_pass(
 /// every *pass*, since a plan runs its passes in sequence over the same
 /// shared values. See `docs/style-guide.md` §4.
 struct SharedRun<'a> {
-  config: &'a FormalityConfig,
-  root: Arc<PathBuf>,
-  paths: Arc<Vec<PathBuf>>,
-  global_config: Arc<crate::config::ResolvedGlobalConfig>,
-  candidate_files: Arc<Vec<PathBuf>>,
+  config: &'a config::FormalityConfig,
+  root: sync::Arc<path::PathBuf>,
+  paths: sync::Arc<Vec<path::PathBuf>>,
+  global_config: sync::Arc<config::ResolvedGlobalConfig>,
+  candidate_files: sync::Arc<Vec<path::PathBuf>>,
 }
 
 impl SharedRun<'_> {
@@ -877,19 +888,19 @@ impl SharedRun<'_> {
   /// given `check_only`.
   fn ctx_for(
     &self,
-    surface: &dyn LanguageSurface,
+    surface: &dyn surfaces::LanguageSurface,
     check_only: bool,
-  ) -> ExecutionContext {
+  ) -> surfaces::ExecutionContext {
     let lang_config = self
       .config
       .resolve_for_lang_with_global(surface.name(), &self.global_config);
-    ExecutionContext {
-      root: Arc::clone(&self.root),
-      paths: Arc::clone(&self.paths),
-      global_config: Arc::clone(&self.global_config),
+    surfaces::ExecutionContext {
+      root: sync::Arc::clone(&self.root),
+      paths: sync::Arc::clone(&self.paths),
+      global_config: sync::Arc::clone(&self.global_config),
       lang_config,
       check_only,
-      candidate_files: Arc::clone(&self.candidate_files),
+      candidate_files: sync::Arc::clone(&self.candidate_files),
     }
   }
 }
@@ -904,12 +915,12 @@ impl SharedRun<'_> {
 /// done. A surface that passed the lint pass has no `recheck` and is
 /// returned unchanged.
 fn apply_recheck(
-  lint_res: SurfaceResult,
-  recheck: Option<SurfaceResult>,
-) -> SurfaceResult {
+  lint_res: surfaces::SurfaceResult,
+  recheck: Option<surfaces::SurfaceResult>,
+) -> surfaces::SurfaceResult {
   match recheck {
     None => lint_res,
-    Some(r) => SurfaceResult {
+    Some(r) => surfaces::SurfaceResult {
       surface_name: lint_res.surface_name,
       status: r.status,
       duration: lint_res.duration + r.duration,
@@ -925,25 +936,25 @@ fn apply_recheck(
 /// execution errors, two violation reports or two skips merge their text.
 /// Durations always sum.
 fn combine_pass_results(
-  first: SurfaceResult,
-  second: SurfaceResult,
-) -> SurfaceResult {
+  first: surfaces::SurfaceResult,
+  second: surfaces::SurfaceResult,
+) -> surfaces::SurfaceResult {
   let surface_name = first.surface_name;
   let duration = first.duration + second.duration;
 
   let status = match (first.status, second.status) {
     (
-      SurfaceStatus::ExecutionError { message: m1 },
-      SurfaceStatus::ExecutionError { message: m2 },
-    ) => SurfaceStatus::ExecutionError {
+      surfaces::SurfaceStatus::ExecutionError { message: m1 },
+      surfaces::SurfaceStatus::ExecutionError { message: m2 },
+    ) => surfaces::SurfaceStatus::ExecutionError {
       message: format!("{m1}\n{m2}"),
     },
     (
-      SurfaceStatus::ViolationsFound {
+      surfaces::SurfaceStatus::ViolationsFound {
         message: m1,
         diff: d1,
       },
-      SurfaceStatus::ViolationsFound {
+      surfaces::SurfaceStatus::ViolationsFound {
         message: m2,
         diff: d2,
       },
@@ -954,15 +965,15 @@ fn combine_pass_results(
         (Some(a), None) | (None, Some(a)) => Some(a),
         (None, None) => None,
       };
-      SurfaceStatus::ViolationsFound {
+      surfaces::SurfaceStatus::ViolationsFound {
         message: combined_msg,
         diff: combined_diff,
       }
     }
     (
-      SurfaceStatus::Skipped { reason: r1 },
-      SurfaceStatus::Skipped { reason: r2 },
-    ) => SurfaceStatus::Skipped {
+      surfaces::SurfaceStatus::Skipped { reason: r1 },
+      surfaces::SurfaceStatus::Skipped { reason: r2 },
+    ) => surfaces::SurfaceStatus::Skipped {
       reason: format!("{r1}; {r2}"),
     },
     (first, second) => {
@@ -974,7 +985,7 @@ fn combine_pass_results(
     }
   };
 
-  SurfaceResult {
+  surfaces::SurfaceResult {
     surface_name,
     status,
     duration,
@@ -985,16 +996,16 @@ fn combine_pass_results(
 /// between statuses of one severity, by which carries the more specific
 /// report (a tool's violations over config drift over a hand-written config;
 /// a config write over a bare pass).
-fn precedence(status: &SurfaceStatus) -> (Severity, u8) {
+fn precedence(status: &surfaces::SurfaceStatus) -> (surfaces::Severity, u8) {
   let within_severity = match status {
-    SurfaceStatus::ViolationsFound { .. } => 2,
-    SurfaceStatus::ConfigDrifted { .. }
-    | SurfaceStatus::ConfigSynced { .. } => 1,
-    SurfaceStatus::ManualConfig { .. }
-    | SurfaceStatus::Passed
-    | SurfaceStatus::Skipped { .. }
-    | SurfaceStatus::ToolMissing { .. }
-    | SurfaceStatus::ExecutionError { .. } => 0,
+    surfaces::SurfaceStatus::ViolationsFound { .. } => 2,
+    surfaces::SurfaceStatus::ConfigDrifted { .. }
+    | surfaces::SurfaceStatus::ConfigSynced { .. } => 1,
+    surfaces::SurfaceStatus::ManualConfig { .. }
+    | surfaces::SurfaceStatus::Passed
+    | surfaces::SurfaceStatus::Skipped { .. }
+    | surfaces::SurfaceStatus::ToolMissing { .. }
+    | surfaces::SurfaceStatus::ExecutionError { .. } => 0,
   };
   (status.severity(), within_severity)
 }
@@ -1058,7 +1069,7 @@ fn normalize_diagnostics(raw: &str) -> String {
   result.join("\n")
 }
 
-/// Shared diagnostic-detail computation for the two `SurfaceStatus` arms that
+/// Shared diagnostic-detail computation for the two `surfaces::SurfaceStatus` arms that
 /// carry raw tool output (`ViolationsFound` and `ExecutionError`, per #146):
 /// the raw message is run through [`normalize_diagnostics`], and a rendered
 /// diff is appended verbatim below it. Called from both arms in
@@ -1095,14 +1106,16 @@ fn tool_output_detail(message: &str, diff: Option<&str>) -> String {
 /// status produced actionable findings: drift diffs, manual config suggestions,
 /// missing tool install hints, or tool violation / execution error output.
 /// Clean passes, synced configs, and skipped surfaces produce no diagnostics.
-fn collect_diagnostics(results: &[SurfaceResult]) -> Vec<(String, String)> {
+fn collect_diagnostics(
+  results: &[surfaces::SurfaceResult],
+) -> Vec<(String, String)> {
   let mut diagnostics = Vec::new();
   for res in results {
     match &res.status {
-      SurfaceStatus::Passed
-      | SurfaceStatus::ConfigSynced { .. }
-      | SurfaceStatus::Skipped { .. } => {}
-      SurfaceStatus::ConfigDrifted { file, diff } => {
+      surfaces::SurfaceStatus::Passed
+      | surfaces::SurfaceStatus::ConfigSynced { .. }
+      | surfaces::SurfaceStatus::Skipped { .. } => {}
+      surfaces::SurfaceStatus::ConfigDrifted { file, diff } => {
         diagnostics.push((
           res.surface_name.to_string(),
           format!(
@@ -1110,14 +1123,14 @@ fn collect_diagnostics(results: &[SurfaceResult]) -> Vec<(String, String)> {
           ),
         ));
       }
-      SurfaceStatus::ManualConfig { suggestion, .. } => {
+      surfaces::SurfaceStatus::ManualConfig { suggestion, .. } => {
         diagnostics.push((res.surface_name.to_string(), suggestion.clone()));
       }
-      SurfaceStatus::ViolationsFound { message, diff } => {
+      surfaces::SurfaceStatus::ViolationsFound { message, diff } => {
         let detail = tool_output_detail(message, diff.as_deref());
         diagnostics.push((res.surface_name.to_string(), detail));
       }
-      SurfaceStatus::ToolMissing {
+      surfaces::SurfaceStatus::ToolMissing {
         binary,
         install_hint,
       } => {
@@ -1128,7 +1141,7 @@ fn collect_diagnostics(results: &[SurfaceResult]) -> Vec<(String, String)> {
           ),
         ));
       }
-      SurfaceStatus::ExecutionError { message } => {
+      surfaces::SurfaceStatus::ExecutionError { message } => {
         diagnostics.push((
           res.surface_name.to_string(),
           tool_output_detail(message, None),

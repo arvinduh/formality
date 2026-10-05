@@ -23,21 +23,23 @@ pub use mstv::{
   ToolMstvEntry, VersionProbe, get_tool_mstv_entry,
 };
 
-use crate::surfaces::create_tool_command;
-use serde::{Deserialize, Serialize};
-use std::cmp::Ordering;
-use std::collections::BTreeMap;
-use std::ffi::OsString;
+use std::cmp;
+use std::collections;
+use std::ffi;
 use std::fmt;
-use std::path::{Path, PathBuf};
-use std::str::FromStr;
-use std::time::{SystemTime, UNIX_EPOCH};
+use std::path;
+use std::str;
+use std::time;
+
+use serde;
+
+use crate::surfaces;
 
 /// Cache TTL for probed tool versions: 24 hours.
 pub const TOOL_VERSION_CACHE_TTL_SECS: u64 = 24 * 60 * 60;
 
 /// An on-disk cache entry recording the probed version output and metadata for a tool binary.
-#[derive(Serialize, Deserialize, Debug, Clone, PartialEq, Eq)]
+#[derive(serde::Serialize, serde::Deserialize, Debug, Clone, PartialEq, Eq)]
 pub struct ToolVersionEntry {
   /// The raw stdout/stderr output banner obtained from the tool.
   pub raw_version: String,
@@ -51,30 +53,37 @@ pub struct ToolVersionEntry {
 }
 
 /// The collection of cached tool versions stored in `tool_versions.json`.
-#[derive(Serialize, Deserialize, Debug, Default, Clone, PartialEq, Eq)]
+#[derive(
+  serde::Serialize, serde::Deserialize, Debug, Default, Clone, PartialEq, Eq,
+)]
 pub struct ToolVersionStore {
   /// Map of tool binary names to their cached version entry.
   #[serde(default)]
-  pub tools: BTreeMap<String, ToolVersionEntry>,
+  pub tools: collections::BTreeMap<String, ToolVersionEntry>,
 }
 
 /// Returns the full path to the `tool_versions.json` cache file in formality's cache directory.
 #[must_use]
-pub fn get_tool_versions_cache_path() -> PathBuf {
+pub fn get_tool_versions_cache_path() -> path::PathBuf {
   crate::engine::cache_path("tool_versions.json")
 }
 
 /// Reads and deserializes the tool versions cache from the given path.
 /// Returns `None` if the file cannot be read or parsed.
 #[must_use]
-pub fn read_tool_version_cache_at(path: &Path) -> Option<ToolVersionStore> {
+pub fn read_tool_version_cache_at(
+  path: &path::Path,
+) -> Option<ToolVersionStore> {
   let data = std::fs::read_to_string(path).ok()?;
   serde_json::from_str(&data).ok()
 }
 
 /// Serializes and writes the tool versions cache to the given path.
 /// Creates parent directories as needed and ignores I/O errors to ensure resilient operation.
-pub fn write_tool_version_cache_at(path: &Path, store: &ToolVersionStore) {
+pub fn write_tool_version_cache_at(
+  path: &path::Path,
+  store: &ToolVersionStore,
+) {
   if let Some(parent) = path.parent() {
     let _ = std::fs::create_dir_all(parent);
   }
@@ -85,7 +94,7 @@ pub fn write_tool_version_cache_at(path: &Path, store: &ToolVersionStore) {
 
 /// Resolves the binary path on PATH and retrieves its file modification timestamp (`mtime`).
 #[must_use]
-pub fn resolve_binary_info(binary: &str) -> Option<(PathBuf, u64)> {
+pub fn resolve_binary_info(binary: &str) -> Option<(path::PathBuf, u64)> {
   let path = if matches!(binary, "clippy" | "clippy-driver" | "cargo-clippy") {
     which::which("clippy-driver")
       .or_else(|_| which::which("cargo"))
@@ -98,7 +107,7 @@ pub fn resolve_binary_info(binary: &str) -> Option<(PathBuf, u64)> {
   let mtime = std::fs::metadata(&path)
     .and_then(|m| m.modified())
     .ok()
-    .and_then(|t| t.duration_since(UNIX_EPOCH).ok())
+    .and_then(|t| t.duration_since(time::UNIX_EPOCH).ok())
     .map_or(0, |d| d.as_secs());
 
   Some((path, mtime))
@@ -202,13 +211,13 @@ pub fn parse_go_version_m(output: &str) -> Option<String> {
 pub fn render_probe_args(
   binary: &str,
   args: &[ProbeArg],
-) -> Option<Vec<OsString>> {
+) -> Option<Vec<ffi::OsString>> {
   let mut rendered = Vec::with_capacity(args.len());
-  let mut resolved_path: Option<PathBuf> = None;
+  let mut resolved_path: Option<path::PathBuf> = None;
 
   for arg in args {
     match arg {
-      ProbeArg::Literal(s) => rendered.push(OsString::from(s)),
+      ProbeArg::Literal(s) => rendered.push(ffi::OsString::from(s)),
       ProbeArg::ToolPath => {
         let path = if let Some(p) = &resolved_path {
           p.clone()
@@ -234,9 +243,12 @@ fn run_probe_command<I, S>(
 ) -> Option<String>
 where
   I: IntoIterator<Item = S>,
-  S: AsRef<std::ffi::OsStr>,
+  S: AsRef<ffi::OsStr>,
 {
-  let output = create_tool_command(bin).args(args).output().ok()?;
+  let output = surfaces::create_tool_command(bin)
+    .args(args)
+    .output()
+    .ok()?;
   match extractor {
     ProbeExtractor::FirstVersionishLine => version_line_from_probe_output(
       output.status.success(),
@@ -295,7 +307,7 @@ pub fn probe_raw_tool_version_uncached(binary: &str) -> Option<String> {
 #[must_use]
 pub fn get_raw_tool_version_at(
   binary: &str,
-  cache_path: &Path,
+  cache_path: &path::Path,
 ) -> Option<String> {
   let bin_info = resolve_binary_info(binary);
 
@@ -304,8 +316,8 @@ pub fn get_raw_tool_version_at(
     && let Some(store) = read_tool_version_cache_at(cache_path)
     && let Some(entry) = store.tools.get(binary)
   {
-    let now = SystemTime::now()
-      .duration_since(UNIX_EPOCH)
+    let now = time::SystemTime::now()
+      .duration_since(time::UNIX_EPOCH)
       .map_or(0, |d| d.as_secs());
 
     let is_fresh =
@@ -325,8 +337,8 @@ pub fn get_raw_tool_version_at(
 
   if let Some((ref bin_path, bin_mtime)) = bin_info {
     let mut store = read_tool_version_cache_at(cache_path).unwrap_or_default();
-    let now = SystemTime::now()
-      .duration_since(UNIX_EPOCH)
+    let now = time::SystemTime::now()
+      .duration_since(time::UNIX_EPOCH)
       .map_or(0, |d| d.as_secs());
 
     store.tools.insert(
@@ -355,7 +367,7 @@ pub fn get_raw_tool_version(binary: &str) -> Option<String> {
 #[must_use]
 pub fn probe_tool_version_at(
   binary: &str,
-  cache_path: &Path,
+  cache_path: &path::Path,
 ) -> Option<Version> {
   let raw_output = get_raw_tool_version_at(binary, cache_path)?;
   normalize_probed_version(binary, &raw_output)
@@ -639,13 +651,13 @@ impl Version {
 
 impl Ord for Version {
   /// Delegated to `semver` (precedence rules 9-11, prerelease chain included).
-  fn cmp(&self, other: &Self) -> Ordering {
+  fn cmp(&self, other: &Self) -> cmp::Ordering {
     self.to_semver().cmp(&other.to_semver())
   }
 }
 
 impl PartialOrd for Version {
-  fn partial_cmp(&self, other: &Self) -> Option<Ordering> {
+  fn partial_cmp(&self, other: &Self) -> Option<cmp::Ordering> {
     Some(self.cmp(other))
   }
 }
@@ -657,7 +669,7 @@ impl fmt::Display for Version {
   }
 }
 
-impl FromStr for Version {
+impl str::FromStr for Version {
   type Err = String;
   fn from_str(s: &str) -> Result<Self, Self::Err> {
     Self::parse(s).ok_or_else(|| format!("Invalid semantic version: '{s}'"))
