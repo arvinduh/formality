@@ -7,8 +7,6 @@ mod common;
 use std::fs;
 use std::path;
 
-use fml::cli;
-
 /// `true` only when both tools the markdown surface drives are installed, so a
 /// `fml fix` run actually exercises the lint pass *and* the format pass rather
 /// than bailing out early with a `ToolMissing`.
@@ -56,7 +54,7 @@ fn test_fix_command_targeted_paths() {
   let target_file = root.join("nested/target.toml");
   let untouched_file = root.join("untouched.toml");
 
-  let fix_args = cli::Commands::Fix {
+  let fix_args = common::Command::Fix {
     check: false,
     staged: false,
     changed: false,
@@ -109,7 +107,7 @@ fn test_fix_command_invalid_surface_and_mutual_exclusion() {
   );
 
   // 2. Both staged and changed returns error
-  let conflict_args = cli::Commands::Fix {
+  let conflict_args = common::Command::Fix {
     check: false,
     staged: true,
     changed: true,
@@ -180,7 +178,7 @@ fn test_fix_command_staged_with_explicit_paths_filtering() {
     .output();
 
   // Run fix with staged: true AND explicit paths: [target_file]
-  let fix_args = cli::Commands::Fix {
+  let fix_args = common::Command::Fix {
     check: false,
     staged: true,
     changed: false,
@@ -231,7 +229,7 @@ fn test_fix_command_changed_with_explicit_paths_filtering() {
   fs::write(&other_file, "[package]\n   name =   \"other_mod\"\n").unwrap();
 
   // Run fix with changed: true AND explicit paths: [target_file]
-  let fix_args = cli::Commands::Fix {
+  let fix_args = common::Command::Fix {
     check: false,
     staged: false,
     changed: true,

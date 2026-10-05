@@ -7,7 +7,6 @@ mod common;
 use std::fs;
 use std::path;
 
-use fml::cli;
 use fml::config;
 use fml::errors;
 use fml::surfaces;
@@ -292,10 +291,7 @@ fn test_sync_config_workflow() {
 
 #[test]
 fn test_doctor_command() {
-  let _code = common::run_cli_no_root(cli::Commands::Doctor {
-    all: false,
-    install: false,
-  });
+  let _code = common::run_cli_no_root(common::doctor_cmd(false, false));
 }
 
 #[test]
@@ -331,16 +327,13 @@ fn test_doctor_command_prints_sync_optional_notice() {
 
 #[test]
 fn test_schema_command() {
-  assert_eq!(
-    common::run_cli_no_root(cli::Commands::Schema { output: None }),
-    0
-  );
+  assert_eq!(common::run_cli_no_root(common::schema_cmd(None)), 0);
 
   let temp = tempfile::NamedTempFile::new().unwrap();
   assert_eq!(
-    common::run_cli_no_root(cli::Commands::Schema {
-      output: Some(temp.path().to_path_buf()),
-    }),
+    common::run_cli_no_root(common::schema_cmd(Some(
+      temp.path().to_path_buf()
+    ))),
     0
   );
   assert!(
@@ -386,7 +379,7 @@ fn test_targeted_file_and_dir_formatting() {
   let sub = root.join("nested");
 
   // Format only target_file
-  let fmt_single = cli::Commands::Fmt {
+  let fmt_single = common::Command::Fmt {
     check: false,
     staged: false,
     changed: false,
@@ -397,7 +390,7 @@ fn test_targeted_file_and_dir_formatting() {
   assert_eq!(common::run_cli(root, fmt_single), 0);
 
   // Format nested directory
-  let fmt_dir = cli::Commands::Fmt {
+  let fmt_dir = common::Command::Fmt {
     check: false,
     staged: false,
     changed: false,
@@ -593,13 +586,7 @@ fn test_doctor_install_flag_paths() {
   ]);
   let root = temp.path();
 
-  let doc_code = common::run_cli(
-    root,
-    cli::Commands::Doctor {
-      all: false,
-      install: true,
-    },
-  );
+  let doc_code = common::run_cli(root, common::doctor_cmd(false, true));
   assert!(doc_code == 0 || doc_code == 2);
 }
 
@@ -636,7 +623,7 @@ fn test_fmt_staged_and_changed_with_explicit_paths_filtering() {
     .output();
 
   // fmt only a.toml
-  let fmt_args = cli::Commands::Fmt {
+  let fmt_args = common::Command::Fmt {
     check: false,
     staged: true,
     changed: false,
@@ -792,7 +779,7 @@ fn test_missing_tool_exit_code_parity_staged_vs_unstaged() {
   cache.hide("markdownlint");
 
   // 1. Lint staged vs unstaged parity with missing tool
-  let lint_staged = cli::Commands::Lint {
+  let lint_staged = common::Command::Lint {
     check: false,
     staged: true,
     changed: false,
@@ -800,7 +787,7 @@ fn test_missing_tool_exit_code_parity_staged_vs_unstaged() {
     allow_missing: false,
     paths: vec![],
   };
-  let lint_unstaged = cli::Commands::Lint {
+  let lint_unstaged = common::Command::Lint {
     check: false,
     staged: false,
     changed: false,
@@ -830,7 +817,7 @@ fn test_missing_tool_exit_code_parity_staged_vs_unstaged() {
   // 2. Fmt staged vs unstaged parity with missing tool (prettier)
   cache.hide("prettier");
 
-  let fmt_staged = cli::Commands::Fmt {
+  let fmt_staged = common::Command::Fmt {
     check: false,
     staged: true,
     changed: false,
@@ -838,7 +825,7 @@ fn test_missing_tool_exit_code_parity_staged_vs_unstaged() {
     allow_missing: false,
     paths: vec![],
   };
-  let fmt_unstaged = cli::Commands::Fmt {
+  let fmt_unstaged = common::Command::Fmt {
     check: false,
     staged: false,
     changed: false,
