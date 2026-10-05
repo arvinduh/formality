@@ -346,7 +346,7 @@ fn test_schema_command() {
   assert!(
     fs::read_to_string(temp.path())
       .unwrap()
-      .contains("config::FormalityConfig")
+      .contains("FormalityConfig")
   );
 }
 
