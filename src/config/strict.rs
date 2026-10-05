@@ -1,5 +1,5 @@
 //! Strict parsing of one config document into a `FormalityConfig`,
-//! turning a rejected key or value into a `ConfigError` that names its key
+//! turning a rejected key or value into a `config::Error` that names its key
 //! path and line.
 //!
 //! The typed structs in `super` decide what a config may contain; this module
@@ -20,20 +20,19 @@ use crate::surfaces;
 ///
 /// # Errors
 ///
-/// Returns [`ConfigError::UnknownKey`] for a key this `fml` does not accept,
-/// [`ConfigError::InvalidValue`] for a value of the wrong type,
-/// [`ConfigError::NonCanonicalLang`] for a `[lang.<name>]` section spelled
-/// as an alias or case variant, or [`ConfigError::Parse`] for invalid TOML.
+/// Returns [`config::Error::UnknownKey`] for a key this `fml` does not accept,
+/// [`config::Error::InvalidValue`] for a value of the wrong type,
+/// [`config::Error::NonCanonicalLang`] for a `[lang.<name>]` section spelled
+/// as an alias or case variant, or [`config::Error::Parse`] for invalid TOML.
 pub fn parse(
   content: &str,
   path: &path::Path,
-) -> Result<config::FormalityConfig, config::ConfigError> {
-  let doc = de::DeTable::parse(content).map_err(|source| {
-    config::ConfigError::Parse {
+) -> Result<config::FormalityConfig, config::Error> {
+  let doc =
+    de::DeTable::parse(content).map_err(|source| config::Error::Parse {
       path: path.to_path_buf(),
       source,
-    }
-  })?;
+    })?;
   check_lang_names(content, path, doc.get_ref())?;
   check_extra_args(content, path, doc.get_ref())?;
   config::FormalityConfig::deserialize(de::Deserializer::from(doc.clone()))
@@ -51,7 +50,7 @@ fn check_lang_names(
   content: &str,
   path: &path::Path,
   doc: &de::DeTable<'_>,
-) -> Result<(), config::ConfigError> {
+) -> Result<(), config::Error> {
   let Some(de::DeValue::Table(sections)) =
     doc.get("lang").map(toml::Spanned::get_ref)
   else {
@@ -62,7 +61,7 @@ fn check_lang_names(
     let name: &str = key.get_ref();
     match registry.resolve_canonical_name(name) {
       Some(canonical) if canonical != name => {
-        return Err(config::ConfigError::NonCanonicalLang {
+        return Err(config::Error::NonCanonicalLang {
           path: path.to_path_buf(),
           name: name.to_owned(),
           canonical,
@@ -84,7 +83,7 @@ fn check_extra_args(
   content: &str,
   path: &path::Path,
   doc: &de::DeTable<'_>,
-) -> Result<(), config::ConfigError> {
+) -> Result<(), config::Error> {
   let Some(de::DeValue::Table(sections)) =
     doc.get("lang").map(toml::Spanned::get_ref)
   else {
@@ -108,7 +107,7 @@ fn check_extra_args(
     let tools = surface.extra_args_tools();
     match value.get_ref() {
       de::DeValue::Array(_) => {
-        return Err(config::ConfigError::FlatExtraArgs {
+        return Err(config::Error::FlatExtraArgs {
           path: path.to_path_buf(),
           lang: lang.to_owned(),
           line: line_at(content, key.span().start),
@@ -120,7 +119,7 @@ fn check_extra_args(
           .keys()
           .find(|tool| !tools.contains(&tool.get_ref().as_ref()))
         {
-          return Err(config::ConfigError::UnknownTool {
+          return Err(config::Error::UnknownTool {
             path: path.to_path_buf(),
             lang: lang.to_owned(),
             tool: tool.get_ref().to_string(),
@@ -194,13 +193,13 @@ fn check_options(
 }
 
 /// Attributes a deserialization error to the key it occurred under, falling
-/// back to [`ConfigError::Parse`] when its span matches no key.
+/// back to [`config::Error::Parse`] when its span matches no key.
 fn locate(
   path: &path::Path,
   content: &str,
   doc: &de::DeTable<'_>,
   mut source: de::Error,
-) -> config::ConfigError {
+) -> config::Error {
   let mut key = Vec::new();
   match source.span() {
     Some(span) if key_path_at(doc, span.start, &mut key) => {
@@ -208,13 +207,13 @@ fn locate(
       // serde's `de::Error::unknown_field` wording; the typed structs
       // reject extra keys with `deny_unknown_fields`.
       if source.message().starts_with("unknown field ") {
-        return config::ConfigError::UnknownKey {
+        return config::Error::UnknownKey {
           path: path.to_path_buf(),
           key: key.join("."),
           line,
         };
       }
-      config::ConfigError::InvalidValue {
+      config::Error::InvalidValue {
         path: path.to_path_buf(),
         key: key.join("."),
         line,
@@ -223,7 +222,7 @@ fn locate(
     }
     _ => {
       source.set_input(Some(content));
-      config::ConfigError::Parse {
+      config::Error::Parse {
         path: path.to_path_buf(),
         source,
       }

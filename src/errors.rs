@@ -6,12 +6,12 @@
 
 pub use crate::config::ConfigError;
 
-use std::error;
 use std::fmt;
 use std::io;
 use std::path;
 
 use colored::Colorize;
+use thiserror;
 
 /// Standard exit statuses for CLI invocations.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
@@ -73,69 +73,30 @@ impl PartialEq<ExitStatus> for i32 {
 }
 
 /// Errors occurring during Git repository operations or path resolution.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
 pub enum GitError {
   /// Both `--staged` and `--changed` flags were specified simultaneously.
+  #[error(
+    "--staged and --changed are mutually exclusive. Use one or the other."
+  )]
   MutuallyExclusiveFlags,
   /// Execution of the `git` binary failed.
+  #[error("Failed to execute git: {0}")]
   ExecutionFailed(String),
   /// Git command returned a non-zero status.
+  #[error("Git command failed: {0}")]
   CommandFailed(String),
 }
 
-impl fmt::Display for GitError {
-  fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-    match self {
-      GitError::MutuallyExclusiveFlags => write!(
-        f,
-        "--staged and --changed are mutually exclusive. Use one or the other."
-      ),
-      GitError::ExecutionFailed(msg) => {
-        write!(f, "Failed to execute git: {msg}")
-      }
-      GitError::CommandFailed(msg) => write!(f, "Git command failed: {msg}"),
-    }
-  }
-}
-
-impl error::Error for GitError {}
-
-/// Errors related to language surfaces or native configuration rendering.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub enum SurfaceError {
-  /// Surface requested by name was not recognized in the registry.
-  UnknownSurface(String),
-  /// Serialization of native surface configuration failed.
-  SerializationFailed {
-    /// Surface name.
-    surface: String,
-    /// Detailed failure message.
-    message: String,
-  },
-}
-
-impl fmt::Display for SurfaceError {
-  fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-    match self {
-      SurfaceError::UnknownSurface(name) => write!(
-        f,
-        "Unknown language surface: '{name}'. Run 'fml doctor' to see supported languages."
-      ),
-      SurfaceError::SerializationFailed { surface, message } => {
-        write!(f, "Failed to serialize {surface} config: {message}")
-      }
-    }
-  }
-}
-
-impl error::Error for SurfaceError {}
+pub use crate::surfaces::Error as SurfaceError;
 
 /// Standard IO error wrapper with optional path context.
-#[derive(Debug)]
+#[derive(Debug, thiserror::Error)]
 pub struct IoError {
   /// File or directory path associated with the IO operation, if known.
   pub path: Option<path::PathBuf>,
   /// Underlying standard IO error.
+  #[source]
   pub source: io::Error,
 }
 
@@ -157,28 +118,30 @@ impl fmt::Display for IoError {
   }
 }
 
-impl error::Error for IoError {
-  fn source(&self) -> Option<&(dyn error::Error + 'static)> {
-    Some(&self.source)
-  }
-}
-
 /// Structured crate-wide error type for formality.
-#[derive(Debug)]
-pub enum FormalityError {
+#[derive(Debug, thiserror::Error)]
+pub enum Error {
   /// Configuration parsing, loading, or validation errors.
-  Config(ConfigError),
+  #[error(transparent)]
+  Config(#[from] ConfigError),
   /// Git repository or path resolution errors.
-  Git(GitError),
+  #[error(transparent)]
+  Git(#[from] GitError),
   /// Language surface resolution or serialization errors.
-  Surface(SurfaceError),
+  #[error(transparent)]
+  Surface(#[from] SurfaceError),
   /// Standard file system or stream IO errors.
-  Io(IoError),
+  #[error(transparent)]
+  Io(#[from] IoError),
   /// Command-line argument parsing or usage errors.
+  #[error("{0}")]
   InvalidCli(String),
 }
 
-impl FormalityError {
+/// Backward-compatible alias for [`Error`].
+pub type FormalityError = Error;
+
+impl Error {
   /// Renders standardized red bold diagnostic string for stdout/stderr.
   #[must_use]
   pub fn render_diagnostic(&self) -> String {
@@ -191,68 +154,20 @@ impl FormalityError {
   }
 }
 
-impl fmt::Display for FormalityError {
-  fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-    match self {
-      FormalityError::Config(e) => write!(f, "{e}"),
-      FormalityError::Git(e) => write!(f, "{e}"),
-      FormalityError::Surface(e) => write!(f, "{e}"),
-      FormalityError::Io(e) => write!(f, "{e}"),
-      FormalityError::InvalidCli(msg) => write!(f, "{msg}"),
-    }
-  }
-}
-
-impl error::Error for FormalityError {
-  fn source(&self) -> Option<&(dyn error::Error + 'static)> {
-    match self {
-      FormalityError::Config(e) => Some(e),
-      FormalityError::Git(e) => Some(e),
-      FormalityError::Surface(e) => Some(e),
-      FormalityError::Io(e) => Some(e),
-      FormalityError::InvalidCli(_) => None,
-    }
-  }
-}
-
-impl From<ConfigError> for FormalityError {
-  fn from(err: ConfigError) -> Self {
-    FormalityError::Config(err)
-  }
-}
-
-impl From<GitError> for FormalityError {
-  fn from(err: GitError) -> Self {
-    FormalityError::Git(err)
-  }
-}
-
-impl From<SurfaceError> for FormalityError {
-  fn from(err: SurfaceError) -> Self {
-    FormalityError::Surface(err)
-  }
-}
-
-impl From<IoError> for FormalityError {
-  fn from(err: IoError) -> Self {
-    FormalityError::Io(err)
-  }
-}
-
-impl From<io::Error> for FormalityError {
+impl From<io::Error> for Error {
   fn from(err: io::Error) -> Self {
-    FormalityError::Io(IoError::new(None, err))
+    Error::Io(IoError::new(None, err))
   }
 }
 
-impl From<FormalityError> for ExitStatus {
-  fn from(_: FormalityError) -> Self {
+impl From<Error> for ExitStatus {
+  fn from(_: Error) -> Self {
     ExitStatus::Error
   }
 }
 
-impl From<&FormalityError> for ExitStatus {
-  fn from(_: &FormalityError) -> Self {
+impl From<&Error> for ExitStatus {
+  fn from(_: &Error) -> Self {
     ExitStatus::Error
   }
 }
@@ -262,6 +177,8 @@ pub type Result<T, E = FormalityError> = std::result::Result<T, E>;
 
 #[cfg(test)]
 mod tests {
+  use std::error;
+
   use super::*;
 
   #[test]

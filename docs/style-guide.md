@@ -251,29 +251,27 @@ must not report `[FAIL]`). A new cross-surface subcommand goes through
 
 ## 5. Error handling conventions
 
-**Deviation from `rust-guide`:** this crate hand-rolls one central error
-hierarchy in `src/errors.rs` (`#119 [pre-recreation]`) instead of per-module
-`thiserror` enums.
+This crate follows `rust-guide` §3C: per-module `thiserror` error hierarchies,
+leaf modules own their failures, and parents aggregate with
+`#[error(transparent)]`.
 
-- No `anyhow`/`thiserror`; neither is a dependency, and a new error site does
-  not add one.
-- `FormalityError` is the top-level enum, one variant per subsystem (`Config`,
-  `Git`, `Surface`, `Io`, plus `InvalidCli(String)`). Each wraps its own type
-  implementing `fmt::Display` and `std::error::Error` by hand: the enums
-  `ConfigError` (defined in `src/config.rs`, re-exported from `src/errors.rs`),
-  `GitError` and `SurfaceError`, and the struct `IoError`. A missing tool is not
-  an error: it is the run status `SurfaceStatus::ToolMissing`.
+- Errors derive `thiserror::Error` without stuttering type names
+  (`config::Error`, `surfaces::Error`, `errors::Error`).
+- `errors::Error` (aliased as `FormalityError` for backward compatibility) is
+  the top-level enum aggregating subsystem errors (`Config`, `Git`, `Surface`,
+  `Io`, plus `InvalidCli(String)`). A missing tool is not an error: it is the
+  run status `SurfaceStatus::ToolMissing`.
 - A new failure in an existing subsystem adds a variant to that subsystem's
-  enum, not a new top-level variant and not a bare `String`.
+  `Error` enum, not a new top-level variant and not a bare `String`.
   `InvalidCli(String)` is the deliberate exception for CLI usage errors.
-- `impl From<FormalityError> for ExitStatus` (and `From<&FormalityError>`) maps
-  every variant to `ExitStatus::Error` (exit code 2). A case needing a different
-  exit status is a design decision to raise, not a special case to add.
+- `impl From<Error> for ExitStatus` (and `From<&Error>`) maps every variant to
+  `ExitStatus::Error` (exit code 2). A case needing a different exit status is a
+  design decision to raise, not a special case to add.
 - User-facing rendering goes through `render_diagnostic()` /
   `print_diagnostic()` (`[ERR]` prefix), not an ad hoc `eprintln!`.
 
 **Tier 2 (enforced by `test_all_inner_error_enums_implement_std_error` in
-`src/errors.rs`):** every `FormalityError` variant's inner type implements
+`src/errors.rs`):** every `Error` variant's inner type implements
 `std::error::Error`.
 
 ---

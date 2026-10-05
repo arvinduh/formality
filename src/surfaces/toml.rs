@@ -11,7 +11,6 @@ use serde;
 use crate::config;
 use crate::config::facets;
 use crate::config::facets::DeclaresFacets;
-use crate::errors;
 use crate::surfaces;
 use crate::surfaces::LanguageSurface;
 use crate::surfaces::NativeConfig;
@@ -77,7 +76,7 @@ impl NativeConfig for TaploConfig {
     }
   }
 
-  fn render(&self) -> Result<String, errors::FormalityError> {
+  fn render(&self) -> Result<String, surfaces::Error> {
     surfaces::render_native_config(self)
   }
 }

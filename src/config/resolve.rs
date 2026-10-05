@@ -41,13 +41,13 @@ impl config::FormalityConfig {
   ///
   /// # Errors
   ///
-  /// Returns a [`config::ConfigError::Parse`] if the TOML is invalid,
-  /// [`config::ConfigError::UnknownKey`] for a key this `fml` does not accept, or
-  /// [`config::ConfigError::InvalidValue`] if a value has the wrong type.
+  /// Returns a [`config::Error::Parse`] if the TOML is invalid,
+  /// [`config::Error::UnknownKey`] for a key this `fml` does not accept, or
+  /// [`config::Error::InvalidValue`] if a value has the wrong type.
   pub fn parse_str(
     content: &str,
     path: &path::Path,
-  ) -> Result<Self, config::ConfigError> {
+  ) -> Result<Self, config::Error> {
     super::strict::parse(content, path)
   }
 
@@ -55,10 +55,10 @@ impl config::FormalityConfig {
   ///
   /// # Errors
   ///
-  /// Returns a [`config::ConfigError::Io`] if the file cannot be read, or [`config::ConfigError::Parse`] if the TOML is invalid.
-  pub fn load_file(path: &path::Path) -> Result<Self, config::ConfigError> {
+  /// Returns a [`config::Error::Io`] if the file cannot be read, or [`config::Error::Parse`] if the TOML is invalid.
+  pub fn load_file(path: &path::Path) -> Result<Self, config::Error> {
     let content =
-      fs::read_to_string(path).map_err(|source| config::ConfigError::Io {
+      fs::read_to_string(path).map_err(|source| config::Error::Io {
         path: path.to_path_buf(),
         source,
       })?;
@@ -234,10 +234,10 @@ impl config::FormalityConfig {
   ///
   /// # Errors
   ///
-  /// Returns a [`config::ConfigError`] if reading or parsing any discovered configuration file fails.
+  /// Returns a [`config::Error`] if reading or parsing any discovered configuration file fails.
   pub fn load_layered(
     repo_root: Option<&path::Path>,
-  ) -> Result<(Self, Option<path::PathBuf>), config::ConfigError> {
+  ) -> Result<(Self, Option<path::PathBuf>), config::Error> {
     let project_config_path = if let Some(root) = repo_root {
       find_project_config(root)
     } else if let Ok(cwd) = std::env::current_dir() {
@@ -255,10 +255,10 @@ impl config::FormalityConfig {
   ///
   /// # Errors
   ///
-  /// Returns a [`config::ConfigError`] if reading or parsing any discovered configuration file fails.
+  /// Returns a [`config::Error`] if reading or parsing any discovered configuration file fails.
   pub fn load_layered_with_path(
     project_config_path: Option<&path::Path>,
-  ) -> Result<(Self, Option<path::PathBuf>), config::ConfigError> {
+  ) -> Result<(Self, Option<path::PathBuf>), config::Error> {
     let mut config = Self::with_defaults();
 
     // 1. User config (cross-platform: Linux, macOS, Windows)
