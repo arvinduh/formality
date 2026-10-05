@@ -7,23 +7,20 @@ per-feature behavior.
 
 ## Top-level crate (`src/lib.rs`, `src/main.rs`, `src/cli.rs`, `src/errors.rs`)
 
-`src/main.rs` is a thin binary entry point — it calls `fml::run()` and exits
-with the returned code, nothing else. The real work lives in the `fml` library
-crate (`src/lib.rs`), which declares the seven top-level modules (`cli`,
-`commands`, `config`, `engine`, `errors`, `surfaces`, `ui`), owns the actual
-subcommand dispatch (`run_command_inner` — the single `match args.command` that
-routes every `Commands` variant to its handler, after loading and merging
-config), and re-exports one crate-root item reached that way by this crate's own
-integration tests (`generate_schema`) — see [style-guide.md](style-guide.md) §1
-for why it survived the `#133 [pre-recreation]` alias-minimization sweep while
-the rest of the old `DEPRECATED / STALE ALIAS` block did not: new code always
-uses the canonical structural path, never a crate-root shortcut. `src/cli.rs`
-defines the `clap`-based argument parser only (`Cli`, `Commands`) — it parses,
-it does not dispatch. `src/errors.rs` is the crate-wide error hierarchy —
-`FormalityError` and its per-subsystem inner types (`GitError`, `SurfaceError`,
-the `IoError` struct, and `ConfigError`, which `src/config` defines and this
-file re-exports) — with no `anyhow`/`thiserror` dependency; see
-[style-guide.md](style-guide.md) §5 for the full convention.
+`src/main.rs` is the binary entry point and Process Host per rust-guide §3H. It
+owns terminal color detection (`NO_COLOR`, `CLICOLOR_FORCE`), argument parsing
+via `cli::Cli::parse_checked()`, top-level command dispatch to `fml::commands`,
+background update notifier checks, and exit code mapping. `src/cli.rs` belongs
+to the binary target (declared via `mod cli;` in `src/main.rs`), defining the
+`clap`-based argument schema (`Cli`, `Commands`) and validation. The `fml`
+library crate (`src/lib.rs`) has zero knowledge of `cli` and zero dependency on
+`clap`, declaring the six library modules (`commands`, `config`, `engine`,
+`errors`, `surfaces`, `ui`), and re-exporting `generate_schema` for external
+integration tests (`tests/schema_drift.rs`). `src/errors.rs` is the crate-wide
+error hierarchy — `FormalityError` and its per-subsystem inner types
+(`GitError`, `SurfaceError`, the `IoError` struct, and `ConfigError`, which
+`src/config` defines and this file re-exports) — with no `anyhow`/`thiserror`
+dependency; see [style-guide.md](style-guide.md) §5 for the full convention.
 
 ## `src/config`
 

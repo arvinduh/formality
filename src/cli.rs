@@ -1,8 +1,8 @@
 //! `clap`-derived CLI argument definitions (`Cli`, `Commands`) — the single source of truth for every `fml` subcommand's flags.
 //!
 //! Owns argument schema definitions, flag parsing, and validation. Subcommand
-//! handlers live in `crate::commands`, and top-level dispatch lives in
-//! `crate::lib`.
+//! handlers live in `fml::commands`, and top-level dispatch lives in
+//! `crate` (the `fml` binary Process Host).
 
 use std::path;
 
@@ -195,7 +195,7 @@ impl Cli {
   /// Parses `std::env::args()` and rejects flag combinations clap's derive
   /// cannot express, exiting with clap's own error rendering.
   ///
-  /// Used by [`crate::run`] in place of a bare [`clap::Parser::parse`].
+  /// Used by the binary entry point in place of a bare [`clap::Parser::parse`].
   #[must_use]
   pub fn parse_checked() -> Self {
     let cli = <Self as clap::Parser>::parse();

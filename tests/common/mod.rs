@@ -15,8 +15,162 @@ use std::path;
 use std::sync;
 use tempfile;
 
-use fml::cli;
+use fml::commands;
+use fml::config;
 use fml::errors;
+
+/// Test representation of CLI commands for integration test dispatch.
+#[derive(Debug, Clone)]
+pub enum Command {
+  /// Format source files.
+  Fmt {
+    /// Report what would be reformatted without writing.
+    check: bool,
+    /// Only act on staged files.
+    staged: bool,
+    /// Only act on changed files.
+    changed: bool,
+    /// Filter by language.
+    lang: Vec<String>,
+    /// Allow missing tools.
+    allow_missing: bool,
+    /// Target paths.
+    paths: Vec<path::PathBuf>,
+  },
+  /// Lint source files.
+  Lint {
+    /// Check flag (rejected or ignored in lint).
+    check: bool,
+    /// Only act on staged files.
+    staged: bool,
+    /// Only act on changed files.
+    changed: bool,
+    /// Filter by language.
+    lang: Vec<String>,
+    /// Allow missing tools.
+    allow_missing: bool,
+    /// Target paths.
+    paths: Vec<path::PathBuf>,
+  },
+  /// Apply lint fixes, then reformat.
+  Fix {
+    /// Report whether fixes would change anything.
+    check: bool,
+    /// Only act on staged files.
+    staged: bool,
+    /// Only act on changed files.
+    changed: bool,
+    /// Filter by language.
+    lang: Vec<String>,
+    /// Allow missing tools.
+    allow_missing: bool,
+    /// Target paths.
+    paths: Vec<path::PathBuf>,
+  },
+  /// Sync native tool configs.
+  Sync {
+    /// Check whether configs are in sync without writing.
+    check: bool,
+    /// Filter by language.
+    lang: Vec<String>,
+  },
+  /// Diagnose installed toolchains.
+  Doctor {
+    /// Inspect all supported surfaces.
+    all: bool,
+    /// Automatically install missing toolchains.
+    install: bool,
+  },
+  /// Scaffold a new formality.toml.
+  Init {
+    /// Overwrite existing config.
+    force: bool,
+    /// Create hidden config (.formality.toml).
+    hidden: bool,
+  },
+  /// Write JSON schema to stdout or file.
+  Schema {
+    /// Optional output file path.
+    output: Option<path::PathBuf>,
+  },
+}
+
+/// Dispatches a test command directly through library APIs.
+fn dispatch_command(root: &path::Path, command: Command) -> errors::ExitStatus {
+  let project_config_path = config::find_project_config(root);
+  let (config, _) = match config::FormalityConfig::load_layered_with_path(
+    project_config_path.as_deref(),
+  ) {
+    Ok(res) => res,
+    Err(e) => {
+      errors::FormalityError::from(e).print_diagnostic();
+      return errors::ExitStatus::Error;
+    }
+  };
+
+  match command {
+    Command::Fmt {
+      check,
+      staged,
+      changed,
+      lang,
+      allow_missing,
+      paths,
+    } => commands::fmt::run_fmt(
+      root,
+      &config,
+      check,
+      staged,
+      changed,
+      &lang,
+      paths,
+      allow_missing,
+    ),
+    Command::Lint {
+      staged,
+      changed,
+      lang,
+      allow_missing,
+      paths,
+      ..
+    } => commands::lint::run_lint(
+      root,
+      &config,
+      staged,
+      changed,
+      &lang,
+      paths,
+      allow_missing,
+    ),
+    Command::Fix {
+      check,
+      staged,
+      changed,
+      lang,
+      allow_missing,
+      paths,
+    } => commands::fix::run_fix(
+      root,
+      &config,
+      check,
+      staged,
+      changed,
+      &lang,
+      paths,
+      allow_missing,
+    ),
+    Command::Sync { check, lang } => {
+      commands::sync::run_sync(root, &config, check, &lang)
+    }
+    Command::Doctor { all, install } => {
+      commands::doctor::run_doctor(root, all, install, &config)
+    }
+    Command::Init { force, hidden } => {
+      commands::init::run_init(root, &config, force, hidden)
+    }
+    Command::Schema { output } => commands::schema::run_schema(output),
+  }
+}
 
 /// Orders in-process fml runs against overrides of fml's process-wide binary
 /// cache, which every test thread in this binary shares.
@@ -65,13 +219,9 @@ impl BinaryOverride {
   pub fn run_cli(
     &self,
     root: &path::Path,
-    command: cli::Commands,
+    command: Command,
   ) -> errors::ExitStatus {
-    fml::run_with_args(cli::Cli {
-      config: None,
-      root: Some(root.to_path_buf()),
-      command,
-    })
+    dispatch_command(root, command)
   }
 }
 
@@ -102,30 +252,22 @@ pub fn temp_repo(files: &[(&str, &str)]) -> tempfile::TempDir {
 /// Executes a CLI command targeted at the given root directory.
 pub fn run_cli(
   root: impl AsRef<path::Path>,
-  command: cli::Commands,
+  command: Command,
 ) -> errors::ExitStatus {
   let _shared = BINARY_CACHE_LOCK
     .read()
     .unwrap_or_else(sync::PoisonError::into_inner);
-  let args = cli::Cli {
-    config: None,
-    root: Some(root.as_ref().to_path_buf()),
-    command,
-  };
-  fml::run_with_args(args)
+  dispatch_command(root.as_ref(), command)
 }
 
 /// Executes a CLI command without specifying a root directory (global / ambient mode).
-pub fn run_cli_no_root(command: cli::Commands) -> errors::ExitStatus {
+pub fn run_cli_no_root(command: Command) -> errors::ExitStatus {
   let _shared = BINARY_CACHE_LOCK
     .read()
     .unwrap_or_else(sync::PoisonError::into_inner);
-  let args = cli::Cli {
-    config: None,
-    root: None,
-    command,
-  };
-  fml::run_with_args(args)
+  let cwd =
+    std::env::current_dir().unwrap_or_else(|_| path::PathBuf::from("."));
+  dispatch_command(&cwd, command)
 }
 
 /// Initializes a git repository in `path` with a dummy committer identity.
@@ -151,34 +293,22 @@ pub fn init_git_repo(path: impl AsRef<path::Path>) -> bool {
   true
 }
 
-/// Helper to create a `Commands::Init` command.
-pub fn init_cmd(force: bool, hidden: bool) -> cli::Commands {
-  cli::Commands::Init { force, hidden }
+/// Helper to create a `Command::Init` command.
+pub fn init_cmd(force: bool, hidden: bool) -> Command {
+  Command::Init { force, hidden }
 }
 
-/// Helper to create a `Commands::Sync` command.
-pub fn sync_cmd(check: bool, lang: &[&str]) -> cli::Commands {
-  cli::Commands::Sync {
+/// Helper to create a `Command::Sync` command.
+pub fn sync_cmd(check: bool, lang: &[&str]) -> Command {
+  Command::Sync {
     check,
     lang: lang.iter().map(|s| (*s).to_string()).collect(),
   }
 }
 
-/// Helper to create a standard `Commands::Fmt` command.
-pub fn fmt_cmd(check: bool, lang: &[&str]) -> cli::Commands {
-  cli::Commands::Fmt {
-    check,
-    staged: false,
-    changed: false,
-    lang: lang.iter().map(|s| (*s).to_string()).collect(),
-    allow_missing: false,
-    paths: vec![],
-  }
-}
-
-/// Helper to create a standard `Commands::Fix` command.
-pub fn fix_cmd(check: bool, lang: &[&str]) -> cli::Commands {
-  cli::Commands::Fix {
+/// Helper to create a standard `Command::Fmt` command.
+pub fn fmt_cmd(check: bool, lang: &[&str]) -> Command {
+  Command::Fmt {
     check,
     staged: false,
     changed: false,
@@ -188,9 +318,21 @@ pub fn fix_cmd(check: bool, lang: &[&str]) -> cli::Commands {
   }
 }
 
-/// Helper to create a standard `Commands::Lint` command.
-pub fn lint_cmd(lang: &[&str]) -> cli::Commands {
-  cli::Commands::Lint {
+/// Helper to create a standard `Command::Fix` command.
+pub fn fix_cmd(check: bool, lang: &[&str]) -> Command {
+  Command::Fix {
+    check,
+    staged: false,
+    changed: false,
+    lang: lang.iter().map(|s| (*s).to_string()).collect(),
+    allow_missing: false,
+    paths: vec![],
+  }
+}
+
+/// Helper to create a standard `Command::Lint` command.
+pub fn lint_cmd(lang: &[&str]) -> Command {
+  Command::Lint {
     check: false,
     staged: false,
     changed: false,
@@ -198,4 +340,14 @@ pub fn lint_cmd(lang: &[&str]) -> cli::Commands {
     allow_missing: false,
     paths: vec![],
   }
+}
+
+/// Helper to create a `Command::Doctor` command.
+pub fn doctor_cmd(all: bool, install: bool) -> Command {
+  Command::Doctor { all, install }
+}
+
+/// Helper to create a `Command::Schema` command.
+pub fn schema_cmd(output: Option<path::PathBuf>) -> Command {
+  Command::Schema { output }
 }

@@ -1,12 +1,9 @@
-//! Formality (`fml`) is a unified CLI for formatting, linting, and syncing configurations across multiple language surfaces.
+//! Formality (`fml`) library for formatting, linting, and syncing configurations across multiple language surfaces.
 //!
-//! Owns top-level execution entry points and command dispatch. Subcommand
-//! implementations live in `commands`, configuration models live in
-//! `config`, execution engine lives in `engine`, and language definitions
-//! live in `surfaces`.
+//! Owns library subsystems and public APIs for language surfaces, execution
+//! engine, configuration models, and commands. CLI argument parsing and
+//! process hosting live in the `fml` binary.
 
-/// Command-line argument parsing definitions.
-pub mod cli;
 /// CLI command implementations.
 pub mod commands;
 /// Configuration loading, parsing, and resolving.
@@ -28,199 +25,10 @@ pub mod ui;
 // `crate::ui::table`); see docs/style-guide.md §1.
 pub use config::schema::generate_schema;
 
-use std::env;
-use std::path;
-
-use colored;
-use colored::Colorize;
-
-/// Parses CLI arguments from `std::env::args()` and executes the command.
-#[must_use]
-pub fn run() -> errors::ExitStatus {
-  let args = cli::Cli::parse_checked();
-  run_with_args(args)
-}
-
-/// Executes the CLI command specified by the provided [`cli::Cli`] arguments.
-#[must_use]
-pub fn run_with_args(args: cli::Cli) -> errors::ExitStatus {
-  // NO_COLOR wins over every force-color signal, matching the precedence
-  // `ui::table::Palette::detect` already applies to this crate's own escape
-  // codes. Without the first branch the two disagreed under CI, where
-  // GITHUB_ACTIONS/CLICOLOR_FORCE are set: the palette went plain while
-  // `colored` was still forced on, so `NO_COLOR=1 fml ...` emitted a log
-  // that was *mostly* uncolored but still carried bold/color runs around
-  // every status token -- honoring neither mode, and defeating the point
-  // of NO_COLOR for anything parsing the output.
-  if ui::no_color_requested() {
-    colored::control::set_override(false);
-  } else if ui::color_forced() {
-    colored::control::set_override(true);
-  }
-
-  let root = resolve_root(args.root.clone());
-
-  let project_config_path = config::find_project_config(&root);
-
-  let update_notifier = engine::update::spawn_update_check();
-  let status = run_command_inner(args, &root, project_config_path.as_deref());
-  engine::update::print_update_notice(update_notifier);
-  status
-}
-
-/// Resolves `--root` (or the current directory when it is absent) to an
-/// absolute path, so every command sees the same root however it was spelled.
-fn resolve_root(root: Option<path::PathBuf>) -> path::PathBuf {
-  let root = root.unwrap_or_else(|| {
-    env::current_dir().unwrap_or_else(|_| path::PathBuf::from("."))
-  });
-  path::absolute(&root).unwrap_or_else(|_| {
-    env::current_dir().map_or_else(|_| root.clone(), |cwd| cwd.join(&root))
-  })
-}
-
-// Dispatches all top-level CLI commands (fmt, lint, sync, fix, doctor, init, lsp, schema, etc.).
-fn run_command_inner(
-  args: cli::Cli,
-  root: &path::Path,
-  project_config_path: Option<&path::Path>,
-) -> errors::ExitStatus {
-  // The server loads and reports its own config at `initialize`. Editors
-  // spawn it in the workspace root, so failing on that config here would
-  // kill it before it could tell the editor why.
-  if matches!(args.command, cli::Commands::Lsp) {
-    return commands::lsp::run_lsp_server(Some(root));
-  }
-
-  let (mut config, _config_path) =
-    match config::FormalityConfig::load_layered_with_path(project_config_path) {
-      Ok(res) => res,
-      Err(e) => {
-        errors::FormalityError::from(e).print_diagnostic();
-        return errors::ExitStatus::Error;
-      }
-    };
-
-  if let Some(custom_cfg) = args.config {
-    match config::FormalityConfig::load_file(&custom_cfg) {
-      Ok(custom) => config.merge(custom),
-      Err(e) => {
-        errors::FormalityError::from(e).print_diagnostic();
-        return errors::ExitStatus::Error;
-      }
-    }
-  }
-
-  warn_unrecognized_lang_sections(&config);
-
-  match args.command {
-    cli::Commands::Schema { output } => commands::schema::run_schema(output),
-
-    cli::Commands::Doctor { all, install } => {
-      commands::doctor::run_doctor(root, all, install, &config)
-    }
-
-    cli::Commands::Init { force, hidden } => {
-      commands::init::run_init(root, &config, force, hidden)
-    }
-
-    cli::Commands::Fmt {
-      check,
-      staged,
-      changed,
-      lang,
-      allow_missing,
-      paths,
-    } => commands::fmt::run_fmt(
-      root,
-      &config,
-      check,
-      staged,
-      changed,
-      &lang,
-      paths,
-      allow_missing,
-    ),
-
-    cli::Commands::Fix {
-      check,
-      staged,
-      changed,
-      lang,
-      allow_missing,
-      paths,
-    } => commands::fix::run_fix(
-      root,
-      &config,
-      check,
-      staged,
-      changed,
-      &lang,
-      paths,
-      allow_missing,
-    ),
-
-    cli::Commands::Lint {
-      staged,
-      changed,
-      lang,
-      allow_missing,
-      paths,
-      ..
-    } => commands::lint::run_lint(
-      root,
-      &config,
-      staged,
-      changed,
-      &lang,
-      paths,
-      allow_missing,
-    ),
-
-    cli::Commands::Sync { check, lang } => {
-      commands::sync::run_sync(root, &config, check, &lang)
-    }
-
-    cli::Commands::Lsp => {
-      unreachable!("`lsp` is dispatched before the config load")
-    }
-  }
-}
-
-/// Warns (non-fatal, to stderr) about any `[lang.X]` sections in the
-/// resolved config whose `X` isn't a recognized surface name or alias —
-/// almost always a typo (e.g. `[lang.pythonn]`) that would otherwise be
-/// silently ignored, leaving the user's override never applied and no
-/// signal as to why. Runs once at config-load time so every subcommand
-/// benefits, mirroring the `Unknown language surface` error already given
-/// for an unrecognized `--lang` CLI flag value.
-///
-/// Deliberately does not flag a section that names a real surface which
-/// simply isn't detected/active in the current workspace (e.g.
-/// `[lang.rust]` in a Python-only repo) — that's a valid
-/// pre-configuration, not a mistake.
-fn warn_unrecognized_lang_sections(config: &config::FormalityConfig) {
-  let registry = surfaces::SurfaceRegistry::default();
-  let unrecognized = config.unrecognized_lang_sections(&registry);
-  if unrecognized.is_empty() {
-    return;
-  }
-
-  for name in unrecognized {
-    eprintln!(
-      "{} Unrecognized language section '[lang.{}]' in formality.toml — \
-       this override will not be applied. Run '{}' to see supported \
-       languages.",
-      "[WARN]".yellow().bold(),
-      name.bold(),
-      "fml doctor".cyan()
-    );
-  }
-}
-
 #[cfg(test)]
 mod tests {
-  use super::*;
+  use std::env;
+  use std::path;
 
   // Tier-2 enforcement for the module/file hierarchy rule documented in
   // docs/style-guide.md ("`*_tests.rs` vs `#[cfg(test)] mod tests`"): a
@@ -912,21 +720,6 @@ mod tests {
       "bare pre-recreation issue citation(s) — see docs/INDEX.md:\n{}",
       violations.join("\n")
     );
-  }
-
-  #[test]
-  fn test_relative_root_resolves_to_absolute() {
-    // Asserts on `resolve_root` itself, not on a full command's exit status:
-    // a `Doctor` run is `Clean` only if every detected surface's tool
-    // resolves at that instant, so it failed whenever a concurrent
-    // `npm install -g` / `doctor --install` was relinking a shared tool
-    // binary (#291).
-    let cwd = env::current_dir().expect("current dir");
-    for (relative, expected) in [(".", cwd.clone()), ("src", cwd.join("src"))] {
-      let resolved = resolve_root(Some(path::PathBuf::from(relative)));
-      assert!(resolved.is_absolute(), "`{relative}` stayed relative");
-      assert_eq!(resolved, expected);
-    }
   }
 
   // Tier-2 enforcement for the `src/` half of docs/style-guide.md §6's
