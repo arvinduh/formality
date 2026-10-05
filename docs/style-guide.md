@@ -83,9 +83,8 @@ Extracted from what all 12 language surfaces do consistently — see
 `src/surfaces/{rust,python,cpp,java,go,markdown,yaml,json,toml,typst,javascript,kotlin}.rs`.
 
 - **Surface struct**: `<Lang>Surface`, a unit struct
-  (`#[derive(Debug, Default, Clone, Copy)] pub struct RustSurface;`). One per
-  file, with its `impl LanguageSurface` and `impl DeclaresFacets` in that same
-  file.
+  (`#[derive(Debug, Default)] pub struct RustSurface;`). One per file, with its
+  `impl LanguageSurface` and `impl DeclaresFacets` in that same file.
 - **Native config struct**: `<Tool>Config` (e.g. `RustfmtConfig`), implementing
   `NativeConfig` with `const FILE_NAME: &'static str` set to the real file name
   the tool reads (e.g. `.rustfmt.toml`). One struct per managed file.
