@@ -1,7 +1,8 @@
 //! Configuration file synchronization support.
 //!
 //! Implements expected-versus-current file diffing and auto-generation header checks.
-//! High-level command coordination is owned by `crate::engine::sync`.
+//! High-level command coordination is owned by `crate::cli::sync` and
+//! `crate::engine::runner`.
 
 use std::path;
 use std::time;

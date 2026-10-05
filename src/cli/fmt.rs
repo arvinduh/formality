@@ -1,14 +1,17 @@
-//! CLI argument definitions and adapter for `fml fmt`.
+//! CLI argument definitions and pipeline execution for `fml fmt`.
 //!
-//! Owns argument definitions for formatting and delegates execution to
-//! [`crate::engine::fmt`].
+//! Owns argument definitions for formatting and composes the execution
+//! pipeline from pure engine primitives.
 
 use std::path;
 
 use clap;
+use colored::Colorize;
 
 use crate::config;
-use crate::engine::fmt;
+use crate::engine::doctor;
+use crate::engine::runner;
+use crate::engine::target;
 use crate::errors;
 
 /// Arguments for `fml fmt`.
@@ -52,14 +55,36 @@ pub fn run(
   root: &path::Path,
   config: &config::FormalityConfig,
 ) -> errors::ExitStatus {
-  fmt::run(
+  let scoped = !args.paths.is_empty();
+  let target = match target::resolve_targets(
     root,
-    config,
-    args.check,
     args.staged,
     args.changed,
-    &args.lang,
     args.paths,
-    args.allow_missing,
+    &args.lang,
+    config,
+  ) {
+    Ok(Some(t)) => t,
+    Ok(None) => {
+      let flag = if args.staged { "staged" } else { "changed" };
+      let under = if scoped { " under the given paths" } else { "" };
+      println!("{}", format!("No {flag} files{under}.").yellow());
+      return errors::ExitStatus::Clean;
+    }
+    Err(e) => {
+      e.print_diagnostic();
+      return errors::ExitStatus::Error;
+    }
+  };
+
+  doctor::preflight_warn_stale_tools(&target.surfaces, config, true, false);
+  let plan = runner::Plan::fmt(args.check, args.allow_missing);
+  runner::Runner::run_into(
+    &mut std::io::stdout(),
+    &target.surfaces,
+    root,
+    &target.scope,
+    &plan,
+    config,
   )
 }

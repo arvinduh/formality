@@ -23,6 +23,10 @@
 //! clangd, …) — it does not spawn, proxy, or route requests to them. See
 //! `README.md`'s "Editor setup" section for how to wire `fml lsp` in
 //! alongside a primary language server.
+
+/// Structured per-violation diagnostic publishers for language tools.
+pub mod diagnostics;
+
 use std::path;
 use std::sync;
 
@@ -32,8 +36,8 @@ use tower_lsp::jsonrpc;
 use tower_lsp::lsp_types;
 
 use crate::config;
-use crate::engine::plan;
 use crate::engine::runner;
+use crate::engine::target;
 use crate::errors;
 
 /// Server identity reported in `initialize`'s `ServerInfo`.
@@ -47,6 +51,33 @@ pub fn is_formality_config_file(path: &path::Path) -> bool {
     .file_name()
     .and_then(|n| n.to_str())
     .is_some_and(|name| config::CONFIG_FILE_CANDIDATES.contains(&name))
+}
+
+fn run_file_pass(
+  root: &path::Path,
+  path: &path::Path,
+  config: &config::FormalityConfig,
+  plan: &runner::Plan,
+) -> errors::ExitStatus {
+  let paths = [path.to_path_buf()];
+  let scope =
+    runner::Scope::resolve(root, &paths, &config.resolve_global().exclude);
+  let surfaces =
+    match target::resolve_target_surfaces(root, &[], &scope, config) {
+      Ok(s) => s,
+      Err(e) => {
+        e.print_diagnostic();
+        return errors::ExitStatus::Error;
+      }
+    };
+  runner::Runner::run_into(
+    &mut std::io::stderr(),
+    &surfaces,
+    root,
+    &scope,
+    plan,
+    config,
+  )
 }
 
 // ---------------------------------------------------------------------------
@@ -273,15 +304,8 @@ impl tower_lsp::LanguageServer for FormalityLsp {
 
     let config = self.get_or_load_config(Some(&root)).await;
 
-    // stdout is the JSON-RPC transport, so the report goes to stderr.
-    let status = plan::run_resolved(
-      &mut std::io::stderr(),
-      &root,
-      &config,
-      &[],
-      std::slice::from_ref(&path),
-      &runner::Plan::fmt(false, false),
-    );
+    let status =
+      run_file_pass(&root, &path, &config, &runner::Plan::fmt(false, false));
 
     if status.is_clean() {
       let after = std::fs::read_to_string(&path).unwrap_or_default();
@@ -326,23 +350,14 @@ impl tower_lsp::LanguageServer for FormalityLsp {
     // from being published "clean" when the structured tool never actually
     // ran (#177 [pre-recreation]).
     let diagnostics = if let Some(diags) =
-      crate::engine::lsp_diagnostics::diagnostics_for_file_with_config(
-        &root,
-        &path,
-        Some(&config),
-      ) {
+      diagnostics::diagnostics_for_file_with_config(&root, &path, Some(&config))
+    {
       diags
     } else {
       // stderr is the server log the fallback diagnostic points at; stdout
       // is the JSON-RPC transport.
-      let status = plan::run_resolved(
-        &mut std::io::stderr(),
-        &root,
-        &config,
-        &[],
-        std::slice::from_ref(&path),
-        &runner::Plan::lint(false),
-      );
+      let status =
+        run_file_pass(&root, &path, &config, &runner::Plan::lint(false));
 
       if status.is_clean() {
         vec![]

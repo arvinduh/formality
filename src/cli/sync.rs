@@ -1,14 +1,15 @@
-//! CLI argument definitions and adapter for `fml sync`.
+//! CLI argument definitions and pipeline execution for `fml sync`.
 //!
-//! Owns argument definitions for native config synchronization and delegates
-//! execution to [`crate::engine::sync`].
+//! Owns argument definitions for native config synchronization and composes the
+//! execution pipeline from pure engine primitives.
 
 use std::path;
 
 use clap;
 
 use crate::config;
-use crate::engine::sync;
+use crate::engine::runner;
+use crate::engine::target;
 use crate::errors;
 
 /// Arguments for `fml sync`.
@@ -30,5 +31,21 @@ pub fn run(
   root: &path::Path,
   config: &config::FormalityConfig,
 ) -> errors::ExitStatus {
-  sync::run(root, config, args.check, &args.lang)
+  let target = match target::resolve_workspace_targets(root, &args.lang, config)
+  {
+    Ok(t) => t,
+    Err(e) => {
+      e.print_diagnostic();
+      return errors::ExitStatus::Error;
+    }
+  };
+  let plan = runner::Plan::sync(args.check);
+  runner::Runner::run_into(
+    &mut std::io::stdout(),
+    &target.surfaces,
+    root,
+    &target.scope,
+    &plan,
+    config,
+  )
 }

@@ -1224,7 +1224,7 @@ fn test_doctor_detects_the_surfaces_fmt_runs_under_global_exclude() {
     &config.resolve_global().exclude,
   );
   let fmt: Vec<&str> =
-    crate::engine::plan::resolve_target_surfaces(root, &[], &scope, &config)
+    crate::engine::target::resolve_target_surfaces(root, &[], &scope, &config)
       .unwrap()
       .iter()
       .map(|s| s.name())

@@ -1,7 +1,7 @@
 //! Typst language surface: formats via `typstyle`.
 //!
 //! Implements `super::LanguageSurface` for Typst. Structured LSP diagnostics
-//! are owned by `crate::engine::lsp_diagnostics`.
+//! are owned by `crate::engine::lsp::diagnostics`.
 
 use std::path;
 use std::time;

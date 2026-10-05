@@ -1,35 +1,19 @@
 //! Formatting/linting engine orchestration.
 //!
 //! Coordinates subprocess dispatch, diffing, and tool version detection.
-//! Pass dispatch lives in `runner`, diffing lives in `diff`, and version
-//! checking lives in `version`.
+//! Pass dispatch lives in `runner`, diffing lives in `diff`, target resolution
+//! lives in `target`, and version checking lives in `version`.
 
 /// Unified diff generation and rendering.
 pub mod diff;
 /// Environment and tooling diagnostics.
 pub mod doctor;
-/// Auto-fix orchestration across surfaces.
-pub mod fix;
-/// Formatting orchestration across surfaces.
-pub mod fmt;
-/// Git path resolution and status inspection.
-pub mod git;
-/// Workspace configuration initialization.
-pub mod init;
-/// Linting orchestration across surfaces.
-pub mod lint;
 /// Language Server Protocol server.
 pub mod lsp;
-/// Structured diagnostic publishers for LSP.
-pub mod lsp_diagnostics;
-/// Plan dispatch, target surface resolution, and reporting.
-pub mod plan;
 /// Execution runner for dispatching pass plans across surfaces.
 pub mod runner;
-/// JSON schema generation for formality configuration.
-pub mod schema;
-/// Configuration synchronization across surfaces.
-pub mod sync;
+/// Target resolution for paths, scopes, and language surfaces.
+pub mod target;
 /// Asynchronous self-update checker and release notice renderer.
 pub mod update;
 /// Tool version probing, semver parsing, and compatibility policy evaluation.

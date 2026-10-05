@@ -40,27 +40,23 @@ on.
 
 ## `src/engine`
 
-Execution pipelines, diffing, git path resolution, and version/update checking —
-the core engine machinery that coordinates formatters/linters across surfaces
-and reports results, as opposed to `src/surfaces`, which defines _what_ each
-surface does.
+Diffing, target resolution, diagnostics, and version/update checking — the pure
+engine primitives that coordinate execution across surfaces, as opposed to
+`src/surfaces`, which defines _what_ each surface does, and `src/cli`, which
+defines argument definitions, fallbacks, and command pipeline composition.
 
-- `engine/fmt.rs`, `engine/lint.rs`, `engine/fix.rs`: execution pipelines for
-  formatting, linting, and autofixing.
-- `engine/plan.rs`: plan dispatch, candidate path resolution, and reporting.
-- `engine/git.rs`: git path resolution and staged/changed file inspection.
-- `engine/sync.rs`, `engine/init.rs`, `engine/schema.rs`: config sync, project
-  initialization, and schema generation pipelines.
+- `engine/diff.rs`: renders unified diffs for `fmt --check`/`fml lint` output.
 - `engine/doctor/`: workspace and toolchain verification diagnostics and
   toolchain installations (`install_missing_tools_framed`).
-- `engine/lsp.rs` and `engine/lsp_diagnostics.rs`: the in-process Language
+- `engine/lsp.rs` and `engine/lsp/diagnostics.rs`: the in-process Language
   Server implementing document formatting and structured diagnostics.
-- `engine/runner.rs`: `Runner::run`, executing passes in parallel across
+- `engine/runner.rs`: `Runner::run_into`, executing passes in parallel across
   surfaces via `rayon::par_iter`. See [style-guide.md](style-guide.md) §4 for
   `ExecutionContext` `Arc`-sharing and the three-stage fix pipeline.
-- `engine/diff.rs`: renders unified diffs for `fmt --check`/`fml lint` output.
-- `engine/version/`: resolves tool versions and enforces minimum tool versions.
+- `engine/target.rs`: git path resolution, candidate path resolution, scope
+  resolution, and surface filtering.
 - `engine/update.rs`: implements self-update checks against GitHub Releases.
+- `engine/version/`: resolves tool versions and enforces minimum tool versions.
 
 ## `src/surfaces`
 

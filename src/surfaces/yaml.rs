@@ -125,7 +125,7 @@ pub fn build_yamllint_inline_config(cfg: &YamllintConfig) -> String {
 /// intentionally runs with yamllint's own default rule set rather than
 /// threading through `build_yamllint_inline_config`'s resolved
 /// `formality.toml` settings — the same known simplification noted in this
-/// module's callers (see `lsp_diagnostics.rs` module docs).
+/// module's callers (see `lsp::diagnostics` module docs).
 #[must_use]
 pub fn build_yamllint_parsable_args(file: &path::Path) -> Vec<String> {
   vec![

@@ -1,14 +1,17 @@
-//! CLI argument definitions and adapter for `fml lint`.
+//! CLI argument definitions and pipeline execution for `fml lint`.
 //!
-//! Owns argument definitions for linting and delegates execution to
-//! [`crate::engine::lint`].
+//! Owns argument definitions for linting and composes the execution
+//! pipeline from pure engine primitives.
 
 use std::path;
 
 use clap;
+use colored::Colorize;
 
 use crate::config;
-use crate::engine::lint;
+use crate::engine::doctor;
+use crate::engine::runner;
+use crate::engine::target;
 use crate::errors;
 
 /// Arguments for `fml lint`.
@@ -55,13 +58,36 @@ pub fn run(
   root: &path::Path,
   config: &config::FormalityConfig,
 ) -> errors::ExitStatus {
-  lint::run(
+  let scoped = !args.paths.is_empty();
+  let target = match target::resolve_targets(
     root,
-    config,
     args.staged,
     args.changed,
-    &args.lang,
     args.paths,
-    args.allow_missing,
+    &args.lang,
+    config,
+  ) {
+    Ok(Some(t)) => t,
+    Ok(None) => {
+      let flag = if args.staged { "staged" } else { "changed" };
+      let under = if scoped { " under the given paths" } else { "" };
+      println!("{}", format!("No {flag} files{under}.").yellow());
+      return errors::ExitStatus::Clean;
+    }
+    Err(e) => {
+      e.print_diagnostic();
+      return errors::ExitStatus::Error;
+    }
+  };
+
+  doctor::preflight_warn_stale_tools(&target.surfaces, config, false, true);
+  let plan = runner::Plan::lint(args.allow_missing);
+  runner::Runner::run_into(
+    &mut std::io::stdout(),
+    &target.surfaces,
+    root,
+    &target.scope,
+    &plan,
+    config,
   )
 }

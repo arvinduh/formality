@@ -15,8 +15,8 @@ use std::path;
 use std::sync;
 use tempfile;
 
+use fml::cli;
 use fml::config;
-use fml::engine;
 use fml::errors;
 
 /// Test representation of CLI commands for integration test dispatch.
@@ -116,15 +116,17 @@ fn dispatch_command(root: &path::Path, command: Command) -> errors::ExitStatus {
       lang,
       allow_missing,
       paths,
-    } => engine::fmt::run(
+    } => cli::fmt::run(
+      cli::fmt::Args {
+        check,
+        staged,
+        changed,
+        lang,
+        allow_missing,
+        paths,
+      },
       root,
       &config,
-      check,
-      staged,
-      changed,
-      &lang,
-      paths,
-      allow_missing,
     ),
     Command::Lint {
       staged,
@@ -133,14 +135,17 @@ fn dispatch_command(root: &path::Path, command: Command) -> errors::ExitStatus {
       allow_missing,
       paths,
       ..
-    } => engine::lint::run(
+    } => cli::lint::run(
+      cli::lint::Args {
+        check: false,
+        staged,
+        changed,
+        lang,
+        allow_missing,
+        paths,
+      },
       root,
       &config,
-      staged,
-      changed,
-      &lang,
-      paths,
-      allow_missing,
     ),
     Command::Fix {
       check,
@@ -149,26 +154,30 @@ fn dispatch_command(root: &path::Path, command: Command) -> errors::ExitStatus {
       lang,
       allow_missing,
       paths,
-    } => engine::fix::run(
+    } => cli::fix::run(
+      cli::fix::Args {
+        check,
+        staged,
+        changed,
+        lang,
+        allow_missing,
+        paths,
+      },
       root,
       &config,
-      check,
-      staged,
-      changed,
-      &lang,
-      paths,
-      allow_missing,
     ),
     Command::Sync { check, lang } => {
-      engine::sync::run(root, &config, check, &lang)
+      cli::sync::run(&cli::sync::Args { check, lang }, root, &config)
     }
     Command::Doctor { all, install } => {
-      engine::doctor::run(root, all, install, &config)
+      cli::doctor::run(cli::doctor::Args { all, install }, root, &config)
     }
     Command::Init { force, hidden } => {
-      engine::init::run(root, &config, force, hidden)
+      cli::init::run(cli::init::Args { force, hidden }, root, &config)
     }
-    Command::Schema { output } => engine::schema::run(output),
+    Command::Schema { output } => {
+      cli::schema::run(cli::schema::Args { output })
+    }
   }
 }
 
