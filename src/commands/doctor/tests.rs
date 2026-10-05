@@ -1,3 +1,5 @@
+use super::gitignore;
+use super::venv;
 use super::*;
 use crate::ui::table;
 use std::path;
@@ -8,10 +10,11 @@ fn test_detect_virtualenv_from_env_var() {
   let mock_venv = temp.path().join("custom_venv");
   std::fs::create_dir_all(&mock_venv).unwrap();
 
-  let info = detect_virtualenv_with_env(temp.path(), Some(mock_venv.clone()));
+  let info =
+    venv::detect_virtualenv_with_env(temp.path(), Some(mock_venv.clone()));
   assert!(info.is_active);
   assert_eq!(info.venv_path, Some(mock_venv));
-  assert_eq!(info.source, VirtualEnvSource::EnvVar);
+  assert_eq!(info.source, venv::VirtualEnvSource::EnvVar);
 }
 
 #[test]
@@ -21,12 +24,12 @@ fn test_detect_virtualenv_from_workspace_dirs() {
     let venv_dir = temp.path().join(dir_name);
     std::fs::create_dir_all(&venv_dir).unwrap();
 
-    let info = detect_virtualenv_with_env(temp.path(), None);
+    let info = venv::detect_virtualenv_with_env(temp.path(), None);
     assert!(!info.is_active);
     assert_eq!(info.venv_path, Some(venv_dir));
     assert_eq!(
       info.source,
-      VirtualEnvSource::Workspace(dir_name.to_string())
+      venv::VirtualEnvSource::Workspace(dir_name.to_string())
     );
   }
 }
@@ -39,21 +42,21 @@ fn test_detect_virtualenv_precedence() {
   std::fs::create_dir_all(&dot_venv).unwrap();
   std::fs::create_dir_all(&venv).unwrap();
 
-  let info = detect_virtualenv_with_env(temp.path(), None);
+  let info = venv::detect_virtualenv_with_env(temp.path(), None);
   assert_eq!(info.venv_path, Some(dot_venv));
   assert_eq!(
     info.source,
-    VirtualEnvSource::Workspace(".venv".to_string())
+    venv::VirtualEnvSource::Workspace(".venv".to_string())
   );
 }
 
 #[test]
 fn test_detect_virtualenv_none() {
   let temp = tempfile::tempdir().unwrap();
-  let info = detect_virtualenv_with_env(temp.path(), None);
+  let info = venv::detect_virtualenv_with_env(temp.path(), None);
   assert!(!info.is_active);
   assert_eq!(info.venv_path, None);
-  assert_eq!(info.source, VirtualEnvSource::None);
+  assert_eq!(info.source, venv::VirtualEnvSource::None);
 }
 
 #[test]
@@ -64,7 +67,7 @@ fn test_find_venv_interpreter() {
   let python_bin = bin_dir.join("python");
   std::fs::write(&python_bin, "#!/bin/sh\n").unwrap();
 
-  let found = find_venv_interpreter(temp.path());
+  let found = venv::find_venv_interpreter(temp.path());
   assert_eq!(found, Some(python_bin));
 }
 
@@ -80,18 +83,18 @@ fn test_is_pattern_ignored() {
     "!not_ignored",
   ];
 
-  assert!(is_pattern_ignored(&lines, "target"));
-  assert!(is_pattern_ignored(&lines, ".ruff_cache"));
-  assert!(is_pattern_ignored(&lines, "__pycache__"));
-  assert!(is_pattern_ignored(&lines, "node_modules"));
-  assert!(!is_pattern_ignored(&lines, ".pytest_cache"));
-  assert!(!is_pattern_ignored(&lines, "not_ignored"));
+  assert!(gitignore::is_pattern_ignored(&lines, "target"));
+  assert!(gitignore::is_pattern_ignored(&lines, ".ruff_cache"));
+  assert!(gitignore::is_pattern_ignored(&lines, "__pycache__"));
+  assert!(gitignore::is_pattern_ignored(&lines, "node_modules"));
+  assert!(!gitignore::is_pattern_ignored(&lines, ".pytest_cache"));
+  assert!(!gitignore::is_pattern_ignored(&lines, "not_ignored"));
 }
 
 #[test]
 fn test_is_pattern_ignored_pyc_alias() {
   let lines = vec!["*.pyc"];
-  assert!(is_pattern_ignored(&lines, "__pycache__"));
+  assert!(gitignore::is_pattern_ignored(&lines, "__pycache__"));
 }
 
 #[test]
@@ -103,7 +106,7 @@ __pycache__/
 .pytest_cache/
 node_modules/
 ";
-  let report = check_gitignore_hygiene_content(
+  let report = gitignore::check_gitignore_hygiene_content(
     Some(gitignore),
     true, // has_python
     true, // has_rust
@@ -118,7 +121,7 @@ fn test_check_gitignore_hygiene_missing_entries() {
   let gitignore = r"
 target/
 ";
-  let report = check_gitignore_hygiene_content(
+  let report = gitignore::check_gitignore_hygiene_content(
     Some(gitignore),
     true, // has_python
     true, // has_rust
@@ -145,7 +148,7 @@ target/
 
 #[test]
 fn test_check_gitignore_hygiene_no_file() {
-  let report = check_gitignore_hygiene_content(
+  let report = gitignore::check_gitignore_hygiene_content(
     None, true,  // has_python
     true,  // has_rust
     false, // has_js
@@ -1043,7 +1046,7 @@ fn test_doctor_table_shows_detected_vs_undetected_status_for_surfaces() {
 
 #[test]
 fn test_find_system_python() {
-  let found = find_system_python();
+  let found = venv::find_system_python();
   let expected = which::which("python3")
     .or_else(|_| which::which("python"))
     .ok();

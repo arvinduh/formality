@@ -3,12 +3,8 @@
 //! Defines `Table`, `Row`, `Cell`, and formatting styles. Terminal
 //! rendering is owned by `render`, and output framing is owned by `frame`.
 
-/// Comfy-table based terminal rendering and ANSI styling engine.
-pub mod render;
-
-/// The one output frame (`header → rule → body → rule`) every `fml` command
-/// shares — see [`frame::Frame`].
-pub mod frame;
+mod frame;
+mod render;
 
 /// The shared word-wrap tokenizer used by both `render` (table cells) and
 /// `frame` (prose blocks) — see #269.

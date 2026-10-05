@@ -4,19 +4,8 @@
 //! provides installation hints. Execution of linters and formatters is owned
 //! by `crate::engine::runner`.
 
-/// Gitignore workspace hygiene validation.
-pub mod gitignore;
-/// Python virtual environment detection and hygiene checks.
-pub mod venv;
-
-pub use gitignore::{
-  GitignoreHygieneIssue, GitignoreHygieneReport, check_gitignore_hygiene,
-  check_gitignore_hygiene_content, is_pattern_ignored,
-};
-pub use venv::{
-  VirtualEnvInfo, VirtualEnvSource, detect_virtualenv,
-  detect_virtualenv_with_env, find_system_python, find_venv_interpreter,
-};
+mod gitignore;
+mod venv;
 
 use crate::config;
 use crate::engine::version;
@@ -1195,7 +1184,7 @@ fn print_virtualenv_status(
     || root.join("requirements.txt").is_file()
     || root.join("setup.py").is_file()
     || root.join("Pipfile").is_file();
-  let venv_info = detect_virtualenv(root);
+  let venv_info = venv::detect_virtualenv(root);
   if !(has_python || venv_info.venv_path.is_some() || show_all) {
     return;
   }
@@ -1210,7 +1199,7 @@ fn print_virtualenv_status(
 
   let mut body = String::new();
   match &venv_info.source {
-    VirtualEnvSource::EnvVar => {
+    venv::VirtualEnvSource::EnvVar => {
       let _ = writeln!(
         body,
         "  • {} Active virtualenv via VIRTUAL_ENV: {}",
@@ -1218,7 +1207,7 @@ fn print_virtualenv_status(
         venv_path_display().cyan()
       );
     }
-    VirtualEnvSource::Workspace(dir_name) => {
+    venv::VirtualEnvSource::Workspace(dir_name) => {
       let _ = writeln!(
         body,
         "  • {} Detected workspace virtualenv ({}): {}",
@@ -1227,7 +1216,7 @@ fn print_virtualenv_status(
         venv_path_display().dimmed()
       );
     }
-    VirtualEnvSource::None => {
+    venv::VirtualEnvSource::None => {
       let _ = writeln!(
         body,
         "  • {} No virtual environment detected",
@@ -1266,7 +1255,7 @@ fn print_gitignore_hygiene(
   frame: table::Frame,
   palette: &table::Palette,
 ) {
-  let hygiene_report = check_gitignore_hygiene(root, surfaces);
+  let hygiene_report = gitignore::check_gitignore_hygiene(root, surfaces);
   if hygiene_report.issues.is_empty() {
     return;
   }
