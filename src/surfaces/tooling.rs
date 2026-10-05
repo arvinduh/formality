@@ -2,12 +2,13 @@
 //! chains for each supported CLI tool, binary-on-PATH detection, and
 //! Windows-aware `Command` construction.
 
-use super::{SurfaceResult, SurfaceStatus};
-use crate::engine::version::Version;
-use std::collections::HashMap;
-use std::path::PathBuf;
-use std::sync::{Mutex, OnceLock, PoisonError};
-use std::time::Instant;
+use std::collections;
+use std::path;
+use std::sync;
+use std::time;
+
+use crate::engine::version;
+use crate::surfaces;
 
 /// A package-manager-level way to install a CLI tool: knows how to detect
 /// its own availability and how to build the concrete installer command.
@@ -233,25 +234,25 @@ impl InstallMethod {
   /// "Pinned tool versions" note below — so those return `None`, same as a
   /// spec whose trailing segment doesn't parse as a version at all.
   #[must_use]
-  pub fn pinned_version(&self) -> Option<Version> {
+  pub fn pinned_version(&self) -> Option<version::Version> {
     match self {
       InstallMethod::CargoBinstall(pkg)
       | InstallMethod::Npm(pkg)
       | InstallMethod::Pnpm(pkg)
       | InstallMethod::Yarn(pkg)
       | InstallMethod::Bun(pkg)
-      | InstallMethod::GoInstall(pkg) => {
-        pkg.rsplit_once('@').and_then(|(_, v)| Version::parse(v))
-      }
+      | InstallMethod::GoInstall(pkg) => pkg
+        .rsplit_once('@')
+        .and_then(|(_, v)| version::Version::parse(v)),
       InstallMethod::Uv(pkg)
       | InstallMethod::Pipx(pkg)
       | InstallMethod::Pip(pkg)
-      | InstallMethod::Pip3(pkg) => {
-        pkg.rsplit_once("==").and_then(|(_, v)| Version::parse(v))
-      }
+      | InstallMethod::Pip3(pkg) => pkg
+        .rsplit_once("==")
+        .and_then(|(_, v)| version::Version::parse(v)),
       InstallMethod::Cargo { package, .. } => package
         .rsplit_once('@')
-        .and_then(|(_, v)| Version::parse(v)),
+        .and_then(|(_, v)| version::Version::parse(v)),
       InstallMethod::Apt(_)
       | InstallMethod::Brew(_)
       | InstallMethod::Scoop(_)
@@ -579,7 +580,7 @@ const NPM_KTLINT_JAR: &str =
 
 /// Returns the jar behind `shim` when `binary` is ktlint and `shim` is the
 /// `ktlint.cmd` the `@naturalcycles/ktlint` npm wrapper installed.
-fn npm_ktlint_jar(binary: &str, shim: &std::path::Path) -> Option<PathBuf> {
+fn npm_ktlint_jar(binary: &str, shim: &path::Path) -> Option<path::PathBuf> {
   if binary != "ktlint"
     || !shim
       .extension()
@@ -618,7 +619,7 @@ struct ToolChain {
   /// The version `<binary> --version` should report once installed via
   /// this chain's pin, when confirmed to track it 1:1. See the struct doc
   /// above for why this is a hand-confirmed fact, not a derived value.
-  expected_binary_version: Option<Version>,
+  expected_binary_version: Option<version::Version>,
 }
 
 /// The tool-chain side-table every tool in the fleet is registered in
@@ -664,7 +665,7 @@ struct ToolChain {
 ///   that hasn't been independently confirmed the way taplo/ktlint's
 ///   mismatches were, and the apt/brew/winget/scoop fallbacks in the same
 ///   chain resolve against uncontrolled system versions regardless. Flip to
-///   `Some(Version::new(22, 1, 8))` once confirmed against a real pip
+///   `Some(version::Version::new(22, 1, 8))` once confirmed against a real pip
 ///   install.
 const ALL_CHAINS: &[ToolChain] = &[
   ToolChain {
@@ -675,32 +676,32 @@ const ALL_CHAINS: &[ToolChain] = &[
   ToolChain {
     binary: "typstyle",
     chain: TYPSTYLE_CHAIN,
-    expected_binary_version: Some(Version::new(0, 15, 1)),
+    expected_binary_version: Some(version::Version::new(0, 15, 1)),
   },
   ToolChain {
     binary: "ruff",
     chain: RUFF_CHAIN,
-    expected_binary_version: Some(Version::new(0, 16, 4)),
+    expected_binary_version: Some(version::Version::new(0, 16, 4)),
   },
   ToolChain {
     binary: "prettier",
     chain: PRETTIER_CHAIN,
-    expected_binary_version: Some(Version::new(3, 9, 6)),
+    expected_binary_version: Some(version::Version::new(3, 9, 6)),
   },
   ToolChain {
     binary: "biome",
     chain: BIOME_CHAIN,
-    expected_binary_version: Some(Version::new(2, 5, 10)),
+    expected_binary_version: Some(version::Version::new(2, 5, 10)),
   },
   ToolChain {
     binary: "markdownlint-cli2",
     chain: MARKDOWNLINT_CHAIN,
-    expected_binary_version: Some(Version::new(0, 23, 2)),
+    expected_binary_version: Some(version::Version::new(0, 23, 2)),
   },
   ToolChain {
     binary: "yamllint",
     chain: YAMLLINT_CHAIN,
-    expected_binary_version: Some(Version::new(1, 38, 0)),
+    expected_binary_version: Some(version::Version::new(1, 38, 0)),
   },
   ToolChain {
     binary: "clang-format",
@@ -740,7 +741,7 @@ const ALL_CHAINS: &[ToolChain] = &[
   ToolChain {
     binary: "golangci-lint",
     chain: GOLANGCI_LINT_CHAIN,
-    expected_binary_version: Some(Version::new(2, 13, 2)),
+    expected_binary_version: Some(version::Version::new(2, 13, 2)),
   },
   ToolChain {
     binary: "ktlint",
@@ -785,7 +786,7 @@ pub fn install_chain_for(binary: &str) -> Option<&'static [InstallMethod]> {
 /// it, and never treat it as "definitely up to date" either — it means
 /// "unknown", not "yes".
 #[must_use]
-pub fn pinned_version_for(binary: &str) -> Option<Version> {
+pub fn pinned_version_for(binary: &str) -> Option<version::Version> {
   let canonical = canonical_chain_binary(binary);
   ALL_CHAINS
     .iter()
@@ -808,7 +809,7 @@ pub fn selected_install_method_for(binary: &str) -> Option<InstallMethod> {
 /// preference chain, or `None` if no installer is available or the available
 /// installer has no inline pin.
 #[must_use]
-pub fn selected_pinned_version_for(binary: &str) -> Option<Version> {
+pub fn selected_pinned_version_for(binary: &str) -> Option<version::Version> {
   selected_install_method_for(binary).and_then(|m| m.pinned_version())
 }
 
@@ -823,8 +824,9 @@ pub fn pinned_installer_for(binary: &str) -> Option<&'static str> {
     .map(InstallMethod::installer_name)
 }
 
-static BINARY_CACHE: OnceLock<Mutex<HashMap<String, Option<PathBuf>>>> =
-  OnceLock::new();
+static BINARY_CACHE: sync::OnceLock<
+  sync::Mutex<collections::HashMap<String, Option<path::PathBuf>>>,
+> = sync::OnceLock::new();
 
 /// Resolves `binary` to its concrete path, memoized per-process so repeated
 /// lookups for the same binary don't re-hit the filesystem (or, for the
@@ -845,7 +847,7 @@ static BINARY_CACHE: OnceLock<Mutex<HashMap<String, Option<PathBuf>>>> =
 /// 1. *Correctness.* [`resolve_via_known_install_dir`] spawns `go env`
 ///    through [`create_tool_command`], which calls **back into this
 ///    function** to resolve `go` itself. [`BINARY_CACHE`]'s
-///    `std::sync::Mutex` is not reentrant, so re-locking it on the same
+///    `sync::Mutex` is not reentrant, so re-locking it on the same
 ///    thread while the first guard was alive is a documented
 ///    panic-or-deadlock (a deadlock on Windows' SRWLOCK) -- and it would
 ///    fire on exactly the lookup this fallback exists for.
@@ -859,10 +861,11 @@ static BINARY_CACHE: OnceLock<Mutex<HashMap<String, Option<PathBuf>>>> =
 /// read of `PATH`/the filesystem, both threads compute the same answer, and
 /// the second insert overwrites the first with an equal value.
 #[must_use]
-pub fn resolve_binary_path(binary: &str) -> Option<PathBuf> {
-  let cache = BINARY_CACHE.get_or_init(|| Mutex::new(HashMap::new()));
+pub fn resolve_binary_path(binary: &str) -> Option<path::PathBuf> {
+  let cache =
+    BINARY_CACHE.get_or_init(|| sync::Mutex::new(collections::HashMap::new()));
   {
-    let guard = cache.lock().unwrap_or_else(PoisonError::into_inner);
+    let guard = cache.lock().unwrap_or_else(sync::PoisonError::into_inner);
     if let Some(resolved) = guard.get(binary) {
       return resolved.clone();
     }
@@ -871,7 +874,7 @@ pub fn resolve_binary_path(binary: &str) -> Option<PathBuf> {
   let resolved = which::which(binary)
     .ok()
     .or_else(|| resolve_via_known_install_dir(binary));
-  let mut guard = cache.lock().unwrap_or_else(PoisonError::into_inner);
+  let mut guard = cache.lock().unwrap_or_else(sync::PoisonError::into_inner);
   guard.insert(binary.to_string(), resolved.clone());
   resolved
 }
@@ -891,16 +894,18 @@ pub fn resolve_binary_path(binary: &str) -> Option<PathBuf> {
 /// the tool as still missing, even though the installer just placed it on
 /// `PATH` and a fresh lookup would find it immediately.
 pub fn forget_binary(binary: &str) {
-  let cache = BINARY_CACHE.get_or_init(|| Mutex::new(HashMap::new()));
-  let mut guard = cache.lock().unwrap_or_else(PoisonError::into_inner);
+  let cache =
+    BINARY_CACHE.get_or_init(|| sync::Mutex::new(collections::HashMap::new()));
+  let mut guard = cache.lock().unwrap_or_else(sync::PoisonError::into_inner);
   guard.remove(binary);
 }
 
 /// Overrides or mocks the resolved binary path in [`BINARY_CACHE`] for testing.
 #[doc(hidden)]
-pub fn set_binary_path_for_test(binary: &str, path: Option<PathBuf>) {
-  let cache = BINARY_CACHE.get_or_init(|| Mutex::new(HashMap::new()));
-  let mut guard = cache.lock().unwrap_or_else(PoisonError::into_inner);
+pub fn set_binary_path_for_test(binary: &str, path: Option<path::PathBuf>) {
+  let cache =
+    BINARY_CACHE.get_or_init(|| sync::Mutex::new(collections::HashMap::new()));
+  let mut guard = cache.lock().unwrap_or_else(sync::PoisonError::into_inner);
   guard.insert(binary.to_string(), path);
 }
 
@@ -911,21 +916,21 @@ pub fn check_binary_exists(binary: &str) -> bool {
   resolve_binary_path(binary).is_some()
 }
 
-/// Builds the `SurfaceResult` every surface returns from `format`/`lint` when
+/// Builds the `surfaces::SurfaceResult` every surface returns from `format`/`lint` when
 /// a required tool binary is not on `PATH`. Every call site previously
-/// repeated this same `SurfaceResult { .. status: SurfaceStatus::ToolMissing
+/// repeated this same `surfaces::SurfaceResult { .. status: surfaces::SurfaceStatus::ToolMissing
 /// { .. } .. }` struct literal by hand (~23 instances across the 12 language
 /// surfaces) — this is the single place that shape lives now.
 #[must_use]
 pub fn tool_missing_result(
   surface_name: &'static str,
-  start: Instant,
+  start: time::Instant,
   binary: &str,
   install_hint: &str,
-) -> SurfaceResult {
-  SurfaceResult {
+) -> surfaces::SurfaceResult {
+  surfaces::SurfaceResult {
     surface_name,
-    status: SurfaceStatus::ToolMissing {
+    status: surfaces::SurfaceStatus::ToolMissing {
       binary: binary.to_string(),
       install_hint: install_hint.to_string(),
     },
@@ -933,22 +938,22 @@ pub fn tool_missing_result(
   }
 }
 
-/// Returns `Some(SurfaceResult)` with `SurfaceStatus::ToolMissing` if `binary`
+/// Returns `Some(surfaces::SurfaceResult)` with `surfaces::SurfaceStatus::ToolMissing` if `binary`
 /// is not found on `PATH`, or `None` if it is available.
 ///
 /// `hint` is an optional override; `None` falls back to
-/// [`install_hint_for`], the same derivation [`ToolInfo::effective_install_hint`]
+/// [`install_hint_for`], the same derivation [`surfaces::ToolInfo::effective_install_hint`]
 /// uses, so a caller that doesn't need a bespoke message (nearly all of
 /// them) never has to restate the chain's install prose by hand.
 ///
-/// [`ToolInfo::effective_install_hint`]: crate::surfaces::ToolInfo::effective_install_hint
+/// [`surfaces::ToolInfo::effective_install_hint`]: crate::surfaces::ToolInfo::effective_install_hint
 #[must_use]
 pub fn tool_missing_guard(
   name: &'static str,
   binary: &str,
-  start: Instant,
+  start: time::Instant,
   hint: Option<&'static str>,
-) -> Option<SurfaceResult> {
+) -> Option<surfaces::SurfaceResult> {
   if check_binary_exists(binary) {
     None
   } else {
@@ -1017,36 +1022,39 @@ pub fn extra_args_set_flag(
   None
 }
 
-/// Builds the `SurfaceResult` returned when autofix is requested on a surface
+/// Builds the `surfaces::SurfaceResult` returned when autofix is requested on a surface
 /// whose underlying tool does not support automatic lint fixing.
 #[must_use]
 pub fn lint_fix_unsupported(
   name: &'static str,
-  start: Instant,
-) -> SurfaceResult {
-  SurfaceResult {
+  start: time::Instant,
+) -> surfaces::SurfaceResult {
+  surfaces::SurfaceResult {
     surface_name: name,
-    status: SurfaceStatus::Skipped {
+    status: surfaces::SurfaceStatus::Skipped {
       reason: "Tool does not support autofix; run fml fmt instead".to_string(),
     },
     duration: start.elapsed(),
   }
 }
 
-/// Builds the `SurfaceResult` a surface's `sync_config` returns when it has
+/// Builds the `surfaces::SurfaceResult` a surface's `sync_config` returns when it has
 /// no native config file of its own to generate or verify — e.g. it's
 /// configured entirely via CLI flags, or its settings live in a file shared
-/// with other surfaces and synced elsewhere. Always [`SurfaceStatus::Skipped`]:
+/// with other surfaces and synced elsewhere. Always [`surfaces::SurfaceStatus::Skipped`]:
 /// having nothing to sync isn't the same as having verified something is
-/// correct, so it must not report [`SurfaceStatus::Passed`].
+/// correct, so it must not report [`surfaces::SurfaceStatus::Passed`].
 #[must_use]
-pub fn no_native_config(name: &'static str, reason: &str) -> SurfaceResult {
-  SurfaceResult {
+pub fn no_native_config(
+  name: &'static str,
+  reason: &str,
+) -> surfaces::SurfaceResult {
+  surfaces::SurfaceResult {
     surface_name: name,
-    status: SurfaceStatus::Skipped {
+    status: surfaces::SurfaceStatus::Skipped {
       reason: reason.to_string(),
     },
-    duration: std::time::Duration::default(),
+    duration: time::Duration::default(),
   }
 }
 
@@ -1066,7 +1074,8 @@ pub fn has_cargo_binstall() -> bool {
 /// run that needs `cargo-binstall` for several tools (e.g. `typstyle` and a
 /// `taplo`/`ruff` fallback) only pays the network round-trip once, and a
 /// failed/offline attempt doesn't get retried per tool.
-static BINSTALL_BOOTSTRAP: OnceLock<Mutex<Option<bool>>> = OnceLock::new();
+static BINSTALL_BOOTSTRAP: sync::OnceLock<sync::Mutex<Option<bool>>> =
+  sync::OnceLock::new();
 
 /// Returns whether any step in `chain` would use `cargo-binstall`.
 #[must_use]
@@ -1141,8 +1150,8 @@ pub fn ensure_cargo_binstall() -> bool {
     return false;
   }
 
-  let cell = BINSTALL_BOOTSTRAP.get_or_init(|| Mutex::new(None));
-  let mut guard = cell.lock().unwrap_or_else(PoisonError::into_inner);
+  let cell = BINSTALL_BOOTSTRAP.get_or_init(|| sync::Mutex::new(None));
+  let mut guard = cell.lock().unwrap_or_else(sync::PoisonError::into_inner);
   if let Some(available) = *guard {
     return available;
   }
@@ -1183,7 +1192,7 @@ pub fn ensure_cargo_binstall() -> bool {
 /// differs from its package-manager pin.
 fn binstall_bootstrap_would_fix_pin_lag(
   chain: &[InstallMethod],
-  expected: Option<&Version>,
+  expected: Option<&version::Version>,
   selected: Option<&InstallMethod>,
 ) -> bool {
   let Some(expected) = expected else {
@@ -1269,8 +1278,7 @@ pub fn tool_would_benefit_from_cargo_binstall_bootstrap(binary: &str) -> bool {
 )]
 fn merge_path_entries(current: &str, additional: &str) -> String {
   let separator = if cfg!(windows) { ';' } else { ':' };
-  let mut seen: std::collections::HashSet<String> =
-    std::collections::HashSet::new();
+  let mut seen: collections::HashSet<String> = collections::HashSet::new();
   let mut entries: Vec<&str> = Vec::new();
 
   for entry in current
@@ -1393,17 +1401,17 @@ fn merge_into_process_path(additional: &str) {
 /// invocation that sources these two values is the only part left in the
 /// caller.
 #[must_use]
-fn go_bin_dir_from_env(gobin: &str, gopath: &str) -> Option<PathBuf> {
+fn go_bin_dir_from_env(gobin: &str, gopath: &str) -> Option<path::PathBuf> {
   let gobin = gobin.trim();
   if !gobin.is_empty() {
-    return Some(PathBuf::from(gobin));
+    return Some(path::PathBuf::from(gobin));
   }
   let separator = if cfg!(windows) { ';' } else { ':' };
   let first = gopath
     .split(separator)
     .map(str::trim)
     .find(|entry| !entry.is_empty())?;
-  Some(PathBuf::from(first).join("bin"))
+  Some(path::PathBuf::from(first).join("bin"))
 }
 
 /// Asks the `go` toolchain directly for the directory `go install` writes
@@ -1426,7 +1434,7 @@ fn go_bin_dir_from_env(gobin: &str, gopath: &str) -> Option<PathBuf> {
 /// is exactly the two-process `fml doctor --install` then `fml fmt`
 /// sequence #293 was filed over.
 #[must_use]
-fn go_install_bin_dir() -> Option<PathBuf> {
+fn go_install_bin_dir() -> Option<path::PathBuf> {
   let mut cmd = create_tool_command("go");
   cmd.args(["env", "GOBIN", "GOPATH"]);
   let output = cmd.output().ok()?;
@@ -1453,8 +1461,8 @@ fn go_install_bin_dir() -> Option<PathBuf> {
 #[must_use]
 fn resolve_installed_binary_in(
   binary: &str,
-  dir: &std::path::Path,
-) -> Option<PathBuf> {
+  dir: &path::Path,
+) -> Option<path::PathBuf> {
   resolve_installed_binary_with(binary, dir, INSTALLED_BINARY_SUFFIXES)
 }
 
@@ -1479,9 +1487,9 @@ const INSTALLED_BINARY_SUFFIXES: &[&str] = if cfg!(windows) {
 #[must_use]
 fn resolve_installed_binary_with(
   binary: &str,
-  dir: &std::path::Path,
+  dir: &path::Path,
   suffixes: &[&str],
-) -> Option<PathBuf> {
+) -> Option<path::PathBuf> {
   suffixes.iter().find_map(|suffix| {
     let candidate = dir.join(format!("{binary}{suffix}"));
     (candidate.is_file() && is_executable_file(&candidate)).then_some(candidate)
@@ -1501,7 +1509,7 @@ fn resolve_installed_binary_with(
 /// extension (already handled by `INSTALLED_BINARY_SUFFIXES`), not by a
 /// permission bit, so there is nothing further to check there.
 #[must_use]
-fn is_executable_file(path: &std::path::Path) -> bool {
+fn is_executable_file(path: &path::Path) -> bool {
   #[cfg(unix)]
   {
     use std::os::unix::fs::PermissionsExt;
@@ -1645,7 +1653,7 @@ impl KnownInstallDir {
   /// reads, which is why [`resolve_via_known_install_dir`] can afford to
   /// consult them for every chain that lists the matching installer.
   #[must_use]
-  fn path(self) -> Option<PathBuf> {
+  fn path(self) -> Option<path::PathBuf> {
     self.path_with(go_install_bin_dir, |var| std::env::var(var).ok())
   }
 
@@ -1658,9 +1666,9 @@ impl KnownInstallDir {
   #[must_use]
   fn path_with(
     self,
-    go_bin_dir: impl FnOnce() -> Option<PathBuf>,
+    go_bin_dir: impl FnOnce() -> Option<path::PathBuf>,
     env: impl Fn(&str) -> Option<String>,
-  ) -> Option<PathBuf> {
+  ) -> Option<path::PathBuf> {
     match self {
       Self::Go => go_bin_dir(),
       Self::Pipx => {
@@ -1694,7 +1702,7 @@ impl KnownInstallDir {
       ),
       Self::BrewLlvm => Some(
         non_empty_dir(&env, "HOMEBREW_PREFIX")
-          .unwrap_or_else(|| PathBuf::from(HOMEBREW_DEFAULT_PREFIX))
+          .unwrap_or_else(|| path::PathBuf::from(HOMEBREW_DEFAULT_PREFIX))
           .join("opt")
           .join("llvm")
           .join("bin"),
@@ -1768,7 +1776,9 @@ const HOME_VAR: &str = if cfg!(windows) { "USERPROFILE" } else { "HOME" };
 /// directory current `pipx` and `uv` both install tool binaries into, and
 /// the default script directory of Python's user scheme on Unix.
 #[must_use]
-fn local_bin_dir(env: &impl Fn(&str) -> Option<String>) -> Option<PathBuf> {
+fn local_bin_dir(
+  env: &impl Fn(&str) -> Option<String>,
+) -> Option<path::PathBuf> {
   Some(non_empty_dir(env, HOME_VAR)?.join(".local").join("bin"))
 }
 
@@ -1779,10 +1789,10 @@ fn local_bin_dir(env: &impl Fn(&str) -> Option<String>) -> Option<PathBuf> {
 fn non_empty_dir(
   env: &impl Fn(&str) -> Option<String>,
   var: &str,
-) -> Option<PathBuf> {
+) -> Option<path::PathBuf> {
   let value = env(var)?;
   let trimmed = value.trim();
-  (!trimmed.is_empty()).then(|| PathBuf::from(trimmed))
+  (!trimmed.is_empty()).then(|| path::PathBuf::from(trimmed))
 }
 
 /// The lookup-time fallback [`resolve_binary_path`] tries once a plain
@@ -1797,7 +1807,7 @@ fn non_empty_dir(
 /// at install time -- and de-duplicated, since `uv`, `pipx` and pip's user
 /// scheme commonly resolve to the same `~/.local/bin`.
 #[must_use]
-fn resolve_via_known_install_dir(binary: &str) -> Option<PathBuf> {
+fn resolve_via_known_install_dir(binary: &str) -> Option<path::PathBuf> {
   resolve_via_known_install_dir_with(binary, KnownInstallDir::path)
 }
 
@@ -1808,11 +1818,11 @@ fn resolve_via_known_install_dir(binary: &str) -> Option<PathBuf> {
 #[must_use]
 fn resolve_via_known_install_dir_with(
   binary: &str,
-  dir_for: impl Fn(KnownInstallDir) -> Option<PathBuf>,
-) -> Option<PathBuf> {
+  dir_for: impl Fn(KnownInstallDir) -> Option<path::PathBuf>,
+) -> Option<path::PathBuf> {
   let chain = install_chain_for(binary)?;
 
-  let mut probed: Vec<PathBuf> = Vec::new();
+  let mut probed: Vec<path::PathBuf> = Vec::new();
   let mut kinds: Vec<KnownInstallDir> = Vec::new();
   let kinds_in_chain_order = chain
     .iter()
@@ -1923,11 +1933,11 @@ pub fn create_tool_command(binary: &str) -> std::process::Command {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ExitClass {
   /// The tool ran to completion and reported rule violations or formatting
-  /// drift — translated to [`SurfaceStatus::ViolationsFound`].
+  /// drift — translated to [`surfaces::SurfaceStatus::ViolationsFound`].
   ViolationsFound,
   /// The tool could not do its job (bad config, typecheck failure, internal
   /// crash, unusable arguments) — translated to
-  /// [`SurfaceStatus::ExecutionError`]. This is *not* a lint result.
+  /// [`surfaces::SurfaceStatus::ExecutionError`]. This is *not* a lint result.
   ExecutionError,
 }
 
@@ -1990,17 +2000,17 @@ fn exit_status_summary(status: std::process::ExitStatus) -> String {
 }
 
 /// Runs a tool command, measures execution duration, and translates exit
-/// status to a `SurfaceResult`, treating **every** non-zero exit as
-/// [`SurfaceStatus::ViolationsFound`].
+/// status to a `surfaces::SurfaceResult`, treating **every** non-zero exit as
+/// [`surfaces::SurfaceStatus::ViolationsFound`].
 ///
 /// Surfaces whose tool distinguishes "found violations" from "could not run"
 /// through its exit code should call [`run_tool_command_classified`] instead,
-/// so a tool *failure* is reported as [`SurfaceStatus::ExecutionError`] rather
+/// so a tool *failure* is reported as [`surfaces::SurfaceStatus::ExecutionError`] rather
 /// than a spurious lint violation.
 pub fn run_tool_command(
   surface_name: &'static str,
   cmd: &mut std::process::Command,
-) -> SurfaceResult {
+) -> surfaces::SurfaceResult {
   run_tool_command_classified(surface_name, cmd, |_| ExitClass::ViolationsFound)
 }
 
@@ -2012,7 +2022,7 @@ pub fn run_tool_command(
 /// On any non-zero exit, both captured streams are surfaced when both are
 /// non-empty (see [`merge_tool_streams`]); no non-empty stream is discarded.
 /// A batch shim that `cmd` could not launch is an
-/// [`SurfaceStatus::ExecutionError`] whatever `classify` says.
+/// [`surfaces::SurfaceStatus::ExecutionError`] whatever `classify` says.
 ///
 /// # Side Effects
 ///
@@ -2021,19 +2031,19 @@ pub fn run_tool_command_classified(
   surface_name: &'static str,
   cmd: &mut std::process::Command,
   classify: impl Fn(Option<i32>) -> ExitClass,
-) -> SurfaceResult {
+) -> surfaces::SurfaceResult {
   #[cfg(windows)]
-  if is_batch_file(std::path::Path::new(cmd.get_program())) {
+  if is_batch_file(path::Path::new(cmd.get_program())) {
     std::os::windows::process::CommandExt::raw_arg(cmd, BATCH_EXIT_SUFFIX);
   }
-  let start = Instant::now();
+  let start = time::Instant::now();
   match cmd.output() {
     Ok(output) => {
       let duration = start.elapsed();
       if output.status.success() {
-        return SurfaceResult {
+        return surfaces::SurfaceResult {
           surface_name,
-          status: SurfaceStatus::Passed,
+          status: surfaces::SurfaceStatus::Passed,
           duration,
         };
       }
@@ -2041,9 +2051,9 @@ pub fn run_tool_command_classified(
       let stdout = String::from_utf8_lossy(&output.stdout);
       let stderr = String::from_utf8_lossy(&output.stderr);
       if is_batch_launch_failure(cmd, output.status.code(), &stdout) {
-        return SurfaceResult {
+        return surfaces::SurfaceResult {
           surface_name,
-          status: SurfaceStatus::ExecutionError {
+          status: surfaces::SurfaceStatus::ExecutionError {
             message: format!(
               "Failed to execute {}: {}",
               spawned_binary_name(cmd),
@@ -2059,13 +2069,17 @@ pub fn run_tool_command_classified(
         &exit_status_summary(output.status),
       );
       let status = match classify(output.status.code()) {
-        ExitClass::ViolationsFound => SurfaceStatus::ViolationsFound {
-          message,
-          diff: None,
-        },
-        ExitClass::ExecutionError => SurfaceStatus::ExecutionError { message },
+        ExitClass::ViolationsFound => {
+          surfaces::SurfaceStatus::ViolationsFound {
+            message,
+            diff: None,
+          }
+        }
+        ExitClass::ExecutionError => {
+          surfaces::SurfaceStatus::ExecutionError { message }
+        }
       };
-      SurfaceResult {
+      surfaces::SurfaceResult {
         surface_name,
         status,
         duration,
@@ -2073,9 +2087,9 @@ pub fn run_tool_command_classified(
     }
     Err(err) => {
       let duration = start.elapsed();
-      SurfaceResult {
+      surfaces::SurfaceResult {
         surface_name,
-        status: SurfaceStatus::ExecutionError {
+        status: surfaces::SurfaceStatus::ExecutionError {
           message: format!(
             "Failed to execute {}: {err}",
             spawned_binary_name(cmd)
@@ -2109,14 +2123,14 @@ fn is_batch_launch_failure(
   code: Option<i32>,
   stdout: &str,
 ) -> bool {
-  is_batch_file(std::path::Path::new(cmd.get_program()))
+  is_batch_file(path::Path::new(cmd.get_program()))
     && stdout.trim().is_empty()
     && code.is_some_and(|code| CMD_LAUNCH_FAILURE_CODES.contains(&code))
 }
 
 /// Returns whether `path` names a Windows batch file (`.cmd`/`.bat`).
 #[must_use]
-fn is_batch_file(path: &std::path::Path) -> bool {
+fn is_batch_file(path: &path::Path) -> bool {
   path.extension().is_some_and(|ext| {
     ext.eq_ignore_ascii_case("cmd") || ext.eq_ignore_ascii_case("bat")
   })
@@ -2127,7 +2141,7 @@ fn is_batch_file(path: &std::path::Path) -> bool {
 /// attributable to the tool `fml doctor --install` reports by that name.
 fn spawned_binary_name(cmd: &std::process::Command) -> String {
   let program = cmd.get_program();
-  std::path::Path::new(program)
+  path::Path::new(program)
     .file_stem()
     .unwrap_or(program)
     .to_string_lossy()
@@ -2137,7 +2151,6 @@ fn spawned_binary_name(cmd: &std::process::Command) -> String {
 #[cfg(test)]
 mod tests {
   use super::*;
-  use crate::surfaces::ToolInfo;
 
   /// Returns whether `pkg` (the final argument passed to a package-manager
   /// install command) carries an explicit version pin, recognizing both the
@@ -2271,23 +2284,23 @@ mod tests {
     // npm-family `name@version`.
     assert_eq!(
       InstallMethod::Npm("prettier@3.9.6").pinned_version(),
-      Some(Version::new(3, 9, 6))
+      Some(version::Version::new(3, 9, 6))
     );
     // Scoped npm `@scope/name@version` -- must split on the *last* `@`, not
     // the scope's leading one.
     assert_eq!(
       InstallMethod::Npm("@taplo/cli@0.7.0").pinned_version(),
-      Some(Version::new(0, 7, 0))
+      Some(version::Version::new(0, 7, 0))
     );
     // pip-family `name==version`.
     assert_eq!(
       InstallMethod::Uv("ruff==0.16.4").pinned_version(),
-      Some(Version::new(0, 16, 4))
+      Some(version::Version::new(0, 16, 4))
     );
     // cargo/cargo-binstall `name@version`.
     assert_eq!(
       InstallMethod::CargoBinstall("taplo-cli@0.10.0").pinned_version(),
-      Some(Version::new(0, 10, 0))
+      Some(version::Version::new(0, 10, 0))
     );
     assert_eq!(
       InstallMethod::Cargo {
@@ -2295,20 +2308,20 @@ mod tests {
         locked: true,
       }
       .pinned_version(),
-      Some(Version::new(0, 10, 0))
+      Some(version::Version::new(0, 10, 0))
     );
     // `go install` `name@vVERSION` -- leading `v` must be stripped.
     assert_eq!(
       InstallMethod::GoInstall("golang.org/x/tools/cmd/goimports@v0.49.0")
         .pinned_version(),
-      Some(Version::new(0, 49, 0))
+      Some(version::Version::new(0, 49, 0))
     );
     assert_eq!(
       InstallMethod::GoInstall(
         "github.com/golangci/golangci-lint/v2/cmd/golangci-lint@v2.13.1"
       )
       .pinned_version(),
-      Some(Version::new(2, 13, 1))
+      Some(version::Version::new(2, 13, 1))
     );
   }
 
@@ -2316,7 +2329,7 @@ mod tests {
   fn test_pinned_version_for_golangci_lint() {
     assert_eq!(
       pinned_version_for("golangci-lint"),
-      Some(Version::new(2, 13, 2))
+      Some(version::Version::new(2, 13, 2))
     );
   }
 
@@ -2539,7 +2552,7 @@ mod tests {
   #[test]
   fn test_tool_info_auto_install_cmd_coverage() {
     for entry in ALL_CHAINS {
-      let info = ToolInfo {
+      let info = surfaces::ToolInfo {
         binary: entry.binary,
         description: "test tool",
         install_hint: None,
@@ -2558,7 +2571,7 @@ mod tests {
 
   #[test]
   fn test_unknown_tool_has_no_install_chain() {
-    let info = ToolInfo {
+    let info = surfaces::ToolInfo {
       binary: "not-a-real-tool",
       description: "test tool",
       install_hint: None,
@@ -2684,12 +2697,13 @@ mod tests {
     // Driven through `set_binary_path_for_test` with a name no chain and no
     // other test uses, so the seeded cache entry can't collide with a real
     // lookup elsewhere in this test binary.
-    let fake = PathBuf::from("/nowhere/fml-spawn-path-probe/bin/probe-tool");
+    let fake =
+      path::PathBuf::from("/nowhere/fml-spawn-path-probe/bin/probe-tool");
     set_binary_path_for_test("fml-spawn-path-probe-tool", Some(fake.clone()));
 
     let cmd = create_tool_command("fml-spawn-path-probe-tool");
     assert_eq!(
-      std::path::Path::new(cmd.get_program()),
+      path::Path::new(cmd.get_program()),
       fake.as_path(),
       "create_tool_command must spawn the path resolve_binary_path found, \
        not the bare binary name -- a bare name is a PATH-only lookup and \
@@ -2722,7 +2736,7 @@ mod tests {
     // `.cmd` shim resolves and gets `std`'s batch-file quoting.
     for name in ["npm", "pnpm", "yarn", "npx"] {
       let want = resolve_binary_path(name)
-        .map_or_else(|| name.into(), PathBuf::into_os_string);
+        .map_or_else(|| name.into(), path::PathBuf::into_os_string);
       assert_eq!(create_tool_command(name).get_program(), want, "{name}");
     }
   }
@@ -2753,7 +2767,7 @@ mod tests {
 
     set_binary_path_for_test("goimports", resolved);
     let cmd = create_tool_command("goimports");
-    let spawned = PathBuf::from(cmd.get_program());
+    let spawned = path::PathBuf::from(cmd.get_program());
     forget_binary("goimports");
 
     assert_eq!(
@@ -2796,7 +2810,7 @@ mod tests {
     stdout: &str,
     stderr: &str,
     code: i32,
-  ) -> SurfaceStatus {
+  ) -> surfaces::SurfaceStatus {
     let tmp = tempfile::tempdir().expect("tempdir");
     let stub = write_bin_fixture(tmp.path(), "ktlint.cmd");
     std::fs::write(
@@ -2820,7 +2834,7 @@ mod tests {
       3,
     );
     match status {
-      SurfaceStatus::ExecutionError { message } => assert_eq!(
+      surfaces::SurfaceStatus::ExecutionError { message } => assert_eq!(
         message,
         "Failed to execute ktlint: Das System kann den angegebenen Pfad nicht \
          finden."
@@ -2840,7 +2854,7 @@ mod tests {
       1,
     );
     assert!(
-      matches!(status, SurfaceStatus::ViolationsFound { .. }),
+      matches!(status, surfaces::SurfaceStatus::ViolationsFound { .. }),
       "English text without exit 3/9009 must not be detected, got {status:?}"
     );
   }
@@ -2852,7 +2866,7 @@ mod tests {
     let status =
       run_stub_batch_shim("Sample.kt:1:1: Unexpected blank line\\n", "", 3);
     assert!(
-      matches!(status, SurfaceStatus::ViolationsFound { .. }),
+      matches!(status, surfaces::SurfaceStatus::ViolationsFound { .. }),
       "a shim'd tool's own findings must stay ViolationsFound, got {status:?}"
     );
   }
@@ -2882,7 +2896,7 @@ mod tests {
         run_tool_command("kotlin", &mut std::process::Command::new(&shim))
           .status;
       assert_eq!(
-        matches!(status, SurfaceStatus::ExecutionError { .. }),
+        matches!(status, surfaces::SurfaceStatus::ExecutionError { .. }),
         want != 1,
         "{name}: {status:?}"
       );
@@ -2910,8 +2924,8 @@ mod tests {
 
   #[test]
   fn test_tool_missing_result_construction_for_all_surfaces() {
-    let surfaces = crate::surfaces::all_surfaces();
-    let start = Instant::now();
+    let surfaces = surfaces::all_surfaces();
+    let start = time::Instant::now();
 
     for surface in surfaces {
       let missing_res = tool_missing_result(
@@ -2922,7 +2936,7 @@ mod tests {
       );
       assert_eq!(missing_res.surface_name, surface.name());
       match missing_res.status {
-        SurfaceStatus::ToolMissing {
+        surfaces::SurfaceStatus::ToolMissing {
           binary,
           install_hint,
         } => {
@@ -2952,7 +2966,7 @@ mod tests {
     let result = has_cargo_binstall();
 
     let cache = BINARY_CACHE.get().expect("cache should be initialized");
-    let guard = cache.lock().unwrap_or_else(PoisonError::into_inner);
+    let guard = cache.lock().unwrap_or_else(sync::PoisonError::into_inner);
 
     let cargo_on_path = guard.get("cargo").expect(
       "has_cargo_binstall must resolve `cargo` through check_binary_exists",
@@ -2989,7 +3003,7 @@ mod tests {
 
     // Inspect BINARY_CACHE directly to verify process-lifetime memoization
     let cache = BINARY_CACHE.get().expect("cache should be initialized");
-    let guard = cache.lock().unwrap_or_else(PoisonError::into_inner);
+    let guard = cache.lock().unwrap_or_else(sync::PoisonError::into_inner);
     assert_eq!(guard.get(non_existent), Some(&None));
     assert_eq!(
       guard.get(existing).map(Option::is_some),
@@ -3011,8 +3025,10 @@ mod tests {
     // Prime the cache exactly the way a preflight scan does when a tool is
     // still missing: a memoized `None`.
     {
-      let cache = BINARY_CACHE.get_or_init(|| Mutex::new(HashMap::new()));
-      let mut guard = cache.lock().unwrap_or_else(PoisonError::into_inner);
+      let cache = BINARY_CACHE
+        .get_or_init(|| sync::Mutex::new(collections::HashMap::new()));
+      let mut guard =
+        cache.lock().unwrap_or_else(sync::PoisonError::into_inner);
       guard.insert(binary.to_string(), None);
     }
     assert!(
@@ -3026,7 +3042,7 @@ mod tests {
     // `None` behind would be exactly the bug this function exists to fix.
     {
       let cache = BINARY_CACHE.get().expect("cache should be initialized");
-      let guard = cache.lock().unwrap_or_else(PoisonError::into_inner);
+      let guard = cache.lock().unwrap_or_else(sync::PoisonError::into_inner);
       assert!(
         !guard.contains_key(binary),
         "forget_binary must remove the cache entry entirely"
@@ -3037,7 +3053,7 @@ mod tests {
     // not just leave it absent forever.
     let _ = check_binary_exists(binary);
     let cache = BINARY_CACHE.get().expect("cache should be initialized");
-    let guard = cache.lock().unwrap_or_else(PoisonError::into_inner);
+    let guard = cache.lock().unwrap_or_else(sync::PoisonError::into_inner);
     assert!(
       guard.contains_key(binary),
       "the lookup right after forget_binary must repopulate the cache"
@@ -3385,7 +3401,7 @@ mod tests {
     let dir = go_bin_dir_from_env("/custom/gobin", "/home/u/go");
     assert_eq!(
       dir,
-      Some(PathBuf::from("/custom/gobin")),
+      Some(path::PathBuf::from("/custom/gobin")),
       "GOBIN, when set, is exactly where `go install` writes -- it must win \
        over $GOPATH/bin"
     );
@@ -3398,7 +3414,7 @@ mod tests {
     let dir = go_bin_dir_from_env("", &gopath);
     assert_eq!(
       dir,
-      Some(PathBuf::from("/home/u/go").join("bin")),
+      Some(path::PathBuf::from("/home/u/go").join("bin")),
       "with GOBIN unset, `go install` uses the FIRST GOPATH entry's bin \
        directory, not the last and not all of them"
     );
@@ -3408,7 +3424,7 @@ mod tests {
   fn test_go_bin_dir_tolerates_whitespace_and_empty_values() {
     assert_eq!(
       go_bin_dir_from_env("  /custom/gobin  ", ""),
-      Some(PathBuf::from("/custom/gobin")),
+      Some(path::PathBuf::from("/custom/gobin")),
       "`go env` output arrives with a trailing newline per value; a padded \
        GOBIN must not produce a path with whitespace baked into it"
     );
@@ -3428,7 +3444,7 @@ mod tests {
   /// Writes a stand-in for an installer-produced binary into `dir`,
   /// executable on Unix so it clears the same bar `which::which` applies to
   /// a `PATH` hit (see `is_executable_file`). Returns its full path.
-  fn write_bin_fixture(dir: &std::path::Path, binary: &str) -> PathBuf {
+  fn write_bin_fixture(dir: &path::Path, binary: &str) -> path::PathBuf {
     write_named_fixture(
       dir,
       &format!("{binary}{}", std::env::consts::EXE_SUFFIX),
@@ -3437,7 +3453,7 @@ mod tests {
 
   /// Writes an executable stand-in named exactly `file_name` into `dir`,
   /// with no platform suffix added. Returns its full path.
-  fn write_named_fixture(dir: &std::path::Path, file_name: &str) -> PathBuf {
+  fn write_named_fixture(dir: &path::Path, file_name: &str) -> path::PathBuf {
     let path = dir.join(file_name);
     std::fs::write(&path, b"#!/bin/sh\n").expect("write fixture binary");
     #[cfg(unix)]
@@ -3727,7 +3743,7 @@ mod tests {
 
     set_binary_path_for_test("yamllint", resolved);
     let cmd = create_tool_command("yamllint");
-    let spawned = PathBuf::from(cmd.get_program());
+    let spawned = path::PathBuf::from(cmd.get_program());
     forget_binary("yamllint");
 
     assert_eq!(
@@ -3741,17 +3757,17 @@ mod tests {
   /// call actually asked for, in order, so the loop's traversal is assertable
   /// rather than inferred from its return value alone.
   fn recording_dir_for(
-    answers: Vec<(KnownInstallDir, Option<PathBuf>)>,
+    answers: Vec<(KnownInstallDir, Option<path::PathBuf>)>,
   ) -> (
-    impl Fn(KnownInstallDir) -> Option<PathBuf>,
-    std::sync::Arc<Mutex<Vec<KnownInstallDir>>>,
+    impl Fn(KnownInstallDir) -> Option<path::PathBuf>,
+    sync::Arc<sync::Mutex<Vec<KnownInstallDir>>>,
   ) {
-    let asked = std::sync::Arc::new(Mutex::new(Vec::new()));
-    let log = std::sync::Arc::clone(&asked);
+    let asked = sync::Arc::new(sync::Mutex::new(Vec::new()));
+    let log = sync::Arc::clone(&asked);
     let dir_for = move |kind: KnownInstallDir| {
       log
         .lock()
-        .unwrap_or_else(PoisonError::into_inner)
+        .unwrap_or_else(sync::PoisonError::into_inner)
         .push(kind);
       answers
         .iter()
@@ -3786,7 +3802,7 @@ mod tests {
        binary is in the second one"
     );
     assert_eq!(
-      *asked.lock().unwrap_or_else(PoisonError::into_inner),
+      *asked.lock().unwrap_or_else(sync::PoisonError::into_inner),
       vec![KnownInstallDir::UvTool, KnownInstallDir::Pipx],
       "directories are tried in chain order, and the search stops at the hit"
     );
@@ -3822,7 +3838,7 @@ mod tests {
       &[]
     };
     assert_eq!(
-      *asked.lock().unwrap_or_else(PoisonError::into_inner),
+      *asked.lock().unwrap_or_else(sync::PoisonError::into_inner),
       [
         &[
           KnownInstallDir::UvTool,
@@ -3967,7 +3983,7 @@ mod tests {
     }
   }
 
-  fn no_go_bin_dir() -> Option<PathBuf> {
+  fn no_go_bin_dir() -> Option<path::PathBuf> {
     panic!("a non-Go KnownInstallDir must never ask for the Go bin directory")
   }
 
@@ -3980,7 +3996,7 @@ mod tests {
       no_go_bin_dir,
       fake_env(&[("PIPX_BIN_DIR", "/opt/pipx/bin"), (HOME_VAR, "/home/u")]),
     );
-    assert_eq!(dir, Some(PathBuf::from("/opt/pipx/bin")));
+    assert_eq!(dir, Some(path::PathBuf::from("/opt/pipx/bin")));
   }
 
   #[test]
@@ -3988,7 +4004,8 @@ mod tests {
     // The case #297 was filed over: with nothing configured, both managers
     // install into `~/.local/bin` -- which is why `pipx ensurepath` and
     // `uv tool update-shell` exist at all.
-    let expected = Some(PathBuf::from("/home/u").join(".local").join("bin"));
+    let expected =
+      Some(path::PathBuf::from("/home/u").join(".local").join("bin"));
     let env = fake_env(&[(HOME_VAR, "/home/u")]);
 
     assert_eq!(
@@ -4023,21 +4040,21 @@ mod tests {
     ]);
     assert_eq!(
       KnownInstallDir::UvTool.path_with(no_go_bin_dir, all),
-      Some(PathBuf::from("/uv/bin"))
+      Some(path::PathBuf::from("/uv/bin"))
     );
 
     let xdg_only =
       fake_env(&[("XDG_BIN_HOME", "/xdg/bin"), (HOME_VAR, "/home/u")]);
     assert_eq!(
       KnownInstallDir::UvTool.path_with(no_go_bin_dir, xdg_only),
-      Some(PathBuf::from("/xdg/bin"))
+      Some(path::PathBuf::from("/xdg/bin"))
     );
   }
 
   #[test]
   fn test_known_install_dir_path_treats_a_blank_override_as_unset() {
     // An exported-but-empty `PIPX_BIN_DIR` must not become a probe of the
-    // filesystem root -- `PathBuf::from("")` joined with a binary name is a
+    // filesystem root -- `path::PathBuf::from("")` joined with a binary name is a
     // relative path, resolved against whatever directory fml happens to run
     // in.
     let dir = KnownInstallDir::Pipx.path_with(
@@ -4046,7 +4063,7 @@ mod tests {
     );
     assert_eq!(
       dir,
-      Some(PathBuf::from("/home/u").join(".local").join("bin"))
+      Some(path::PathBuf::from("/home/u").join(".local").join("bin"))
     );
   }
 
@@ -4058,7 +4075,7 @@ mod tests {
     );
     assert_eq!(
       dir,
-      Some(PathBuf::from("/py/user").join(USER_SCHEME_SCRIPT_DIR))
+      Some(path::PathBuf::from("/py/user").join(USER_SCHEME_SCRIPT_DIR))
     );
   }
 
@@ -4093,7 +4110,7 @@ mod tests {
     assert_eq!(
       KnownInstallDir::WingetUserLinks.path_with(no_go_bin_dir, &env),
       Some(
-        PathBuf::from(r"C:\Users\u\AppData\Local")
+        path::PathBuf::from(r"C:\Users\u\AppData\Local")
           .join("Microsoft")
           .join("WinGet")
           .join("Links")
@@ -4102,7 +4119,7 @@ mod tests {
     assert_eq!(
       KnownInstallDir::WingetMachineLinks.path_with(no_go_bin_dir, &env),
       Some(
-        PathBuf::from(r"C:\Program Files")
+        path::PathBuf::from(r"C:\Program Files")
           .join("WinGet")
           .join("Links")
       )
@@ -4114,7 +4131,11 @@ mod tests {
     let env = fake_env(&[("ProgramFiles", r"C:\Program Files")]);
     assert_eq!(
       KnownInstallDir::WingetLlvm.path_with(no_go_bin_dir, &env),
-      Some(PathBuf::from(r"C:\Program Files").join("LLVM").join("bin"))
+      Some(
+        path::PathBuf::from(r"C:\Program Files")
+          .join("LLVM")
+          .join("bin")
+      )
     );
   }
 
@@ -4143,20 +4164,29 @@ mod tests {
     let profile = fake_env(&[("USERPROFILE", r"C:\Users\u")]);
     assert_eq!(
       KnownInstallDir::ScoopShims.path_with(no_go_bin_dir, &profile),
-      Some(PathBuf::from(r"C:\Users\u").join("scoop").join("shims"))
+      Some(
+        path::PathBuf::from(r"C:\Users\u")
+          .join("scoop")
+          .join("shims")
+      )
     );
     let both =
       fake_env(&[("SCOOP", r"D:\scoop"), ("USERPROFILE", r"C:\Users\u")]);
     assert_eq!(
       KnownInstallDir::ScoopShims.path_with(no_go_bin_dir, &both),
-      Some(PathBuf::from(r"D:\scoop").join("shims"))
+      Some(path::PathBuf::from(r"D:\scoop").join("shims"))
     );
   }
 
   #[test]
   fn test_known_install_dir_path_brew_llvm_keg_bin() {
     let keg_bin = |prefix: &str| {
-      Some(PathBuf::from(prefix).join("opt").join("llvm").join("bin"))
+      Some(
+        path::PathBuf::from(prefix)
+          .join("opt")
+          .join("llvm")
+          .join("bin"),
+      )
     };
     assert_eq!(
       KnownInstallDir::BrewLlvm.path_with(
@@ -4213,10 +4243,10 @@ mod tests {
     // Go's directory comes from `go env`, not from any variable this type
     // reads; proven by an env closure that panics if consulted at all.
     let dir = KnownInstallDir::Go.path_with(
-      || Some(PathBuf::from("/go/bin")),
+      || Some(path::PathBuf::from("/go/bin")),
       |var| panic!("KnownInstallDir::Go must not read the environment: {var}"),
     );
-    assert_eq!(dir, Some(PathBuf::from("/go/bin")));
+    assert_eq!(dir, Some(path::PathBuf::from("/go/bin")));
   }
 
   #[test]
@@ -4276,7 +4306,7 @@ mod tests {
     // known-install-dir fallback spawns `go env` via `create_tool_command`,
     // which resolves `go` through `resolve_binary_path` itself. With the
     // cache guard still alive across the fallback, that re-lock of a
-    // non-reentrant `std::sync::Mutex` on the same thread is a documented
+    // non-reentrant `sync::Mutex` on the same thread is a documented
     // panic-or-deadlock -- a hang on Windows' SRWLOCK.
     //
     // Driven through a real Go-chain binary that `which` cannot see, so the
@@ -4294,14 +4324,14 @@ mod tests {
       return;
     };
 
-    let (tx, rx) = std::sync::mpsc::channel();
+    let (tx, rx) = sync::mpsc::channel();
     let worker = std::thread::spawn(move || {
       let resolved = resolve_binary_path(missing);
       // Sent after the call returns; a deadlocked lookup never gets here.
       let _ = tx.send(resolved);
     });
 
-    rx.recv_timeout(std::time::Duration::from_secs(60)).expect(
+    rx.recv_timeout(time::Duration::from_secs(60)).expect(
       "resolve_binary_path deadlocked (or panicked) on the re-entrant \
        lookup its own known-install-dir fallback performs -- the \
        BINARY_CACHE guard must be dropped before the fallback runs",
@@ -4328,7 +4358,7 @@ mod tests {
     }
 
     let cache = BINARY_CACHE.get().expect("cache should be initialized");
-    let guard = cache.lock().unwrap_or_else(PoisonError::into_inner);
+    let guard = cache.lock().unwrap_or_else(sync::PoisonError::into_inner);
     assert!(guard.contains_key("cargo"));
     for i in 0..10 {
       let binary_name = format!("thread_test_binary_{i}");
@@ -4338,7 +4368,7 @@ mod tests {
 
   #[test]
   fn test_tool_missing_guard() {
-    let start = Instant::now();
+    let start = time::Instant::now();
     let res = tool_missing_guard(
       "test",
       "non_existent_tool_xyz_123",
@@ -4349,7 +4379,7 @@ mod tests {
     let res = res.unwrap();
     assert_eq!(res.surface_name, "test");
     match res.status {
-      SurfaceStatus::ToolMissing {
+      surfaces::SurfaceStatus::ToolMissing {
         binary,
         install_hint,
       } => {
@@ -4367,7 +4397,7 @@ mod tests {
       tool_missing_guard("test", "non_existent_tool_xyz_123", start, None);
     assert!(res_none.is_some());
     match res_none.unwrap().status {
-      SurfaceStatus::ToolMissing {
+      surfaces::SurfaceStatus::ToolMissing {
         binary,
         install_hint,
       } => {
@@ -4381,11 +4411,11 @@ mod tests {
 
   #[test]
   fn test_lint_fix_unsupported() {
-    let start = Instant::now();
+    let start = time::Instant::now();
     let res = lint_fix_unsupported("test", start);
     assert_eq!(res.surface_name, "test");
     match res.status {
-      SurfaceStatus::Skipped { reason } => {
+      surfaces::SurfaceStatus::Skipped { reason } => {
         assert_eq!(
           reason,
           "Tool does not support autofix; run fml fmt instead"
@@ -4439,7 +4469,7 @@ mod tests {
   fn test_run_tool_command_success_is_passed() {
     let mut cmd = scripted_command("", "", 0);
     let res = run_tool_command("t", &mut cmd);
-    assert!(matches!(res.status, SurfaceStatus::Passed));
+    assert!(matches!(res.status, surfaces::SurfaceStatus::Passed));
   }
 
   #[test]
@@ -4447,7 +4477,7 @@ mod tests {
     let mut cmd = scripted_command("ONLYOUT", "", 1);
     let res = run_tool_command("t", &mut cmd);
     match res.status {
-      SurfaceStatus::ViolationsFound { message, .. } => {
+      surfaces::SurfaceStatus::ViolationsFound { message, .. } => {
         assert_eq!(message, "ONLYOUT");
         assert!(!message.contains("stderr:"));
       }
@@ -4460,7 +4490,7 @@ mod tests {
     let mut cmd = scripted_command("", "ONLYERR", 1);
     let res = run_tool_command("t", &mut cmd);
     match res.status {
-      SurfaceStatus::ViolationsFound { message, .. } => {
+      surfaces::SurfaceStatus::ViolationsFound { message, .. } => {
         assert_eq!(message, "ONLYERR");
         assert!(!message.contains("stderr:"));
       }
@@ -4473,7 +4503,7 @@ mod tests {
     let mut cmd = scripted_command("BANNER", "FINDINGS", 1);
     let res = run_tool_command("t", &mut cmd);
     match res.status {
-      SurfaceStatus::ViolationsFound { message, .. } => {
+      surfaces::SurfaceStatus::ViolationsFound { message, .. } => {
         let out = message.find("BANNER").expect("stdout kept");
         let err = message.find("FINDINGS").expect("stderr kept");
         assert!(out < err, "stdout is shown before stderr");
@@ -4488,7 +4518,7 @@ mod tests {
     let mut cmd = scripted_command("", "", 3);
     let res = run_tool_command("t", &mut cmd);
     match res.status {
-      SurfaceStatus::ViolationsFound { message, .. } => {
+      surfaces::SurfaceStatus::ViolationsFound { message, .. } => {
         // Exact, so a reintroduced `Display` stutter ("exit code exit
         // code: 3") fails the assertion.
         assert_eq!(message, "Command failed with exit code 3");
@@ -4506,7 +4536,7 @@ mod tests {
     let res =
       run_tool_command_classified("t", &mut cmd, classify_all_nonzero_as_error);
     match res.status {
-      SurfaceStatus::ExecutionError { message } => {
+      surfaces::SurfaceStatus::ExecutionError { message } => {
         assert!(message.contains("BANNER"));
         assert!(message.contains("PARSEFAIL"));
       }
@@ -4525,7 +4555,7 @@ mod tests {
       classify_exit_one_as_violation,
     );
     match res.status {
-      SurfaceStatus::ExecutionError { message } => {
+      surfaces::SurfaceStatus::ExecutionError { message } => {
         assert!(message.contains("TYPECHECKFAIL"), "real cause surfaced");
         assert!(message.contains("0 issues."), "banner stream not dropped");
       }
@@ -4544,7 +4574,7 @@ mod tests {
     let res =
       run_tool_command_classified("t", &mut cmd, classify_all_nonzero_as_error);
     match res.status {
-      SurfaceStatus::ExecutionError { message } => {
+      surfaces::SurfaceStatus::ExecutionError { message } => {
         assert!(
           message.starts_with("Failed to execute not-a-real-tool: "),
           "{message}"
@@ -4563,7 +4593,7 @@ mod tests {
       classify_exit_one_as_violation,
     );
     match res.status {
-      SurfaceStatus::ViolationsFound { message, .. } => {
+      surfaces::SurfaceStatus::ViolationsFound { message, .. } => {
         assert_eq!(message, "ONEISSUE");
       }
       other => panic!("expected ViolationsFound, got {other:?}"),
@@ -4628,7 +4658,7 @@ mod tests {
     }
   }
 
-  // --- install_hint_for / ToolInfo::effective_install_hint (#264) --------
+  // --- install_hint_for / surfaces::ToolInfo::effective_install_hint (#264) --------
   //
   // These are the regression guards for the bug #264 actually filed: printed
   // install hints used to be hand-written prose restated 2-4 times per tool,
@@ -4688,11 +4718,11 @@ mod tests {
   #[test]
   fn test_every_surface_tool_info_binary_resolves_to_all_chains_or_overrides() {
     // Acceptance criterion from #264: a new tool cannot ship "hintless". A
-    // `ToolInfo` either resolves to a real `ALL_CHAINS` row (and so gets a
+    // `surfaces::ToolInfo` either resolves to a real `ALL_CHAINS` row (and so gets a
     // derived hint automatically), or it deliberately overrides
     // `install_hint` itself (the only legitimate reason: it has no
     // install-chain at all, e.g. `cargo`/`gofmt` ship with a toolchain).
-    for surface in crate::surfaces::all_surfaces() {
+    for surface in surfaces::all_surfaces() {
       let resolved = crate::config::ResolvedLangConfig::new(surface.name());
       for tool in surface.tool_info(&resolved) {
         let has_chain = install_chain_for(tool.binary).is_some();
@@ -4718,7 +4748,7 @@ mod tests {
     // Issue #295: `tinymist` sat in ALL_CHAINS with no surface. Paired by
     // name, after alias canonicalisation, so a row that reuses another
     // tool's chain constant is still an orphan.
-    let declared: Vec<&str> = crate::surfaces::all_surfaces()
+    let declared: Vec<&str> = surfaces::all_surfaces()
       .iter()
       .flat_map(|surface| {
         let resolved = crate::config::ResolvedLangConfig::new(surface.name());
@@ -4743,7 +4773,7 @@ mod tests {
 
   #[test]
   fn test_no_surface_hardcodes_a_chain_derived_install_command() {
-    // QA follow-up on #264: `ToolInfo.install_hint: None` and
+    // QA follow-up on #264: `surfaces::ToolInfo.install_hint: None` and
     // `tool_missing_guard`'s `None` made the *common* call sites derive
     // automatically, but nothing stopped a bespoke call site --
     // `tool_missing_result`, or a fresh `tool_missing_guard` call written
@@ -4751,11 +4781,11 @@ mod tests {
     // hand-copied package-manager command straight back in. That is
     // exactly what happened: `rust.rs`'s combined "cargo / rustfmt"
     // missing-tool message still spelled out `"Run: rustup component add
-    // rustfmt"` by hand after `rustfmt`'s own `ToolInfo.install_hint` had
+    // rustfmt"` by hand after `rustfmt`'s own `surfaces::ToolInfo.install_hint` had
     // already switched to `None`, and `cargo`'s/`gofmt`'s legitimate
     // no-chain overrides existed as two textually-drifting copies each
     // rather than one source. The coverage test above only walks
-    // `ToolInfo` rows, so it never saw either.
+    // `surfaces::ToolInfo` rows, so it never saw either.
     //
     // This scans every surface source file's non-comment lines for the
     // literal shell-command phrases `InstallMethod::describe()` renders.

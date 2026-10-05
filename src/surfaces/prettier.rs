@@ -1,19 +1,19 @@
 //! Shared Prettier configuration model, CLI argument builders, and configuration syncing.
 
-use super::{
-  AUTO_GENERATED_JSON_COMMENT, ExecutionContext, LanguageSurface, NativeConfig,
-  SurfaceResult, SurfaceStatus, render_native_config, sync_file_helper,
-};
-use crate::config::{
-  FormalityConfig, ResolvedGlobalConfig, ResolvedLangConfig,
-};
-use serde::{Deserialize, Serialize};
-use std::fmt::Write as _;
-use std::path::Path;
-use std::time::Instant;
+use std::fmt::Write;
+use std::path;
+use std::time;
+
+use serde;
+
+use crate::config;
+use crate::errors;
+use crate::surfaces;
+use crate::surfaces::LanguageSurface;
+use crate::surfaces::NativeConfig;
 
 /// Native `.prettierrc.json` configuration representation for Markdown, YAML, and JSON formatting.
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "camelCase")]
 pub struct PrettierConfig {
   /// Warning comment field.
@@ -34,12 +34,12 @@ pub struct PrettierConfig {
 impl NativeConfig for PrettierConfig {
   const FILE_NAME: &'static str = ".prettierrc.json";
 
-  fn from_context(ctx: &ExecutionContext) -> Self {
+  fn from_context(ctx: &surfaces::ExecutionContext) -> Self {
     Self::from_resolved(&ctx.global_config, &ctx.lang_config)
   }
 
-  fn render(&self) -> Result<String, crate::errors::FormalityError> {
-    render_native_config(self)
+  fn render(&self) -> Result<String, errors::FormalityError> {
+    surfaces::render_native_config(self)
   }
 }
 
@@ -48,13 +48,13 @@ impl PrettierConfig {
   ///
   /// [`NativeConfig::from_context`] delegates here. The split exists because
   /// the shared single-writer pass ([`sync_shared_prettier_config`]) runs
-  /// outside the per-surface fan-out and so has no [`ExecutionContext`] — it
+  /// outside the per-surface fan-out and so has no [`surfaces::ExecutionContext`] — it
   /// needs to resolve what *each* prettier surface would have asked for in
   /// order to detect a conflict between them.
   #[must_use]
   pub fn from_resolved(
-    global: &ResolvedGlobalConfig,
-    lang: &ResolvedLangConfig,
+    global: &config::ResolvedGlobalConfig,
+    lang: &config::ResolvedLangConfig,
   ) -> Self {
     let eol = match global.end_of_line.to_lowercase().as_str() {
       "crlf" => "crlf",
@@ -63,7 +63,7 @@ impl PrettierConfig {
     };
 
     Self {
-      comment: AUTO_GENERATED_JSON_COMMENT.to_string(),
+      comment: surfaces::AUTO_GENERATED_JSON_COMMENT.to_string(),
       tab_width: lang.indent_size,
       print_width: lang.line_length,
       use_tabs: lang.use_tabs,
@@ -155,12 +155,12 @@ pub const PRETTIER_PASS_NAME: &str = "prettier";
 /// is rendered for a `.prettierrc.json` nobody asked for.
 #[must_use]
 pub fn sync_shared_prettier_config(
-  root: &Path,
-  config: &FormalityConfig,
+  root: &path::Path,
+  config: &config::FormalityConfig,
   surfaces: &[Box<dyn LanguageSurface>],
   check: bool,
-) -> Option<SurfaceResult> {
-  let start = Instant::now();
+) -> Option<surfaces::SurfaceResult> {
+  let start = time::Instant::now();
   let global = config.resolve_global();
 
   // Deterministic order: the surfaces are matched in a fixed order, so the
@@ -177,9 +177,9 @@ pub fn sync_shared_prettier_config(
   let (_, expected) = claims.first()?;
 
   if let Some(message) = describe_prettier_conflict(&claims) {
-    return Some(SurfaceResult {
+    return Some(surfaces::SurfaceResult {
       surface_name: PRETTIER_PASS_NAME,
-      status: SurfaceStatus::ExecutionError { message },
+      status: surfaces::SurfaceStatus::ExecutionError { message },
       duration: start.elapsed(),
     });
   }
@@ -187,9 +187,9 @@ pub fn sync_shared_prettier_config(
   let content = match expected.render() {
     Ok(c) => c,
     Err(e) => {
-      return Some(SurfaceResult {
+      return Some(surfaces::SurfaceResult {
         surface_name: PRETTIER_PASS_NAME,
-        status: SurfaceStatus::ExecutionError {
+        status: surfaces::SurfaceStatus::ExecutionError {
           message: format!(
             "Failed to serialize {}: {e}",
             PrettierConfig::FILE_NAME
@@ -200,7 +200,7 @@ pub fn sync_shared_prettier_config(
     }
   };
 
-  Some(sync_file_helper(
+  Some(surfaces::sync_file_helper(
     &root.join(PrettierConfig::FILE_NAME),
     PrettierConfig::FILE_NAME,
     &content,
@@ -262,6 +262,8 @@ fn describe_prettier_conflict(
 
 #[cfg(test)]
 mod tests {
+  use std::sync;
+
   use super::*;
 
   #[test]
@@ -283,14 +285,11 @@ mod tests {
     assert!(rendered.contains("\"proseWrap\": \"preserve\""));
   }
 
-  use crate::surfaces::{json, markdown, rust, yaml};
-  use std::path::Path;
-
   fn prettier_surfaces() -> Vec<Box<dyn LanguageSurface>> {
     vec![
-      Box::new(json::JsonSurface),
-      Box::new(markdown::MarkdownSurface),
-      Box::new(yaml::YamlSurface),
+      Box::new(surfaces::json::JsonSurface),
+      Box::new(surfaces::markdown::MarkdownSurface),
+      Box::new(surfaces::yaml::YamlSurface),
     ]
   }
 
@@ -298,10 +297,10 @@ mod tests {
   fn test_only_prettier_surfaces_declare_the_shared_config() {
     // The declaration, not a hardcoded name list, is what keeps the shared
     // pass in step with the surfaces (#130).
-    assert!(json::JsonSurface.uses_prettier());
-    assert!(markdown::MarkdownSurface.uses_prettier());
-    assert!(yaml::YamlSurface.uses_prettier());
-    assert!(!rust::RustSurface.uses_prettier());
+    assert!(surfaces::json::JsonSurface.uses_prettier());
+    assert!(surfaces::markdown::MarkdownSurface.uses_prettier());
+    assert!(surfaces::yaml::YamlSurface.uses_prettier());
+    assert!(!surfaces::rust::RustSurface.uses_prettier());
   }
 
   #[test]
@@ -311,7 +310,7 @@ mod tests {
     // coalesced into one pass outside the fan-out, so there is exactly one
     // writer, one row, and a stable surface name in the report.
     let temp = tempfile::TempDir::new().unwrap();
-    let config = FormalityConfig::default();
+    let config = config::FormalityConfig::default();
 
     let res = sync_shared_prettier_config(
       temp.path(),
@@ -334,18 +333,18 @@ mod tests {
       false,
     )
     .expect("still syncing");
-    assert!(matches!(again.status, SurfaceStatus::Passed));
+    assert!(matches!(again.status, surfaces::SurfaceStatus::Passed));
   }
 
   #[test]
   fn test_shared_pass_is_absent_when_no_surface_uses_prettier() {
     let temp = tempfile::TempDir::new().unwrap();
     let surfaces: Vec<Box<dyn LanguageSurface>> =
-      vec![Box::new(rust::RustSurface)];
+      vec![Box::new(surfaces::rust::RustSurface)];
     assert!(
       sync_shared_prettier_config(
         temp.path(),
-        &FormalityConfig::default(),
+        &config::FormalityConfig::default(),
         &surfaces,
         false
       )
@@ -367,9 +366,11 @@ mod tests {
       [lang.markdown]
       line_length = 100
     ";
-    let config =
-      FormalityConfig::parse_str(toml_str, Path::new("formality.toml"))
-        .unwrap();
+    let config = config::FormalityConfig::parse_str(
+      toml_str,
+      path::Path::new("formality.toml"),
+    )
+    .unwrap();
     let temp = tempfile::TempDir::new().unwrap();
 
     let res = sync_shared_prettier_config(
@@ -380,7 +381,8 @@ mod tests {
     )
     .expect("prettier surfaces are present");
 
-    let SurfaceStatus::ExecutionError { message } = &res.status else {
+    let surfaces::SurfaceStatus::ExecutionError { message } = &res.status
+    else {
       panic!("expected an explicit conflict, got {:?}", res.status);
     };
     assert!(message.contains("printWidth"), "{message}");
@@ -394,8 +396,8 @@ mod tests {
 
   #[test]
   fn test_agreeing_surfaces_report_no_conflict() {
-    let global = ResolvedGlobalConfig::default();
-    let config = FormalityConfig::default();
+    let global = config::ResolvedGlobalConfig::default();
+    let config = config::FormalityConfig::default();
     let claims: Vec<(&'static str, PrettierConfig)> = ["json", "markdown"]
       .into_iter()
       .map(|n| {
@@ -410,12 +412,12 @@ mod tests {
   fn test_from_resolved_matches_from_context() {
     // `from_context` delegates to `from_resolved`; the shared pass depends
     // on the two agreeing, since it resolves without an ExecutionContext.
-    let config = FormalityConfig::default();
+    let config = config::FormalityConfig::default();
     let global = config.resolve_global();
     let lang = config.resolve_for_lang_with_global("markdown", &global);
     let temp = tempfile::TempDir::new().unwrap();
-    let mut ctx = crate::surfaces::test_ctx(temp.path(), lang.clone());
-    ctx.global_config = std::sync::Arc::new(global.clone());
+    let mut ctx = surfaces::test_ctx(temp.path(), lang.clone());
+    ctx.global_config = sync::Arc::new(global.clone());
 
     assert_eq!(
       PrettierConfig::from_context(&ctx),

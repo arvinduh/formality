@@ -2,15 +2,15 @@
 //! detected surface's canonical formatting facets into one cross-language
 //! block per the fleet order in [`CANONICAL_FLEET_ORDER`].
 
-use crate::config::facets::{Facet, FacetSupport};
-use crate::config::{FormalityConfig, ResolvedGlobalConfig};
-use crate::surfaces::{
-  AUTO_GENERATED_HEADER, LanguageSurface, SurfaceResult, sync_file_helper,
-};
-use std::collections::HashSet;
-use std::fmt::Write as _;
-use std::path::Path;
-use std::time::Instant;
+use std::collections;
+use std::fmt::Write;
+use std::path;
+use std::time;
+
+use crate::config;
+use crate::config::facets;
+use crate::surfaces;
+use crate::surfaces::LanguageSurface;
 
 /// Default filename for `.editorconfig` files.
 pub const EDITORCONFIG_FILE_NAME: &str = ".editorconfig";
@@ -63,7 +63,7 @@ pub fn glob_for_surface(surface: &dyn LanguageSurface) -> String {
 /// overrides in addition to global defaults and layout facet capabilities.
 #[must_use]
 pub fn generate_editorconfig_from_config(
-  config: &FormalityConfig,
+  config: &config::FormalityConfig,
   surfaces: &[Box<dyn LanguageSurface>],
 ) -> String {
   let global = config.resolve_global();
@@ -78,7 +78,7 @@ pub fn generate_editorconfig_from_config(
 }
 
 fn generate_editorconfig_internal<F>(
-  global: &ResolvedGlobalConfig,
+  global: &config::ResolvedGlobalConfig,
   surfaces: &[Box<dyn LanguageSurface>],
   surface_layout: F,
 ) -> String
@@ -86,7 +86,7 @@ where
   F: Fn(&dyn LanguageSurface) -> (bool, usize, usize),
 {
   let mut out = String::new();
-  out.push_str(AUTO_GENERATED_HEADER);
+  out.push_str(surfaces::AUTO_GENERATED_HEADER);
   out.push_str("root = true\n\n");
 
   let global_indent_style = if global.use_tabs { "tab" } else { "space" };
@@ -116,7 +116,7 @@ where
   let _ = writeln!(out, "max_line_length = {}", global.line_length);
 
   // Collect ordered distinct surfaces
-  let mut seen = HashSet::new();
+  let mut seen = collections::HashSet::new();
   let mut ordered_surfaces: Vec<&Box<dyn LanguageSurface>> = Vec::new();
 
   for &canonical_name in CANONICAL_FLEET_ORDER {
@@ -137,9 +137,9 @@ where
     let glob = glob_for_surface(surface.as_ref());
     let (use_tabs, indent_size, line_length) = surface_layout(surface.as_ref());
 
-    let indent_style = match surface.facet_support(Facet::IndentTabs) {
-      FacetSupport::Fixed("spaces" | "space") => "space",
-      FacetSupport::Fixed("tabs" | "tab") => "tab",
+    let indent_style = match surface.facet_support(facets::Facet::IndentTabs) {
+      facets::FacetSupport::Fixed("spaces" | "space") => "space",
+      facets::FacetSupport::Fixed("tabs" | "tab") => "tab",
       _ => {
         if use_tabs {
           "tab"
@@ -149,14 +149,15 @@ where
       }
     };
 
-    let indent_size = match surface.facet_support(Facet::IndentWidth) {
-      FacetSupport::Fixed(v) => v.parse().unwrap_or(indent_size),
+    let indent_size = match surface.facet_support(facets::Facet::IndentWidth) {
+      facets::FacetSupport::Fixed(v) => v.parse().unwrap_or(indent_size),
       _ => indent_size,
     };
-    let max_line_length = match surface.facet_support(Facet::LineLength) {
-      FacetSupport::Unsupported => None,
-      FacetSupport::Fixed(v) => v.parse().ok().or(Some(line_length)),
-      FacetSupport::Configurable => Some(line_length),
+    let max_line_length = match surface.facet_support(facets::Facet::LineLength)
+    {
+      facets::FacetSupport::Unsupported => None,
+      facets::FacetSupport::Fixed(v) => v.parse().ok().or(Some(line_length)),
+      facets::FacetSupport::Configurable => Some(line_length),
     };
 
     let diverges = indent_style != global_indent_style
@@ -183,15 +184,15 @@ where
 /// Helper function to sync `.editorconfig` at the repository root.
 #[must_use]
 pub fn sync_editorconfig(
-  root: &Path,
-  config: &FormalityConfig,
+  root: &path::Path,
+  config: &config::FormalityConfig,
   surfaces: &[Box<dyn LanguageSurface>],
   check: bool,
-) -> SurfaceResult {
-  let start = Instant::now();
+) -> surfaces::SurfaceResult {
+  let start = time::Instant::now();
   let target = root.join(EDITORCONFIG_FILE_NAME);
   let content = generate_editorconfig_from_config(config, surfaces);
-  sync_file_helper(
+  surfaces::sync_file_helper(
     &target,
     EDITORCONFIG_FILE_NAME,
     &content,
@@ -204,15 +205,14 @@ pub fn sync_editorconfig(
 #[cfg(test)]
 mod tests {
   use super::*;
-  use crate::surfaces::all_surfaces;
 
   #[test]
   fn test_generate_editorconfig_defaults() {
-    let config = FormalityConfig::with_defaults();
-    let surfaces = all_surfaces();
+    let config = config::FormalityConfig::with_defaults();
+    let surfaces = surfaces::all_surfaces();
     let ec = generate_editorconfig_from_config(&config, &surfaces);
 
-    assert!(ec.starts_with(AUTO_GENERATED_HEADER));
+    assert!(ec.starts_with(surfaces::AUTO_GENERATED_HEADER));
     assert!(ec.contains("root = true"));
     assert!(ec.contains("[*]"));
     assert!(ec.contains("charset = utf-8"));
@@ -241,9 +241,9 @@ mod tests {
 
     // When all provided surfaces match [*], only [*] is emitted
     let matching_surfaces: Vec<Box<dyn LanguageSurface>> = vec![
-      Box::new(crate::surfaces::rust::RustSurface),
-      Box::new(crate::surfaces::toml::TomlSurface),
-      Box::new(crate::surfaces::markdown::MarkdownSurface),
+      Box::new(surfaces::rust::RustSurface),
+      Box::new(surfaces::toml::TomlSurface),
+      Box::new(surfaces::markdown::MarkdownSurface),
     ];
     let ec_matching =
       generate_editorconfig_from_config(&config, &matching_surfaces);
@@ -257,11 +257,13 @@ mod tests {
   fn test_generate_editorconfig_fixed_tabs_and_unsupported_line_length() {
     let toml_str =
       "[global]\nuse_tabs = true\nindent_size = 4\nline_length = 100\n";
-    let config =
-      FormalityConfig::parse_str(toml_str, Path::new("formality.toml"))
-        .unwrap();
+    let config = config::FormalityConfig::parse_str(
+      toml_str,
+      path::Path::new("formality.toml"),
+    )
+    .unwrap();
 
-    let surfaces = all_surfaces();
+    let surfaces = surfaces::all_surfaces();
     let ec = generate_editorconfig_from_config(&config, &surfaces);
 
     // Global has tab
@@ -317,10 +319,12 @@ use_tabs = true
 indent_size = 4
 line_length = 88
 "#;
-    let config =
-      FormalityConfig::parse_str(toml_str, Path::new("formality.toml"))
-        .unwrap();
-    let surfaces = all_surfaces();
+    let config = config::FormalityConfig::parse_str(
+      toml_str,
+      path::Path::new("formality.toml"),
+    )
+    .unwrap();
+    let surfaces = surfaces::all_surfaces();
     let ec = generate_editorconfig_from_config(&config, &surfaces);
 
     assert!(ec.contains("end_of_line = crlf"));
