@@ -134,7 +134,7 @@ impl NativeConfig for CheckstyleConfig {
     }
   }
 
-  fn render(&self) -> Result<String, crate::errors::FormalityError> {
+  fn render(&self) -> Result<String, surfaces::Error> {
     Ok(format!(
       "<?xml version=\"1.0\"?>\n\
 <!DOCTYPE module PUBLIC\n\

@@ -10,7 +10,6 @@ use std::time;
 use serde;
 
 use crate::config;
-use crate::errors;
 use crate::surfaces;
 use crate::surfaces::LanguageSurface;
 use crate::surfaces::NativeConfig;
@@ -41,7 +40,7 @@ impl NativeConfig for PrettierConfig {
     Self::from_resolved(&ctx.global_config, &ctx.lang_config)
   }
 
-  fn render(&self) -> Result<String, errors::FormalityError> {
+  fn render(&self) -> Result<String, surfaces::Error> {
     surfaces::render_native_config(self)
   }
 }

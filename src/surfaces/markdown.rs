@@ -108,7 +108,7 @@ impl NativeConfig for MarkdownlintConfig {
     markdownlint_config_for_lang(&ctx.lang_config)
   }
 
-  fn render(&self) -> Result<String, crate::errors::FormalityError> {
+  fn render(&self) -> Result<String, surfaces::Error> {
     surfaces::render_native_config(self)
   }
 }

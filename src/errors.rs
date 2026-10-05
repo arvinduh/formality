@@ -100,35 +100,7 @@ impl fmt::Display for GitError {
 
 impl error::Error for GitError {}
 
-/// Errors related to language surfaces or native configuration rendering.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub enum SurfaceError {
-  /// Surface requested by name was not recognized in the registry.
-  UnknownSurface(String),
-  /// Serialization of native surface configuration failed.
-  SerializationFailed {
-    /// Surface name.
-    surface: String,
-    /// Detailed failure message.
-    message: String,
-  },
-}
-
-impl fmt::Display for SurfaceError {
-  fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-    match self {
-      SurfaceError::UnknownSurface(name) => write!(
-        f,
-        "Unknown language surface: '{name}'. Run 'fml doctor' to see supported languages."
-      ),
-      SurfaceError::SerializationFailed { surface, message } => {
-        write!(f, "Failed to serialize {surface} config: {message}")
-      }
-    }
-  }
-}
-
-impl error::Error for SurfaceError {}
+pub use crate::surfaces::Error as SurfaceError;
 
 /// Standard IO error wrapper with optional path context.
 #[derive(Debug)]

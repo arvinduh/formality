@@ -549,6 +549,27 @@ impl Clone for Box<dyn LanguageSurface> {
   }
 }
 
+/// Errors related to language surfaces or native configuration rendering.
+#[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
+pub enum Error {
+  /// Surface requested by name was not recognized in the registry.
+  #[error(
+    "Unknown language surface: '{0}'. Run 'fml doctor' to see supported languages."
+  )]
+  UnknownSurface(String),
+  /// Serialization of native surface configuration failed.
+  #[error("Failed to serialize {surface} config: {message}")]
+  SerializationFailed {
+    /// Surface name.
+    surface: String,
+    /// Detailed failure message.
+    message: String,
+  },
+}
+
+/// Legacy alias for [`Error`].
+pub type SurfaceError = Error;
+
 #[cfg(test)]
 mod tests {
   use super::*;
