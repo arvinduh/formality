@@ -495,9 +495,10 @@ impl ResolvedLangConfig {
 }
 
 /// Errors occurring during configuration loading, parsing, or validation.
-#[derive(Debug)]
-pub enum ConfigError {
+#[derive(Debug, thiserror::Error)]
+pub enum Error {
   /// File system IO error while reading configuration file.
+  #[error("Failed to read config file at {}: {source}", path.display())]
   Io {
     /// File path where IO error occurred.
     path: path::PathBuf,
@@ -505,6 +506,7 @@ pub enum ConfigError {
     source: std::io::Error,
   },
   /// TOML deserialization or syntax error.
+  #[error("Failed to parse config file at {}: {source}", path.display())]
   Parse {
     /// File path where parse error occurred.
     path: path::PathBuf,
@@ -513,6 +515,12 @@ pub enum ConfigError {
   },
   /// A key this `fml` does not accept: misspelled, removed, or added by a
   /// newer `fml`.
+  #[error(
+    "unknown key `{key}` in {}:{line}. It may need a newer fml (`fml \
+     --version`), or it is misspelled or was removed; `fml schema` lists \
+     the keys this fml accepts.",
+    path.display()
+  )]
   UnknownKey {
     /// File path of the config holding the key.
     path: path::PathBuf,
@@ -522,6 +530,11 @@ pub enum ConfigError {
     line: usize,
   },
   /// A known key whose value has the wrong type or shape.
+  #[error(
+    "invalid value for `{key}` in {}:{line}: {reason}. Check `fml \
+     schema` for the type this fml expects.",
+    path.display()
+  )]
   InvalidValue {
     /// File path of the config holding the value.
     path: path::PathBuf,
@@ -535,6 +548,11 @@ pub enum ConfigError {
   },
   /// A `[lang.<name>]` section spelled as a surface alias or with other
   /// casing, which no reader would look up.
+  #[error(
+    "section `[lang.{name}]` in {}:{line} is not a canonical surface \
+     name; rename it to `[lang.{canonical}]`.",
+    path.display()
+  )]
   NonCanonicalLang {
     /// File path of the config holding the section.
     path: path::PathBuf,
@@ -547,6 +565,15 @@ pub enum ConfigError {
   },
   /// `[lang.<name>] extra_args` written as one flat list instead of a table
   /// keyed by tool.
+  #[error(
+    "`lang.{lang}.extra_args` in {}:{line} is a list, but extra_args \
+     takes one list per tool: write it as a table, e.g. \
+     `[lang.{lang}.extra_args]` then `{} = [\"--flag\"]`. Tools for \
+     `{lang}`: `{}`.",
+    path.display(),
+    tools[0],
+    tools.join("`, `")
+  )]
   FlatExtraArgs {
     /// File path of the config holding the list.
     path: path::PathBuf,
@@ -559,6 +586,7 @@ pub enum ConfigError {
     tools: &'static [&'static str],
   },
   /// An `extra_args` key naming no tool its surface runs.
+  #[error("{}", format_unknown_tool(path, lang, tool, *line, tools))]
   UnknownTool {
     /// File path of the config holding the key.
     path: path::PathBuf,
@@ -576,95 +604,29 @@ pub enum ConfigError {
   },
 }
 
-impl std::fmt::Display for ConfigError {
-  fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-    match self {
-      ConfigError::Io { path, source } => {
-        write!(
-          f,
-          "Failed to read config file at {}: {}",
-          path.display(),
-          source
-        )
-      }
-      ConfigError::Parse { path, source } => {
-        write!(
-          f,
-          "Failed to parse config file at {}: {}",
-          path.display(),
-          source
-        )
-      }
-      ConfigError::UnknownKey { path, key, line } => write!(
-        f,
-        "unknown key `{key}` in {}:{line}. It may need a newer fml (`fml \
-         --version`), or it is misspelled or was removed; `fml schema` lists \
-         the keys this fml accepts.",
-        path.display()
-      ),
-      ConfigError::InvalidValue {
-        path,
-        key,
-        line,
-        reason,
-      } => write!(
-        f,
-        "invalid value for `{key}` in {}:{line}: {reason}. Check `fml \
-         schema` for the type this fml expects.",
-        path.display()
-      ),
-      ConfigError::NonCanonicalLang {
-        path,
-        name,
-        canonical,
-        line,
-      } => write!(
-        f,
-        "section `[lang.{name}]` in {}:{line} is not a canonical surface \
-         name; rename it to `[lang.{canonical}]`.",
-        path.display()
-      ),
-      ConfigError::FlatExtraArgs {
-        path,
-        lang,
-        line,
-        tools,
-      } => write!(
-        f,
-        "`lang.{lang}.extra_args` in {}:{line} is a list, but extra_args \
-         takes one list per tool: write it as a table, e.g. \
-         `[lang.{lang}.extra_args]` then `{} = [\"--flag\"]`. Tools for \
-         `{lang}`: `{}`.",
-        path.display(),
-        tools[0],
-        tools.join("`, `")
-      ),
-      ConfigError::UnknownTool {
-        path,
-        lang,
-        tool,
-        line,
-        tools,
-      } => {
-        write!(
-          f,
-          "unknown key `lang.{lang}.extra_args.{tool}` in {}:{line}: \
-           `{lang}` runs no tool named `{tool}`; its extra_args keys are \
-           `{}`.",
-          path.display(),
-          tools.join("`, `")
-        )?;
-        let canonical = tooling::canonical_chain_binary(tool);
-        match tools.iter().find(|key| **key == canonical) {
-          Some(key) => write!(f, " Did you mean `{key}`?"),
-          None => Ok(()),
-        }
-      }
-    }
-  }
-}
+/// Legacy alias for [`Error`].
+pub type ConfigError = Error;
 
-impl std::error::Error for ConfigError {}
+fn format_unknown_tool(
+  path: &path::Path,
+  lang: &str,
+  tool: &str,
+  line: usize,
+  tools: &[&str],
+) -> String {
+  let canonical = tooling::canonical_chain_binary(tool);
+  let suggestion = match tools.iter().find(|key| **key == canonical) {
+    Some(key) => format!(" Did you mean `{key}`?"),
+    None => String::new(),
+  };
+  format!(
+    "unknown key `lang.{lang}.extra_args.{tool}` in {}:{line}: \
+     `{lang}` runs no tool named `{tool}`; its extra_args keys are \
+     `{}`.{suggestion}",
+    path.display(),
+    tools.join("`, `")
+  )
+}
 
 #[cfg(test)]
 mod tests;

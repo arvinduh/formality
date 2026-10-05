@@ -112,7 +112,7 @@ impl FormalityLsp {
   /// # Side Effects
   ///
   /// On failure, sends one `window/showMessage` (ERROR) carrying the
-  /// [`crate::config::ConfigError`] text and returns `None`.
+  /// [`crate::config::Error`] text and returns `None`.
   async fn load_config(
     &self,
     root: Option<&path::Path>,

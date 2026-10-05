@@ -852,7 +852,7 @@ fn test_unrecognized_lang_sections_flags_typo_but_not_valid_undetected() {
 fn test_load_file_missing_path_yields_io_error() {
   let missing = path::Path::new("this/path/definitely/does/not/exist.toml");
   let err = FormalityConfig::load_file(missing).unwrap_err();
-  assert!(matches!(err, ConfigError::Io { .. }));
+  assert!(matches!(err, Error::Io { .. }));
   let msg = err.to_string();
   assert!(msg.contains("Failed to read config file at"));
   assert!(msg.contains("exist.toml"));
@@ -865,7 +865,7 @@ fn test_parse_str_malformed_toml_yields_parse_error() {
   let err =
     FormalityConfig::parse_str(bad_toml, path::Path::new("formality.toml"))
       .unwrap_err();
-  assert!(matches!(err, ConfigError::Parse { .. }));
+  assert!(matches!(err, Error::Parse { .. }));
   let msg = err.to_string();
   assert!(msg.contains("Failed to parse config file at"));
   assert!(msg.contains("formality.toml"));
@@ -933,7 +933,7 @@ fn test_parse_str_rejects_non_canonical_lang_sections() {
   assert!(
     matches!(
       &err,
-      ConfigError::NonCanonicalLang { name, canonical: "rust", line: 1, .. }
+      Error::NonCanonicalLang { name, canonical: "rust", line: 1, .. }
         if name == "RUST"
     ),
     "{err:?}"
@@ -972,7 +972,7 @@ fn test_corrupted_config_syntax_errors_and_recovery() {
   fs::write(&path1, "[global\nindent_size = 2").unwrap();
   let err1 = FormalityConfig::load_file(&path1).unwrap_err();
   match &err1 {
-    ConfigError::Parse { path, source } => {
+    Error::Parse { path, source } => {
       assert_eq!(path, &path1);
       assert!(!source.to_string().is_empty());
     }
@@ -998,12 +998,12 @@ fn test_corrupted_config_syntax_errors_and_recovery() {
   let path3 = temp.path().join("bad_syntax.toml");
   fs::write(&path3, "global = = = true\n").unwrap();
   let err3 = FormalityConfig::load_file(&path3).unwrap_err();
-  assert!(matches!(err3, ConfigError::Parse { .. }));
+  assert!(matches!(err3, Error::Parse { .. }));
 
   // Test 4: File not found (Io error recovery)
   let path4 = temp.path().join("nonexistent_config.toml");
   let err4 = FormalityConfig::load_file(&path4).unwrap_err();
-  assert!(matches!(err4, ConfigError::Io { .. }));
+  assert!(matches!(err4, Error::Io { .. }));
   assert!(err4.to_string().contains("Failed to read config file at"));
 }
 
@@ -1071,7 +1071,7 @@ fn test_parse_str_unknown_key_names_key_path_line_and_fix() {
   assert!(
     matches!(
       &err,
-      ConfigError::UnknownKey { key, line: 3, .. }
+      Error::UnknownKey { key, line: 3, .. }
         if key == "lang.python.python.ignore_rulez"
     ),
     "{err:?}"
@@ -1118,7 +1118,7 @@ fn test_parse_str_flat_lang_keys_follow_their_own_surface() {
   assert!(
     matches!(
       &err,
-      ConfigError::UnknownKey { key, line: 3, .. }
+      Error::UnknownKey { key, line: 3, .. }
         if key == "lang.rust.quote_style"
     ),
     "{err:?}"
@@ -1130,7 +1130,7 @@ fn test_parse_str_flat_lang_keys_follow_their_own_surface() {
   assert!(
     matches!(
       &err,
-      ConfigError::InvalidValue { key, line: 2, .. }
+      Error::InvalidValue { key, line: 2, .. }
         if key == "lang.python.target_version"
     ),
     "{err:?}"
@@ -1143,7 +1143,7 @@ fn test_parse_str_flat_lang_keys_follow_their_own_surface() {
   assert!(
     matches!(
       &err,
-      ConfigError::UnknownKey { key, line: 3, .. }
+      Error::UnknownKey { key, line: 3, .. }
         if key == "lang.go.options.shadow"
     ),
     "{err:?}"
@@ -1277,7 +1277,7 @@ fn test_extra_args_flat_list_in_unknown_section_is_a_type_error() {
   let err = FormalityConfig::parse_str(toml, path::Path::new("formality.toml"))
     .unwrap_err();
   assert!(
-    matches!(err, ConfigError::InvalidValue { .. }),
+    matches!(err, Error::InvalidValue { .. }),
     "expected InvalidValue, got: {err}"
   );
 }
