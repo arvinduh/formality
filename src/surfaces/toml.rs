@@ -157,7 +157,7 @@ fn taplo_path_arg(path: &str, backslash_is_separator: bool) -> String {
 }
 
 /// TOML language surface implementation.
-#[derive(Debug, Default, Clone, Copy)]
+#[derive(Debug, Default)]
 pub struct TomlSurface;
 
 impl DeclaresFacets for TomlSurface {
@@ -196,7 +196,7 @@ impl LanguageSurface for TomlSurface {
   }
 
   fn clone_box(&self) -> Box<dyn LanguageSurface> {
-    Box::new(*self)
+    Box::new(Self)
   }
 
   fn marker_files(&self) -> &[&'static str] {

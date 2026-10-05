@@ -136,7 +136,7 @@ pub fn build_yamllint_parsable_args(file: &path::Path) -> Vec<String> {
 }
 
 /// YAML language surface implementation.
-#[derive(Debug, Default, Clone, Copy)]
+#[derive(Debug, Default)]
 pub struct YamlSurface;
 
 impl DeclaresFacets for YamlSurface {
@@ -175,7 +175,7 @@ impl LanguageSurface for YamlSurface {
   }
 
   fn clone_box(&self) -> Box<dyn LanguageSurface> {
-    Box::new(*self)
+    Box::new(Self)
   }
 
   fn marker_files(&self) -> &[&'static str] {

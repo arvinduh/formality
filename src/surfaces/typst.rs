@@ -14,7 +14,7 @@ use crate::surfaces::LanguageSurface;
 use crate::surfaces::tooling;
 
 /// Typst language surface implementation.
-#[derive(Debug, Default, Clone, Copy)]
+#[derive(Debug, Default)]
 pub struct TypstSurface;
 
 impl DeclaresFacets for TypstSurface {
@@ -83,7 +83,7 @@ impl LanguageSurface for TypstSurface {
   }
 
   fn clone_box(&self) -> Box<dyn LanguageSurface> {
-    Box::new(*self)
+    Box::new(Self)
   }
 
   fn tool_info(
