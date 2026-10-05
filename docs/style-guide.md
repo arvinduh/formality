@@ -37,14 +37,17 @@ mod tests {
 }
 ```
 
-The one sanctioned exception is a **directory module** (`some/mod.rs`) whose
-`mod.rs` is large enough that a sibling file keeps it readable — there, the
-sibling is named exactly `tests.rs` and declared with `mod tests;`:
+The one sanctioned exception is a **directory module** (`some.rs` + `some/`)
+whose root is large enough that a submodule file keeps it readable — there, the
+submodule is named exactly `tests.rs` and declared with
+`#[cfg(test)] mod tests;`:
 
 ```text
-src/engine/runner/
-├── mod.rs      // `mod tests;` near the bottom
-└── tests.rs    // `use super::*;`, then #[test] fns
+src/engine/
+├── runner.rs
+└── runner/
+    ├── violations.rs
+    └── tests.rs
 ```
 
 No other `*_tests.rs` naming (`registry_tests.rs`, `mod_tests.rs`, ...) is
@@ -112,10 +115,10 @@ which reaches every target (lib, bin, and each `tests/*.rs` crate). On top of
   keyword, though `missing_docs` does not require it. **Tier 2 (enforced by
   `test_pub_mod_declarations_carry_doc_comments` in `src/lib.rs`).**
 - The `//!` header is enforced by `test_files_carry_module_doc_comment` in
-  `src/lib.rs`. A §1 `tests.rs` sibling file is exempt.
+  `src/lib.rs`. A §1 `tests.rs` file is exempt.
 - **Doc comments on `JsonSchema`-derived types are published output.**
   `schemars` lifts a doc comment on a type or field deriving `JsonSchema` (such
-  as `LangConfig` in `src/config/mod.rs`) verbatim into
+  as `LangConfig` in `src/config.rs`) verbatim into
   `schema/formality.schema.json`, where users and IDE tooltips read it. Editing
   one changes the published schema and fails `tests/schema_drift.rs` until the
   schema is regenerated. Never edit one incidentally; batch prose fixes onto a
@@ -142,8 +145,8 @@ which reaches every target (lib, bin, and each `tests/*.rs` crate). On top of
 
 ### `ExecutionContext` and `Arc`-sharing
 
-`ExecutionContext` (`src/surfaces/mod.rs`) is built once per surface, per
-invocation, and the `Runner` (`src/engine/runner/mod.rs`) dispatches all matched
+`ExecutionContext` (`src/surfaces.rs`) is built once per surface, per
+invocation, and the `Runner` (`src/engine/runner.rs`) dispatches all matched
 surfaces in parallel via `rayon::par_iter`. `paths: Arc<Vec<PathBuf>>` and
 `global_config: Arc<ResolvedGlobalConfig>` are `Arc`-wrapped because every
 surface sees the same values; without it each of the 12 surfaces would
@@ -160,8 +163,8 @@ surface invocation is wrapped in `Arc`, not cloned per surface.
 
 ### `LanguageSurface` trait contract
 
-`LanguageSurface: DeclaresFacets + Send + Sync` (`src/surfaces/mod.rs`) is the
-core abstraction every surface implements. Required methods: `name`, `detect`,
+`LanguageSurface: DeclaresFacets + Send + Sync` (`src/surfaces.rs`) is the core
+abstraction every surface implements. Required methods: `name`, `detect`,
 `tool_info`, `format`, `lint`, `sync_config`, `clone_box`. `aliases`,
 `file_extensions`, and `supports_lint_fix` have defaults, overridden only when a
 surface differs (e.g. `aliases()` returning `&["rs"]` for Rust). `clone_box`
@@ -235,16 +238,15 @@ router that was never built.
 
 ### `Runner` dispatch
 
-`Runner::run` (`src/engine/runner/mod.rs`) is the single dispatch point for
-every subcommand that acts across surfaces (`fmt`, `lint`, `sync`, `fix`): it
-takes the filtered `Vec<Box<dyn LanguageSurface>>`, builds one
-`ExecutionContext` per surface, and fans out via `rayon::par_iter`. `fix` runs
-three parallel stages: `lint(fix: true)` on every surface, then
-`format(check: false)`, then a check-only re-lint of the surfaces that still
-reported violations, so status and exit code reflect the tree after formatting
-(a violation the formatter resolved must not report `[FAIL]`). A new
-cross-surface subcommand goes through `Runner::run` with a `RunnerAction`
-variant, not its own dispatch loop.
+`Runner::run` (`src/engine/runner.rs`) is the single dispatch point for every
+subcommand that acts across surfaces (`fmt`, `lint`, `sync`, `fix`): it takes
+the filtered `Vec<Box<dyn LanguageSurface>>`, builds one `ExecutionContext` per
+surface, and fans out via `rayon::par_iter`. `fix` runs three parallel stages:
+`lint(fix: true)` on every surface, then `format(check: false)`, then a
+check-only re-lint of the surfaces that still reported violations, so status and
+exit code reflect the tree after formatting (a violation the formatter resolved
+must not report `[FAIL]`). A new cross-surface subcommand goes through
+`Runner::run` with a `RunnerAction` variant, not its own dispatch loop.
 
 ---
 
@@ -259,10 +261,9 @@ hierarchy in `src/errors.rs` (`#119 [pre-recreation]`) instead of per-module
 - `FormalityError` is the top-level enum, one variant per subsystem (`Config`,
   `Git`, `Surface`, `Io`, plus `InvalidCli(String)`). Each wraps its own type
   implementing `fmt::Display` and `std::error::Error` by hand: the enums
-  `ConfigError` (defined in `src/config/mod.rs`, re-exported from
-  `src/errors.rs`), `GitError` and `SurfaceError`, and the struct `IoError`. A
-  missing tool is not an error: it is the run status
-  `SurfaceStatus::ToolMissing`.
+  `ConfigError` (defined in `src/config.rs`, re-exported from `src/errors.rs`),
+  `GitError` and `SurfaceError`, and the struct `IoError`. A missing tool is not
+  an error: it is the run status `SurfaceStatus::ToolMissing`.
 - A new failure in an existing subsystem adds a variant to that subsystem's
   enum, not a new top-level variant and not a bare `String`.
   `InvalidCli(String)` is the deliberate exception for CLI usage errors.
