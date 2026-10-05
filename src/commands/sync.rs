@@ -1,7 +1,7 @@
 //! `fml sync` command: synchronizes native tool configs from `formality.toml`.
 //!
 //! Manages native config file synchronization across surfaces. Formatting and
-//! linting passes are handled by [`super::fmt`] and [`super::lint`].
+//! linting passes are handled by `super::fmt` and `super::lint`.
 
 use std::path;
 

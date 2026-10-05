@@ -1,7 +1,7 @@
 //! Terminal UI components and layout rendering.
 //!
 //! Provides table formatting and color control. Table rendering implementation
-//! lives in [`table`], and path formatting lives in [`paths`].
+//! lives in `table`, and path formatting lives in `paths`.
 
 /// Semantic table layout and rendering components.
 pub mod table;

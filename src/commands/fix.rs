@@ -1,8 +1,8 @@
 //! `fml fix` command: runs a lint-fix pass followed by a format pass.
 //!
-//! Dispatches the `[Lint, Format]` plan through [`crate::engine::runner::Runner`].
-//! Read-only linting is handled by [`super::lint`], formatting alone is handled
-//! by [`super::fmt`], and tool installation belongs to [`super::doctor`].
+//! Dispatches the `[Lint, Format]` plan through `crate::engine::runner::Runner`.
+//! Read-only linting is handled by `super::lint`, formatting alone is handled
+//! by `super::fmt`, and tool installation belongs to `super::doctor`.
 
 use std::path;
 

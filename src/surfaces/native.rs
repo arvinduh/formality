@@ -1,7 +1,7 @@
 //! Native tool configuration file serializers and diffing.
 //!
 //! Generates and compares tool-specific configurations (e.g. `.rustfmt.toml`).
-//! EditorConfig aggregation is owned by [`super::editorconfig`].
+//! EditorConfig aggregation is owned by `super::editorconfig`.
 
 use std::time;
 
@@ -91,7 +91,7 @@ pub fn serialize_json_pretty<T: Serialize>(
 ///
 /// # Errors
 ///
-/// Returns a [`FormalityError`] if JSON, YAML, or TOML serialization fails.
+/// Returns a [`errors::FormalityError`] if JSON, YAML, or TOML serialization fails.
 #[expect(
   clippy::case_sensitive_file_extension_comparisons,
   reason = "native config filenames are fixed static ASCII strings"

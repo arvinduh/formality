@@ -1,7 +1,7 @@
 //! JSON Schema generation for `formality.toml`.
 //!
-//! Produces the JSON Schema specification from [`super::FormalityConfig`].
-//! Parsing and runtime validation of configuration files are owned by [`super::strict`].
+//! Produces the JSON Schema specification from `super::FormalityConfig`.
+//! Parsing and runtime validation of configuration files are owned by `super::strict`.
 
 use schemars;
 use serde_json;

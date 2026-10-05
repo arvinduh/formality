@@ -1,9 +1,9 @@
 //! Formality (`fml`) is a unified CLI for formatting, linting, and syncing configurations across multiple language surfaces.
 //!
 //! Owns top-level execution entry points and command dispatch. Subcommand
-//! implementations live in [`commands`], configuration models live in
-//! [`config`], execution engine lives in [`engine`], and language definitions
-//! live in [`surfaces`].
+//! implementations live in `commands`, configuration models live in
+//! `config`, execution engine lives in `engine`, and language definitions
+//! live in `surfaces`.
 
 /// Command-line argument parsing definitions.
 pub mod cli;

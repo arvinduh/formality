@@ -1,7 +1,7 @@
 //! Surface registry and fleet lookup.
 //!
-//! Discovers and catalogs all active [`LanguageSurface`] implementations.
-//! Tool discovery and install chains are owned by [`super::tooling`].
+//! Discovers and catalogs all active `LanguageSurface` implementations.
+//! Tool discovery and install chains are owned by `super::tooling`.
 
 use std::cell;
 use std::path;

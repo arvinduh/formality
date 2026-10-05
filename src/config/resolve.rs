@@ -1,7 +1,7 @@
 //! Layered configuration file discovery, loading, and merging.
 //!
 //! Resolves configuration cascades across defaults, user settings, and project files.
-//! Strict validation of individual configuration files is owned by [`super::strict`].
+//! Strict validation of individual configuration files is owned by `super::strict`.
 
 use std::collections;
 use std::fmt::Write;
@@ -28,7 +28,7 @@ impl config::FormalityConfig {
     }
   }
 
-  /// Constructs a [`FormalityConfig`] initialized with standard global default settings.
+  /// Constructs a [`config::FormalityConfig`] initialized with standard global default settings.
   #[must_use]
   pub fn with_defaults() -> Self {
     Self {
@@ -41,9 +41,9 @@ impl config::FormalityConfig {
   ///
   /// # Errors
   ///
-  /// Returns a [`ConfigError::Parse`] if the TOML is invalid,
-  /// [`ConfigError::UnknownKey`] for a key this `fml` does not accept, or
-  /// [`ConfigError::InvalidValue`] if a value has the wrong type.
+  /// Returns a [`config::ConfigError::Parse`] if the TOML is invalid,
+  /// [`config::ConfigError::UnknownKey`] for a key this `fml` does not accept, or
+  /// [`config::ConfigError::InvalidValue`] if a value has the wrong type.
   pub fn parse_str(
     content: &str,
     path: &path::Path,
@@ -55,7 +55,7 @@ impl config::FormalityConfig {
   ///
   /// # Errors
   ///
-  /// Returns a [`ConfigError::Io`] if the file cannot be read, or [`ConfigError::Parse`] if the TOML is invalid.
+  /// Returns a [`config::ConfigError::Io`] if the file cannot be read, or [`config::ConfigError::Parse`] if the TOML is invalid.
   pub fn load_file(path: &path::Path) -> Result<Self, config::ConfigError> {
     let content =
       fs::read_to_string(path).map_err(|source| config::ConfigError::Io {
@@ -234,7 +234,7 @@ impl config::FormalityConfig {
   ///
   /// # Errors
   ///
-  /// Returns a [`ConfigError`] if reading or parsing any discovered configuration file fails.
+  /// Returns a [`config::ConfigError`] if reading or parsing any discovered configuration file fails.
   pub fn load_layered(
     repo_root: Option<&path::Path>,
   ) -> Result<(Self, Option<path::PathBuf>), config::ConfigError> {
@@ -255,7 +255,7 @@ impl config::FormalityConfig {
   ///
   /// # Errors
   ///
-  /// Returns a [`ConfigError`] if reading or parsing any discovered configuration file fails.
+  /// Returns a [`config::ConfigError`] if reading or parsing any discovered configuration file fails.
   pub fn load_layered_with_path(
     project_config_path: Option<&path::Path>,
   ) -> Result<(Self, Option<path::PathBuf>), config::ConfigError> {

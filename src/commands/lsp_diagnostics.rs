@@ -1,7 +1,7 @@
 //! Structured per-violation lint diagnostics for `fml lsp` (Fixes #159 [pre-recreation]).
 //!
 //! `fml lint`'s CLI output is human-readable free text (see
-//! [`surfaces::LanguageSurface::lint`] — its `SurfaceStatus::ViolationsFound`
+//! `surfaces::LanguageSurface::lint` — its `SurfaceStatus::ViolationsFound`
 //! carries only a rendered `message: String`, not structured per-violation
 //! data). The LSP's Problems panel needs real per-violation `lsp_types::Diagnostic`s
 //! (file/line/column/message/severity), so this module shells out to each
@@ -29,7 +29,7 @@
 //! flags. `markdown` is the one exception with a real core-setting
 //! dependency: `markdownlint_diagnostics` resolves formality.toml's MD013
 //! settings (`line_length`/`code_blocks`/`tables`) via
-//! [`surfaces::markdown::write_markdownlint_temp_config`] and passes
+//! `surfaces::markdown::write_markdownlint_temp_config` and passes
 //! them inline, precisely because markdownlint-cli2 (unlike the other
 //! tools here) has no meaningful built-in default rule set of its own to
 //! fall back on that would match formality.toml's — see that function's
@@ -39,7 +39,7 @@
 //! =======================================
 //! Every `*_diagnostics` function here returns `Option<Vec<lsp_types::Diagnostic>>`,
 //! and the two cases mean very different things to the caller
-//! ([`crate::commands::lsp::Backend::did_save`]): `None` means the
+//! (`crate::commands::lsp::Backend::did_save`): `None` means the
 //! structured tool could not be run at all this time — its binary is
 //! missing, the project has no marker file it needs (`Cargo.toml`,
 //! `go.mod`, `checkstyle.xml`), or spawning it failed outright — and the
@@ -588,7 +588,7 @@ fn parse_markdownlint_line(
 /// line on stderr, see [`surfaces::markdown::build_markdownlint_args`]
 /// — into `lsp_types::Diagnostic`s for violations reported against `target_file`.
 /// markdownlint-cli2 — the binary preferred here and by
-/// [`surfaces::markdown::MarkdownSurface::lint`] — has no JSON
+/// `MarkdownSurface::lint` — has no JSON
 /// reporter reachable by CLI flag (its `--help` lists only `--config`,
 /// `--configPointer`, `--fix`, `--format`, `--help` and `--no-globs`; JSON
 /// output requires an `outputFormatters` block in a config file written to

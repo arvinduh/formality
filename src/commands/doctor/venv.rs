@@ -1,7 +1,7 @@
 //! Virtual environment detection for the Python surface in `fml doctor`.
 //!
 //! Inspects active Python virtual environments. Git ignore checks are owned by
-//! [`super::gitignore`].
+//! `super::gitignore`.
 
 use std::path;
 

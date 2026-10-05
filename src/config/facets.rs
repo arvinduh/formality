@@ -1,7 +1,7 @@
 //! Cross-language layout facet definitions.
 //!
-//! Defines the shared formatting facet vocabulary ([`Facet`], [`FacetSupport`]).
-//! Language surface implementations honoring these facets live in [`crate::surfaces`].
+//! Defines the shared formatting facet vocabulary (`Facet`, `FacetSupport`).
+//! Language surface implementations honoring these facets live in `crate::surfaces`.
 
 use schemars;
 use serde;

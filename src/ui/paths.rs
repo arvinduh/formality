@@ -1,7 +1,7 @@
 //! Shared path formatting for user-facing output.
 //!
 //! Normalizes filesystem paths relative to the workspace root. Table framing
-//! and rendering are owned by [`super::table`].
+//! and rendering are owned by `super::table`.
 
 use std::cmp;
 use std::env;
@@ -408,19 +408,19 @@ const RELATIVIZE_LINE_PREFIXES: [&str; 4] =
 /// Deliberately **not** a general search-and-replace, and **not** a diff-state
 /// machine (color codes and the leading-space context marker both defeat that).
 /// A line is rewritten only when, after ANSI stripping, it either:
-/// - begins with one of [`RELATIVIZE_LINE_PREFIXES`] — a line whose whole
+/// - begins with one of `RELATIVIZE_LINE_PREFIXES` — a line whose whole
 ///   payload is paths (unified-diff file headers). *Every* token-boundary
 ///   occurrence on such a line is rewritten
-///   ([`RewriteScope::WholeLine`]), which is correct by construction: a
+///   (`RewriteScope::WholeLine`), which is correct by construction: a
 ///   unified-diff header carries nothing but paths, or
-/// - begins with `root` itself (any [`root_prefixes`] spelling) — a line
+/// - begins with `root` itself (any `root_prefixes` spelling) — a line
 ///   whose *leading token* is an absolute path under `root`, the shape
 ///   compiler- and linter-style tools use for `<path>:<line>:<col> message`
 ///   diagnostics. Observed live from yamllint, clang-format, clang-tidy and
 ///   `gofmt -l` when invoked with absolute file arguments; markdownlint-cli2
 ///   is *not* a live case, since it emits cwd-relative paths and fml always
 ///   runs it with `current_dir(root)`. Here only that leading token is
-///   rewritten ([`RewriteScope::LeadingTokenOnly`]) — see the decision note
+///   rewritten (`RewriteScope::LeadingTokenOnly`) — see the decision note
 ///   below.
 ///
 /// # Decision (#183): the leading-path arm rewrites the leading token only
@@ -451,17 +451,17 @@ const RELATIVIZE_LINE_PREFIXES: [&str; 4] =
 /// corrupted, on any line. On a rewritten line the path text is spliced out
 /// of the original, so any ANSI styling *around* the matched path is
 /// preserved — including a hyperlink escape (OSC 8) wrapped around it, see
-/// [`relativize_line`]. Within a rewritten diff header the strip is still
-/// token-anchored (see [`occurrence_is_rewritable`]) so a sibling dir or a
+/// `relativize_line`. Within a rewritten diff header the strip is still
+/// token-anchored (see `occurrence_is_rewritable`) so a sibling dir or a
 /// longer superpath is left alone.
 ///
 /// Escapes *around* a matched path — before, or wrapping it — are handled;
-/// on leading-path diagnostic lines ([`RewriteScope::LeadingTokenOnly`]),
+/// on leading-path diagnostic lines (`RewriteScope::LeadingTokenOnly`),
 /// escape sequences landing *inside* the root prefix itself, splitting it
 /// across two styled spans (e.g. a tool styling directory and basename
 /// separately), are also handled by preserving the interleaved escapes while
 /// stripping the prefix characters (#203). On diff headers
-/// ([`RewriteScope::WholeLine`]), prefixes are matched contiguously in raw
+/// (`RewriteScope::WholeLine`), prefixes are matched contiguously in raw
 /// text.
 #[must_use]
 pub fn relativize_text(root: &path::Path, text: &str) -> String {

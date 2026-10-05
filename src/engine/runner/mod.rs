@@ -1,11 +1,11 @@
-//! [`Runner`]: the single dispatch point for every subcommand that acts
+//! `Runner`: the single dispatch point for every subcommand that acts
 //! across surfaces (`fmt`, `lint`, `sync`, `fix`) — builds one
-//! [`ExecutionContext`] per surface and fans out via `rayon::par_iter`. See
+//! `ExecutionContext` per surface and fans out via `rayon::par_iter`. See
 //! `docs/style-guide.md` §4 for the `Arc`-sharing pattern its fields follow.
 //!
-//! Every such subcommand is expressed as a [`Plan`]: an ordered list of
-//! [`Pass`]es plus one [`Mode`]. `--check` is the only mode flag in the CLI
-//! and selects [`Mode::Report`]; its absence selects [`Mode::Write`].
+//! Every such subcommand is expressed as a `Plan`: an ordered list of
+//! `Pass`es plus one `Mode`. `--check` is the only mode flag in the CLI
+//! and selects `Mode::Report`; its absence selects `Mode::Write`.
 //! `fml fix --check` therefore needs no execution code of its own — it is
 //! `[Lint, Format]` under `Report`, a plan nobody had spelled before.
 
@@ -24,18 +24,18 @@ use crate::errors;
 use crate::surfaces;
 use crate::ui::table;
 
-/// One unit of work the runner can dispatch to a [`LanguageSurface`].
+/// One unit of work the runner can dispatch to a [`surfaces::LanguageSurface`].
 ///
 /// A pass is not a command: `fml fix` is two passes, and `fml lint` is one
 /// pass that only ever runs in [`Mode::Report`]. Commands are spelled as
 /// [`Plan`]s over these.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Pass {
-  /// Lint pass — [`LanguageSurface::lint`].
+  /// Lint pass — [`surfaces::LanguageSurface::lint`].
   Lint,
-  /// Format pass — [`LanguageSurface::format`].
+  /// Format pass — [`surfaces::LanguageSurface::format`].
   Format,
-  /// Native-config sync pass — [`LanguageSurface::sync_config`].
+  /// Native-config sync pass — [`surfaces::LanguageSurface::sync_config`].
   ConfigSync,
 }
 
@@ -68,7 +68,7 @@ impl Mode {
 /// shape every surface-acting subcommand is dispatched as.
 ///
 /// Passes run in list order and their per-surface results are folded
-/// left-to-right by [`combine_pass_results`], so `[Lint, Format]` reports
+/// left-to-right by `combine_pass_results`, so `[Lint, Format]` reports
 /// the lint pass's findings ahead of the format pass's.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Plan {
@@ -76,11 +76,11 @@ pub struct Plan {
   pub passes: Vec<Pass>,
   /// Whether those passes may write to disk.
   pub mode: Mode,
-  /// Whether a surface reporting [`SurfaceStatus::ToolMissing`] alone should
+  /// Whether a surface reporting [`surfaces::SurfaceStatus::ToolMissing`] alone should
   /// keep the run's exit code clean (#252 / #163). Only `fmt`, `lint`, and
   /// `fix` expose this on the CLI (`--allow-missing`) — `sync` and `doctor`
   /// don't, so [`Plan::sync`] always leaves it `false`. A real violation or
-  /// an [`SurfaceStatus::ExecutionError`] still exits non-zero regardless of
+  /// an [`surfaces::SurfaceStatus::ExecutionError`] still exits non-zero regardless of
   /// this flag; it only silences the "missing tool" precondition itself.
   pub allow_missing: bool,
 }

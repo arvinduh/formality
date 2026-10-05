@@ -1,7 +1,7 @@
 //! Tool-binary discovery, path resolution, and installation chains.
 //!
 //! Locates executable binaries on `PATH` and builds process commands. Version
-//! parsing and MSTV policy enforcement are owned by [`crate::engine::version`].
+//! parsing and MSTV policy enforcement are owned by `crate::engine::version`.
 
 use std::collections;
 use std::path;
@@ -59,7 +59,7 @@ pub enum InstallMethod {
   /// — the venv's `bin`, or the system prefix — which is on `PATH` by
   /// construction whenever that `pip` was invocable. The user scheme is still
   /// reachable without the flag (PEP 370 configuration, distro-patched pips),
-  /// so [`KnownInstallDir::PythonUser`] covers that directory anyway.
+  /// so `KnownInstallDir::PythonUser` covers that directory anyway.
   Pip(&'static str),
   /// `pip3 install <package>`. Requires `pip3` on PATH. Same
   /// `name==version` pinning convention as [`InstallMethod::Uv`], and the
@@ -310,7 +310,7 @@ impl InstallMethod {
   }
 }
 
-/// Renders `binary`'s registered [`ALL_CHAINS`] install-preference chain as a
+/// Renders `binary`'s registered `ALL_CHAINS` install-preference chain as a
 /// single human-readable hint string, in the chain's own order — the one
 /// place install guidance is composed from the chain data instead of being
 /// restated by hand per call site (Fixes #264). A tool with no chain row
@@ -752,7 +752,7 @@ const ALL_CHAINS: &[ToolChain] = &[
 ];
 
 /// Resolves `markdownlint`/`clippy` legacy binary-name aliases to their
-/// canonical [`ALL_CHAINS`] row name (`markdownlint-cli2`/`clippy-driver`).
+/// canonical `ALL_CHAINS` row name (`markdownlint-cli2`/`clippy-driver`).
 /// Shared by [`install_chain_for`] and [`pinned_version_for`] so alias
 /// resolution lives in exactly one place; config validation also uses it to
 /// suggest the right `extra_args` key.
@@ -766,7 +766,7 @@ pub fn canonical_chain_binary(binary: &str) -> &str {
 }
 
 /// Looks up the ordered installer preference chain for a tool binary name,
-/// via [`ALL_CHAINS`] above.
+/// via `ALL_CHAINS` above.
 #[must_use]
 pub fn install_chain_for(binary: &str) -> Option<&'static [InstallMethod]> {
   let canonical = canonical_chain_binary(binary);
@@ -777,11 +777,11 @@ pub fn install_chain_for(binary: &str) -> Option<&'static [InstallMethod]> {
 }
 
 /// The version `<binary> --version` is expected to report when it's
-/// installed to the pin `fml doctor --install` currently uses, per [`ALL_CHAINS`]'s
+/// installed to the pin `fml doctor --install` currently uses, per `ALL_CHAINS`'s
 /// `expected_binary_version` field. Returns `None` — a "no known pin to
 /// compare against" result, not an error — when the tool has no registered
 /// chain row, or (deliberately, for most rows — see the doc comment above
-/// [`ALL_CHAINS`]) when the binary's own version output isn't confirmed to
+/// `ALL_CHAINS`) when the binary's own version output isn't confirmed to
 /// track the package-manager pin 1:1. Callers (`fml doctor`'s `[STALE]`
 /// check) must treat `None` as "skip the pin comparison", never crash on
 /// it, and never treat it as "definitely up to date" either — it means
@@ -834,7 +834,7 @@ static BINARY_CACHE: sync::OnceLock<
 /// fallback below, re-spawn a process).
 ///
 /// Checks `PATH` first via `which::which`, then -- only if that fails --
-/// falls back to [`resolve_via_known_install_dir`], which consults the one
+/// falls back to `resolve_via_known_install_dir`, which consults the one
 /// known-but-not-on-`PATH` install location this crate's installers use
 /// (see that function's doc comment). This is the lookup-time half of the
 /// fix for #293: a tool an *earlier* `fml` process installed into that
@@ -845,9 +845,9 @@ static BINARY_CACHE: sync::OnceLock<
 /// is taken to read, dropped, and only re-taken to insert. That is load
 /// bearing twice over:
 ///
-/// 1. *Correctness.* [`resolve_via_known_install_dir`] spawns `go env`
+/// 1. *Correctness.* `resolve_via_known_install_dir` spawns `go env`
 ///    through [`create_tool_command`], which calls **back into this
-///    function** to resolve `go` itself. [`BINARY_CACHE`]'s
+///    function** to resolve `go` itself. `BINARY_CACHE`'s
 ///    `sync::Mutex` is not reentrant, so re-locking it on the same
 ///    thread while the first guard was alive is a documented
 ///    panic-or-deadlock (a deadlock on Windows' SRWLOCK) -- and it would
@@ -880,7 +880,7 @@ pub fn resolve_binary_path(binary: &str) -> Option<path::PathBuf> {
   resolved
 }
 
-/// Evicts `binary`'s entry (if any) from [`BINARY_CACHE`], forcing the next
+/// Evicts `binary`'s entry (if any) from `BINARY_CACHE`, forcing the next
 /// [`resolve_binary_path`]/[`check_binary_exists`] call for it to re-hit the
 /// filesystem instead of returning a stale memoized result.
 ///
@@ -1137,7 +1137,7 @@ fn run_cargo_binstall_bootstrap() -> bool {
 /// install path on every OS instead of silently dropping straight to
 /// `cargo install --locked` source compilation just because `cargo-binstall`
 /// itself hadn't been bootstrapped yet. Side-effecting (spawns a network
-/// request) and memoized at most once per process via [`BINSTALL_BOOTSTRAP`]
+/// request) and memoized at most once per process via `BINSTALL_BOOTSTRAP`
 /// -- callers must only invoke this from an actual `--install` code path,
 /// never from a read-only status scan (`fml doctor` without `--install`,
 /// `fml fmt`/`lint` preflight without `--install`), which must stay free of
@@ -1229,7 +1229,7 @@ fn binstall_bootstrap_would_fix_pin_lag(
 ///    multi-minute source build.
 /// 2. A pin-carrying `CargoBinstall` entry sits ahead of the currently-winning
 ///    installer, which can't pin to the tool's confirmed version -- see
-///    [`binstall_bootstrap_would_fix_pin_lag`].
+///    `binstall_bootstrap_would_fix_pin_lag`.
 ///
 /// Deliberately narrower than "the chain merely contains a `CargoBinstall`
 /// step": `taplo`'s chain reaches `Npm` well before its `CargoBinstall`
@@ -1315,7 +1315,7 @@ fn merge_path_entries(current: &str, additional: &str) -> String {
 /// process's inherited environment block, nor that of any child it starts
 /// later. Without this, a tool Scoop/`winget` just
 /// installed mid-run can be completely unresolvable for the rest of this
-/// invocation: not a [`BINARY_CACHE`] staleness problem (already fixed by
+/// invocation: not a `BINARY_CACHE` staleness problem (already fixed by
 /// [`forget_binary`]) but a genuine "this process's `PATH` string does not
 /// contain that directory at all" problem underneath it, which shows up as
 /// the tool's post-install version probe reporting "an unparseable
@@ -1856,7 +1856,7 @@ fn resolve_via_known_install_dir_with(
 /// which handles the separate in-process caching half of the same
 /// symptom). This is *not* the place a new [`InstallMethod`] whose bin
 /// directory isn't on `PATH` gets taught about -- that is
-/// [`KnownInstallDir::for_method`], which fixes the cross-process case as
+/// `KnownInstallDir::for_method`, which fixes the cross-process case as
 /// well and whose `match` is exhaustive so the decision cannot be skipped.
 /// What is left here is only the one fix-up a *lookup* cannot perform: a
 /// `PATH` change another process already made durably, which this
@@ -1864,7 +1864,7 @@ fn resolve_via_known_install_dir_with(
 ///
 /// So `go install`, `pipx`, `uv` and `pip` are all absent from the match
 /// below: a same-process `PATH` mutation would fix nothing that
-/// [`resolve_via_known_install_dir`] doesn't already fix at lookup time,
+/// `resolve_via_known_install_dir` doesn't already fix at lookup time,
 /// for this process *and* the next one. Scoop and winget keep their arm
 /// because it also puts their dirs on `PATH` for the tools this process
 /// spawns; later processes rely on the known-dir lookup (Issue #478).
@@ -1889,7 +1889,7 @@ pub fn refresh_path_after_install(program: &str) {
 /// falling back to the bare name only when nothing resolved at all. That is
 /// the execution half of #293's fix and it has to match the detection half:
 /// `check_binary_exists`/`tool_missing_guard` decide a tool is present via
-/// `resolve_binary_path`, which consults every [`KnownInstallDir`] the
+/// `resolve_binary_path`, which consults every `KnownInstallDir` the
 /// binary's own install chain could have written to -- `go install`'s output
 /// directory (`GOBIN`, else `$GOPATH/bin`), pipx/uv/pip's `~/.local/bin`
 /// (#297), Scoop's `shims`, winget's `Links`, winget's LLVM installer

@@ -1,7 +1,7 @@
 //! Kotlin language surface: formats and lints via `ktlint`.
 //!
-//! Implements [`super::LanguageSurface`] for Kotlin. EditorConfig aggregation
-//! is owned by [`super::editorconfig`].
+//! Implements `super::LanguageSurface` for Kotlin. EditorConfig aggregation
+//! is owned by `super::editorconfig`.
 
 use std::path;
 use std::time;

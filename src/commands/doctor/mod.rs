@@ -1,8 +1,8 @@
 //! `fml doctor` command: probes toolchains and reports environment health.
 //!
-//! Checks binary existence and versions via [`crate::engine::version`] and
+//! Checks binary existence and versions via `crate::engine::version` and
 //! provides installation hints. Execution of linters and formatters is owned
-//! by [`crate::engine::runner`].
+//! by `crate::engine::runner`.
 
 /// Gitignore workspace hygiene validation.
 pub mod gitignore;
@@ -463,7 +463,7 @@ fn print_install_summary_table(
 
 /// Preflight check for `fml fmt`, `fml lint`, and `fml fix`: scans all
 /// required tools for the active target surfaces and emits a non-blocking
-/// warning to stderr if any tool is present but [`ToolStatus::Stale`]
+/// warning to stderr if any tool is present but `ToolStatus::Stale`
 /// relative to its pinned version.
 pub fn preflight_warn_stale_tools(
   surfaces: &[Box<dyn LanguageSurface>],
@@ -1360,7 +1360,7 @@ fn print_stale_unpinnable_warnings(
   );
 }
 
-/// The informational message printed by [`print_sync_notice`], exposed as a
+/// The informational message printed by `print_sync_notice`, exposed as a
 /// standalone constant so it can be asserted on directly in tests without
 /// capturing stdout.
 pub const SYNC_NOTICE_SUMMARY: &str = "`fml sync` is optional for the primary fml fmt / fml lint / VS Code workflow now \

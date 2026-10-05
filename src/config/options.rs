@@ -1,7 +1,7 @@
 //! Strongly-typed option structs for each language surface.
 //!
 //! Defines the per-language option representations deserialized from `[lang.*]` sections.
-//! Cascaded resolution of these options is owned by [`super::resolve`].
+//! Cascaded resolution of these options is owned by `super::resolve`.
 
 use schemars;
 use serde;

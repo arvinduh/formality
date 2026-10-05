@@ -1,7 +1,7 @@
 //! Shared Prettier configuration generator and CLI argument builder.
 //!
 //! Models Prettier options and command-line arguments. Surfaces driving Prettier
-//! include [`super::markdown`], [`super::json`], and [`super::yaml`].
+//! include `super::markdown`, `super::json`, and `super::yaml`.
 
 use std::fmt::Write;
 use std::path;
@@ -121,7 +121,7 @@ pub const PRETTIER_PASS_NAME: &str = "prettier";
 /// to call `sync_native_config::<PrettierConfig>` from their own
 /// `sync_config` — which the runner invokes concurrently under
 /// `surfaces.par_iter()`. Three threads
-/// therefore ran the read-compare-write in [`sync_file_helper`] against the
+/// therefore ran the read-compare-write in `sync_file_helper` against the
 /// same path with no coordination (#130). Consequences, in ascending
 /// severity:
 ///

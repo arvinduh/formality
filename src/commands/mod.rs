@@ -1,8 +1,8 @@
 //! Standalone command implementations for the Formality CLI.
 //!
 //! Coordinates user-requested actions by delegating to the execution engine in
-//! [`crate::engine`], config loading in [`crate::config`], and language surfaces
-//! in [`crate::surfaces`].
+//! `crate::engine`, config loading in `crate::config`, and language surfaces
+//! in `crate::surfaces`.
 
 /// Doctor diagnostic commands for workspace and toolchain verification.
 pub mod doctor;
@@ -33,7 +33,7 @@ use crate::errors;
 use crate::surfaces;
 use crate::surfaces::LanguageSurface;
 
-/// Dispatches a [`Plan`] across target surfaces for the `fmt`, `lint`, and
+/// Dispatches a [`engine::Plan`] across target surfaces for the `fmt`, `lint`, and
 /// `fix` commands after resolving git paths, target surfaces, and preflight
 /// tool requirements. Provisioning missing tools is `fml doctor --install`'s
 /// job now, not these commands' — see #282; this dispatch only warns about
@@ -159,7 +159,7 @@ fn normalize_path(path: &path::Path) -> path::PathBuf {
 ///
 /// # Errors
 ///
-/// Returns a [`FormalityError`] if both `staged` and `changed` are set, or if
+/// Returns a [`errors::FormalityError`] if both `staged` and `changed` are set, or if
 /// the underlying git query fails.
 pub fn resolve_git_paths(
   root: &path::Path,
@@ -257,7 +257,7 @@ fn get_git_diff_files(
 ///
 /// # Errors
 ///
-/// Returns a [`FormalityError`] if git execution fails or the git command cannot be run.
+/// Returns a [`errors::FormalityError`] if git execution fails or the git command cannot be run.
 pub fn get_git_staged_files(
   root: &path::Path,
 ) -> Result<Vec<path::PathBuf>, errors::FormalityError> {
@@ -268,7 +268,7 @@ pub fn get_git_staged_files(
 ///
 /// # Errors
 ///
-/// Returns a [`FormalityError`] if git execution fails or the git command cannot be run.
+/// Returns a [`errors::FormalityError`] if git execution fails or the git command cannot be run.
 pub fn get_git_changed_files(
   root: &path::Path,
 ) -> Result<Vec<path::PathBuf>, errors::FormalityError> {
@@ -283,7 +283,7 @@ pub fn get_git_changed_files(
 ///
 /// # Errors
 ///
-/// Returns a [`FormalityError`] if `lang_filter` names a surface that doesn't
+/// Returns a [`errors::FormalityError`] if `lang_filter` names a surface that doesn't
 /// exist.
 pub fn resolve_target_surfaces(
   root: &path::Path,

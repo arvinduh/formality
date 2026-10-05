@@ -1,7 +1,7 @@
 //! JavaScript/TypeScript language surface: formats and lints via `biome`.
 //!
-//! Implements [`super::LanguageSurface`] for JS/TS, syncing `biome.json`.
-//! Fleet registration is owned by [`super::registry`].
+//! Implements `super::LanguageSurface` for JS/TS, syncing `biome.json`.
+//! Fleet registration is owned by `super::registry`.
 
 use crate::config::facets;
 use crate::config::facets::DeclaresFacets;

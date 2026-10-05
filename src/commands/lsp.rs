@@ -79,7 +79,7 @@ impl FormalityLsp {
 
   /// Returns the cached configuration, or loads and caches it if not yet present.
   ///
-  /// An invalid config is reported once (see [`Self::load_config`]) and the
+  /// An invalid config is reported once (see `Self::load_config`) and the
   /// built-in defaults are cached in its place, so later requests reuse them
   /// instead of re-reporting the same error.
   ///
@@ -411,7 +411,7 @@ impl tower_lsp::LanguageServer for FormalityLsp {
 // Formatting helper functions
 // ---------------------------------------------------------------------------
 
-/// Computes the whole-document LSP [`Range`] for the given document content.
+/// Computes the whole-document LSP `Range` for the given document content.
 ///
 /// Per the Language Server Protocol specification:
 /// - Line bounds are 0-indexed, so the end line is `line_count.saturating_sub(1)`.
@@ -436,7 +436,7 @@ pub fn full_document_range(text: &str) -> lsp_types::Range {
   }
 }
 
-/// Computes the [`TextEdit`] list required to replace the document with formatted content.
+/// Computes the `TextEdit` list required to replace the document with formatted content.
 ///
 /// Returns an empty vector if `before == after`.
 #[must_use]
@@ -532,8 +532,8 @@ fn serve_status(
 /// from `fml lsp`.
 ///
 /// Returns the exit status the LSP spec prescribes for `exit` (see
-/// [`exit_status`]), [`ExitStatus::Clean`] when stdin closes first, or
-/// [`ExitStatus::Error`] when a handler panics (see [`serve_status`]).
+/// `exit_status`), `ExitStatus::Clean` when stdin closes first, or
+/// `ExitStatus::Error` when a handler panics (see `serve_status`).
 ///
 /// # Panics
 ///

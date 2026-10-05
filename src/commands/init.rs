@@ -1,8 +1,8 @@
 //! `fml init` command: writes a starter `formality.toml`.
 //!
-//! Discovers candidate project surfaces via [`crate::surfaces::detect_surfaces_smart`]
+//! Discovers candidate project surfaces via `crate::surfaces::detect_surfaces_smart`
 //! and writes default configuration. Ongoing config syncing is handled by
-//! [`super::sync`].
+//! `super::sync`.
 
 use colored::Colorize;
 use std::path;

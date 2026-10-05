@@ -1,7 +1,7 @@
 //! Rust language surface: formats via `rustfmt` and lints via Clippy.
 //!
-//! Implements [`super::LanguageSurface`] for Rust, syncing `.rustfmt.toml`.
-//! Fleet registration is owned by [`super::registry`].
+//! Implements `super::LanguageSurface` for Rust, syncing `.rustfmt.toml`.
+//! Fleet registration is owned by `super::registry`.
 
 use std::path;
 use std::process;

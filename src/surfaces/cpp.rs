@@ -1,7 +1,7 @@
 //! C/C++ language surface: formats via `clang-format` and lints via `clang-tidy`.
 //!
-//! Implements [`super::LanguageSurface`] for C and C++, syncing `.clang-format`
-//! and `.clang-tidy`. Fleet registration is owned by [`super::registry`].
+//! Implements `super::LanguageSurface` for C and C++, syncing `.clang-format`
+//! and `.clang-tidy`. Fleet registration is owned by `super::registry`.
 
 use crate::config::facets;
 use crate::config::facets::DeclaresFacets;

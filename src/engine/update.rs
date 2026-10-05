@@ -1,7 +1,7 @@
 //! Background self-update check for newer releases.
 //!
 //! Probes GitHub releases asynchronously for updates. Toolchain version
-//! compatibility checks for installed linters/formatters are owned by [`super::version`].
+//! compatibility checks for installed linters/formatters are owned by `super::version`.
 
 use std::path;
 use std::time;
@@ -144,9 +144,9 @@ pub fn parse_latest_tag_from_json(body: &str) -> Option<String> {
 
 /// Compares a release tag (e.g. "v0.2.0" or "0.2.0") with the current version.
 ///
-/// Both sides are scraped by [`Version::parse`] (the custom extraction layer —
+/// Both sides are scraped by [`version::Version::parse`] (the custom extraction layer —
 /// it tolerates the `v` prefix `GitHub` tags carry); the `>` that decides the
-/// banner is `semver`-backed via [`Version`]'s `Ord`. An unparseable tag can
+/// banner is `semver`-backed via [`version::Version`]'s `Ord`. An unparseable tag can
 /// never trip the banner: it yields `false`, not a spurious "update available".
 #[must_use]
 pub fn is_newer_version(latest_tag: &str, current_version: &str) -> bool {

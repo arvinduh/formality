@@ -1,8 +1,8 @@
-//! `clap`-derived CLI argument definitions ([`Cli`], [`Commands`]) — the single source of truth for every `fml` subcommand's flags.
+//! `clap`-derived CLI argument definitions (`Cli`, `Commands`) — the single source of truth for every `fml` subcommand's flags.
 //!
 //! Owns argument schema definitions, flag parsing, and validation. Subcommand
-//! handlers live in [`crate::commands`], and top-level dispatch lives in
-//! [`crate::lib`].
+//! handlers live in `crate::commands`, and top-level dispatch lives in
+//! `crate::lib`.
 
 use std::path;
 

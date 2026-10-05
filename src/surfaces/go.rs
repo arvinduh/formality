@@ -1,7 +1,7 @@
 //! Go language surface: formats via `gofmt`/`goimports` and lints via `golangci-lint`.
 //!
-//! Implements [`super::LanguageSurface`] for Go, syncing `.golangci.yml`.
-//! Fleet registration is owned by [`super::registry`].
+//! Implements `super::LanguageSurface` for Go, syncing `.golangci.yml`.
+//! Fleet registration is owned by `super::registry`.
 
 use std::path;
 use std::sync;

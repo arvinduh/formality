@@ -1,8 +1,8 @@
 //! Language surfaces interface and shared fleet infrastructure.
 //!
-//! Defines the [`LanguageSurface`] trait and shared registry/lookup machinery.
+//! Defines the `LanguageSurface` trait and shared registry/lookup machinery.
 //! Concrete language implementations live in sibling submodules, while execution
-//! orchestration is owned by [`crate::engine`].
+//! orchestration is owned by `crate::engine`.
 
 /// C/C++ language surface implementation.
 pub mod cpp;
@@ -89,10 +89,10 @@ pub use tooling::{
   tool_missing_result, tool_would_benefit_from_cargo_binstall_bootstrap,
 };
 
-/// Execution context shared with every [`LanguageSurface`] invocation for a
+/// Execution context shared with every [`trait@LanguageSurface`] invocation for a
 /// single `fml` command.
 ///
-/// `root`, `paths`, `global_config`, and `candidate_files` are wrapped in [`Arc`] because the
+/// `root`, `paths`, `global_config`, and `candidate_files` are wrapped in [`std::sync::Arc`] because the
 /// runner builds one `ExecutionContext` per surface and dispatches them in
 /// parallel (`rayon::par_iter`), and all surfaces see the same values for
 /// these fields. For `paths`, `global_config`, and `candidate_files` this avoids a real

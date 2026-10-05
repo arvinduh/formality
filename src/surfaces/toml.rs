@@ -1,7 +1,7 @@
 //! TOML language surface: formats and lints via Taplo.
 //!
-//! Implements [`super::LanguageSurface`] for TOML, syncing `taplo.toml`.
-//! Fleet registration is owned by [`super::registry`].
+//! Implements `super::LanguageSurface` for TOML, syncing `taplo.toml`.
+//! Fleet registration is owned by `super::registry`.
 
 use std::path;
 use std::time;

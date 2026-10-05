@@ -1,5 +1,5 @@
-//! Strict parsing of one config document into a [`FormalityConfig`],
-//! turning a rejected key or value into a [`ConfigError`] that names its key
+//! Strict parsing of one config document into a `FormalityConfig`,
+//! turning a rejected key or value into a `ConfigError` that names its key
 //! path and line.
 //!
 //! The typed structs in `super` decide what a config may contain; this module

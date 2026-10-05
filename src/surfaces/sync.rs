@@ -1,7 +1,7 @@
 //! Configuration file synchronization support.
 //!
 //! Implements expected-versus-current file diffing and auto-generation header checks.
-//! High-level command coordination is owned by [`crate::commands::sync`].
+//! High-level command coordination is owned by `crate::commands::sync`.
 
 use std::path;
 use std::time;
@@ -210,11 +210,11 @@ enum PerFileCheckResult {
 /// Executes an in-place formatter on temporary copies of the given files in
 /// parallel and generates unified diffs between the original content and the
 /// formatted content, treating **any** non-zero formatter exit as
-/// [`SurfaceStatus::ViolationsFound`].
+/// [`surfaces::SurfaceStatus::ViolationsFound`].
 ///
 /// Surfaces whose formatter distinguishes "could not run" from a formatting
 /// result via its exit code should call [`diff_check_via_tempcopy_classified`]
-/// so a tool *failure* is reported as [`SurfaceStatus::ExecutionError`],
+/// so a tool *failure* is reported as [`surfaces::SurfaceStatus::ExecutionError`],
 /// consistently with the non-`--check` write path.
 pub fn diff_check_via_tempcopy(
   files: &[path::PathBuf],

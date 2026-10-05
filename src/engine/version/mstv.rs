@@ -1,7 +1,7 @@
 //! Minimum Supported Tool Version (MSTV) registry.
 //!
 //! Defines minimum supported version floors and probe strategies for tools.
-//! Version scraping and semver comparison logic are owned by [`super`].
+//! Version scraping and semver comparison logic are owned by `super`.
 
 use crate::engine::version;
 

@@ -1,6 +1,6 @@
-//! `fml lint` command: lints the resolved target surfaces via [`Runner`].
+//! `fml lint` command: lints the resolved target surfaces via `Runner`.
 //!
-//! `lint` never writes; applying fixes is [`super::fix`]'s job.
+//! `lint` never writes; applying fixes is `super::fix`'s job.
 
 use std::path;
 

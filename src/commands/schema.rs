@@ -1,7 +1,7 @@
 //! `fml schema` command: generates and writes or prints the configuration schema.
 //!
-//! Dispatches schema generation to [`crate::config::schema::generate_schema`].
-//! Strict schema parsing and validation live in [`crate::config::strict`].
+//! Dispatches schema generation to `crate::config::schema::generate_schema`.
+//! Strict schema parsing and validation live in `crate::config::strict`.
 
 use colored::Colorize;
 use std::path;

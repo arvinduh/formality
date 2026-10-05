@@ -1,7 +1,7 @@
 //! Markdown language surface: formats via Prettier and lints via markdownlint.
 //!
-//! Implements [`super::LanguageSurface`] for Markdown, syncing `.markdownlint.json`
-//! and `.prettierrc.json`. Fleet registration is owned by [`super::registry`].
+//! Implements `super::LanguageSurface` for Markdown, syncing `.markdownlint.json`
+//! and `.prettierrc.json`. Fleet registration is owned by `super::registry`.
 
 use crate::config;
 use crate::config::facets;
@@ -160,7 +160,7 @@ fn markdownlint_config_for_lang(
 /// takes effect for both the `--fix` pass and the plain lint pass — the only
 /// way to hand markdownlint-cli2 formality.toml's resolved settings, since
 /// unlike prettier/rustfmt it has no per-flag inline config mechanism (see
-/// [`write_markdownlint_temp_config`]).
+/// `write_markdownlint_temp_config`).
 #[must_use]
 pub fn build_markdownlint_args(
   files: &[path::PathBuf],

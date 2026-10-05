@@ -1,7 +1,7 @@
 //! Python language surface: formats and lints via Ruff.
 //!
-//! Implements [`super::LanguageSurface`] for Python, syncing `ruff.toml`.
-//! Fleet registration is owned by [`super::registry`].
+//! Implements `super::LanguageSurface` for Python, syncing `ruff.toml`.
+//! Fleet registration is owned by `super::registry`.
 
 use crate::config;
 use crate::config::facets;

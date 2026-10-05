@@ -1,7 +1,7 @@
 //! Unified output framing for CLI commands.
 //!
 //! Generates consistent borders, headers, and rules. Table content formatting
-//! is owned by [`super::render`].
+//! is owned by `super::render`.
 
 use unicode_width;
 
@@ -83,7 +83,7 @@ impl Frame {
   /// width are left exactly as-is.
   ///
   /// For notice / diagnostic prose only — not tables, whose columns are
-  /// already fitted by [`super::render`].
+  /// already fitted by `super::render`.
   #[must_use]
   pub fn wrap_body(&self, text: &str) -> String {
     text

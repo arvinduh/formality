@@ -1,7 +1,7 @@
 //! Table data model, styling, and layout definitions.
 //!
-//! Defines [`Table`], [`Row`], [`Cell`], and formatting styles. Terminal
-//! rendering is owned by [`render`], and output framing is owned by [`frame`].
+//! Defines `Table`, `Row`, `Cell`, and formatting styles. Terminal
+//! rendering is owned by `render`, and output framing is owned by `frame`.
 
 /// Comfy-table based terminal rendering and ANSI styling engine.
 pub mod render;

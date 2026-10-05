@@ -1,7 +1,7 @@
 //! Terminal and JSON table rendering implementation.
 //!
 //! Renders structured table models into styled terminal text or JSON. Framing
-//! rules are owned by [`super::frame`], and word wrapping is owned by [`super::wrap`].
+//! rules are owned by `super::frame`, and word wrapping is owned by `super::wrap`.
 
 use std::cmp;
 use std::io;

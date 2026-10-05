@@ -1,7 +1,7 @@
 //! Java language surface: formats via `google-java-format` and lints via `checkstyle`.
 //!
-//! Implements [`super::LanguageSurface`] for Java, syncing `checkstyle.xml`.
-//! Fleet registration is owned by [`super::registry`].
+//! Implements `super::LanguageSurface` for Java, syncing `checkstyle.xml`.
+//! Fleet registration is owned by `super::registry`.
 
 use crate::config::facets;
 use crate::config::facets::DeclaresFacets;
@@ -104,10 +104,10 @@ fn explain_jvm_incompatibility(
 /// immediately afterward ("Smart Format").
 ///
 /// ### XML Emission Special Case
-/// Unlike other surfaces (which serialize to JSON, TOML, or YAML via [`super::render_native_config`]),
+/// Unlike other surfaces (which serialize to JSON, TOML, or YAML via `super::render_native_config`),
 /// Checkstyle uses an XML DTD hierarchy with strict module nests and comment headers.
-/// `CheckstyleConfig` implements [`NativeConfig`] by emitting this XML module structure directly
-/// in [`NativeConfig::render`], integrating into the standard [`sync_native_config`] workflow
+/// `CheckstyleConfig` implements `NativeConfig` by emitting this XML module structure directly
+/// in `NativeConfig::render`, integrating into the standard `sync_native_config` workflow
 /// without requiring serde serialization overhead or an XML serializer crate.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct CheckstyleConfig {

@@ -1,8 +1,8 @@
 //! `formality.toml` parsing, cascade resolution, and typed models.
 //!
 //! Owns the configuration schema and layered resolution logic. Strict document
-//! syntax validation lives in [`strict`], option definitions live in [`options`],
-//! and schema generation lives in [`schema`].
+//! syntax validation lives in `strict`, option definitions live in `options`,
+//! and schema generation lives in `schema`.
 
 /// Formatting and linting layout facet definitions.
 pub mod facets;

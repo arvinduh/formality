@@ -1,7 +1,7 @@
 //! Cross-language `.editorconfig` generation and synchronization.
 //!
 //! Aggregates canonical formatting facets into a unified `.editorconfig`. Individual
-//! surface facet declarations are owned by each language surface in [`crate::surfaces`].
+//! surface facet declarations are owned by each language surface in `crate::surfaces`.
 
 use std::collections;
 use std::fmt::Write;

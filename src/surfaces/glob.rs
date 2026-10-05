@@ -1,7 +1,7 @@
 //! File discovery and path filtering helpers.
 //!
 //! Traverses directories and evaluates exclude patterns. Workspace root
-//! resolution is owned by [`crate::lib`].
+//! resolution is owned by `crate::lib`.
 
 use std::path;
 

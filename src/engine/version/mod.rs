@@ -5,12 +5,12 @@
 //!   (`go version go1.27.0 ...`, `0.44`, `18.1.8-0ubuntu1~22.04.1`,
 //!   `1.35.1.post1`). A non-semver suffix or 4th component is salvaged down to
 //!   the bare `MAJOR.MINOR.PATCH`; a malformed core (`01.2.3`) is not.
-//! - **Comparison (`semver`-backed):** [`Version`] ordering/precedence and the
+//! - **Comparison (`semver`-backed):** `Version` ordering/precedence and the
 //!   MSTV "installed >= minimum" check are delegated to the `semver` crate via
-//!   the sole crossing, [`Version::to_semver`].
+//!   the sole crossing, `Version::to_semver`.
 //!
 //! A version-shaped token that is invalid semver even bare surfaces as
-//! [`ToolStatus::UnknownVersion`] — never a silently-satisfied MSTV.
+//! `ToolStatus::UnknownVersion` — never a silently-satisfied MSTV.
 
 /// Minimum Supported Tool Version (MSTV) definitions and registry.
 pub mod mstv;
@@ -382,7 +382,7 @@ pub fn probe_tool_version(binary: &str) -> Option<Version> {
 
 /// A version *scraped* from a tool's `--version` banner. Owns no ordering
 /// logic of its own: comparison, precedence and the MSTV check are delegated
-/// to `semver` via [`Version::to_semver`].
+/// to `semver` via `Version::to_semver`.
 #[derive(Debug, Clone, Eq, PartialEq, Hash)]
 pub struct Version {
   /// Major version component.

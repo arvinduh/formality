@@ -1,8 +1,8 @@
 //! Crate-wide error type hierarchy and exit-status/diagnostic rendering.
 //!
-//! Owns [`FormalityError`] and [`ExitStatus`] for unified error reporting and
+//! Owns `FormalityError` and `ExitStatus` for unified error reporting and
 //! process exit codes. Subsystem-specific error types are owned by their respective
-//! modules (such as [`crate::config::ConfigError`]).
+//! modules (such as `crate::config::ConfigError`).
 
 pub use crate::config::ConfigError;
 
