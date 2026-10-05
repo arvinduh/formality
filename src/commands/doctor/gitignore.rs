@@ -1,7 +1,7 @@
 //! `.gitignore` cache hygiene diagnostics.
 
 use crate::surfaces::LanguageSurface;
-use std::path::Path;
+use std::path;
 
 /// Represents a missing `.gitignore` pattern category for a language surface.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -117,7 +117,7 @@ pub fn check_gitignore_hygiene_content(
 /// Checks `.gitignore` hygiene at `root` for active language surfaces.
 #[must_use]
 pub fn check_gitignore_hygiene(
-  root: &Path,
+  root: &path::Path,
   surfaces: &[Box<dyn LanguageSurface>],
 ) -> GitignoreHygieneReport {
   let gitignore_path = root.join(".gitignore");

@@ -1,6 +1,6 @@
 //! Virtual environment detection for the Python surface.
 
-use std::path::{Path, PathBuf};
+use std::path;
 
 /// Indicates the origin of a detected Python virtual environment.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -19,16 +19,16 @@ pub struct VirtualEnvInfo {
   /// Whether the virtual environment is currently active.
   pub is_active: bool,
   /// Path to the virtual environment directory, if present.
-  pub venv_path: Option<PathBuf>,
+  pub venv_path: Option<path::PathBuf>,
   /// Path to the resolved Python interpreter executable, if present.
-  pub interpreter_path: Option<PathBuf>,
+  pub interpreter_path: Option<path::PathBuf>,
   /// Source mechanism through which the virtual environment was detected.
   pub source: VirtualEnvSource,
 }
 
 /// Look for Python interpreter binary inside a virtual environment directory.
 #[must_use]
-pub fn find_venv_interpreter(venv_path: &Path) -> Option<PathBuf> {
+pub fn find_venv_interpreter(venv_path: &path::Path) -> Option<path::PathBuf> {
   let candidates = [
     venv_path.join("Scripts").join("python.exe"),
     venv_path.join("Scripts").join("python"),
@@ -48,25 +48,25 @@ pub fn find_venv_interpreter(venv_path: &Path) -> Option<PathBuf> {
 
 /// Finds the system Python interpreter binary on PATH (`python3` or `python`).
 #[must_use]
-pub fn find_system_python() -> Option<PathBuf> {
+pub fn find_system_python() -> Option<path::PathBuf> {
   which::which("python3")
     .or_else(|_| which::which("python"))
     .ok()
 }
 
 /// Detects active virtual environment (via `VIRTUAL_ENV`) or workspace virtualenv directory (`.venv`, `venv`, `env`, `.env`).
-pub fn detect_virtualenv(root: &Path) -> VirtualEnvInfo {
+pub fn detect_virtualenv(root: &path::Path) -> VirtualEnvInfo {
   detect_virtualenv_with_env(
     root,
-    std::env::var_os("VIRTUAL_ENV").map(PathBuf::from),
+    std::env::var_os("VIRTUAL_ENV").map(path::PathBuf::from),
   )
 }
 
 /// Detects virtual environment status given optional explicit `VIRTUAL_ENV` path.
 #[must_use]
 pub fn detect_virtualenv_with_env(
-  root: &Path,
-  env_var: Option<PathBuf>,
+  root: &path::Path,
+  env_var: Option<path::PathBuf>,
 ) -> VirtualEnvInfo {
   if let Some(venv_dir) = env_var.filter(|p| !p.as_os_str().is_empty()) {
     let interpreter =

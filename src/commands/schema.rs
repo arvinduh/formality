@@ -7,16 +7,16 @@
 //! generate the published schema asset.
 
 use colored::Colorize;
-use std::path::PathBuf;
+use std::path;
 
-use crate::config::schema::generate_schema;
-use crate::errors::{ExitStatus, FormalityError, IoError};
+use crate::config;
+use crate::errors;
 
 /// Runs the `fml schema` command: generates the JSON Schema for
 /// `formality.toml` and either writes it to `output` or prints it to stdout.
 #[must_use]
-pub fn run_schema(output: Option<PathBuf>) -> ExitStatus {
-  let schema_json = generate_schema();
+pub fn run_schema(output: Option<path::PathBuf>) -> errors::ExitStatus {
+  let schema_json = config::schema::generate_schema();
   if let Some(target_file) = output {
     if let Some(parent) = target_file.parent() {
       let _ = std::fs::create_dir_all(parent);
@@ -28,16 +28,16 @@ pub fn run_schema(output: Option<PathBuf>) -> ExitStatus {
           "[OK]".green().bold(),
           target_file.display().to_string().cyan()
         );
-        ExitStatus::Clean
+        errors::ExitStatus::Clean
       }
       Err(e) => {
-        FormalityError::Io(IoError::new(Some(target_file), e))
+        errors::FormalityError::Io(errors::IoError::new(Some(target_file), e))
           .print_diagnostic();
-        ExitStatus::Error
+        errors::ExitStatus::Error
       }
     }
   } else {
     println!("{schema_json}");
-    ExitStatus::Clean
+    errors::ExitStatus::Clean
   }
 }

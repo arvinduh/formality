@@ -1,9 +1,9 @@
 //! Structured per-violation lint diagnostics for `fml lsp` (Fixes #159 [pre-recreation]).
 //!
 //! `fml lint`'s CLI output is human-readable free text (see
-//! [`crate::surfaces::LanguageSurface::lint`] — its `SurfaceStatus::ViolationsFound`
+//! [`surfaces::LanguageSurface::lint`] — its `SurfaceStatus::ViolationsFound`
 //! carries only a rendered `message: String`, not structured per-violation
-//! data). The LSP's Problems panel needs real per-violation `Diagnostic`s
+//! data). The LSP's Problems panel needs real per-violation `lsp_types::Diagnostic`s
 //! (file/line/column/message/severity), so this module shells out to each
 //! supported linter's own machine-readable output mode directly — `cargo
 //! clippy --message-format=json` for Rust, `ruff check --output-format=json`
@@ -29,7 +29,7 @@
 //! flags. `markdown` is the one exception with a real core-setting
 //! dependency: `markdownlint_diagnostics` resolves formality.toml's MD013
 //! settings (`line_length`/`code_blocks`/`tables`) via
-//! [`crate::surfaces::markdown::write_markdownlint_temp_config`] and passes
+//! [`surfaces::markdown::write_markdownlint_temp_config`] and passes
 //! them inline, precisely because markdownlint-cli2 (unlike the other
 //! tools here) has no meaningful built-in default rule set of its own to
 //! fall back on that would match formality.toml's — see that function's
@@ -37,7 +37,7 @@
 //!
 //! `None` vs. `Some(vec![])` (Fixes #177 [pre-recreation])
 //! =======================================
-//! Every `*_diagnostics` function here returns `Option<Vec<Diagnostic>>`,
+//! Every `*_diagnostics` function here returns `Option<Vec<lsp_types::Diagnostic>>`,
 //! and the two cases mean very different things to the caller
 //! ([`crate::commands::lsp::Backend::did_save`]): `None` means the
 //! structured tool could not be run at all this time — its binary is
@@ -50,17 +50,13 @@
 //! never actually looked at it, silently regressing behind the `fml lint`
 //! fallback this module exists to enhance, not replace.
 
-use std::path::Path;
+use std::path;
 
-use serde::Deserialize;
-use tower_lsp::lsp_types::{
-  Diagnostic, DiagnosticSeverity, NumberOrString, Position, Range,
-};
+use serde;
+use tower_lsp::lsp_types;
 
-use crate::config::FormalityConfig;
-use crate::surfaces::{
-  check_binary_exists, default_registry, find_manifest_upwards,
-};
+use crate::config;
+use crate::surfaces;
 
 // ---------------------------------------------------------------------------
 // Surface detection
@@ -69,9 +65,9 @@ use crate::surfaces::{
 /// Returns the canonical surface name (e.g. `"rust"`, `"python"`) whose
 /// `file_extensions()` cover `file`'s extension, if any surface claims it.
 #[must_use]
-pub fn surface_name_for_file(file: &Path) -> Option<&'static str> {
+pub fn surface_name_for_file(file: &path::Path) -> Option<&'static str> {
   let ext = file.extension()?.to_str()?;
-  default_registry()
+  surfaces::default_registry()
     .surfaces()
     .iter()
     .find(|s| {
@@ -83,7 +79,7 @@ pub fn surface_name_for_file(file: &Path) -> Option<&'static str> {
 }
 
 // ---------------------------------------------------------------------------
-// Path matching
+// path::Path matching
 // ---------------------------------------------------------------------------
 
 /// Like `str::ends_with`, but only counts as a match on a path-component
@@ -104,7 +100,7 @@ fn ends_with_path_boundary(haystack: &str, needle: &str) -> bool {
 /// disk. Normalizes separators and checks path-boundary-respecting suffix
 /// containment in either direction, given the reported path always shares a
 /// tail with the real file path.
-fn paths_match(reported: &str, target: &Path) -> bool {
+fn paths_match(reported: &str, target: &path::Path) -> bool {
   let reported_norm = reported.replace('\\', "/");
   let target_norm = target.to_string_lossy().replace('\\', "/");
   if reported_norm.is_empty() || target_norm.is_empty() {
@@ -118,14 +114,14 @@ fn paths_match(reported: &str, target: &Path) -> bool {
 // Rust — cargo clippy --message-format=json
 // ---------------------------------------------------------------------------
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, serde::Deserialize)]
 struct ClippyMessage {
   level: String,
   message: String,
   spans: Vec<ClippySpan>,
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, serde::Deserialize)]
 struct ClippySpan {
   file_name: String,
   is_primary: bool,
@@ -136,7 +132,7 @@ struct ClippySpan {
 }
 
 /// Parses `cargo clippy --message-format=json` output (one JSON object per
-/// line, cargo's usual `--message-format=json` framing) into `Diagnostic`s
+/// line, cargo's usual `--message-format=json` framing) into `lsp_types::Diagnostic`s
 /// for the violations whose primary span touches `target_file`.
 ///
 /// Non-`compiler-message` lines (e.g. `build-finished`, `compiler-artifact`)
@@ -147,8 +143,8 @@ struct ClippySpan {
 #[must_use]
 pub fn parse_clippy_json(
   json_output: &str,
-  target_file: &Path,
-) -> Vec<Diagnostic> {
+  target_file: &path::Path,
+) -> Vec<lsp_types::Diagnostic> {
   let mut diagnostics = Vec::new();
 
   for line in json_output.lines() {
@@ -173,8 +169,8 @@ pub fn parse_clippy_json(
       continue;
     };
     let severity = match message.level.as_str() {
-      "error" => DiagnosticSeverity::ERROR,
-      "warning" => DiagnosticSeverity::WARNING,
+      "error" => lsp_types::DiagnosticSeverity::ERROR,
+      "warning" => lsp_types::DiagnosticSeverity::WARNING,
       _ => continue, // note/help/etc. — not a standalone violation
     };
     let Some(span) = message.spans.iter().find(|s| s.is_primary) else {
@@ -184,13 +180,13 @@ pub fn parse_clippy_json(
       continue;
     }
 
-    diagnostics.push(Diagnostic {
-      range: Range {
-        start: Position {
+    diagnostics.push(lsp_types::Diagnostic {
+      range: lsp_types::Range {
+        start: lsp_types::Position {
           line: span.line_start.saturating_sub(1),
           character: span.column_start.saturating_sub(1),
         },
-        end: Position {
+        end: lsp_types::Position {
           line: span.line_end.saturating_sub(1),
           character: span.column_end.saturating_sub(1),
         },
@@ -206,23 +202,24 @@ pub fn parse_clippy_json(
 }
 
 /// Runs `cargo clippy --message-format=json` in `root` and returns
-/// `Diagnostic`s for violations touching `file`. Returns `None` — not
+/// `lsp_types::Diagnostic`s for violations touching `file`. Returns `None` — not
 /// invocation otherwise fails to spawn or exits with an error status: those all
 /// mean the tool never ran cleanly, so the caller must fall back to `fml lint`
 /// rather than publish "no violations" for a file that was never actually
 /// checked (#177 [pre-recreation], #204).
 fn clippy_diagnostics(
-  root: &Path,
-  file: &Path,
-  _config: Option<&FormalityConfig>,
-) -> Option<Vec<Diagnostic>> {
-  if !check_binary_exists("cargo") || !find_manifest_upwards(root, "Cargo.toml")
+  root: &path::Path,
+  file: &path::Path,
+  _config: Option<&config::FormalityConfig>,
+) -> Option<Vec<lsp_types::Diagnostic>> {
+  if !surfaces::check_binary_exists("cargo")
+    || !surfaces::find_manifest_upwards(root, "Cargo.toml")
   {
     return None;
   }
 
-  let mut cmd = crate::surfaces::create_tool_command("cargo");
-  cmd.args(crate::surfaces::rust::build_clippy_json_args(&[]));
+  let mut cmd = surfaces::create_tool_command("cargo");
+  cmd.args(surfaces::rust::build_clippy_json_args(&[]));
   cmd.current_dir(root);
 
   match cmd.output() {
@@ -243,13 +240,13 @@ fn clippy_diagnostics(
 // Python — ruff check --output-format=json
 // ---------------------------------------------------------------------------
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, serde::Deserialize)]
 struct RuffLocation {
   row: u32,
   column: u32,
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, serde::Deserialize)]
 struct RuffViolation {
   code: Option<String>,
   message: String,
@@ -259,7 +256,7 @@ struct RuffViolation {
 }
 
 /// Parses `ruff check --output-format=json` output (a single JSON array of
-/// violation objects) into `Diagnostic`s for violations reported against
+/// violation objects) into `lsp_types::Diagnostic`s for violations reported against
 /// `target_file`. Ruff's JSON schema carries no severity field of its own —
 /// every rule it reports is treated as a `WARNING` here, matching how `fml
 /// lint`'s non-zero exit is surfaced generically today rather than
@@ -267,8 +264,8 @@ struct RuffViolation {
 #[must_use]
 pub fn parse_ruff_json(
   json_output: &str,
-  target_file: &Path,
-) -> Vec<Diagnostic> {
+  target_file: &path::Path,
+) -> Vec<lsp_types::Diagnostic> {
   let Ok(violations) = serde_json::from_str::<Vec<RuffViolation>>(json_output)
   else {
     return Vec::new();
@@ -277,19 +274,19 @@ pub fn parse_ruff_json(
   violations
     .into_iter()
     .filter(|v| paths_match(&v.filename, target_file))
-    .map(|v| Diagnostic {
-      range: Range {
-        start: Position {
+    .map(|v| lsp_types::Diagnostic {
+      range: lsp_types::Range {
+        start: lsp_types::Position {
           line: v.location.row.saturating_sub(1),
           character: v.location.column.saturating_sub(1),
         },
-        end: Position {
+        end: lsp_types::Position {
           line: v.end_location.row.saturating_sub(1),
           character: v.end_location.column.saturating_sub(1),
         },
       },
-      severity: Some(DiagnosticSeverity::WARNING),
-      code: v.code.map(NumberOrString::String),
+      severity: Some(lsp_types::DiagnosticSeverity::WARNING),
+      code: v.code.map(lsp_types::NumberOrString::String),
       source: Some("ruff".to_string()),
       message: v.message,
       ..Default::default()
@@ -298,21 +295,21 @@ pub fn parse_ruff_json(
 }
 
 /// Runs `ruff check --output-format=json <file>` in `root` and returns
-/// `Diagnostic`s for `file`'s violations. Returns `None` — not `Some(vec![])`
+/// `lsp_types::Diagnostic`s for `file`'s violations. Returns `None` — not `Some(vec![])`
 /// — when ruff is missing or the invocation otherwise fails to spawn, so the
 /// caller falls back to `fml lint` instead of publishing a false "clean"
 /// (#177 [pre-recreation]).
 fn ruff_diagnostics(
-  root: &Path,
-  file: &Path,
-  _config: Option<&FormalityConfig>,
-) -> Option<Vec<Diagnostic>> {
-  if !check_binary_exists("ruff") {
+  root: &path::Path,
+  file: &path::Path,
+  _config: Option<&config::FormalityConfig>,
+) -> Option<Vec<lsp_types::Diagnostic>> {
+  if !surfaces::check_binary_exists("ruff") {
     return None;
   }
 
-  let mut cmd = crate::surfaces::create_tool_command("ruff");
-  cmd.args(crate::surfaces::python::build_ruff_check_json_args(
+  let mut cmd = surfaces::create_tool_command("ruff");
+  cmd.args(surfaces::python::build_ruff_check_json_args(
     &[file.to_path_buf()],
     &[],
   ));
@@ -331,12 +328,12 @@ fn ruff_diagnostics(
 // JavaScript/TypeScript — biome lint --reporter=json
 // ---------------------------------------------------------------------------
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, serde::Deserialize)]
 struct BiomeOutput {
   diagnostics: Vec<BiomeDiagnostic>,
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, serde::Deserialize)]
 struct BiomeDiagnostic {
   severity: String,
   message: String,
@@ -344,22 +341,22 @@ struct BiomeDiagnostic {
   location: Option<BiomeLocation>,
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, serde::Deserialize)]
 struct BiomeLocation {
   path: String,
   start: BiomePosition,
   end: BiomePosition,
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, serde::Deserialize)]
 struct BiomePosition {
   line: u32,
   column: u32,
 }
 
 /// Parses `biome lint --reporter=json` output (a single JSON object, see
-/// [`crate::surfaces::javascript::build_biome_lint_json_args`]) into
-/// `Diagnostic`s for violations reported against `target_file`. Biome's
+/// [`surfaces::javascript::build_biome_lint_json_args`]) into
+/// `lsp_types::Diagnostic`s for violations reported against `target_file`. Biome's
 /// `line`/`column` positions are 1-based, like clippy's and unlike ruff's
 /// (which is also 1-based, incidentally — all three tools agree here).
 /// Diagnostics with no `location` (none observed in practice, but the field
@@ -367,8 +364,8 @@ struct BiomePosition {
 #[must_use]
 pub fn parse_biome_json(
   json_output: &str,
-  target_file: &Path,
-) -> Vec<Diagnostic> {
+  target_file: &path::Path,
+) -> Vec<lsp_types::Diagnostic> {
   let Ok(output) = serde_json::from_str::<BiomeOutput>(json_output) else {
     return Vec::new();
   };
@@ -382,23 +379,23 @@ pub fn parse_biome_json(
         return None;
       }
       let severity = match d.severity.as_str() {
-        "error" => DiagnosticSeverity::ERROR,
-        "information" => DiagnosticSeverity::INFORMATION,
-        _ => DiagnosticSeverity::WARNING,
+        "error" => lsp_types::DiagnosticSeverity::ERROR,
+        "information" => lsp_types::DiagnosticSeverity::INFORMATION,
+        _ => lsp_types::DiagnosticSeverity::WARNING,
       };
-      Some(Diagnostic {
-        range: Range {
-          start: Position {
+      Some(lsp_types::Diagnostic {
+        range: lsp_types::Range {
+          start: lsp_types::Position {
             line: location.start.line.saturating_sub(1),
             character: location.start.column.saturating_sub(1),
           },
-          end: Position {
+          end: lsp_types::Position {
             line: location.end.line.saturating_sub(1),
             character: location.end.column.saturating_sub(1),
           },
         },
         severity: Some(severity),
-        code: d.category.map(NumberOrString::String),
+        code: d.category.map(lsp_types::NumberOrString::String),
         source: Some("biome".to_string()),
         message: d.message,
         ..Default::default()
@@ -408,23 +405,21 @@ pub fn parse_biome_json(
 }
 
 /// Runs `biome lint --reporter=json <file>` in `root` and returns
-/// `Diagnostic`s for `file`'s violations. Returns `None` — not
+/// `lsp_types::Diagnostic`s for `file`'s violations. Returns `None` — not
 /// `Some(vec![])` — when biome is missing or the invocation otherwise fails
 /// to spawn, so the caller falls back to `fml lint` instead of publishing a
 /// false "clean" (#177 [pre-recreation]).
 fn biome_diagnostics(
-  root: &Path,
-  file: &Path,
-  _config: Option<&FormalityConfig>,
-) -> Option<Vec<Diagnostic>> {
-  if !check_binary_exists("biome") {
+  root: &path::Path,
+  file: &path::Path,
+  _config: Option<&config::FormalityConfig>,
+) -> Option<Vec<lsp_types::Diagnostic>> {
+  if !surfaces::check_binary_exists("biome") {
     return None;
   }
 
-  let mut cmd = crate::surfaces::create_tool_command("biome");
-  cmd.args(crate::surfaces::javascript::build_biome_lint_json_args(
-    file,
-  ));
+  let mut cmd = surfaces::create_tool_command("biome");
+  cmd.args(surfaces::javascript::build_biome_lint_json_args(file));
   cmd.current_dir(root);
 
   match cmd.output() {
@@ -464,36 +459,36 @@ fn parse_yamllint_line(
 }
 
 /// Parses `yamllint -f parsable` output (one violation per line, see
-/// [`crate::surfaces::yaml::build_yamllint_parsable_args`]) into
-/// `Diagnostic`s for violations reported against `target_file`. yamllint has
+/// [`surfaces::yaml::build_yamllint_parsable_args`]) into
+/// `lsp_types::Diagnostic`s for violations reported against `target_file`. yamllint has
 /// no end position of its own, so each diagnostic's range is a zero-width
 /// point at its reported line/column. `line`/`col` are 1-based.
 #[must_use]
 pub fn parse_yamllint_parsable(
   text_output: &str,
-  target_file: &Path,
-) -> Vec<Diagnostic> {
+  target_file: &path::Path,
+) -> Vec<lsp_types::Diagnostic> {
   text_output
     .lines()
     .filter_map(parse_yamllint_line)
     .filter(|(path, ..)| paths_match(path, target_file))
     .map(|(_, line_num, col, severity, message, rule)| {
-      let position = Position {
+      let position = lsp_types::Position {
         line: line_num.saturating_sub(1),
         character: col.saturating_sub(1),
       };
       let severity = if severity == "error" {
-        DiagnosticSeverity::ERROR
+        lsp_types::DiagnosticSeverity::ERROR
       } else {
-        DiagnosticSeverity::WARNING
+        lsp_types::DiagnosticSeverity::WARNING
       };
-      Diagnostic {
-        range: Range {
+      lsp_types::Diagnostic {
+        range: lsp_types::Range {
           start: position,
           end: position,
         },
         severity: Some(severity),
-        code: Some(NumberOrString::String(rule.to_string())),
+        code: Some(lsp_types::NumberOrString::String(rule.to_string())),
         source: Some("yamllint".to_string()),
         message: message.to_string(),
         ..Default::default()
@@ -502,22 +497,22 @@ pub fn parse_yamllint_parsable(
     .collect()
 }
 
-/// Runs `yamllint -f parsable <file>` in `root` and returns `Diagnostic`s
+/// Runs `yamllint -f parsable <file>` in `root` and returns `lsp_types::Diagnostic`s
 /// for `file`'s violations. Returns `None` — not `Some(vec![])` — when
 /// yamllint is missing or the invocation otherwise fails to spawn, so the
 /// caller falls back to `fml lint` instead of publishing a false "clean"
 /// (#177 [pre-recreation]).
 fn yamllint_diagnostics(
-  root: &Path,
-  file: &Path,
-  _config: Option<&FormalityConfig>,
-) -> Option<Vec<Diagnostic>> {
-  if !check_binary_exists("yamllint") {
+  root: &path::Path,
+  file: &path::Path,
+  _config: Option<&config::FormalityConfig>,
+) -> Option<Vec<lsp_types::Diagnostic>> {
+  if !surfaces::check_binary_exists("yamllint") {
     return None;
   }
 
-  let mut cmd = crate::surfaces::create_tool_command("yamllint");
-  cmd.args(crate::surfaces::yaml::build_yamllint_parsable_args(file));
+  let mut cmd = surfaces::create_tool_command("yamllint");
+  cmd.args(surfaces::yaml::build_yamllint_parsable_args(file));
   cmd.current_dir(root);
 
   match cmd.output() {
@@ -590,10 +585,10 @@ fn parse_markdownlint_line(
 }
 
 /// Parses markdownlint's default (non-JSON) text report — one violation per
-/// line on stderr, see [`crate::surfaces::markdown::build_markdownlint_args`]
-/// — into `Diagnostic`s for violations reported against `target_file`.
+/// line on stderr, see [`surfaces::markdown::build_markdownlint_args`]
+/// — into `lsp_types::Diagnostic`s for violations reported against `target_file`.
 /// markdownlint-cli2 — the binary preferred here and by
-/// [`crate::surfaces::markdown::MarkdownSurface::lint`] — has no JSON
+/// [`surfaces::markdown::MarkdownSurface::lint`] — has no JSON
 /// reporter reachable by CLI flag (its `--help` lists only `--config`,
 /// `--configPointer`, `--fix`, `--format`, `--help` and `--no-globs`; JSON
 /// output requires an `outputFormatters` block in a config file written to
@@ -607,29 +602,29 @@ fn parse_markdownlint_line(
 #[must_use]
 pub fn parse_markdownlint_text(
   text_output: &str,
-  target_file: &Path,
-) -> Vec<Diagnostic> {
+  target_file: &path::Path,
+) -> Vec<lsp_types::Diagnostic> {
   text_output
     .lines()
     .filter_map(parse_markdownlint_line)
     .filter(|(path, ..)| paths_match(path, target_file))
     .map(|(_, line_num, col, severity, rule, description)| {
-      let position = Position {
+      let position = lsp_types::Position {
         line: line_num.saturating_sub(1),
         character: col.saturating_sub(1),
       };
       let severity = if severity == "warning" {
-        DiagnosticSeverity::WARNING
+        lsp_types::DiagnosticSeverity::WARNING
       } else {
-        DiagnosticSeverity::ERROR
+        lsp_types::DiagnosticSeverity::ERROR
       };
-      Diagnostic {
-        range: Range {
+      lsp_types::Diagnostic {
+        range: lsp_types::Range {
           start: position,
           end: position,
         },
         severity: Some(severity),
-        code: Some(NumberOrString::String(rule.to_string())),
+        code: Some(lsp_types::NumberOrString::String(rule.to_string())),
         source: Some("markdownlint".to_string()),
         message: description.to_string(),
         ..Default::default()
@@ -639,18 +634,18 @@ pub fn parse_markdownlint_text(
 }
 
 /// Runs markdownlint-cli2 (falling back to markdownlint) against `file` in
-/// `root` and returns `Diagnostic`s for its violations. Both tools report
+/// `root` and returns `lsp_types::Diagnostic`s for its violations. Both tools report
 /// violations on stderr with a successful exit status meaning "no
-/// violations" (matching [`crate::surfaces::markdown::MarkdownSurface::lint`]'s
+/// violations" (matching [`surfaces::markdown::MarkdownSurface::lint`]'s
 /// own stderr-first message selection). Returns `None` — not `Some(vec![])`
 /// — when neither binary is present or the invocation otherwise fails to
 /// spawn, so the caller falls back to `fml lint` instead of publishing a
 /// false "clean" (#177 [pre-recreation]).
 ///
 /// Resolves formality.toml's markdown settings the same way `fml lint`
-/// does (`FormalityConfig::load_layered` + `resolve_for_lang("markdown")`)
+/// does (`config::FormalityConfig::load_layered` + `resolve_for_lang("markdown")`)
 /// and passes them to markdownlint-cli2 via a throwaway temp file — see
-/// [`crate::surfaces::markdown::write_markdownlint_temp_config`]. Before
+/// [`surfaces::markdown::write_markdownlint_temp_config`]. Before
 /// issue #1 deleted this repo's own `.markdownlint.json`, this path ran
 /// with no `--config` at all and relied on markdownlint-cli2
 /// auto-discovering that file from `root`/`file`'s directory, which
@@ -663,13 +658,13 @@ pub fn parse_markdownlint_text(
 /// does for `fml lint` itself, not "disable markdown diagnostics
 /// entirely."
 fn markdownlint_diagnostics(
-  root: &Path,
-  file: &Path,
-  config: Option<&FormalityConfig>,
-) -> Option<Vec<Diagnostic>> {
-  let binary = if check_binary_exists("markdownlint-cli2") {
+  root: &path::Path,
+  file: &path::Path,
+  config: Option<&config::FormalityConfig>,
+) -> Option<Vec<lsp_types::Diagnostic>> {
+  let binary = if surfaces::check_binary_exists("markdownlint-cli2") {
     "markdownlint-cli2"
-  } else if check_binary_exists("markdownlint") {
+  } else if surfaces::check_binary_exists("markdownlint") {
     "markdownlint"
   } else {
     return None;
@@ -677,16 +672,15 @@ fn markdownlint_diagnostics(
 
   let lang_config = match config {
     Some(cfg) => cfg.resolve_for_lang("markdown"),
-    None => FormalityConfig::load_layered(Some(root))
-      .map_or_else(|_| FormalityConfig::with_defaults(), |(cfg, _)| cfg)
+    None => config::FormalityConfig::load_layered(Some(root))
+      .map_or_else(|_| config::FormalityConfig::with_defaults(), |(cfg, _)| cfg)
       .resolve_for_lang("markdown"),
   };
   let temp_cfg =
-    crate::surfaces::markdown::write_markdownlint_temp_config(&lang_config)
-      .ok()?;
+    surfaces::markdown::write_markdownlint_temp_config(&lang_config).ok()?;
 
-  let mut cmd = crate::surfaces::create_tool_command(binary);
-  cmd.args(crate::surfaces::markdown::build_markdownlint_args(
+  let mut cmd = surfaces::create_tool_command(binary);
+  cmd.args(surfaces::markdown::build_markdownlint_args(
     &[file.to_path_buf()],
     false,
     Some(temp_cfg.path()),
@@ -749,36 +743,36 @@ fn parse_clang_tidy_line(line: &str) -> Option<ClangTidyLine<'_>> {
 
 /// Parses `clang-tidy`'s default plain-text diagnostic output (one
 /// violation per line on stdout, see
-/// [`crate::surfaces::cpp::build_clang_tidy_args`]) into `Diagnostic`s for
+/// [`surfaces::cpp::build_clang_tidy_args`]) into `lsp_types::Diagnostic`s for
 /// violations reported against `target_file`. clang-tidy has no end
 /// position of its own beyond the single reported column, so each
 /// diagnostic's range is a zero-width point. `line`/`col` are 1-based.
 #[must_use]
 pub fn parse_clang_tidy_plain(
   text_output: &str,
-  target_file: &Path,
-) -> Vec<Diagnostic> {
+  target_file: &path::Path,
+) -> Vec<lsp_types::Diagnostic> {
   text_output
     .lines()
     .filter_map(parse_clang_tidy_line)
     .filter(|(path, ..)| paths_match(path, target_file))
     .map(|(_, line_num, col, severity, message, check)| {
-      let position = Position {
+      let position = lsp_types::Position {
         line: line_num.saturating_sub(1),
         character: col.saturating_sub(1),
       };
       let severity = if severity == "error" {
-        DiagnosticSeverity::ERROR
+        lsp_types::DiagnosticSeverity::ERROR
       } else {
-        DiagnosticSeverity::WARNING
+        lsp_types::DiagnosticSeverity::WARNING
       };
-      Diagnostic {
-        range: Range {
+      lsp_types::Diagnostic {
+        range: lsp_types::Range {
           start: position,
           end: position,
         },
         severity: Some(severity),
-        code: check.map(|c| NumberOrString::String(c.to_string())),
+        code: check.map(|c| lsp_types::NumberOrString::String(c.to_string())),
         source: Some("clang-tidy".to_string()),
         message: message.to_string(),
         ..Default::default()
@@ -787,9 +781,9 @@ pub fn parse_clang_tidy_plain(
     .collect()
 }
 
-/// Runs `clang-tidy` in `root` against `file` and returns `Diagnostic`s for
+/// Runs `clang-tidy` in `root` against `file` and returns `lsp_types::Diagnostic`s for
 /// its violations. No `--config=` override is passed (unlike
-/// [`crate::surfaces::cpp::CppSurface::lint`]'s inline-config path) — this
+/// [`surfaces::cpp::CppSurface::lint`]'s inline-config path) — this
 /// follows the same simplification already documented at the top of this
 /// module for clippy/ruff's `extra_args`: clang-tidy still applies whatever
 /// `.clang-tidy` is on disk, or its own default check set if none is,
@@ -798,18 +792,17 @@ pub fn parse_clang_tidy_plain(
 /// otherwise fails to spawn, so the caller falls back to `fml lint` instead
 /// of publishing a false "clean" (#177 [pre-recreation]).
 fn clang_tidy_diagnostics(
-  root: &Path,
-  file: &Path,
-  _config: Option<&FormalityConfig>,
-) -> Option<Vec<Diagnostic>> {
-  if !check_binary_exists("clang-tidy") {
+  root: &path::Path,
+  file: &path::Path,
+  _config: Option<&config::FormalityConfig>,
+) -> Option<Vec<lsp_types::Diagnostic>> {
+  if !surfaces::check_binary_exists("clang-tidy") {
     return None;
   }
 
-  let std_flag =
-    crate::surfaces::cpp::std_flag_for_file(file, &[file.to_path_buf()]);
-  let mut cmd = crate::surfaces::create_tool_command("clang-tidy");
-  cmd.args(crate::surfaces::cpp::build_clang_tidy_args(
+  let std_flag = surfaces::cpp::std_flag_for_file(file, &[file.to_path_buf()]);
+  let mut cmd = surfaces::create_tool_command("clang-tidy");
+  cmd.args(surfaces::cpp::build_clang_tidy_args(
     &[file.to_path_buf()],
     false,
     std_flag,
@@ -830,13 +823,13 @@ fn clang_tidy_diagnostics(
 // Go — golangci-lint run --output.json.path=stdout
 // ---------------------------------------------------------------------------
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, serde::Deserialize)]
 struct GolangciLintOutput {
   #[serde(rename = "Issues")]
   issues: Vec<GolangciLintIssue>,
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, serde::Deserialize)]
 struct GolangciLintIssue {
   #[serde(rename = "Text")]
   text: String,
@@ -855,7 +848,7 @@ struct GolangciLintIssue {
   pos: GolangciLintPos,
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, serde::Deserialize)]
 struct GolangciLintPos {
   #[serde(rename = "Filename")]
   filename: String,
@@ -867,8 +860,8 @@ struct GolangciLintPos {
 
 /// Parses `golangci-lint run --output.json.path=stdout` output (a single
 /// JSON object, see
-/// [`crate::surfaces::go::build_golangci_lint_json_args`]) into
-/// `Diagnostic`s for violations reported against `target_file`.
+/// [`surfaces::go::build_golangci_lint_json_args`]) into
+/// `lsp_types::Diagnostic`s for violations reported against `target_file`.
 /// golangci-lint's `Issues[].Severity` field is present in the schema but
 /// observed empty on every issue in a real v2.5.0 run regardless of
 /// underlying linter — treated as `WARNING` uniformly here, same simplification
@@ -882,8 +875,8 @@ struct GolangciLintPos {
 #[must_use]
 pub fn parse_golangci_lint_json(
   json_output: &str,
-  target_file: &Path,
-) -> Vec<Diagnostic> {
+  target_file: &path::Path,
+) -> Vec<lsp_types::Diagnostic> {
   let Ok(output) = serde_json::from_str::<GolangciLintOutput>(json_output)
   else {
     return Vec::new();
@@ -894,17 +887,17 @@ pub fn parse_golangci_lint_json(
     .into_iter()
     .filter(|issue| paths_match(&issue.pos.filename, target_file))
     .map(|issue| {
-      let position = Position {
+      let position = lsp_types::Position {
         line: issue.pos.line.saturating_sub(1),
         character: issue.pos.column.saturating_sub(1),
       };
       let severity = if issue.severity == "error" {
-        DiagnosticSeverity::ERROR
+        lsp_types::DiagnosticSeverity::ERROR
       } else {
-        DiagnosticSeverity::WARNING
+        lsp_types::DiagnosticSeverity::WARNING
       };
-      Diagnostic {
-        range: Range {
+      lsp_types::Diagnostic {
+        range: lsp_types::Range {
           start: position,
           end: position,
         },
@@ -912,7 +905,7 @@ pub fn parse_golangci_lint_json(
         code: if issue.from_linter.is_empty() {
           None
         } else {
-          Some(NumberOrString::String(issue.from_linter))
+          Some(lsp_types::NumberOrString::String(issue.from_linter))
         },
         source: Some("golangci-lint".to_string()),
         message: issue.text,
@@ -923,24 +916,24 @@ pub fn parse_golangci_lint_json(
 }
 
 /// Runs `golangci-lint run --output.json.path=stdout <file>` in `root` and
-/// returns `Diagnostic`s for `file`'s violations. Returns `None` — not
+/// returns `lsp_types::Diagnostic`s for `file`'s violations. Returns `None` — not
 /// `Some(vec![])` — when golangci-lint is missing, there's no `go.mod`, or
 /// the invocation otherwise fails to spawn or exits with an error status,
 /// so the caller falls back to `fml lint` instead of publishing a false
 /// "clean" (#177 [pre-recreation], #204).
 fn golangci_lint_diagnostics(
-  root: &Path,
-  file: &Path,
-  _config: Option<&FormalityConfig>,
-) -> Option<Vec<Diagnostic>> {
-  if !check_binary_exists("golangci-lint")
-    || !find_manifest_upwards(root, "go.mod")
+  root: &path::Path,
+  file: &path::Path,
+  _config: Option<&config::FormalityConfig>,
+) -> Option<Vec<lsp_types::Diagnostic>> {
+  if !surfaces::check_binary_exists("golangci-lint")
+    || !surfaces::find_manifest_upwards(root, "go.mod")
   {
     return None;
   }
 
-  let mut cmd = crate::surfaces::create_tool_command("golangci-lint");
-  cmd.args(crate::surfaces::go::build_golangci_lint_json_args(
+  let mut cmd = surfaces::create_tool_command("golangci-lint");
+  cmd.args(surfaces::go::build_golangci_lint_json_args(
     &[file.to_path_buf()],
     &[],
   ));
@@ -1026,31 +1019,31 @@ fn parse_checkstyle_line(
 }
 
 /// Parses `checkstyle -f plain` output (one violation per line on stdout,
-/// see [`crate::surfaces::java::build_checkstyle_plain_args`]) into
-/// `Diagnostic`s for violations reported against `target_file`. Checkstyle
+/// see [`surfaces::java::build_checkstyle_plain_args`]) into
+/// `lsp_types::Diagnostic`s for violations reported against `target_file`. Checkstyle
 /// has no end position of its own, so each diagnostic's range is a
 /// zero-width point. `line`/`col` are 1-based.
 #[must_use]
 pub fn parse_checkstyle_plain(
   text_output: &str,
-  target_file: &Path,
-) -> Vec<Diagnostic> {
+  target_file: &path::Path,
+) -> Vec<lsp_types::Diagnostic> {
   text_output
     .lines()
     .filter_map(parse_checkstyle_line)
     .filter(|(path, ..)| paths_match(path, target_file))
     .map(|(_, line_num, col, severity, message, rule)| {
-      let position = Position {
+      let position = lsp_types::Position {
         line: line_num.saturating_sub(1),
         character: col.saturating_sub(1),
       };
       let severity = if severity == "ERROR" {
-        DiagnosticSeverity::ERROR
+        lsp_types::DiagnosticSeverity::ERROR
       } else {
-        DiagnosticSeverity::WARNING
+        lsp_types::DiagnosticSeverity::WARNING
       };
-      Diagnostic {
-        range: Range {
+      lsp_types::Diagnostic {
+        range: lsp_types::Range {
           start: position,
           end: position,
         },
@@ -1058,7 +1051,7 @@ pub fn parse_checkstyle_plain(
         code: if rule.is_empty() {
           None
         } else {
-          Some(NumberOrString::String(rule.to_string()))
+          Some(lsp_types::NumberOrString::String(rule.to_string()))
         },
         source: Some("checkstyle".to_string()),
         message: message.to_string(),
@@ -1069,10 +1062,10 @@ pub fn parse_checkstyle_plain(
 }
 
 /// Runs `checkstyle -c checkstyle.xml -f plain <file>` in `root` and
-/// returns `Diagnostic`s for `file`'s violations. Unlike
-/// [`crate::surfaces::java::JavaSurface::lint`], this does **not**
+/// returns `lsp_types::Diagnostic`s for `file`'s violations. Unlike
+/// [`surfaces::java::JavaSurface::lint`], this does **not**
 /// self-heal a missing `checkstyle.xml` by generating one — doing so needs
-/// a full [`crate::surfaces::ExecutionContext`] (for `indent_size` etc.)
+/// a full [`surfaces::ExecutionContext`] (for `indent_size` etc.)
 /// that this file/root-only entry point doesn't have, and is explicitly out
 /// of scope for #177 [pre-recreation] (falling back, not self-healing, is the right size fix
 /// here). Run `fml lint` or `fml sync` once first to materialize
@@ -1080,18 +1073,18 @@ pub fn parse_checkstyle_plain(
 /// same as when checkstyle itself is missing, so the caller falls back to
 /// `fml lint` instead of publishing a false "clean".
 fn checkstyle_diagnostics(
-  root: &Path,
-  file: &Path,
-  _config: Option<&FormalityConfig>,
-) -> Option<Vec<Diagnostic>> {
+  root: &path::Path,
+  file: &path::Path,
+  _config: Option<&config::FormalityConfig>,
+) -> Option<Vec<lsp_types::Diagnostic>> {
   let config_path = root.join("checkstyle.xml");
-  if !check_binary_exists("checkstyle") || !config_path.is_file() {
+  if !surfaces::check_binary_exists("checkstyle") || !config_path.is_file() {
     return None;
   }
 
-  let mut cmd = crate::surfaces::create_tool_command("checkstyle");
+  let mut cmd = surfaces::create_tool_command("checkstyle");
   cmd.arg("-c").arg(&config_path);
-  cmd.args(crate::surfaces::java::build_checkstyle_plain_args(
+  cmd.args(surfaces::java::build_checkstyle_plain_args(
     &[file.to_path_buf()],
     &[],
   ));
@@ -1110,13 +1103,13 @@ fn checkstyle_diagnostics(
 // Kotlin — ktlint --reporter=json
 // ---------------------------------------------------------------------------
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, serde::Deserialize)]
 struct KtlintFileResult {
   file: String,
   errors: Vec<KtlintError>,
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, serde::Deserialize)]
 struct KtlintError {
   line: u32,
   column: u32,
@@ -1124,7 +1117,7 @@ struct KtlintError {
   rule: String,
 }
 
-/// Parses `ktlint --reporter=json` output into `Diagnostic`s for violations
+/// Parses `ktlint --reporter=json` output into `lsp_types::Diagnostic`s for violations
 /// reported against `target_file`. The JSON array itself
 /// (`[{"file":...,"errors":[...]}]`) is well-formed, but a real ktlint
 /// 1.8.0 run was observed prefixing stdout with an unrelated SLF4J `WARN
@@ -1140,8 +1133,8 @@ struct KtlintError {
 #[must_use]
 pub fn parse_ktlint_json(
   json_output: &str,
-  target_file: &Path,
-) -> Vec<Diagnostic> {
+  target_file: &path::Path,
+) -> Vec<lsp_types::Diagnostic> {
   // The JSON array's own opening `[` always starts a fresh line (ktlint
   // pretty-prints it), so the array is located by walking lines and
   // tracking the byte offset as we go. Neither a bare
@@ -1174,17 +1167,17 @@ pub fn parse_ktlint_json(
       continue;
     }
     for error in result.errors {
-      let position = Position {
+      let position = lsp_types::Position {
         line: error.line.saturating_sub(1),
         character: error.column.saturating_sub(1),
       };
-      diagnostics.push(Diagnostic {
-        range: Range {
+      diagnostics.push(lsp_types::Diagnostic {
+        range: lsp_types::Range {
           start: position,
           end: position,
         },
-        severity: Some(DiagnosticSeverity::WARNING),
-        code: Some(NumberOrString::String(error.rule)),
+        severity: Some(lsp_types::DiagnosticSeverity::WARNING),
+        code: Some(lsp_types::NumberOrString::String(error.rule)),
         source: Some("ktlint".to_string()),
         message: error.message,
         ..Default::default()
@@ -1194,22 +1187,22 @@ pub fn parse_ktlint_json(
   diagnostics
 }
 
-/// Runs `ktlint --reporter=json <file>` in `root` and returns `Diagnostic`s
+/// Runs `ktlint --reporter=json <file>` in `root` and returns `lsp_types::Diagnostic`s
 /// for `file`'s violations. Returns `None` — not `Some(vec![])` — when
 /// ktlint is missing or the invocation otherwise fails to spawn, so the
 /// caller falls back to `fml lint` instead of publishing a false "clean"
 /// (#177 [pre-recreation]).
 fn ktlint_diagnostics(
-  root: &Path,
-  file: &Path,
-  _config: Option<&FormalityConfig>,
-) -> Option<Vec<Diagnostic>> {
-  if !check_binary_exists("ktlint") {
+  root: &path::Path,
+  file: &path::Path,
+  _config: Option<&config::FormalityConfig>,
+) -> Option<Vec<lsp_types::Diagnostic>> {
+  if !surfaces::check_binary_exists("ktlint") {
     return None;
   }
 
-  let mut cmd = crate::surfaces::create_tool_command("ktlint");
-  cmd.args(crate::surfaces::kotlin::build_ktlint_json_args(
+  let mut cmd = surfaces::create_tool_command("ktlint");
+  cmd.args(surfaces::kotlin::build_ktlint_json_args(
     &[file.to_path_buf()],
     &[],
   ));
@@ -1230,7 +1223,7 @@ fn ktlint_diagnostics(
 
 /// Parses `taplo lint --colors never` output (a codespan-reporting-style
 /// human diagnostic block, see
-/// [`crate::surfaces::toml::build_taplo_lsp_lint_args`]) into `Diagnostic`s
+/// [`surfaces::toml::build_taplo_lsp_lint_args`]) into `lsp_types::Diagnostic`s
 /// for violations reported against `target_file`. taplo has no
 /// JSON/single-line reporter reachable by CLI flag, so this scans for a
 /// `error: <message>`/`warning: <message>` line, then the `┌─ path:line:col`
@@ -1249,8 +1242,8 @@ fn ktlint_diagnostics(
 #[must_use]
 pub fn parse_taplo_lint_plain(
   text_output: &str,
-  target_file: &Path,
-) -> Vec<Diagnostic> {
+  target_file: &path::Path,
+) -> Vec<lsp_types::Diagnostic> {
   let lines: Vec<&str> = text_output.lines().collect();
   let mut diagnostics = Vec::new();
   let mut i = 0;
@@ -1297,17 +1290,17 @@ pub fn parse_taplo_lint_plain(
           (col_s.parse::<u32>(), line_s.parse::<u32>())
         && paths_match(path, target_file)
       {
-        let position = Position {
+        let position = lsp_types::Position {
           line: line_num.saturating_sub(1),
           character: col.saturating_sub(1),
         };
         let severity = if severity == "error" {
-          DiagnosticSeverity::ERROR
+          lsp_types::DiagnosticSeverity::ERROR
         } else {
-          DiagnosticSeverity::WARNING
+          lsp_types::DiagnosticSeverity::WARNING
         };
-        diagnostics.push(Diagnostic {
-          range: Range {
+        diagnostics.push(lsp_types::Diagnostic {
+          range: lsp_types::Range {
             start: position,
             end: position,
           },
@@ -1326,21 +1319,21 @@ pub fn parse_taplo_lint_plain(
 }
 
 /// Runs `taplo lint --colors never <file>` in `root` and returns
-/// `Diagnostic`s for `file`'s violations. Returns `None` — not
+/// `lsp_types::Diagnostic`s for `file`'s violations. Returns `None` — not
 /// `Some(vec![])` — when taplo is missing or the invocation otherwise fails
 /// to spawn, so the caller falls back to `fml lint` instead of publishing a
 /// false "clean" (#177 [pre-recreation]).
 fn taplo_diagnostics(
-  root: &Path,
-  file: &Path,
-  _config: Option<&FormalityConfig>,
-) -> Option<Vec<Diagnostic>> {
-  if !check_binary_exists("taplo") {
+  root: &path::Path,
+  file: &path::Path,
+  _config: Option<&config::FormalityConfig>,
+) -> Option<Vec<lsp_types::Diagnostic>> {
+  if !surfaces::check_binary_exists("taplo") {
     return None;
   }
 
-  let mut cmd = crate::surfaces::create_tool_command("taplo");
-  cmd.args(crate::surfaces::toml::build_taplo_lsp_lint_args(
+  let mut cmd = surfaces::create_tool_command("taplo");
+  cmd.args(surfaces::toml::build_taplo_lsp_lint_args(
     &[file.to_path_buf()],
     &[],
   ));
@@ -1382,31 +1375,31 @@ fn parse_typst_line(line: &str) -> Option<(&str, u32, u32, &str, &str)> {
 
 /// Parses `typst compile --diagnostic-format short` output (one violation
 /// per line on stderr, see
-/// [`crate::surfaces::typst::build_typst_check_args`]) into `Diagnostic`s
+/// [`surfaces::typst::build_typst_check_args`]) into `lsp_types::Diagnostic`s
 /// for violations reported against `target_file`. Typst reports no end
 /// position on the `short` format, so each diagnostic's range is a
 /// zero-width point. `line`/`col` are 1-based.
 #[must_use]
 pub fn parse_typst_short(
   text_output: &str,
-  target_file: &Path,
-) -> Vec<Diagnostic> {
+  target_file: &path::Path,
+) -> Vec<lsp_types::Diagnostic> {
   text_output
     .lines()
     .filter_map(parse_typst_line)
     .filter(|(path, ..)| paths_match(path, target_file))
     .map(|(_, line_num, col, severity, message)| {
-      let position = Position {
+      let position = lsp_types::Position {
         line: line_num.saturating_sub(1),
         character: col.saturating_sub(1),
       };
       let severity = if severity == "error" {
-        DiagnosticSeverity::ERROR
+        lsp_types::DiagnosticSeverity::ERROR
       } else {
-        DiagnosticSeverity::WARNING
+        lsp_types::DiagnosticSeverity::WARNING
       };
-      Diagnostic {
-        range: Range {
+      lsp_types::Diagnostic {
+        range: lsp_types::Range {
           start: position,
           end: position,
         },
@@ -1420,9 +1413,9 @@ pub fn parse_typst_short(
 }
 
 /// Runs `typst compile --diagnostic-format short <file> <scratch-output>`
-/// in `root` and returns `Diagnostic`s for `file`'s violations. Typst's
+/// in `root` and returns `lsp_types::Diagnostic`s for `file`'s violations. Typst's
 /// `compile` command (there is no separate `check`/`lint` subcommand — see
-/// [`crate::surfaces::typst::build_typst_check_args`]) always needs
+/// [`surfaces::typst::build_typst_check_args`]) always needs
 /// somewhere to write its output, so this points it at a throwaway file in
 /// a fresh temp directory, discarded once diagnostics are parsed. Returns
 /// `None` — not `Some(vec![])` — when typst is missing, the temp directory
@@ -1430,11 +1423,11 @@ pub fn parse_typst_short(
 /// caller falls back to `fml lint` instead of publishing a false "clean"
 /// (#177 [pre-recreation]).
 fn typst_diagnostics(
-  root: &Path,
-  file: &Path,
-  _config: Option<&FormalityConfig>,
-) -> Option<Vec<Diagnostic>> {
-  if !check_binary_exists("typst") {
+  root: &path::Path,
+  file: &path::Path,
+  _config: Option<&config::FormalityConfig>,
+) -> Option<Vec<lsp_types::Diagnostic>> {
+  if !surfaces::check_binary_exists("typst") {
     return None;
   }
 
@@ -1443,11 +1436,8 @@ fn typst_diagnostics(
   };
   let output_path = scratch_dir.path().join("out.pdf");
 
-  let mut cmd = crate::surfaces::create_tool_command("typst");
-  cmd.args(crate::surfaces::typst::build_typst_check_args(
-    file,
-    &output_path,
-  ));
+  let mut cmd = surfaces::create_tool_command("typst");
+  cmd.args(surfaces::typst::build_typst_check_args(file, &output_path));
   cmd.current_dir(root);
 
   match cmd.output() {
@@ -1463,14 +1453,17 @@ fn typst_diagnostics(
 // Public entry point
 // ---------------------------------------------------------------------------
 
-/// Runs one surface's linter in `root` and returns `Diagnostic`s for the
+/// Runs one surface's linter in `root` and returns `lsp_types::Diagnostic`s for the
 /// second argument's violations — the shared shape of every
 /// `*_diagnostics` function in this module. `None` means the tool could not
 /// be run at all (binary missing, no project marker file, spawn failure,
 /// required config missing) and the caller must fall back to `fml lint`;
 /// `Some(vec![])` means the tool ran successfully and found nothing (#177 [pre-recreation]).
-type DiagnosticsRunner =
-  fn(&Path, &Path, Option<&FormalityConfig>) -> Option<Vec<Diagnostic>>;
+type DiagnosticsRunner = fn(
+  &path::Path,
+  &path::Path,
+  Option<&config::FormalityConfig>,
+) -> Option<Vec<lsp_types::Diagnostic>>;
 
 /// Maps a canonical surface name to the function that produces structured
 /// diagnostics for it, or `None` for a surface with no parser wired up
@@ -1499,7 +1492,7 @@ fn diagnostics_runner_for_surface(surface: &str) -> Option<DiagnosticsRunner> {
   }
 }
 
-/// Returns structured per-violation `Diagnostic`s for `file` if its surface
+/// Returns structured per-violation `lsp_types::Diagnostic`s for `file` if its surface
 /// has a structured-output parser wired up here *and that parser actually
 /// ran*, or `None` otherwise — the caller falls back to `fml lint`'s
 /// generic single-warning diagnostic in the `None` case (#177 [pre-recreation]). `None`
@@ -1508,13 +1501,13 @@ fn diagnostics_runner_for_surface(surface: &str) -> Option<DiagnosticsRunner> {
 /// or it does but the underlying tool/config couldn't be run this time
 /// (binary missing, no project marker file, spawn failure, required config
 /// missing). `Some(vec![])` means the tool ran and genuinely found nothing.
-/// `config` reuses a cached [`FormalityConfig`] when provided.
+/// `config` reuses a cached [`config::FormalityConfig`] when provided.
 #[must_use]
 pub fn diagnostics_for_file_with_config(
-  root: &Path,
-  file: &Path,
-  config: Option<&FormalityConfig>,
-) -> Option<Vec<Diagnostic>> {
+  root: &path::Path,
+  file: &path::Path,
+  config: Option<&config::FormalityConfig>,
+) -> Option<Vec<lsp_types::Diagnostic>> {
   let runner = diagnostics_runner_for_surface(surface_name_for_file(file)?)?;
   runner(root, file, config)
 }
@@ -1526,40 +1519,49 @@ mod tests {
   #[test]
   fn test_surface_name_for_file_known_extensions() {
     assert_eq!(
-      surface_name_for_file(Path::new("src/main.rs")),
+      surface_name_for_file(path::Path::new("src/main.rs")),
       Some("rust")
     );
     assert_eq!(
-      surface_name_for_file(Path::new("app/views.py")),
+      surface_name_for_file(path::Path::new("app/views.py")),
       Some("python")
     );
   }
 
   #[test]
   fn test_surface_name_for_file_unknown_extension() {
-    assert_eq!(surface_name_for_file(Path::new("notes.txt")), None);
-    assert_eq!(surface_name_for_file(Path::new("no_extension")), None);
+    assert_eq!(surface_name_for_file(path::Path::new("notes.txt")), None);
+    assert_eq!(surface_name_for_file(path::Path::new("no_extension")), None);
   }
 
   #[test]
   fn test_paths_match_handles_relative_vs_absolute_and_separators() {
     assert!(paths_match(
       "src/main.rs",
-      Path::new("C:\\proj\\src\\main.rs")
+      path::Path::new("C:\\proj\\src\\main.rs")
     ));
-    assert!(paths_match("src/main.rs", Path::new("/proj/src/main.rs")));
-    assert!(!paths_match("src/other.rs", Path::new("/proj/src/main.rs")));
-    assert!(!paths_match("", Path::new("/proj/src/main.rs")));
+    assert!(paths_match(
+      "src/main.rs",
+      path::Path::new("/proj/src/main.rs")
+    ));
+    assert!(!paths_match(
+      "src/other.rs",
+      path::Path::new("/proj/src/main.rs")
+    ));
+    assert!(!paths_match("", path::Path::new("/proj/src/main.rs")));
   }
 
   #[test]
   fn test_paths_match_rejects_filename_suffix_collision() {
     // "domain.rs" ends with "main.rs" at the byte level, but they're
     // unrelated files — must not match without a path-component boundary.
-    assert!(!paths_match("domain.rs", Path::new("/proj/src/main.rs")));
+    assert!(!paths_match(
+      "domain.rs",
+      path::Path::new("/proj/src/main.rs")
+    ));
     assert!(!paths_match(
       "src/domain.rs",
-      Path::new("/proj/src/main.rs")
+      path::Path::new("/proj/src/main.rs")
     ));
   }
 
@@ -1569,14 +1571,15 @@ mod tests {
 {"reason":"compiler-message","message":{"level":"warning","message":"unused variable: `x`","code":{"code":"unused_variables"},"spans":[{"file_name":"src/main.rs","is_primary":true,"line_start":3,"line_end":3,"column_start":9,"column_end":10,"byte_start":0,"byte_end":0,"text":[]}],"children":[]}}
 {"reason":"build-finished","success":false}"#;
 
-    let diagnostics = parse_clippy_json(sample, Path::new("/proj/src/main.rs"));
+    let diagnostics =
+      parse_clippy_json(sample, path::Path::new("/proj/src/main.rs"));
 
     assert_eq!(diagnostics.len(), 1);
     let d = &diagnostics[0];
-    assert_eq!(d.severity, Some(DiagnosticSeverity::WARNING));
+    assert_eq!(d.severity, Some(lsp_types::DiagnosticSeverity::WARNING));
     assert_eq!(d.message, "unused variable: `x`");
     assert_eq!(d.source.as_deref(), Some("clippy"));
-    // clippy is 1-based; LSP Position is 0-based.
+    // clippy is 1-based; LSP lsp_types::Position is 0-based.
     assert_eq!(d.range.start.line, 2);
     assert_eq!(d.range.start.character, 8);
     assert_eq!(d.range.end.line, 2);
@@ -1587,12 +1590,16 @@ mod tests {
   fn test_parse_clippy_json_maps_error_level_and_filters_other_files() {
     let sample = r#"{"reason":"compiler-message","message":{"level":"error","message":"mismatched types","spans":[{"file_name":"src/lib.rs","is_primary":true,"line_start":10,"line_end":10,"column_start":1,"column_end":5,"byte_start":0,"byte_end":0,"text":[]}],"children":[]}}"#;
 
-    let matching = parse_clippy_json(sample, Path::new("/proj/src/lib.rs"));
+    let matching =
+      parse_clippy_json(sample, path::Path::new("/proj/src/lib.rs"));
     assert_eq!(matching.len(), 1);
-    assert_eq!(matching[0].severity, Some(DiagnosticSeverity::ERROR));
+    assert_eq!(
+      matching[0].severity,
+      Some(lsp_types::DiagnosticSeverity::ERROR)
+    );
 
     let non_matching =
-      parse_clippy_json(sample, Path::new("/proj/src/main.rs"));
+      parse_clippy_json(sample, path::Path::new("/proj/src/main.rs"));
     assert!(non_matching.is_empty());
   }
 
@@ -1601,7 +1608,8 @@ mod tests {
     let sample = r#"not json at all
 {"reason":"compiler-message","message":{"level":"note","message":"for more information, try `rustc --explain`","spans":[],"children":[]}}"#;
 
-    let diagnostics = parse_clippy_json(sample, Path::new("/proj/src/main.rs"));
+    let diagnostics =
+      parse_clippy_json(sample, path::Path::new("/proj/src/main.rs"));
     assert!(diagnostics.is_empty());
   }
 
@@ -1632,15 +1640,19 @@ mod tests {
       }
     ]"#;
 
-    let diagnostics = parse_ruff_json(sample, Path::new("/proj/app/views.py"));
+    let diagnostics =
+      parse_ruff_json(sample, path::Path::new("/proj/app/views.py"));
 
     assert_eq!(diagnostics.len(), 1);
     let d = &diagnostics[0];
-    assert_eq!(d.severity, Some(DiagnosticSeverity::WARNING));
+    assert_eq!(d.severity, Some(lsp_types::DiagnosticSeverity::WARNING));
     assert_eq!(d.message, "`os` imported but unused");
     assert_eq!(d.source.as_deref(), Some("ruff"));
-    assert_eq!(d.code, Some(NumberOrString::String("F401".to_string())));
-    // ruff is 1-based; LSP Position is 0-based.
+    assert_eq!(
+      d.code,
+      Some(lsp_types::NumberOrString::String("F401".to_string()))
+    );
+    // ruff is 1-based; LSP lsp_types::Position is 0-based.
     assert_eq!(d.range.start.line, 0);
     assert_eq!(d.range.start.character, 7);
     assert_eq!(d.range.end.line, 0);
@@ -1649,14 +1661,15 @@ mod tests {
 
   #[test]
   fn test_parse_ruff_json_empty_array_means_no_violations() {
-    let diagnostics = parse_ruff_json("[]", Path::new("/proj/app/views.py"));
+    let diagnostics =
+      parse_ruff_json("[]", path::Path::new("/proj/app/views.py"));
     assert!(diagnostics.is_empty());
   }
 
   #[test]
   fn test_parse_ruff_json_malformed_input_returns_empty_not_panic() {
     let diagnostics =
-      parse_ruff_json("not valid json", Path::new("/proj/app/views.py"));
+      parse_ruff_json("not valid json", path::Path::new("/proj/app/views.py"));
     assert!(diagnostics.is_empty());
   }
 
@@ -1666,7 +1679,7 @@ mod tests {
     // a surface added later without a parser wired into
     // `diagnostics_runner_for_surface` fails here instead of silently
     // falling back to `fml lsp`'s generic single-warning diagnostic.
-    for surface in default_registry().surfaces() {
+    for surface in surfaces::default_registry().surfaces() {
       let name = surface.name();
       if name == "json" {
         assert!(
@@ -1687,9 +1700,9 @@ mod tests {
     // Guards the other half of the routing: no two surfaces may claim the
     // same file extension, or one of them would silently never receive
     // structured diagnostics.
-    for surface in default_registry().surfaces() {
+    for surface in surfaces::default_registry().surfaces() {
       for ext in surface.file_extensions() {
-        let path = std::path::PathBuf::from(format!("sample.{ext}"));
+        let path = path::PathBuf::from(format!("sample.{ext}"));
         assert_eq!(
           surface_name_for_file(&path),
           Some(surface.name()),
@@ -1707,16 +1720,16 @@ mod tests {
     // structured-diagnostics parser wired up here.
     assert!(
       diagnostics_for_file_with_config(
-        Path::new("."),
-        Path::new("data.json"),
+        path::Path::new("."),
+        path::Path::new("data.json"),
         None
       )
       .is_none()
     );
     assert!(
       diagnostics_for_file_with_config(
-        Path::new("."),
-        Path::new("notes.txt"),
+        path::Path::new("."),
+        path::Path::new("notes.txt"),
         None
       )
       .is_none()
@@ -1728,23 +1741,29 @@ mod tests {
     // Captured from a real `biome lint --reporter=json` run.
     let sample = r#"{"summary":{"changed":0,"unchanged":1,"matches":0,"duration":2763878,"errors":1,"warnings":1,"infos":0,"skipped":0,"suggestedFixesSkipped":0,"diagnosticsNotPrinted":0,"scannerDuration":446471},"diagnostics":[{"severity":"warning","message":"This variable unused is unused.","category":"lint/correctness/noUnusedVariables","location":{"path":"bad.js","start":{"line":4,"column":5},"end":{"line":4,"column":11}},"advices":[]},{"severity":"error","message":"Using == may be unsafe if you are relying on type coercion.","category":"lint/suspicious/noDoubleEquals","location":{"path":"bad.js","start":{"line":1,"column":7},"end":{"line":1,"column":9}},"advices":[]}],"command":"lint"}"#;
 
-    let diagnostics = parse_biome_json(sample, Path::new("/proj/bad.js"));
+    let diagnostics = parse_biome_json(sample, path::Path::new("/proj/bad.js"));
 
     assert_eq!(diagnostics.len(), 2);
-    assert_eq!(diagnostics[0].severity, Some(DiagnosticSeverity::WARNING));
+    assert_eq!(
+      diagnostics[0].severity,
+      Some(lsp_types::DiagnosticSeverity::WARNING)
+    );
     assert_eq!(diagnostics[0].message, "This variable unused is unused.");
     assert_eq!(diagnostics[0].source.as_deref(), Some("biome"));
     assert_eq!(
       diagnostics[0].code,
-      Some(NumberOrString::String(
+      Some(lsp_types::NumberOrString::String(
         "lint/correctness/noUnusedVariables".to_string()
       ))
     );
-    // biome is 1-based; LSP Position is 0-based.
+    // biome is 1-based; LSP lsp_types::Position is 0-based.
     assert_eq!(diagnostics[0].range.start.line, 3);
     assert_eq!(diagnostics[0].range.start.character, 4);
 
-    assert_eq!(diagnostics[1].severity, Some(DiagnosticSeverity::ERROR));
+    assert_eq!(
+      diagnostics[1].severity,
+      Some(lsp_types::DiagnosticSeverity::ERROR)
+    );
     assert_eq!(diagnostics[1].range.start.line, 0);
     assert_eq!(diagnostics[1].range.start.character, 6);
   }
@@ -1752,8 +1771,12 @@ mod tests {
   #[test]
   fn test_parse_biome_json_filters_other_files_and_handles_malformed_input() {
     let sample = r#"{"diagnostics":[{"severity":"error","message":"x","category":"lint/a","location":{"path":"other.js","start":{"line":1,"column":1},"end":{"line":1,"column":2}},"advices":[]}]}"#;
-    assert!(parse_biome_json(sample, Path::new("/proj/bad.js")).is_empty());
-    assert!(parse_biome_json("not json", Path::new("/proj/bad.js")).is_empty());
+    assert!(
+      parse_biome_json(sample, path::Path::new("/proj/bad.js")).is_empty()
+    );
+    assert!(
+      parse_biome_json("not json", path::Path::new("/proj/bad.js")).is_empty()
+    );
   }
 
   #[test]
@@ -1762,20 +1785,28 @@ mod tests {
     let sample = "bad.yaml:1:1: [warning] missing document start \"---\" (document-start)\nbad.yaml:1:6: [error] too many spaces after colon (colons)\n";
 
     let diagnostics =
-      parse_yamllint_parsable(sample, Path::new("/proj/bad.yaml"));
+      parse_yamllint_parsable(sample, path::Path::new("/proj/bad.yaml"));
 
     assert_eq!(diagnostics.len(), 2);
-    assert_eq!(diagnostics[0].severity, Some(DiagnosticSeverity::WARNING));
+    assert_eq!(
+      diagnostics[0].severity,
+      Some(lsp_types::DiagnosticSeverity::WARNING)
+    );
     assert_eq!(diagnostics[0].message, "missing document start \"---\"");
     assert_eq!(diagnostics[0].source.as_deref(), Some("yamllint"));
     assert_eq!(
       diagnostics[0].code,
-      Some(NumberOrString::String("document-start".to_string()))
+      Some(lsp_types::NumberOrString::String(
+        "document-start".to_string()
+      ))
     );
     assert_eq!(diagnostics[0].range.start.line, 0);
     assert_eq!(diagnostics[0].range.start.character, 0);
 
-    assert_eq!(diagnostics[1].severity, Some(DiagnosticSeverity::ERROR));
+    assert_eq!(
+      diagnostics[1].severity,
+      Some(lsp_types::DiagnosticSeverity::ERROR)
+    );
     assert_eq!(diagnostics[1].range.start.character, 5);
   }
 
@@ -1783,7 +1814,7 @@ mod tests {
   fn test_parse_yamllint_parsable_filters_other_files_and_malformed_lines() {
     let sample = "not a yamllint line\nother.yaml:1:1: [error] bad (rule)\n";
     let diagnostics =
-      parse_yamllint_parsable(sample, Path::new("/proj/bad.yaml"));
+      parse_yamllint_parsable(sample, path::Path::new("/proj/bad.yaml"));
     assert!(diagnostics.is_empty());
   }
 
@@ -1796,19 +1827,22 @@ mod tests {
     );
 
     let diagnostics =
-      parse_markdownlint_text(sample, Path::new("/proj/bad.md"));
+      parse_markdownlint_text(sample, path::Path::new("/proj/bad.md"));
 
     assert_eq!(diagnostics.len(), 2);
-    assert_eq!(diagnostics[0].severity, Some(DiagnosticSeverity::ERROR));
+    assert_eq!(
+      diagnostics[0].severity,
+      Some(lsp_types::DiagnosticSeverity::ERROR)
+    );
     assert_eq!(diagnostics[0].source.as_deref(), Some("markdownlint"));
     assert_eq!(
       diagnostics[0].code,
-      Some(NumberOrString::String(
+      Some(lsp_types::NumberOrString::String(
         "MD018/no-missing-space-atx".to_string()
       ))
     );
     assert!(diagnostics[0].message.starts_with("No space after hash"));
-    // markdownlint is 1-based; LSP Position is 0-based.
+    // markdownlint is 1-based; LSP lsp_types::Position is 0-based.
     assert_eq!(diagnostics[0].range.start.line, 2);
     assert_eq!(diagnostics[0].range.start.character, 0);
 
@@ -1828,23 +1862,26 @@ mod tests {
     );
 
     let diagnostics =
-      parse_markdownlint_text(sample, Path::new("/proj/bad.md"));
+      parse_markdownlint_text(sample, path::Path::new("/proj/bad.md"));
 
     assert_eq!(diagnostics.len(), 2);
     assert_eq!(
       diagnostics[0].code,
-      Some(NumberOrString::String(
+      Some(lsp_types::NumberOrString::String(
         "MD018/no-missing-space-atx".to_string()
       ))
     );
     assert!(diagnostics[0].message.starts_with("No space after hash"));
-    assert_eq!(diagnostics[0].severity, Some(DiagnosticSeverity::ERROR));
+    assert_eq!(
+      diagnostics[0].severity,
+      Some(lsp_types::DiagnosticSeverity::ERROR)
+    );
     assert_eq!(diagnostics[0].range.start.line, 0);
     assert_eq!(diagnostics[0].range.start.character, 0);
 
     assert_eq!(
       diagnostics[1].code,
-      Some(NumberOrString::String(
+      Some(lsp_types::NumberOrString::String(
         "MD032/blanks-around-lists".to_string()
       ))
     );
@@ -1857,7 +1894,7 @@ mod tests {
     let sample =
       "my doc.md:3:1 error MD018/no-missing-space-atx No space after hash\n";
     let diagnostics =
-      parse_markdownlint_text(sample, Path::new("/proj/my doc.md"));
+      parse_markdownlint_text(sample, path::Path::new("/proj/my doc.md"));
 
     assert_eq!(diagnostics.len(), 1);
     assert_eq!(diagnostics[0].message, "No space after hash");
@@ -1866,16 +1903,18 @@ mod tests {
 
   #[test]
   fn test_parsers_treat_empty_output_as_no_violations() {
-    assert!(parse_markdownlint_text("", Path::new("/proj/bad.md")).is_empty());
     assert!(
-      parse_yamllint_parsable("", Path::new("/proj/bad.yaml")).is_empty()
+      parse_markdownlint_text("", path::Path::new("/proj/bad.md")).is_empty()
+    );
+    assert!(
+      parse_yamllint_parsable("", path::Path::new("/proj/bad.yaml")).is_empty()
     );
     // biome always emits a JSON object, with an empty `diagnostics` array
     // when the file is clean.
     assert!(
       parse_biome_json(
         r#"{"summary":{"errors":0},"diagnostics":[],"command":"lint"}"#,
-        Path::new("/proj/bad.js")
+        path::Path::new("/proj/bad.js")
       )
       .is_empty()
     );
@@ -1887,17 +1926,20 @@ mod tests {
     // the message itself contains a colon, which must stay in the message.
     let sample = "syn.yaml:2:3: [error] syntax error: mapping values are not allowed here (syntax)\n";
     let diagnostics =
-      parse_yamllint_parsable(sample, Path::new("/proj/syn.yaml"));
+      parse_yamllint_parsable(sample, path::Path::new("/proj/syn.yaml"));
 
     assert_eq!(diagnostics.len(), 1);
-    assert_eq!(diagnostics[0].severity, Some(DiagnosticSeverity::ERROR));
+    assert_eq!(
+      diagnostics[0].severity,
+      Some(lsp_types::DiagnosticSeverity::ERROR)
+    );
     assert_eq!(
       diagnostics[0].message,
       "syntax error: mapping values are not allowed here"
     );
     assert_eq!(
       diagnostics[0].code,
-      Some(NumberOrString::String("syntax".to_string()))
+      Some(lsp_types::NumberOrString::String("syntax".to_string()))
     );
     assert_eq!(diagnostics[0].range.start.line, 1);
     assert_eq!(diagnostics[0].range.start.character, 2);
@@ -1909,7 +1951,7 @@ mod tests {
     // LSP passes the document's own absolute path.
     let sample = "/proj/bad.yaml:1:1: [warning] missing document start \"---\" (document-start)\n";
     assert_eq!(
-      parse_yamllint_parsable(sample, Path::new("/proj/bad.yaml")).len(),
+      parse_yamllint_parsable(sample, path::Path::new("/proj/bad.yaml")).len(),
       1
     );
   }
@@ -1920,13 +1962,17 @@ mod tests {
     // a syntax error: `category` is `parse`, not `lint/...`.
     let sample = r#"{"diagnostics":[{"severity":"error","message":"expected a name for the function in a function declaration, but found none","category":"parse","location":{"path":"syntax.js","start":{"line":1,"column":10},"end":{"line":1,"column":11}},"advices":[]}],"command":"lint"}"#;
 
-    let diagnostics = parse_biome_json(sample, Path::new("/proj/syntax.js"));
+    let diagnostics =
+      parse_biome_json(sample, path::Path::new("/proj/syntax.js"));
 
     assert_eq!(diagnostics.len(), 1);
-    assert_eq!(diagnostics[0].severity, Some(DiagnosticSeverity::ERROR));
+    assert_eq!(
+      diagnostics[0].severity,
+      Some(lsp_types::DiagnosticSeverity::ERROR)
+    );
     assert_eq!(
       diagnostics[0].code,
-      Some(NumberOrString::String("parse".to_string()))
+      Some(lsp_types::NumberOrString::String("parse".to_string()))
     );
     assert_eq!(diagnostics[0].range.start.line, 0);
     assert_eq!(diagnostics[0].range.start.character, 9);
@@ -1937,7 +1983,7 @@ mod tests {
   fn test_parse_markdownlint_text_filters_other_files_and_malformed_lines() {
     let sample = "not a markdownlint line\nother.md:1:1 error MD001/x desc\n";
     let diagnostics =
-      parse_markdownlint_text(sample, Path::new("/proj/bad.md"));
+      parse_markdownlint_text(sample, path::Path::new("/proj/bad.md"));
     assert!(diagnostics.is_empty());
   }
 
@@ -1952,8 +1998,8 @@ mod tests {
     // formality.toml itself and pass it inline — mirroring
     // `test_lint_respects_formality_toml_md013_with_no_config_on_disk` in
     // `src/surfaces/markdown.rs` for the CLI path.
-    if !check_binary_exists("markdownlint-cli2")
-      && !check_binary_exists("markdownlint")
+    if !surfaces::check_binary_exists("markdownlint-cli2")
+      && !surfaces::check_binary_exists("markdownlint")
     {
       return;
     }
@@ -1976,7 +2022,7 @@ mod tests {
     assert!(!dir.path().join("formality.toml").exists());
 
     let diagnostics =
-      markdownlint_diagnostics(dir.path(), Path::new("a.md"), None);
+      markdownlint_diagnostics(dir.path(), path::Path::new("a.md"), None);
     assert_eq!(
       diagnostics,
       Some(Vec::new()),
@@ -1987,8 +2033,8 @@ mod tests {
 
   #[test]
   fn test_markdownlint_diagnostics_reuses_passed_config() {
-    if !check_binary_exists("markdownlint-cli2")
-      && !check_binary_exists("markdownlint")
+    if !surfaces::check_binary_exists("markdownlint-cli2")
+      && !surfaces::check_binary_exists("markdownlint")
     {
       return;
     }
@@ -1997,10 +2043,10 @@ mod tests {
     let file_path = dir.path().join("b.md");
     std::fs::write(&file_path, "# Title\n\nSome clean paragraph.\n").unwrap();
 
-    let config = FormalityConfig::with_defaults();
+    let config = config::FormalityConfig::with_defaults();
     let diagnostics = diagnostics_for_file_with_config(
       dir.path(),
-      Path::new("b.md"),
+      path::Path::new("b.md"),
       Some(&config),
     );
     assert_eq!(diagnostics, Some(Vec::new()));
@@ -2021,25 +2067,28 @@ mod tests {
     );
 
     let diagnostics =
-      parse_clang_tidy_plain(sample, Path::new("/proj/bad.cpp"));
+      parse_clang_tidy_plain(sample, path::Path::new("/proj/bad.cpp"));
 
     assert_eq!(diagnostics.len(), 2);
-    assert_eq!(diagnostics[0].severity, Some(DiagnosticSeverity::WARNING));
+    assert_eq!(
+      diagnostics[0].severity,
+      Some(lsp_types::DiagnosticSeverity::WARNING)
+    );
     assert_eq!(diagnostics[0].source.as_deref(), Some("clang-tidy"));
     assert_eq!(
       diagnostics[0].code,
-      Some(NumberOrString::String(
+      Some(lsp_types::NumberOrString::String(
         "clang-analyzer-deadcode.DeadStores".to_string()
       ))
     );
     assert_eq!(diagnostics[0].message, "value stored to 'x' is never read");
-    // clang-tidy is 1-based; LSP Position is 0-based.
+    // clang-tidy is 1-based; LSP lsp_types::Position is 0-based.
     assert_eq!(diagnostics[0].range.start.line, 4);
     assert_eq!(diagnostics[0].range.start.character, 8);
 
     assert_eq!(
       diagnostics[1].code,
-      Some(NumberOrString::String(
+      Some(lsp_types::NumberOrString::String(
         "clang-diagnostic-parentheses".to_string()
       ))
     );
@@ -2050,13 +2099,16 @@ mod tests {
     // Captured from a real clang-tidy run over a raw compiler error.
     let sample = "/proj/err.cpp:2:3: error: use of undeclared identifier 'foo' [clang-diagnostic-error]\n";
     let diagnostics =
-      parse_clang_tidy_plain(sample, Path::new("/proj/err.cpp"));
+      parse_clang_tidy_plain(sample, path::Path::new("/proj/err.cpp"));
     assert_eq!(diagnostics.len(), 1);
-    assert_eq!(diagnostics[0].severity, Some(DiagnosticSeverity::ERROR));
+    assert_eq!(
+      diagnostics[0].severity,
+      Some(lsp_types::DiagnosticSeverity::ERROR)
+    );
 
     let no_check = "/proj/x.cpp:1:1: error: something broke\n";
     let diagnostics =
-      parse_clang_tidy_plain(no_check, Path::new("/proj/x.cpp"));
+      parse_clang_tidy_plain(no_check, path::Path::new("/proj/x.cpp"));
     assert_eq!(diagnostics.len(), 1);
     assert_eq!(diagnostics[0].code, None);
     assert_eq!(diagnostics[0].message, "something broke");
@@ -2067,7 +2119,8 @@ mod tests {
     let sample =
       "not a clang-tidy line\n/proj/other.cpp:1:1: warning: x [check]\n";
     assert!(
-      parse_clang_tidy_plain(sample, Path::new("/proj/bad.cpp")).is_empty()
+      parse_clang_tidy_plain(sample, path::Path::new("/proj/bad.cpp"))
+        .is_empty()
     );
   }
 
@@ -2079,17 +2132,20 @@ mod tests {
     let sample = r#"{"Issues":[{"FromLinter":"typecheck","Text":"\"os\" imported and not used","Severity":"","Pos":{"Filename":"bad.go","Offset":0,"Line":5,"Column":2}},{"FromLinter":"typecheck","Text":"declared and not used: x","Severity":"","Pos":{"Filename":"other.go","Offset":0,"Line":9,"Column":2}}]}"#;
 
     let diagnostics =
-      parse_golangci_lint_json(sample, Path::new("/proj/bad.go"));
+      parse_golangci_lint_json(sample, path::Path::new("/proj/bad.go"));
 
     assert_eq!(diagnostics.len(), 1);
-    assert_eq!(diagnostics[0].severity, Some(DiagnosticSeverity::WARNING));
+    assert_eq!(
+      diagnostics[0].severity,
+      Some(lsp_types::DiagnosticSeverity::WARNING)
+    );
     assert_eq!(diagnostics[0].message, "\"os\" imported and not used");
     assert_eq!(diagnostics[0].source.as_deref(), Some("golangci-lint"));
     assert_eq!(
       diagnostics[0].code,
-      Some(NumberOrString::String("typecheck".to_string()))
+      Some(lsp_types::NumberOrString::String("typecheck".to_string()))
     );
-    // golangci-lint is 1-based; LSP Position is 0-based.
+    // golangci-lint is 1-based; LSP lsp_types::Position is 0-based.
     assert_eq!(diagnostics[0].range.start.line, 4);
     assert_eq!(diagnostics[0].range.start.character, 1);
   }
@@ -2101,20 +2157,27 @@ mod tests {
     // run's diagnostics down with it.
     let sample = r#"{"Issues":[{"Text":"boom","Pos":{"Filename":"bad.go","Line":1,"Column":1}}]}"#;
     let diagnostics =
-      parse_golangci_lint_json(sample, Path::new("/proj/bad.go"));
+      parse_golangci_lint_json(sample, path::Path::new("/proj/bad.go"));
     assert_eq!(diagnostics.len(), 1);
     assert_eq!(diagnostics[0].code, None);
-    assert_eq!(diagnostics[0].severity, Some(DiagnosticSeverity::WARNING));
+    assert_eq!(
+      diagnostics[0].severity,
+      Some(lsp_types::DiagnosticSeverity::WARNING)
+    );
   }
 
   #[test]
   fn test_parse_golangci_lint_json_empty_and_malformed_input() {
     assert!(
-      parse_golangci_lint_json(r#"{"Issues":[]}"#, Path::new("/proj/x.go"))
-        .is_empty()
+      parse_golangci_lint_json(
+        r#"{"Issues":[]}"#,
+        path::Path::new("/proj/x.go")
+      )
+      .is_empty()
     );
     assert!(
-      parse_golangci_lint_json("not json", Path::new("/proj/x.go")).is_empty()
+      parse_golangci_lint_json("not json", path::Path::new("/proj/x.go"))
+        .is_empty()
     );
   }
 
@@ -2130,21 +2193,29 @@ mod tests {
     );
 
     let diagnostics =
-      parse_checkstyle_plain(sample, Path::new("/proj/Bad.java"));
+      parse_checkstyle_plain(sample, path::Path::new("/proj/Bad.java"));
 
     assert_eq!(diagnostics.len(), 2);
-    assert_eq!(diagnostics[0].severity, Some(DiagnosticSeverity::ERROR));
+    assert_eq!(
+      diagnostics[0].severity,
+      Some(lsp_types::DiagnosticSeverity::ERROR)
+    );
     assert_eq!(diagnostics[0].source.as_deref(), Some("checkstyle"));
     assert_eq!(
       diagnostics[0].code,
-      Some(NumberOrString::String("WhitespaceAround".to_string()))
+      Some(lsp_types::NumberOrString::String(
+        "WhitespaceAround".to_string()
+      ))
     );
     assert_eq!(diagnostics[0].message, "'=' is not followed by whitespace.");
-    // checkstyle is 1-based; LSP Position is 0-based.
+    // checkstyle is 1-based; LSP lsp_types::Position is 0-based.
     assert_eq!(diagnostics[0].range.start.line, 3);
     assert_eq!(diagnostics[0].range.start.character, 21);
 
-    assert_eq!(diagnostics[1].severity, Some(DiagnosticSeverity::WARNING));
+    assert_eq!(
+      diagnostics[1].severity,
+      Some(lsp_types::DiagnosticSeverity::WARNING)
+    );
   }
 
   #[test]
@@ -2153,7 +2224,7 @@ mod tests {
     // reports no column.
     let sample = "[ERROR] /proj/NoNewline.java:1: File does not end with a newline. [NewlineAtEndOfFile]\n";
     let diagnostics =
-      parse_checkstyle_plain(sample, Path::new("/proj/NoNewline.java"));
+      parse_checkstyle_plain(sample, path::Path::new("/proj/NoNewline.java"));
     assert_eq!(diagnostics.len(), 1);
     assert_eq!(diagnostics[0].range.start.line, 0);
     assert_eq!(diagnostics[0].range.start.character, 0);
@@ -2164,7 +2235,8 @@ mod tests {
   fn test_parse_checkstyle_plain_filters_other_files_and_banner_lines() {
     let sample = "Starting audit...\n[ERROR] /proj/Other.java:1:1: x [Rule]\nAudit done.\n";
     assert!(
-      parse_checkstyle_plain(sample, Path::new("/proj/Bad.java")).is_empty()
+      parse_checkstyle_plain(sample, path::Path::new("/proj/Bad.java"))
+        .is_empty()
     );
   }
 
@@ -2179,34 +2251,44 @@ mod tests {
       r#"[{"file":"/proj/Bad.kt","errors":[{"line":3,"column":10,"message":"Missing spacing before \"{\"","rule":"standard:curly-spacing"},{"line":4,"column":10,"message":"Missing spacing around \"=\"","rule":"standard:op-spacing"}]}]"#,
     );
 
-    let diagnostics = parse_ktlint_json(sample, Path::new("/proj/Bad.kt"));
+    let diagnostics =
+      parse_ktlint_json(sample, path::Path::new("/proj/Bad.kt"));
 
     assert_eq!(diagnostics.len(), 2);
-    assert_eq!(diagnostics[0].severity, Some(DiagnosticSeverity::WARNING));
+    assert_eq!(
+      diagnostics[0].severity,
+      Some(lsp_types::DiagnosticSeverity::WARNING)
+    );
     assert_eq!(diagnostics[0].source.as_deref(), Some("ktlint"));
     assert_eq!(
       diagnostics[0].code,
-      Some(NumberOrString::String("standard:curly-spacing".to_string()))
+      Some(lsp_types::NumberOrString::String(
+        "standard:curly-spacing".to_string()
+      ))
     );
     assert_eq!(diagnostics[0].message, "Missing spacing before \"{\"");
-    // ktlint is 1-based; LSP Position is 0-based.
+    // ktlint is 1-based; LSP lsp_types::Position is 0-based.
     assert_eq!(diagnostics[0].range.start.line, 2);
     assert_eq!(diagnostics[0].range.start.character, 9);
   }
 
   #[test]
   fn test_parse_ktlint_json_clean_file_and_malformed_input() {
-    assert!(parse_ktlint_json("[\n]", Path::new("/proj/Good.kt")).is_empty());
     assert!(
-      parse_ktlint_json("not json", Path::new("/proj/Bad.kt")).is_empty()
+      parse_ktlint_json("[\n]", path::Path::new("/proj/Good.kt")).is_empty()
     );
-    assert!(parse_ktlint_json("", Path::new("/proj/Bad.kt")).is_empty());
+    assert!(
+      parse_ktlint_json("not json", path::Path::new("/proj/Bad.kt")).is_empty()
+    );
+    assert!(parse_ktlint_json("", path::Path::new("/proj/Bad.kt")).is_empty());
   }
 
   #[test]
   fn test_parse_ktlint_json_filters_other_files() {
     let sample = r#"[{"file":"/proj/Other.kt","errors":[{"line":1,"column":1,"message":"x","rule":"r"}]}]"#;
-    assert!(parse_ktlint_json(sample, Path::new("/proj/Bad.kt")).is_empty());
+    assert!(
+      parse_ktlint_json(sample, path::Path::new("/proj/Bad.kt")).is_empty()
+    );
   }
 
   #[test]
@@ -2237,7 +2319,8 @@ mod tests {
       "]\n",
     );
 
-    let diagnostics = parse_ktlint_json(sample, Path::new("/proj/Main.kt"));
+    let diagnostics =
+      parse_ktlint_json(sample, path::Path::new("/proj/Main.kt"));
 
     assert_eq!(diagnostics.len(), 1);
     assert_eq!(diagnostics[0].message, "Unnecessary long whitespace");
@@ -2245,7 +2328,7 @@ mod tests {
     assert_eq!(diagnostics[0].range.start.character, 8);
     assert_eq!(
       diagnostics[0].code,
-      Some(NumberOrString::String(
+      Some(lsp_types::NumberOrString::String(
         "standard:no-multi-spaces".to_string()
       ))
     );
@@ -2271,13 +2354,16 @@ mod tests {
     );
 
     let diagnostics =
-      parse_taplo_lint_plain(sample, Path::new("/proj/bad.toml"));
+      parse_taplo_lint_plain(sample, path::Path::new("/proj/bad.toml"));
 
     assert_eq!(diagnostics.len(), 1);
-    assert_eq!(diagnostics[0].severity, Some(DiagnosticSeverity::ERROR));
+    assert_eq!(
+      diagnostics[0].severity,
+      Some(lsp_types::DiagnosticSeverity::ERROR)
+    );
     assert_eq!(diagnostics[0].source.as_deref(), Some("taplo"));
     assert_eq!(diagnostics[0].message, "conflicting keys");
-    // taplo is 1-based; LSP Position is 0-based.
+    // taplo is 1-based; LSP lsp_types::Position is 0-based.
     assert_eq!(diagnostics[0].range.start.line, 2);
     assert_eq!(diagnostics[0].range.start.character, 0);
   }
@@ -2298,7 +2384,7 @@ mod tests {
       "  │ ╰^ expected \"]\"\n",
     );
     let diagnostics =
-      parse_taplo_lint_plain(sample, Path::new("/proj/bad2.toml"));
+      parse_taplo_lint_plain(sample, path::Path::new("/proj/bad2.toml"));
     assert_eq!(diagnostics.len(), 1);
     assert_eq!(diagnostics[0].message, "invalid TOML");
     assert_eq!(diagnostics[0].range.start.line, 0);
@@ -2325,7 +2411,7 @@ mod tests {
       "ERROR operation failed error=some files were not valid\n",
     );
     let diagnostics =
-      parse_taplo_lint_plain(sample, Path::new("/proj/a[b](c)/bad.toml"));
+      parse_taplo_lint_plain(sample, path::Path::new("/proj/a[b](c)/bad.toml"));
     assert_eq!(diagnostics.len(), 1);
     assert_eq!(diagnostics[0].message, "conflicting keys");
     assert_eq!(diagnostics[0].range.start.line, 1);
@@ -2362,7 +2448,7 @@ mod tests {
     );
 
     let diagnostics =
-      parse_taplo_lint_plain(sample, Path::new("/proj/bad.toml"));
+      parse_taplo_lint_plain(sample, path::Path::new("/proj/bad.toml"));
 
     assert_eq!(diagnostics.len(), 2);
     assert_eq!(diagnostics[0].range.start.line, 2);
@@ -2381,7 +2467,7 @@ mod tests {
       "  ┌─ /proj/bad.toml:7:1\n",
     );
     let diagnostics =
-      parse_taplo_lint_plain(sample, Path::new("/proj/bad.toml"));
+      parse_taplo_lint_plain(sample, path::Path::new("/proj/bad.toml"));
     assert_eq!(diagnostics.len(), 1);
     assert_eq!(diagnostics[0].message, "conflicting keys");
     assert_eq!(diagnostics[0].range.start.line, 6);
@@ -2389,10 +2475,13 @@ mod tests {
 
   #[test]
   fn test_parse_taplo_lint_plain_filters_other_files_and_no_violations() {
-    assert!(parse_taplo_lint_plain("", Path::new("/proj/bad.toml")).is_empty());
+    assert!(
+      parse_taplo_lint_plain("", path::Path::new("/proj/bad.toml")).is_empty()
+    );
     let sample = "error: x\n  ┌─ /proj/other.toml:1:1\n";
     assert!(
-      parse_taplo_lint_plain(sample, Path::new("/proj/bad.toml")).is_empty()
+      parse_taplo_lint_plain(sample, path::Path::new("/proj/bad.toml"))
+        .is_empty()
     );
   }
 
@@ -2402,27 +2491,35 @@ mod tests {
     // (typst 0.15.1), one error case and one warning case.
     let error_sample = "bad.typ:2:1: error: unknown variable: foo\n";
     let diagnostics =
-      parse_typst_short(error_sample, Path::new("/proj/bad.typ"));
+      parse_typst_short(error_sample, path::Path::new("/proj/bad.typ"));
     assert_eq!(diagnostics.len(), 1);
-    assert_eq!(diagnostics[0].severity, Some(DiagnosticSeverity::ERROR));
+    assert_eq!(
+      diagnostics[0].severity,
+      Some(lsp_types::DiagnosticSeverity::ERROR)
+    );
     assert_eq!(diagnostics[0].source.as_deref(), Some("typst"));
     assert_eq!(diagnostics[0].message, "unknown variable: foo");
-    // typst is 1-based; LSP Position is 0-based.
+    // typst is 1-based; LSP lsp_types::Position is 0-based.
     assert_eq!(diagnostics[0].range.start.line, 1);
     assert_eq!(diagnostics[0].range.start.character, 0);
 
     let warn_sample =
       "warn2.typ:2:16: warning: unknown font family: nonexistentfontxyz\n";
     let diagnostics =
-      parse_typst_short(warn_sample, Path::new("/proj/warn2.typ"));
+      parse_typst_short(warn_sample, path::Path::new("/proj/warn2.typ"));
     assert_eq!(diagnostics.len(), 1);
-    assert_eq!(diagnostics[0].severity, Some(DiagnosticSeverity::WARNING));
+    assert_eq!(
+      diagnostics[0].severity,
+      Some(lsp_types::DiagnosticSeverity::WARNING)
+    );
   }
 
   #[test]
   fn test_parse_typst_short_filters_other_files_and_malformed_lines() {
     let sample = "not a typst line\nother.typ:1:1: error: x\n";
-    assert!(parse_typst_short(sample, Path::new("/proj/bad.typ")).is_empty());
+    assert!(
+      parse_typst_short(sample, path::Path::new("/proj/bad.typ")).is_empty()
+    );
   }
 
   // ---------------------------------------------------------------------
@@ -2437,7 +2534,8 @@ mod tests {
     // Deterministic regardless of whether `cargo` is installed in the test
     // environment: no `Cargo.toml` alone is enough to short-circuit.
     assert!(
-      clippy_diagnostics(dir.path(), Path::new("main.rs"), None).is_none()
+      clippy_diagnostics(dir.path(), path::Path::new("main.rs"), None)
+        .is_none()
     );
   }
 
@@ -2445,7 +2543,7 @@ mod tests {
   fn test_golangci_lint_diagnostics_none_when_no_go_mod() {
     let dir = tempfile::tempdir().unwrap();
     assert!(
-      golangci_lint_diagnostics(dir.path(), Path::new("main.go"), None)
+      golangci_lint_diagnostics(dir.path(), path::Path::new("main.go"), None)
         .is_none()
     );
   }
@@ -2454,7 +2552,7 @@ mod tests {
   fn test_checkstyle_diagnostics_none_when_no_checkstyle_xml() {
     let dir = tempfile::tempdir().unwrap();
     assert!(
-      checkstyle_diagnostics(dir.path(), Path::new("Main.java"), None)
+      checkstyle_diagnostics(dir.path(), path::Path::new("Main.java"), None)
         .is_none()
     );
   }
@@ -2466,8 +2564,12 @@ mod tests {
     // publish an empty (false "clean") diagnostics list.
     let dir = tempfile::tempdir().unwrap();
     assert!(
-      diagnostics_for_file_with_config(dir.path(), Path::new("main.rs"), None)
-        .is_none()
+      diagnostics_for_file_with_config(
+        dir.path(),
+        path::Path::new("main.rs"),
+        None
+      )
+      .is_none()
     );
   }
 
@@ -2479,7 +2581,8 @@ mod tests {
     // plus a real crate to actually run) — this only pins that the
     // `Option` wrapper preserves an empty-but-present result rather than
     // collapsing it to `None`.
-    let diagnostics = parse_clippy_json("", Path::new("/proj/src/main.rs"));
+    let diagnostics =
+      parse_clippy_json("", path::Path::new("/proj/src/main.rs"));
     assert_eq!(Some(diagnostics), Some(Vec::new()));
   }
 
@@ -2490,15 +2593,16 @@ mod tests {
     let dir = tempfile::tempdir().unwrap();
     std::fs::create_dir(dir.path().join("Cargo.toml")).unwrap();
     assert!(
-      clippy_diagnostics(dir.path(), Path::new("main.rs"), None).is_none()
+      clippy_diagnostics(dir.path(), path::Path::new("main.rs"), None)
+        .is_none()
     );
   }
 
   #[test]
   fn test_clippy_diagnostics_walks_parent_for_cargo_toml() {
     // A subdirectory of a real crate must find `Cargo.toml` in ancestors
-    // via `find_manifest_upwards` (Fixes #204).
-    if !check_binary_exists("cargo") {
+    // via `surfaces::find_manifest_upwards` (Fixes #204).
+    if !surfaces::check_binary_exists("cargo") {
       return;
     }
     let dir = tempfile::tempdir().unwrap();
@@ -2521,14 +2625,15 @@ mod tests {
     // When cargo clippy exits with an error status (e.g. invalid manifest)
     // and produces no diagnostics for the file, it must return `None`
     // instead of reporting clean `Some(vec![])` (Fixes #204).
-    if !check_binary_exists("cargo") {
+    if !surfaces::check_binary_exists("cargo") {
       return;
     }
     let dir = tempfile::tempdir().unwrap();
     std::fs::write(dir.path().join("Cargo.toml"), "not valid toml !!!")
       .unwrap();
     assert!(
-      clippy_diagnostics(dir.path(), Path::new("main.rs"), None).is_none()
+      clippy_diagnostics(dir.path(), path::Path::new("main.rs"), None)
+        .is_none()
     );
   }
 
@@ -2539,7 +2644,7 @@ mod tests {
     let dir = tempfile::tempdir().unwrap();
     std::fs::create_dir(dir.path().join("go.mod")).unwrap();
     assert!(
-      golangci_lint_diagnostics(dir.path(), Path::new("main.go"), None)
+      golangci_lint_diagnostics(dir.path(), path::Path::new("main.go"), None)
         .is_none()
     );
   }
@@ -2547,11 +2652,11 @@ mod tests {
   #[test]
   fn test_golangci_lint_diagnostics_walks_parent_for_go_mod() {
     // A subdirectory of a Go module must find `go.mod` in ancestors via
-    // `find_manifest_upwards` (Fixes #204).
-    if !check_binary_exists("golangci-lint") {
+    // `surfaces::find_manifest_upwards` (Fixes #204).
+    if !surfaces::check_binary_exists("golangci-lint") {
       return;
     }
-    let _guard = crate::surfaces::go::tests::golangci_lint_lock();
+    let _guard = surfaces::go::tests::golangci_lint_lock();
     let dir = tempfile::tempdir().unwrap();
     std::fs::write(
       dir.path().join("go.mod"),
@@ -2572,14 +2677,14 @@ mod tests {
     // When golangci-lint exits with an error status (e.g. invalid go.mod)
     // and produces no diagnostics, it must return `None` instead of
     // reporting clean `Some(vec![])` (Fixes #204).
-    if !check_binary_exists("golangci-lint") {
+    if !surfaces::check_binary_exists("golangci-lint") {
       return;
     }
-    let _guard = crate::surfaces::go::tests::golangci_lint_lock();
+    let _guard = surfaces::go::tests::golangci_lint_lock();
     let dir = tempfile::tempdir().unwrap();
     std::fs::write(dir.path().join("go.mod"), "not valid go.mod !!!").unwrap();
     assert!(
-      golangci_lint_diagnostics(dir.path(), Path::new("main.go"), None)
+      golangci_lint_diagnostics(dir.path(), path::Path::new("main.go"), None)
         .is_none()
     );
   }
@@ -2592,8 +2697,12 @@ mod tests {
     let dir = tempfile::tempdir().unwrap();
     std::fs::create_dir(dir.path().join("Cargo.toml")).unwrap();
     assert!(
-      diagnostics_for_file_with_config(dir.path(), Path::new("main.rs"), None)
-        .is_none()
+      diagnostics_for_file_with_config(
+        dir.path(),
+        path::Path::new("main.rs"),
+        None
+      )
+      .is_none()
     );
 
     let dir_go = tempfile::tempdir().unwrap();
@@ -2601,7 +2710,7 @@ mod tests {
     assert!(
       diagnostics_for_file_with_config(
         dir_go.path(),
-        Path::new("main.go"),
+        path::Path::new("main.go"),
         None
       )
       .is_none()

@@ -2,13 +2,11 @@
 //! auto-detected surfaces.
 
 use colored::Colorize;
-use std::path::Path;
+use std::path;
 
-use crate::config::{
-  DEFAULT_CONFIG_FILE_NAME, FormalityConfig, find_project_config,
-};
-use crate::errors::{ExitStatus, FormalityError, IoError};
-use crate::surfaces::detect_surfaces_smart;
+use crate::config;
+use crate::errors;
+use crate::surfaces;
 
 /// Runs the `fml init` command: writes a starter config file (`formality.toml`
 /// by default, or the dotfile variant with `hidden`) pre-populated with the
@@ -16,19 +14,19 @@ use crate::surfaces::detect_surfaces_smart;
 /// `force` is set.
 #[must_use]
 pub fn run_init(
-  root: &Path,
-  config: &FormalityConfig,
+  root: &path::Path,
+  config: &config::FormalityConfig,
   force: bool,
   hidden: bool,
-) -> ExitStatus {
+) -> errors::ExitStatus {
   let target_file_name = if hidden {
     ".formality.toml"
   } else {
-    DEFAULT_CONFIG_FILE_NAME
+    config::DEFAULT_CONFIG_FILE_NAME
   };
   let target = root.join(target_file_name);
 
-  if let Some(existing) = find_project_config(root) {
+  if let Some(existing) = config::find_project_config(root) {
     if !force {
       eprintln!(
         "{} Config file already exists at {}. Use {} to overwrite.",
@@ -36,7 +34,7 @@ pub fn run_init(
         existing.display(),
         "--force".bold()
       );
-      return ExitStatus::Violations;
+      return errors::ExitStatus::Violations;
     }
     // Warn when --force would create a file that is shadowed by an existing
     // higher-priority config (e.g. creating .formality.toml while
@@ -53,9 +51,10 @@ pub fn run_init(
     }
   }
 
-  let detected = detect_surfaces_smart(root, config);
+  let detected = surfaces::detect_surfaces_smart(root, config);
   let detected_names: Vec<&str> = detected.iter().map(|s| s.name()).collect();
-  let template = FormalityConfig::generate_init_template(&detected_names);
+  let template =
+    config::FormalityConfig::generate_init_template(&detected_names);
 
   match std::fs::write(&target, template) {
     Ok(()) => {
@@ -65,11 +64,12 @@ pub fn run_init(
         target.display().to_string().cyan(),
         detected.len()
       );
-      ExitStatus::Clean
+      errors::ExitStatus::Clean
     }
     Err(e) => {
-      FormalityError::Io(IoError::new(Some(target), e)).print_diagnostic();
-      ExitStatus::Error
+      errors::FormalityError::Io(errors::IoError::new(Some(target), e))
+        .print_diagnostic();
+      errors::ExitStatus::Error
     }
   }
 }
