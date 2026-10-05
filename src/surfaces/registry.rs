@@ -23,7 +23,7 @@ pub struct SurfaceRegistry {
 /// [`SurfaceRegistry::get_surface_by_name`],
 /// [`SurfaceRegistry::resolve_canonical_name`],
 /// [`SurfaceRegistry::detect_surfaces_smart`]'s ignore-list check, and
-/// `commands::doctor`'s unconfigured-language check — it used to be written
+/// `engine::doctor`'s unconfigured-language check — it used to be written
 /// out independently at each of those call sites. `pub(crate)` so the doctor
 /// command (outside this module) can reuse it too, per issue #276's "one
 /// name/alias predicate" goal.

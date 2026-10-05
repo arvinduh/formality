@@ -1,4 +1,4 @@
-//! `fml fix` command: runs a lint-fix pass followed by a format pass.
+//! In-place autofix pipeline: runs a lint-fix pass followed by a format pass.
 //!
 //! Dispatches the `[Lint, Format]` plan through `crate::engine::runner::Runner`.
 //! Read-only linting is handled by `super::lint`, formatting alone is handled
@@ -6,24 +6,23 @@
 
 use std::path;
 
-use crate::commands;
 use crate::config;
-use crate::engine;
+use crate::engine::plan;
+use crate::engine::runner;
 use crate::errors;
 
-/// Runs the `fml fix` command: the `[Lint, Format]` plan, writing by default
-/// and reporting only under `check`. Provisioning missing tools is `fml
-/// doctor --install`'s job, not this command's (v0.3.0, #282).
+/// Runs the autofix pipeline: the `[Lint, Format]` plan, writing by default
+/// and reporting only under `check`.
 #[expect(
   clippy::too_many_arguments,
-  reason = "CLI command entry point passes clap flag arguments directly"
+  reason = "pipeline entry point takes execution configuration options"
 )]
 #[expect(
   clippy::fn_params_excessive_bools,
-  reason = "CLI command entry point passes clap flag arguments directly"
+  reason = "pipeline entry point takes execution configuration options"
 )]
 #[must_use]
-pub fn run_fix(
+pub fn run(
   root: &path::Path,
   config: &config::FormalityConfig,
   check: bool,
@@ -33,13 +32,13 @@ pub fn run_fix(
   paths: Vec<path::PathBuf>,
   allow_missing: bool,
 ) -> errors::ExitStatus {
-  commands::dispatch_plan(
+  plan::dispatch_plan(
     root,
     config,
     staged,
     changed,
     lang,
     paths,
-    &engine::Plan::fix(check, allow_missing),
+    &runner::Plan::fix(check, allow_missing),
   )
 }

@@ -2,7 +2,7 @@
 //! the client still holds stdin open (issue #487).
 //!
 //! tower-lsp's `Server::serve` returns only on stdin EOF, so the process must
-//! act on `exit` itself. The in-process unit tests in `src/commands/lsp.rs`
+//! act on `exit` itself. The in-process unit tests in `src/engine/lsp.rs`
 //! never run `serve` or the process exit path.
 
 mod common;

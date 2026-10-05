@@ -1,12 +1,37 @@
-//! `clap`-derived CLI argument definitions (`Cli`, `Commands`) — the single source of truth for every `fml` subcommand's flags.
+//! `clap`-derived CLI argument definitions and top-level execution coordinator.
 //!
-//! Owns argument schema definitions, flag parsing, and validation. Subcommand
-//! handlers live in `fml::commands`, and top-level dispatch lives in
-//! `crate` (the `fml` binary Process Host).
+//! Owns argument parsing, validation, terminal configuration, and command
+//! dispatch to modular adapters under `crate::cli::*`.
 
+/// CLI adapter for `fml doctor`.
+pub mod doctor;
+/// CLI adapter for `fml fix`.
+pub mod fix;
+/// CLI adapter for `fml fmt`.
+pub mod fmt;
+/// CLI adapter for `fml init`.
+pub mod init;
+/// CLI adapter for `fml lint`.
+pub mod lint;
+/// CLI adapter for `fml lsp`.
+pub mod lsp;
+/// CLI adapter for `fml schema`.
+pub mod schema;
+/// CLI adapter for `fml sync`.
+pub mod sync;
+
+use std::env;
 use std::path;
 
 use clap;
+use colored;
+use colored::Colorize;
+
+use crate::config;
+use crate::engine::update;
+use crate::errors;
+use crate::surfaces;
+use crate::ui;
 
 /// Top-level command-line arguments parser for formality.
 #[derive(clap::Parser, Debug)]
@@ -36,127 +61,22 @@ pub struct Cli {
 #[derive(clap::Subcommand, Debug)]
 pub enum Commands {
   /// Format source files. Writes changes; --check reports without writing
-  Fmt {
-    /// Report what would be reformatted, without writing
-    #[arg(long)]
-    check: bool,
-
-    /// Only act on files staged for git commit
-    #[arg(short = 's', long)]
-    staged: bool,
-
-    /// Only act on modified uncommitted files in git
-    #[arg(long)]
-    changed: bool,
-
-    /// Filter by specific language surface (e.g. rust, python, markdown)
-    #[arg(short = 'l', long = "lang", value_name = "LANG")]
-    lang: Vec<String>,
-
-    /// A missing required tool alone does not fail the run (still reported
-    /// in the table and the summary's "(allowed)" marker); a real violation
-    /// or execution error still exits non-zero
-    #[arg(long)]
-    allow_missing: bool,
-
-    /// Optional paths or files to target
-    #[arg(value_name = "PATH")]
-    paths: Vec<path::PathBuf>,
-  },
+  Fmt(fmt::Args),
 
   /// Lint source files. Never writes -- use `fml fix` to apply fixes
-  Lint {
-    /// Rejected, not a no-op: `fml lint` never writes, so a mode flag on it
-    /// would be meaningless clutter. Declared only so the error names the
-    /// real reason instead of clap's misleading "to pass '--check' as a
-    /// value, use '-- --check'" tip; validated in [`Cli::parse_checked`].
-    #[arg(long, hide = true)]
-    check: bool,
-
-    /// Only act on files staged for git commit
-    #[arg(short = 's', long)]
-    staged: bool,
-
-    /// Only act on modified uncommitted files in git
-    #[arg(long)]
-    changed: bool,
-
-    /// Filter by specific language surface (e.g. rust, python, markdown)
-    #[arg(short = 'l', long = "lang", value_name = "LANG")]
-    lang: Vec<String>,
-
-    /// A missing required tool alone does not fail the run (still reported
-    /// in the table and the summary's "(allowed)" marker); a real violation
-    /// or execution error still exits non-zero
-    #[arg(long)]
-    allow_missing: bool,
-
-    /// Optional paths or files to target
-    #[arg(value_name = "PATH")]
-    paths: Vec<path::PathBuf>,
-  },
+  Lint(lint::Args),
 
   /// Apply lint fixes, then reformat. Writes changes; --check reports without writing
-  Fix {
-    /// Report whether `fml fix` would change anything, without writing
-    #[arg(long)]
-    check: bool,
-
-    /// Only act on files staged for git commit
-    #[arg(short = 's', long)]
-    staged: bool,
-
-    /// Only act on modified uncommitted files in git
-    #[arg(long)]
-    changed: bool,
-
-    /// Filter by specific language surface (e.g. rust, python, markdown)
-    #[arg(short = 'l', long = "lang", value_name = "LANG")]
-    lang: Vec<String>,
-
-    /// A missing required tool alone does not fail the run (still reported
-    /// in the table and the summary's "(allowed)" marker); a real violation
-    /// or execution error still exits non-zero
-    #[arg(long)]
-    allow_missing: bool,
-
-    /// Optional paths or files to target
-    #[arg(value_name = "PATH")]
-    paths: Vec<path::PathBuf>,
-  },
+  Fix(fix::Args),
 
   /// Sync native tool configs (.rustfmt.toml, ruff.toml, .clang-format, etc.) from canonical globals
-  Sync {
-    /// Check whether native tool configs are in sync without writing changes
-    #[arg(long)]
-    check: bool,
-
-    /// Filter by specific language surface
-    #[arg(short = 'l', long = "lang", value_name = "LANG")]
-    lang: Vec<String>,
-  },
+  Sync(sync::Args),
 
   /// Diagnose installed toolchains and binaries with installation hints
-  Doctor {
-    /// Inspect all supported surfaces regardless of project detection
-    #[arg(short = 'a', long)]
-    all: bool,
-
-    /// Automatically install missing toolchains using available package managers
-    #[arg(short = 'i', long)]
-    install: bool,
-  },
+  Doctor(doctor::Args),
 
   /// Scaffold a new formality.toml
-  Init {
-    /// Overwrite existing configuration file if it already exists
-    #[arg(short = 'f', long)]
-    force: bool,
-
-    /// Create hidden config file (.formality.toml) instead of formality.toml
-    #[arg(long)]
-    hidden: bool,
-  },
+  Init(init::Args),
 
   /// Write the JSON Schema for formality.toml to stdout or a file
   ///
@@ -166,11 +86,7 @@ pub enum Commands {
   /// installed `fml` as a released binary could not run it. It also
   /// generates the published schema asset in the release pipeline, which a
   /// test cannot do.
-  Schema {
-    /// Optional file path to write the JSON schema to (defaults to stdout)
-    #[arg(short = 'o', long, value_name = "FILE")]
-    output: Option<path::PathBuf>,
-  },
+  Schema(schema::Args),
 
   /// Start formality as an LSP server (stdio transport)
   ///
@@ -188,7 +104,7 @@ pub enum Commands {
   /// README.md's "Editor setup" section for per-editor wiring.
   ///
   /// Editors connect via stdio (the default transport for most editors).
-  Lsp,
+  Lsp(lsp::Args),
 }
 
 impl Cli {
@@ -225,7 +141,7 @@ impl Cli {
   /// declared directly above, so this is a "the enum was edited without
   /// updating this" assertion, not a runtime condition.
   pub fn validate(&self) -> Result<(), clap::Error> {
-    if let Commands::Lint { check: true, .. } = &self.command {
+    if let Commands::Lint(lint::Args { check: true, .. }) = &self.command {
       let mut cmd = <Self as clap::CommandFactory>::command();
       cmd.build();
       let lint = cmd
@@ -245,6 +161,113 @@ impl Cli {
   }
 }
 
+/// Dispatches the parsed CLI arguments to the corresponding library command.
+#[must_use]
+pub fn run(args: Cli) -> errors::ExitStatus {
+  // NO_COLOR wins over every force-color signal, matching the precedence
+  // `ui::table::Palette::detect` already applies to this crate's own escape
+  // codes.
+  if ui::no_color_requested() {
+    colored::control::set_override(false);
+  } else if ui::color_forced() {
+    colored::control::set_override(true);
+  }
+
+  let root = resolve_root(args.root);
+  let update_notifier = update::spawn_update_check();
+
+  // The server loads and reports its own config at `initialize`.
+  if let Commands::Lsp(lsp_args) = args.command {
+    let status = lsp::run(lsp_args, Some(&root));
+    update::print_update_notice(update_notifier);
+    return status;
+  }
+
+  let project_config_path = config::find_project_config(&root);
+  let (mut config, _config_path) =
+    match config::FormalityConfig::load_layered_with_path(
+      project_config_path.as_deref(),
+    ) {
+      Ok(res) => res,
+      Err(e) => {
+        errors::FormalityError::from(e).print_diagnostic();
+        update::print_update_notice(update_notifier);
+        return errors::ExitStatus::Error;
+      }
+    };
+
+  if let Some(custom_cfg) = args.config {
+    match config::FormalityConfig::load_file(&custom_cfg) {
+      Ok(custom) => config.merge(custom),
+      Err(e) => {
+        errors::FormalityError::from(e).print_diagnostic();
+        update::print_update_notice(update_notifier);
+        return errors::ExitStatus::Error;
+      }
+    }
+  }
+
+  warn_unrecognized_lang_sections(&config);
+
+  let status = dispatch(args.command, &root, &config);
+
+  update::print_update_notice(update_notifier);
+  status
+}
+
+/// Dispatches the subcommand against the loaded configuration.
+fn dispatch(
+  command: Commands,
+  root: &path::Path,
+  config: &config::FormalityConfig,
+) -> errors::ExitStatus {
+  match command {
+    Commands::Schema(args) => schema::run(args),
+    Commands::Doctor(args) => doctor::run(args, root, config),
+    Commands::Init(args) => init::run(args, root, config),
+    Commands::Fmt(args) => fmt::run(args, root, config),
+    Commands::Fix(args) => fix::run(args, root, config),
+    Commands::Lint(args) => lint::run(args, root, config),
+    Commands::Sync(args) => sync::run(&args, root, config),
+    Commands::Lsp(_) => {
+      unreachable!("`lsp` is dispatched before the config load")
+    }
+  }
+}
+
+/// Resolves `--root` (or the current directory when it is absent) to an
+/// absolute path, so every command sees the same root however it was spelled.
+#[must_use]
+pub fn resolve_root(root: Option<path::PathBuf>) -> path::PathBuf {
+  let root = root.unwrap_or_else(|| {
+    env::current_dir().unwrap_or_else(|_| path::PathBuf::from("."))
+  });
+  path::absolute(&root).unwrap_or_else(|_| {
+    env::current_dir().map_or_else(|_| root.clone(), |cwd| cwd.join(&root))
+  })
+}
+
+/// Warns about any `[lang.X]` sections in the resolved config whose `X` is
+/// not a recognized surface name or alias.
+fn warn_unrecognized_lang_sections(config: &config::FormalityConfig) {
+  let registry = surfaces::SurfaceRegistry::default();
+  let unrecognized = config.unrecognized_lang_sections(&registry);
+  if unrecognized.is_empty() {
+    return;
+  }
+
+  for name in unrecognized {
+    eprintln!(
+      "{} Unrecognized language section '[lang.{}]' in formality.toml — \
+       this override will not be applied. Run '{}' to see supported \
+       languages.",
+      "[WARN]".yellow().bold(),
+      name.bold(),
+      "fml doctor".cyan()
+    );
+  }
+}
+
 #[cfg(test)]
 mod tests {
   use super::*;
@@ -253,10 +276,6 @@ mod tests {
 
   #[test]
   fn test_lint_check_is_rejected_with_a_tailored_error() {
-    // `--check` parses (it is declared hidden) so that `validate` can
-    // explain *why* it is refused. Clap's own "unexpected argument" answer
-    // suggests `-- --check`, which would silently pass `--check` through as
-    // a path argument.
     let cli = Cli::try_parse_from(["fml", "lint", "--check"])
       .expect("--check must parse so validate can reject it by name");
     let err = cli
@@ -265,18 +284,15 @@ mod tests {
     let rendered = err.to_string();
     assert!(
       rendered.contains("never writes"),
-      "error should say why lint has no mode flag, got:
-{rendered}"
+      "error should say why lint has no mode flag, got:\n{rendered}"
     );
     assert!(
       rendered.contains("fml fix --check"),
-      "error should name the spelling that does what the user wanted, got:
-{rendered}"
+      "error should name the spelling that does what the user wanted, got:\n{rendered}"
     );
     assert!(
       !rendered.contains("-- --check"),
-      "error must not reproduce clap's misleading passthrough tip, got:
-{rendered}"
+      "error must not reproduce clap's misleading passthrough tip, got:\n{rendered}"
     );
   }
 
@@ -289,25 +305,29 @@ mod tests {
   #[test]
   fn test_fix_accepts_check() {
     let cli = Cli::try_parse_from(["fml", "fix", "--check"]).unwrap();
-    assert!(matches!(cli.command, Commands::Fix { check: true, .. }));
+    assert!(matches!(
+      cli.command,
+      Commands::Fix(fix::Args { check: true, .. })
+    ));
     assert!(cli.validate().is_ok());
   }
 
   #[test]
   fn test_schema_parses_and_is_advertised_in_help() {
-    // Un-deprecated in v0.3.0 (#255): it is a supported command, so it
-    // must be visible in `--help` like any other.
     let cli = Cli::try_parse_from(["fml", "schema"]).unwrap();
-    assert!(matches!(cli.command, Commands::Schema { output: None }));
+    assert!(matches!(
+      cli.command,
+      Commands::Schema(schema::Args { output: None })
+    ));
     assert!(cli.validate().is_ok());
 
     let cli =
       Cli::try_parse_from(["fml", "schema", "-o", "schema.json"]).unwrap();
     assert!(matches!(
       cli.command,
-      Commands::Schema {
+      Commands::Schema(schema::Args {
         output: Some(ref p)
-      } if p == path::Path::new("schema.json")
+      }) if p == path::Path::new("schema.json")
     ));
 
     let mut cmd = Cli::command();
@@ -330,9 +350,6 @@ mod tests {
 
   #[test]
   fn test_mode_flag_help_is_consistent_across_the_three_commands() {
-    // The `--check` help text is reviewed as a set (#118): every command
-    // that has it describes it as *reporting*, and the shared selection
-    // flags read identically everywhere.
     let mut cmd = Cli::command();
     cmd.build();
     for (name, expected_check) in [
@@ -349,13 +366,11 @@ mod tests {
         .to_string();
       assert!(
         help.contains(expected_check),
-        "`fml {name} --help` should describe --check as reporting, got:
-{help}"
+        "`fml {name} --help` should describe --check as reporting, got:\n{help}"
       );
       assert!(
         help.contains("Only act on files staged for git commit"),
-        "`fml {name} --help` should use the shared --staged wording, got:
-{help}"
+        "`fml {name} --help` should use the shared --staged wording, got:\n{help}"
       );
     }
 
@@ -366,8 +381,7 @@ mod tests {
       .to_string();
     assert!(
       lint_help.contains("Only act on files staged for git commit"),
-      "`fml lint --help` should use the shared --staged wording, got:
-{lint_help}"
+      "`fml lint --help` should use the shared --staged wording, got:\n{lint_help}"
     );
   }
 
@@ -412,5 +426,15 @@ mod tests {
       help.contains("Usage: fml [OPTIONS] <COMMAND>"),
       "help usage line should invoke the executable name `fml`, got:\n{help}"
     );
+  }
+
+  #[test]
+  fn test_relative_root_resolves_to_absolute() {
+    let cwd = env::current_dir().expect("current dir");
+    for (relative, expected) in [(".", cwd.clone()), ("src", cwd.join("src"))] {
+      let resolved = resolve_root(Some(path::PathBuf::from(relative)));
+      assert!(resolved.is_absolute(), "`{relative}` stayed relative");
+      assert_eq!(resolved, expected);
+    }
   }
 }

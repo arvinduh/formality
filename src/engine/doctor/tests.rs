@@ -526,9 +526,7 @@ fn test_tool_tally_footer_reflects_post_install_state() {
 #[test]
 fn test_run_doctor_folds_install_into_tally_before_rendering_footer() {
   let source = include_str!("../doctor.rs");
-  let start = source
-    .find("pub fn run_doctor(")
-    .expect("run_doctor must exist");
+  let start = source.find("pub fn run(").expect("run must exist");
 
   // Blank out `//` comment lines before scanning. Without this the check is
   // vacuous: `run_doctor`'s own prose names the very call this looks for, so
@@ -1198,8 +1196,7 @@ fn test_run_doctor_walks_the_workspace_at_most_once() {
   let temp = tempfile::tempdir().unwrap();
   std::fs::write(temp.path().join("main.rs"), "fn main() {}\n").unwrap();
 
-  let _ =
-    run_doctor(temp.path(), false, false, &config::FormalityConfig::empty());
+  let _ = run(temp.path(), false, false, &config::FormalityConfig::empty());
 
   // Detection and the table's detected column share one walk.
   assert_eq!(surfaces::glob::walk_count::of(temp.path()), 1);
@@ -1219,12 +1216,15 @@ fn test_doctor_detects_the_surfaces_fmt_runs_under_global_exclude() {
   )
   .unwrap();
 
-  let _ = run_doctor(root, false, false, &config);
+  let _ = run(root, false, false, &config);
   let doctor = LAST_DETECTED.take();
-  let scope =
-    crate::engine::Scope::resolve(root, &[], &config.resolve_global().exclude);
+  let scope = crate::engine::runner::Scope::resolve(
+    root,
+    &[],
+    &config.resolve_global().exclude,
+  );
   let fmt: Vec<&str> =
-    crate::commands::resolve_target_surfaces(root, &[], &scope, &config)
+    crate::engine::plan::resolve_target_surfaces(root, &[], &scope, &config)
       .unwrap()
       .iter()
       .map(|s| s.name())

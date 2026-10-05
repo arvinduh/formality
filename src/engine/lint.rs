@@ -1,19 +1,17 @@
-//! `fml lint` command: lints the resolved target surfaces via `Runner`.
+//! Linting pipeline and execution.
 //!
 //! `lint` never writes; applying fixes is `super::fix`'s job.
 
 use std::path;
 
-use crate::commands;
 use crate::config;
-use crate::engine;
+use crate::engine::plan;
+use crate::engine::runner;
 use crate::errors;
 
-/// Runs the `fml lint` command: the `[Lint]` plan, always report-only.
-/// Provisioning missing tools is `fml doctor --install`'s job, not this
-/// command's (v0.3.0, #282).
+/// Runs the linting pipeline: the `[Lint]` plan, always report-only.
 #[must_use]
-pub fn run_lint(
+pub fn run(
   root: &path::Path,
   config: &config::FormalityConfig,
   staged: bool,
@@ -22,13 +20,13 @@ pub fn run_lint(
   paths: Vec<path::PathBuf>,
   allow_missing: bool,
 ) -> errors::ExitStatus {
-  commands::dispatch_plan(
+  plan::dispatch_plan(
     root,
     config,
     staged,
     changed,
     lang,
     paths,
-    &engine::Plan::lint(allow_missing),
+    &runner::Plan::lint(allow_missing),
   )
 }

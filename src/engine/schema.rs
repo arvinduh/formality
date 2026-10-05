@@ -9,11 +9,17 @@ use std::path;
 use crate::config;
 use crate::errors;
 
-/// Runs the `fml schema` command: generates the JSON Schema for
-/// `formality.toml` and either writes it to `output` or prints it to stdout.
+/// Generates the canonical JSON Schema for `formality.toml`.
 #[must_use]
-pub fn run_schema(output: Option<path::PathBuf>) -> errors::ExitStatus {
-  let schema_json = config::schema::generate_schema();
+pub fn generate() -> String {
+  config::schema::generate_schema()
+}
+
+/// Runs the schema pipeline: generates the JSON Schema for `formality.toml`
+/// and either writes it to `output` or prints it to stdout.
+#[must_use]
+pub fn run(output: Option<path::PathBuf>) -> errors::ExitStatus {
+  let schema_json = generate();
   if let Some(target_file) = output {
     if let Some(parent) = target_file.parent() {
       let _ = std::fs::create_dir_all(parent);

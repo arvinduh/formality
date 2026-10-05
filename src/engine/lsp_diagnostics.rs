@@ -39,7 +39,7 @@
 //! =======================================
 //! Every `*_diagnostics` function here returns `Option<Vec<lsp_types::Diagnostic>>`,
 //! and the two cases mean very different things to the caller
-//! (`crate::commands::lsp::Backend::did_save`): `None` means the
+//! (`crate::engine::lsp::Backend::did_save`): `None` means the
 //! structured tool could not be run at all this time — its binary is
 //! missing, the project has no marker file it needs (`Cargo.toml`,
 //! `go.mod`, `checkstyle.xml`), or spawning it failed outright — and the

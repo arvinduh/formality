@@ -8,12 +8,14 @@
 use std::fs;
 use std::path;
 
+use fml::config::schema;
+
 #[test]
 fn test_schema_drift_check() {
   let root = path::PathBuf::from(env!("CARGO_MANIFEST_DIR"));
   let schema_path = root.join("schema").join("formality.schema.json");
 
-  let generated_schema = fml::generate_schema();
+  let generated_schema = schema::generate_schema();
 
   if std::env::var("UPDATE_SCHEMA").as_deref() == Ok("1") {
     if let Some(parent) = schema_path.parent() {

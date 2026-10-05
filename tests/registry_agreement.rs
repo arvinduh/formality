@@ -27,7 +27,7 @@
 //! outside any surface's `tool_info` is invisible to `checked_binaries` by
 //! construction; issue #276 names one such case explicitly — `typst`,
 //! invoked directly by the LSP diagnostics path
-//! (`src/commands/lsp_diagnostics.rs`), in neither registry — and asks for
+//! (`src/engine/lsp_diagnostics.rs`), in neither registry — and asks for
 //! it to be on the exemption list. To make that concrete rather than a
 //! statement nothing exercises, `EXTRA_CHECKED_BINARIES` below adds `typst`
 //! to the checked set by name so `EXEMPTIONS` actually covers it; there is
@@ -112,7 +112,7 @@ const EXEMPTIONS: &[(&str, ExemptSide, &str)] = &[
     "typst",
     ExemptSide::Both,
     "invoked directly by the LSP diagnostics path \
-     (src/commands/lsp_diagnostics.rs), not declared via any surface's \
+     (src/engine/lsp_diagnostics.rs), not declared via any surface's \
      tool_info, and in neither registry — issue #276's own named example \
      of a tool with no chain row; see EXTRA_CHECKED_BINARIES for how it \
      reaches this test's checked set at all",

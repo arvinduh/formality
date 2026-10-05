@@ -32,6 +32,8 @@ use tower_lsp::jsonrpc;
 use tower_lsp::lsp_types;
 
 use crate::config;
+use crate::engine::plan;
+use crate::engine::runner;
 use crate::errors;
 
 /// Server identity reported in `initialize`'s `ServerInfo`.
@@ -272,13 +274,13 @@ impl tower_lsp::LanguageServer for FormalityLsp {
     let config = self.get_or_load_config(Some(&root)).await;
 
     // stdout is the JSON-RPC transport, so the report goes to stderr.
-    let status = super::run_resolved(
+    let status = plan::run_resolved(
       &mut std::io::stderr(),
       &root,
       &config,
       &[],
       std::slice::from_ref(&path),
-      &crate::engine::Plan::fmt(false, false),
+      &runner::Plan::fmt(false, false),
     );
 
     if status.is_clean() {
@@ -324,7 +326,7 @@ impl tower_lsp::LanguageServer for FormalityLsp {
     // from being published "clean" when the structured tool never actually
     // ran (#177 [pre-recreation]).
     let diagnostics = if let Some(diags) =
-      crate::commands::lsp_diagnostics::diagnostics_for_file_with_config(
+      crate::engine::lsp_diagnostics::diagnostics_for_file_with_config(
         &root,
         &path,
         Some(&config),
@@ -333,13 +335,13 @@ impl tower_lsp::LanguageServer for FormalityLsp {
     } else {
       // stderr is the server log the fallback diagnostic points at; stdout
       // is the JSON-RPC transport.
-      let status = super::run_resolved(
+      let status = plan::run_resolved(
         &mut std::io::stderr(),
         &root,
         &config,
         &[],
         std::slice::from_ref(&path),
-        &crate::engine::Plan::lint(false),
+        &runner::Plan::lint(false),
       );
 
       if status.is_clean() {
@@ -538,7 +540,7 @@ fn serve_status(
 /// # Panics
 ///
 /// Panics if the underlying Tokio runtime fails to initialize.
-pub fn run_lsp_server(root: Option<&path::Path>) -> errors::ExitStatus {
+pub fn run(root: Option<&path::Path>) -> errors::ExitStatus {
   // Print a startup banner to stderr (not stdout — that's the LSP channel).
   eprintln!(
     "{} LSP server starting (stdio transport, v{SERVER_VERSION})",
@@ -1091,7 +1093,7 @@ mod tests {
   #[test]
   fn test_lsp_module_does_not_spawn_fml_child_process() {
     let manifest_dir = path::PathBuf::from(env!("CARGO_MANIFEST_DIR"));
-    let lsp_rs_path = manifest_dir.join("src/commands/lsp.rs");
+    let lsp_rs_path = manifest_dir.join("src/engine/lsp.rs");
     let content = std::fs::read_to_string(lsp_rs_path).unwrap();
 
     let (prod_code, _) = content.split_once("#[cfg(test)]").unwrap();
@@ -1099,11 +1101,11 @@ mod tests {
     // Verify there are no std::env::current_exe() calls or subprocess re-spawning of fml in production code
     assert!(
       !prod_code.contains("current_exe"),
-      "src/commands/lsp.rs production code must not call current_exe() — dispatch in-process instead"
+      "src/engine/lsp.rs production code must not call current_exe() — dispatch in-process instead"
     );
     assert!(
       !prod_code.contains("Command::new"),
-      "src/commands/lsp.rs production code must not spawn child processes"
+      "src/engine/lsp.rs production code must not spawn child processes"
     );
   }
 

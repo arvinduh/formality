@@ -55,7 +55,7 @@ sanctioned. `#82 [pre-recreation]` introduced sibling `<name>_tests.rs` files
 and `#120 [pre-recreation]` collapsed every one of them back inline; the tree
 settled on inline as the default and the `tests.rs` split only for directory
 modules (`ui/table`, `config`, `engine/runner`, `engine/version`,
-`commands/doctor`).
+`engine/doctor`).
 
 ### Canonical module paths
 
@@ -338,7 +338,7 @@ EOF for the substring `scan.`, and stayed green when the bug was reintroduced as
 source) strips comments before matching whenever that file's comments quote the
 guarded text. Applies to workflow guards
 (`tests/release_workflow_local_edits.rs`), source scans
-(`src/commands/doctor/tests.rs`), and any self-documenting file.
+(`src/engine/doctor/tests.rs`), and any self-documenting file.
 
 **Motivating case:** `#164` / PR `#199` — deleting the live `fetch-depth: 0`
 line from `release.yml` failed no test, because a `# LOCAL EDIT` comment quoted

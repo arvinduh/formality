@@ -4,7 +4,7 @@
 //! The server runs the same runner as `fml fmt`/`fml lint`, whose results
 //! table once went to stdout and corrupted the transport. This test drives the
 //! real binary over stdio and parses stdout strictly; the in-process unit
-//! tests in `src/commands/lsp.rs` never see the process's stdout.
+//! tests in `src/engine/lsp.rs` never see the process's stdout.
 
 mod common;
 

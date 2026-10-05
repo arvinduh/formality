@@ -29,7 +29,7 @@ repository:
 - [ ] **4. Registry wiring**: `src/surfaces/registry.rs`
       (`SurfaceRegistry::default()` registration call).
 - [ ] **5. Soft / optional tables**:
-  - `src/commands/lsp_diagnostics.rs`: a `parse_<tool>_*` / `<tool>_diagnostics`
+  - `src/engine/lsp_diagnostics.rs`: a `parse_<tool>_*` / `<tool>_diagnostics`
     pair plus a `diagnostics_runner_for_surface()` arm, so `fml lsp` publishes
     one `Diagnostic` per violation rather than a single generic warning. This is
     **not** optional for a surface that has a linter —

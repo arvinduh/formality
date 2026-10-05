@@ -15,8 +15,8 @@ use std::path;
 use std::sync;
 use tempfile;
 
-use fml::commands;
 use fml::config;
+use fml::engine;
 use fml::errors;
 
 /// Test representation of CLI commands for integration test dispatch.
@@ -116,7 +116,7 @@ fn dispatch_command(root: &path::Path, command: Command) -> errors::ExitStatus {
       lang,
       allow_missing,
       paths,
-    } => commands::fmt::run_fmt(
+    } => engine::fmt::run(
       root,
       &config,
       check,
@@ -133,7 +133,7 @@ fn dispatch_command(root: &path::Path, command: Command) -> errors::ExitStatus {
       allow_missing,
       paths,
       ..
-    } => commands::lint::run_lint(
+    } => engine::lint::run(
       root,
       &config,
       staged,
@@ -149,7 +149,7 @@ fn dispatch_command(root: &path::Path, command: Command) -> errors::ExitStatus {
       lang,
       allow_missing,
       paths,
-    } => commands::fix::run_fix(
+    } => engine::fix::run(
       root,
       &config,
       check,
@@ -160,15 +160,15 @@ fn dispatch_command(root: &path::Path, command: Command) -> errors::ExitStatus {
       allow_missing,
     ),
     Command::Sync { check, lang } => {
-      commands::sync::run_sync(root, &config, check, &lang)
+      engine::sync::run(root, &config, check, &lang)
     }
     Command::Doctor { all, install } => {
-      commands::doctor::run_doctor(root, all, install, &config)
+      engine::doctor::run(root, all, install, &config)
     }
     Command::Init { force, hidden } => {
-      commands::init::run_init(root, &config, force, hidden)
+      engine::init::run(root, &config, force, hidden)
     }
-    Command::Schema { output } => commands::schema::run_schema(output),
+    Command::Schema { output } => engine::schema::run(output),
   }
 }
 

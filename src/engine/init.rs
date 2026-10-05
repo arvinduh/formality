@@ -16,7 +16,7 @@ use crate::surfaces;
 /// auto-detected surfaces, refusing to overwrite an existing config unless
 /// `force` is set.
 #[must_use]
-pub fn run_init(
+pub fn run(
   root: &path::Path,
   config: &config::FormalityConfig,
   force: bool,

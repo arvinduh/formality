@@ -4,7 +4,7 @@
 //! Editors spawn `fml lsp` with the workspace root as the working directory,
 //! so the CLI's own config handling runs against the broken file before the
 //! server does. These tests drive the real binary over stdio; the in-process
-//! unit tests in `src/commands/lsp.rs` cannot see that layer.
+//! unit tests in `src/engine/lsp.rs` cannot see that layer.
 
 mod common;
 

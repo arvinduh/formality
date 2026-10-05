@@ -562,9 +562,9 @@ thread_local! {
     const { std::cell::RefCell::new(Vec::new()) };
 }
 
-/// Executes the `fml doctor` diagnostic command to scan tools, environment, and hygiene.
+/// Executes the doctor diagnostic pipeline to scan tools, environment, and hygiene.
 #[must_use]
-pub fn run_doctor(
+pub fn run(
   root: &path::Path,
   show_all: bool,
   install: bool,

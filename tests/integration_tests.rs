@@ -8,6 +8,7 @@ use std::fs;
 use std::path;
 
 use fml::config;
+use fml::engine::doctor;
 use fml::errors;
 use fml::surfaces;
 
@@ -314,12 +315,12 @@ fn test_doctor_command_prints_sync_optional_notice() {
      got:\n{stdout}"
   );
   assert!(
-    flat.contains(&normalize(fml::commands::doctor::SYNC_NOTICE_SUMMARY)),
+    flat.contains(&normalize(doctor::SYNC_NOTICE_SUMMARY)),
     "expected doctor output to contain the sync-optional summary, \
      got:\n{stdout}"
   );
   assert!(
-    flat.contains(&normalize(fml::commands::doctor::SYNC_NOTICE_DETAIL)),
+    flat.contains(&normalize(doctor::SYNC_NOTICE_DETAIL)),
     "expected doctor output to contain the sync-optional detail line, \
      got:\n{stdout}"
   );

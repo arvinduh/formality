@@ -4,14 +4,15 @@
 //! process exit codes. Subsystem-specific error types are owned by their respective
 //! modules (such as `crate::config::ConfigError`).
 
-pub use crate::config::ConfigError;
-
 use std::fmt;
 use std::io;
 use std::path;
 
 use colored::Colorize;
 use thiserror;
+
+use crate::config;
+use crate::surfaces;
 
 /// Standard exit statuses for CLI invocations.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
@@ -88,8 +89,6 @@ pub enum GitError {
   CommandFailed(String),
 }
 
-pub use crate::surfaces::Error as SurfaceError;
-
 /// Standard IO error wrapper with optional path context.
 #[derive(Debug, thiserror::Error)]
 pub struct IoError {
@@ -123,13 +122,13 @@ impl fmt::Display for IoError {
 pub enum Error {
   /// Configuration parsing, loading, or validation errors.
   #[error(transparent)]
-  Config(#[from] ConfigError),
+  Config(#[from] config::Error),
   /// Git repository or path resolution errors.
   #[error(transparent)]
   Git(#[from] GitError),
   /// Language surface resolution or serialization errors.
   #[error(transparent)]
-  Surface(#[from] SurfaceError),
+  Surface(#[from] surfaces::Error),
   /// Standard file system or stream IO errors.
   #[error(transparent)]
   Io(#[from] IoError),
@@ -212,7 +211,7 @@ mod tests {
     assert_eq!(ExitStatus::from(&git_err), ExitStatus::Error);
 
     let surface_err =
-      FormalityError::Surface(SurfaceError::UnknownSurface("foo".into()));
+      FormalityError::Surface(surfaces::Error::UnknownSurface("foo".into()));
     assert!(
       surface_err
         .to_string()
@@ -228,9 +227,9 @@ mod tests {
   #[test]
   fn test_all_inner_error_enums_implement_std_error() {
     assert_error::<FormalityError>();
-    assert_error::<ConfigError>();
+    assert_error::<config::Error>();
     assert_error::<GitError>();
-    assert_error::<SurfaceError>();
+    assert_error::<surfaces::Error>();
     assert_error::<IoError>();
   }
 }

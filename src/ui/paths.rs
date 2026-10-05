@@ -493,7 +493,7 @@ mod tests {
 
   use colored;
 
-  use crate::engine;
+  use crate::engine::diff;
 
   #[test]
   fn display_path_relativizes_under_root() {
@@ -1051,8 +1051,8 @@ mod tests {
     let _guard = ColorOverrideGuard;
 
     colored::control::set_override(true);
-    check(&engine::render_diff(old, new, old_label, new_label));
+    check(&diff::render_diff(old, new, old_label, new_label));
     colored::control::set_override(false);
-    check(&engine::render_diff(old, new, old_label, new_label));
+    check(&diff::render_diff(old, new, old_label, new_label));
   }
 }

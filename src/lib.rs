@@ -1,11 +1,11 @@
 //! Formality (`fml`) library for formatting, linting, and syncing configurations across multiple language surfaces.
 //!
 //! Owns library subsystems and public APIs for language surfaces, execution
-//! engine, configuration models, and commands. CLI argument parsing and
-//! process hosting live in the `fml` binary.
+//! engine, and configuration models. CLI argument parsing, modular adapters,
+//! and process hosting live in the `cli` module and `fml` binary.
 
-/// CLI command implementations.
-pub mod commands;
+/// CLI argument definitions, validation, and subcommand adapters.
+pub mod cli;
 /// Configuration loading, parsing, and resolving.
 pub mod config;
 /// Execution engine for running formatters, linters, and version checks.
@@ -16,14 +16,6 @@ pub mod errors;
 pub mod surfaces;
 /// Terminal UI components and layout rendering.
 pub mod ui;
-
-// `generate_schema` is re-exported at the crate root because this crate's
-// own integration tests (`tests/schema_drift.rs`) reach it as
-// `fml::generate_schema` — a real external use, not a compatibility shim.
-// Every other item in this crate is reached through its canonical,
-// structural module path (e.g. `crate::engine::update`,
-// `crate::ui::table`); see docs/style-guide.md §1.
-pub use config::schema::generate_schema;
 
 #[cfg(test)]
 mod tests {

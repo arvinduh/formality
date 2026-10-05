@@ -186,8 +186,8 @@ print!("{rendered}");
 ```
 
 This is the same rendering path formality's own commands use internally — e.g.
-`fml doctor` builds a `Table` value in `src/commands/doctor/mod.rs` and renders
-it through `fml::ui::table` exactly as `render_json` does from equivalent JSON.
+`fml doctor` builds a `Table` value in `src/engine/doctor.rs` and renders it
+through `fml::ui::table` exactly as `render_json` does from equivalent JSON.
 
 ## Framing (`fml`'s own output)
 
