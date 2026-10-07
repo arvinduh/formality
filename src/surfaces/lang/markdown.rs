@@ -863,16 +863,11 @@ impl LanguageSurface for MarkdownSurface {
   ) -> surfaces::SurfaceResult {
     let start = time::Instant::now();
 
-    if let Some(res) =
-      tooling::tool_missing_guard(self.name(), "prettier", start, None)
-    {
-      return res;
-    }
-
-    let files = ctx.matched_files(MD_EXTENSIONS);
-    if let Some(res) = surfaces::passed_if_empty(&files, self.name(), start) {
-      return res;
-    }
+    let files =
+      match ctx.files_for(self.name(), "prettier", MD_EXTENSIONS, start) {
+        Ok(files) => files,
+        Err(res) => return res,
+      };
 
     let md_binary = if tooling::check_binary_exists("markdownlint-cli2") {
       Some("markdownlint-cli2")
@@ -958,7 +953,7 @@ impl LanguageSurface for MarkdownSurface {
             }
           }
 
-          let mut cmd = tooling::create_tool_command("prettier");
+          let mut cmd = ctx.command("prettier");
           cmd
             .arg("--parser")
             .arg("markdown")
@@ -967,7 +962,6 @@ impl LanguageSurface for MarkdownSurface {
               &[scratch.to_path_buf()],
               &ctx.lang_config,
             ));
-          cmd.current_dir(ctx.root.as_path());
           let output = cmd.output()?;
           // #314: the same post-prettier step as the write branch below, so
           // `--check` reports exactly the diff a real `fml fmt` writes.
@@ -1025,13 +1019,12 @@ impl LanguageSurface for MarkdownSurface {
       }
     }
 
-    let mut cmd = tooling::create_tool_command("prettier");
+    let mut cmd = ctx.command("prettier");
     cmd.args(build_prettier_fmt_args(
       &inline_config,
       &files,
       &ctx.lang_config,
     ));
-    cmd.current_dir(ctx.root.as_path());
 
     // `prettier --write` exits 0 whether or not it reformatted anything and
     // only exits non-zero on an operational failure (parse error, bad
@@ -1108,14 +1101,13 @@ impl LanguageSurface for MarkdownSurface {
       return escape_failed(self.name(), start, &e);
     }
 
-    let mut cmd = tooling::create_tool_command(binary);
+    let mut cmd = ctx.command(binary);
     cmd.args(build_markdownlint_args(
       &files,
       fix,
       Some(md_temp_cfg.path()),
       ctx.lang_config.tool_args(MARKDOWNLINT_CLI2),
     ));
-    cmd.current_dir(ctx.root.as_path());
 
     let mut res = tooling::run_tool_command(self.name(), &mut cmd);
     match &mut res.status {

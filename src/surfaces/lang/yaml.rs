@@ -139,16 +139,11 @@ impl surfaces::LanguageSurface for YamlSurface {
   ) -> surfaces::SurfaceResult {
     let start = time::Instant::now();
 
-    if let Some(res) =
-      tooling::tool_missing_guard(self.name(), "prettier", start, None)
-    {
-      return res;
-    }
-
-    let files = ctx.matched_files(YAML_EXTENSIONS);
-    if let Some(res) = surfaces::passed_if_empty(&files, self.name(), start) {
-      return res;
-    }
+    let files =
+      match ctx.files_for(self.name(), "prettier", YAML_EXTENSIONS, start) {
+        Ok(files) => files,
+        Err(res) => return res,
+      };
 
     // Inline `--tab-width`/`--print-width`/etc. instead of writing
     // `.prettierrc.json` to disk — see `prettier::prettier_args` (Fixes
@@ -159,7 +154,7 @@ impl surfaces::LanguageSurface for YamlSurface {
       return sync::diff_check_via_tempcopy_classified(
         &files,
         |scratch| {
-          let mut cmd = tooling::create_tool_command("prettier");
+          let mut cmd = ctx.command("prettier");
           cmd
             .arg("--write")
             .arg("--parser")
@@ -167,7 +162,6 @@ impl surfaces::LanguageSurface for YamlSurface {
             .args(&inline_config)
             .arg(scratch);
           cmd.args(ctx.lang_config.tool_args("prettier"));
-          cmd.current_dir(ctx.root.as_path());
           cmd.output()
         },
         self.name(),
@@ -176,7 +170,7 @@ impl surfaces::LanguageSurface for YamlSurface {
       );
     }
 
-    let mut cmd = tooling::create_tool_command("prettier");
+    let mut cmd = ctx.command("prettier");
     cmd.arg("--write");
     cmd.args(&inline_config);
 
@@ -185,7 +179,6 @@ impl surfaces::LanguageSurface for YamlSurface {
     }
 
     cmd.args(ctx.lang_config.tool_args("prettier"));
-    cmd.current_dir(ctx.root.as_path());
 
     // `prettier --write` exits `0` whether or not it reformats and only
     // exits non-zero (`2`) on a parse error / bad config / unreadable file
@@ -210,23 +203,18 @@ impl surfaces::LanguageSurface for YamlSurface {
       return tooling::lint_fix_unsupported(self.name(), start);
     }
 
-    if let Some(res) =
-      tooling::tool_missing_guard(self.name(), "yamllint", start, None)
-    {
-      return res;
-    }
-
-    let files = ctx.matched_files(YAML_EXTENSIONS);
-    if let Some(res) = surfaces::passed_if_empty(&files, self.name(), start) {
-      return res;
-    }
+    let files =
+      match ctx.files_for(self.name(), "yamllint", YAML_EXTENSIONS, start) {
+        Ok(files) => files,
+        Err(res) => return res,
+      };
 
     // Inline `-d <yaml source>` instead of writing `.yamllint.yaml` to disk
     // — see `yamllint_config` (Fixes #151 [pre-recreation]). `fml sync` remains
     // the only path that materializes the file.
     let inline_config = yamllint_config(ctx).yaml();
 
-    let mut cmd = tooling::create_tool_command("yamllint");
+    let mut cmd = ctx.command("yamllint");
     cmd.arg("-d").arg(&inline_config);
     if !ctx.paths.is_empty()
       || !ctx.lang_config.files.is_empty()
@@ -240,7 +228,6 @@ impl surfaces::LanguageSurface for YamlSurface {
     }
 
     cmd.args(ctx.lang_config.tool_args("yamllint"));
-    cmd.current_dir(ctx.root.as_path());
 
     tooling::run_tool_command(self.name(), &mut cmd)
   }

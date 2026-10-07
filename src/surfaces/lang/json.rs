@@ -110,7 +110,7 @@ impl LanguageSurface for JsonSurface {
           } else {
             "json"
           };
-          let mut cmd = tooling::create_tool_command("prettier");
+          let mut cmd = ctx.command("prettier");
           cmd
             .arg("--write")
             .arg("--parser")
@@ -118,7 +118,6 @@ impl LanguageSurface for JsonSurface {
             .args(&inline_config)
             .arg(scratch);
           cmd.args(ctx.lang_config.tool_args("prettier"));
-          cmd.current_dir(ctx.root.as_path());
           cmd.output()
         },
         self.name(),
@@ -127,7 +126,7 @@ impl LanguageSurface for JsonSurface {
       );
     }
 
-    let mut cmd = tooling::create_tool_command("prettier");
+    let mut cmd = ctx.command("prettier");
     cmd.arg("--write");
     cmd.args(&inline_config);
 
@@ -136,7 +135,6 @@ impl LanguageSurface for JsonSurface {
     }
 
     cmd.args(ctx.lang_config.tool_args("prettier"));
-    cmd.current_dir(ctx.root.as_path());
 
     // `prettier --write` exits `0` regardless of whether it reformats and
     // only exits non-zero (`2`) on a parse error / bad config / unreadable

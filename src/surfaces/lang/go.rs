@@ -275,16 +275,11 @@ impl LanguageSurface for GoSurface {
       return res;
     }
 
-    if let Some(res) =
-      tooling::tool_missing_guard(self.name(), "goimports", start, None)
-    {
-      return res;
-    }
-
-    let files = ctx.matched_files(GO_EXTENSIONS);
-    if let Some(res) = surfaces::passed_if_empty(&files, self.name(), start) {
-      return res;
-    }
+    let files =
+      match ctx.files_for(self.name(), "goimports", GO_EXTENSIONS, start) {
+        Ok(files) => files,
+        Err(res) => return res,
+      };
 
     let local_prefix = ctx
       .lang_config
@@ -432,16 +427,11 @@ impl LanguageSurface for GoSurface {
       );
     }
 
-    if let Some(res) =
-      tooling::tool_missing_guard(self.name(), "golangci-lint", start, None)
-    {
-      return res;
-    }
-
-    let files = ctx.matched_files(GO_EXTENSIONS);
-    if let Some(res) = surfaces::passed_if_empty(&files, self.name(), start) {
-      return res;
-    }
+    let files =
+      match ctx.files_for(self.name(), "golangci-lint", GO_EXTENSIONS, start) {
+        Ok(files) => files,
+        Err(res) => return res,
+      };
 
     let files_to_pass = ctx.files_to_pass(files);
 
@@ -449,7 +439,7 @@ impl LanguageSurface for GoSurface {
     // `.golangci.yml` being present on disk — see
     // `golangci_config` (Fixes #157 [pre-recreation]). `fml sync` remains the
     // only path that materializes the file.
-    let mut cmd = tooling::create_tool_command("golangci-lint");
+    let mut cmd = ctx.command("golangci-lint");
     if golangci_lint_supports_enable_only() {
       // `--enable-only` replaces the active linter set outright, so it gives
       // the same diagnostics as a `.golangci.yml` with this `linters.enable`
@@ -466,7 +456,6 @@ impl LanguageSurface for GoSurface {
       fix,
       ctx.lang_config.tool_args("golangci-lint"),
     ));
-    cmd.current_dir(ctx.root.as_path());
 
     // golangci-lint exits `1` for "issues found" and non-`1` for "could not
     // run" (`7` = typecheck/config error, `2`/`3`/`5`/`6` = other internal

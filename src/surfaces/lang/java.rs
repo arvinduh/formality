@@ -314,13 +314,12 @@ impl LanguageSurface for JavaSurface {
         sync::diff_check_via_tempcopy_classified(
           &files,
           |scratch| {
-            let mut cmd = tooling::create_tool_command("google-java-format");
+            let mut cmd = ctx.command("google-java-format");
             if aosp {
               cmd.arg("--aosp");
             }
             cmd.arg("--replace").arg(scratch);
             cmd.args(ctx.lang_config.tool_args("google-java-format"));
-            cmd.current_dir(ctx.root.as_path());
             cmd.output()
           },
           self.name(),
@@ -345,7 +344,7 @@ impl LanguageSurface for JavaSurface {
       );
     }
 
-    let mut cmd = tooling::create_tool_command("google-java-format");
+    let mut cmd = ctx.command("google-java-format");
     if aosp {
       cmd.arg("--aosp");
     }
@@ -356,7 +355,6 @@ impl LanguageSurface for JavaSurface {
     }
 
     cmd.args(ctx.lang_config.tool_args("google-java-format"));
-    cmd.current_dir(ctx.root.as_path());
 
     explain_jvm_incompatibility(tooling::run_tool_command_classified(
       self.name(),
@@ -411,13 +409,12 @@ impl LanguageSurface for JavaSurface {
       }
     };
 
-    let mut cmd = tooling::create_tool_command("checkstyle");
+    let mut cmd = ctx.command("checkstyle");
     cmd.arg("-c").arg(&config_path);
     for f in &files {
       cmd.arg(f);
     }
     cmd.args(ctx.lang_config.tool_args("checkstyle"));
-    cmd.current_dir(ctx.root.as_path());
 
     match cmd.output() {
       Ok(output) => {

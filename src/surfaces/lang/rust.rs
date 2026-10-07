@@ -324,12 +324,11 @@ impl surfaces::LanguageSurface for RustSurface {
       );
     }
 
-    let mut cmd = tooling::create_tool_command("cargo");
+    let mut cmd = ctx.command("cargo");
     cmd.args(build_clippy_args(
       fix,
       ctx.lang_config.tool_args("clippy-driver"),
     ));
-    cmd.current_dir(ctx.root.as_path());
 
     tooling::run_tool_command(self.name(), &mut cmd)
   }

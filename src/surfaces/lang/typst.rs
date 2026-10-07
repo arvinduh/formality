@@ -104,29 +104,23 @@ impl surfaces::LanguageSurface for TypstSurface {
   ) -> surfaces::SurfaceResult {
     let start = time::Instant::now();
 
-    if let Some(res) =
-      tooling::tool_missing_guard(self.name(), "typstyle", start, None)
-    {
-      return res;
-    }
-
-    let files = ctx.matched_files(TYPST_EXTENSIONS);
-    if let Some(res) = surfaces::passed_if_empty(&files, self.name(), start) {
-      return res;
-    }
+    let files =
+      match ctx.files_for(self.name(), "typstyle", TYPST_EXTENSIONS, start) {
+        Ok(files) => files,
+        Err(res) => return res,
+      };
 
     if ctx.check_only {
       return sync::diff_check_via_tempcopy(
         &files,
         |scratch| {
-          let mut cmd = tooling::create_tool_command("typstyle");
+          let mut cmd = ctx.command("typstyle");
           cmd
             .arg("--column")
             .arg(ctx.lang_config.line_length.to_string())
             .arg("-i")
             .arg(scratch);
           cmd.args(ctx.lang_config.tool_args("typstyle"));
-          cmd.current_dir(ctx.root.as_path());
           cmd.output()
         },
         self.name(),
@@ -134,7 +128,7 @@ impl surfaces::LanguageSurface for TypstSurface {
       );
     }
 
-    let mut cmd = tooling::create_tool_command("typstyle");
+    let mut cmd = ctx.command("typstyle");
     cmd
       .arg("--column")
       .arg(ctx.lang_config.line_length.to_string())
@@ -145,7 +139,6 @@ impl surfaces::LanguageSurface for TypstSurface {
     }
 
     cmd.args(ctx.lang_config.tool_args("typstyle"));
-    cmd.current_dir(ctx.root.as_path());
 
     tooling::run_tool_command(self.name(), &mut cmd)
   }

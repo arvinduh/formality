@@ -89,6 +89,39 @@ impl ExecutionContext {
     }
   }
 
+  /// Returns the surface's files, or the result to return early: `binary`
+  /// is not installed, or no file matches `extensions`.
+  ///
+  /// # Errors
+  ///
+  /// Returns the `ToolMissing` or `Passed` result the surface reports as-is.
+  pub fn files_for(
+    &self,
+    surface_name: &'static str,
+    binary: &str,
+    extensions: &[&str],
+    start: time::Instant,
+  ) -> Result<Vec<path::PathBuf>, SurfaceResult> {
+    if let Some(res) =
+      tooling::tool_missing_guard(surface_name, binary, start, None)
+    {
+      return Err(res);
+    }
+    let files = self.matched_files(extensions);
+    match passed_if_empty(&files, surface_name, start) {
+      Some(res) => Err(res),
+      None => Ok(files),
+    }
+  }
+
+  /// Returns a command for `binary` that runs from the workspace root.
+  #[must_use]
+  pub fn command(&self, binary: &str) -> std::process::Command {
+    let mut cmd = tooling::create_tool_command(binary);
+    cmd.current_dir(self.root.as_path());
+    cmd
+  }
+
   /// Returns the files to pass to a directory-walking CLI tool.
   /// If paths, `lang_config` files, or `lang_config` excludes are specified,
   /// returns the filtered files; otherwise returns an empty Vec so the tool
