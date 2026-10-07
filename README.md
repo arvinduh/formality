@@ -12,7 +12,6 @@ module map) · [Facet Rosetta](docs/facet-rosetta.md) (the canonical
 cross-language config vocabulary) ·
 [Language Surface Guides](docs/language-surfaces.md) (per-surface tools, config,
 and behavior) · [Adding a New Surface](docs/new-surface-guide.md) ·
-[Table Spec](docs/table-spec.md) (`fml::ui::table`) ·
 [Style Guide](docs/style-guide.md) · [Release Procedure](docs/release.md) ·
 [ADRs](docs/adr/README.md)
 

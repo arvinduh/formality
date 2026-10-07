@@ -2,7 +2,7 @@
 
 This document describes how a release of `fml` is cut. `version` in `Cargo.toml`
 and `editors/vscode/package.json` is kept in lockstep by
-`tests/version_lockstep.rs`; the bump lands on `main` in its own
+`tests/repo/version_lockstep.rs`; the bump lands on `main` in its own
 `chore(release)` PR, and pushing a matching `vX.Y.Z` tag to `main` drives the
 build-and-publish pipeline
 ([cargo-dist](https://opensource.axo.dev/cargo-dist/)).
@@ -62,7 +62,7 @@ committed `CHANGELOG.md`.
 2. **Bump the version.**
 
    Update `version` in `Cargo.toml` and `editors/vscode/package.json` together
-   (they must stay identical — `tests/version_lockstep.rs` enforces this).
+   (they must stay identical — `tests/repo/version_lockstep.rs` enforces this).
    Follow semver based on the changes since the last tag: any `feat` commit
    means at least a minor bump, any breaking change means a major bump,
    otherwise a patch bump. Commit this as its own
@@ -134,9 +134,9 @@ is published as a prerelease and moves none of them.
 Before 1.0.0 the schema makes no compatibility promise
 ([ADR 0007](adr/0007-one-current-schema.md)): a config a newer `fml` no longer
 accepts fails with the key path, line and a fix-it hint instead.
-`tests/schema_drift.rs` keeps `schema/formality.schema.json` equal to
+`tests/repo/schema_drift.rs` keeps `schema/formality.schema.json` equal to
 `fml schema` output; regenerate it with
-`UPDATE_SCHEMA=1 cargo test --test schema_drift`.
+`UPDATE_SCHEMA=1 cargo test --test repo schema_drift`.
 
 ## Release notes
 
@@ -197,13 +197,13 @@ When `[workspace.metadata.dist]` or `cargo-dist-version` changes:
    the guard test:
 
    ```sh
-   cargo test --test release_workflow_local_edits
+   cargo test --test repo release_workflow
    ```
 
 ### The local-edits guard test
 
-`tests/release_workflow_local_edits.rs` guards against accidental reversion. It
-asserts that:
+`tests/repo/release_workflow.rs` guards against accidental reversion. It asserts
+that:
 
 - All required substrings are present on live (non-comment) lines in
   `release.yml`.
@@ -226,6 +226,6 @@ a local edit fails PR checks rather than surfacing at release time.
 
 If a future cargo-dist version makes an edit unnecessary, delete the edit and
 its `# LOCAL EDIT` comment from `release.yml`, drop its corresponding entry from
-`EDITS` in `tests/release_workflow_local_edits.rs`, and remove it from the list
-of local edits at the top of this section, lowering each "four" that counts
-them, all in one commit.
+`EDITS` in `tests/repo/release_workflow.rs`, and remove it from the list of
+local edits at the top of this section, lowering each "four" that counts them,
+all in one commit.

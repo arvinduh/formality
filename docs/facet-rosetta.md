@@ -91,12 +91,12 @@ resolved value, so they can never disagree.
 
 ## Where facets are used
 
-- **`.editorconfig` generation** (`src/surfaces/editorconfig.rs`, run by
+- **`.editorconfig` generation** (`src/surfaces/sync/editorconfig.rs`, run by
   `fml sync`) reads each surface's `facet_support` for `indent_tabs`,
   `indent_width` and `line_length`: a `Fixed` value overrides the resolved
   config value, and an `Unsupported` `line_length` omits `max_line_length` from
   that surface's section.
-- **The golden table test** (`test_surface_facet_declarations` in
+- **The golden table test** (`surface_facet_declarations` in
   `src/config/facets.rs`) asserts every cell of the rosetta table above against
   the code, so the two cannot drift apart.
 

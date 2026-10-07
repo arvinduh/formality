@@ -27,8 +27,8 @@ cargo run -q -- fmt
   `tests/`, so it is never the gate.
 - Always run the freshly built binary (`cargo run -q -- ...`), never a global
   `fml` on `PATH`.
-- Schema drift: `cargo test --test schema_drift`; regenerate with
-  `UPDATE_SCHEMA=1 cargo test -j 2 --test schema_drift`.
+- Schema drift: `cargo test --test repo schema_drift`; regenerate with
+  `UPDATE_SCHEMA=1 cargo test -j 2 --test repo schema_drift`.
 - The root carries only `formality.toml`, no generated native configs
   (`.rustfmt.toml`, `.prettierrc`, ...), so `fml sync --check` is not run here.
 
@@ -78,11 +78,17 @@ builds the binary, then runs `fml fmt --staged --allow-missing` and
 
 ## Layout
 
+The library (`src/lib.rs`) never prints; the binary (`src/main.rs` + `src/cli/`)
+owns all terminal I/O. See `docs/architecture.md`.
+
 - `src/config` — `formality.toml` parsing, resolution, schema
-- `src/engine` — execution, diffing, update checks
-- `src/surfaces` — one file per language; `docs/new-surface-guide.md` adds one
-- `src/ui` — table rendering
-- `src/commands` — CLI subcommand handlers
+- `src/engine` — runner, targets, diffing, doctor checks and installs, LSP
+  primitives, updates
+- `src/surfaces` — the trait and shared toolkit; `lang/` holds one file per
+  language (`docs/new-surface-guide.md` adds one), `sync/` native configs
+- `src/cli` — thin per-command orchestration, the LSP server, plain-line `ui`
+- `tests/api`, `tests/cli`, `tests/repo` — library tests, process-only tests
+  (exit codes, LSP stdio), and repo hygiene
 
 ## Issues
 
@@ -106,8 +112,8 @@ repo's recreation and point at unrelated issues; see
 - Branch protection or required status check names.
 - Version bumps: hand edits in a dedicated `chore(release)` PR
   (`docs/release.md`). `Cargo.toml` and `editors/vscode/package.json` move
-  together (`tests/version_lockstep.rs`). The `semver` crate in `Cargo.toml`
-  parses external tools' versions, not formality's own.
+  together (`tests/repo/version_lockstep.rs`). The `semver` crate in
+  `Cargo.toml` parses external tools' versions, not formality's own.
 
 ## Never
 

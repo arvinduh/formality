@@ -5,20 +5,29 @@ where to go for the detail this document deliberately doesn't repeat. See
 [docs/INDEX.md](INDEX.md) for the full doc set; this page only covers shape, not
 per-feature behavior.
 
-## Top-level crate (`src/lib.rs`, `src/main.rs`, `src/cli.rs`, `src/cli/*`, `src/errors.rs`)
+## Library and binary
 
-`src/main.rs` is the binary entry point and minimal Process Host per rust-guide
-§3H. It parses CLI arguments via `cli::Cli::parse_checked()`, delegates
-execution to `cli::run()`, and maps `ExitStatus` to process exit codes.
-`src/cli.rs` and the `src/cli/` directory define the `clap`-based argument
-schema (`Cli`, `Commands`), validation, and per-subcommand modular adapters
-(`doctor.rs`, `fix.rs`, `fmt.rs`, `init.rs`, `lint.rs`, `lsp.rs`, `schema.rs`,
-`sync.rs`). Top-level dispatch, color overrides (`NO_COLOR`, `CLICOLOR_FORCE`),
-config loading, and update checks are orchestrated in `cli::run()`. `src/lib.rs`
-exports the core library modules (`cli`, `config`, `engine`, `errors`,
-`surfaces`, `ui`). `src/errors.rs` is the crate-wide error hierarchy
-(`FormalityError`, `ExitStatus`) powered by `thiserror` with per-subsystem leaf
-errors (`config::Error`, `surfaces::Error`, `GitError`, `IoError`).
+`fml` is two crates in one package. The library (`src/lib.rs`) exports four
+modules: `config`, `engine` and `surfaces`. It returns data and has no knowledge
+of `clap`, terminal rendering, or stdout. The binary (`src/main.rs`) declares
+`mod cli;` itself and is the only place that prints.
+
+```text
+main.rs (mod cli;)  ──►  src/cli/  ──►  fml::{config, engine, surfaces}
+```
+
+`src/main.rs` is the process host per rust-guide §3H: it parses arguments,
+installs the stderr logger (`-v`, or `RUST_LOG`), runs the command, and maps
+`runner::ExitStatus` to the process exit code. Errors live in the module that
+raises them (`config::Error`, `target::Error`, `surfaces::Error`); there is no
+crate-wide error enum.
+
+### Visibility
+
+Each parent module decides what escapes. Items inside a module are plain `pub`
+when another module uses them and private otherwise; restricted visibility
+(`pub(crate)`) appears only on module declarations, at the gatekeeper, never on
+items. The library exports only what the binary and the integration tests use.
 
 ## `src/config`
 
@@ -40,58 +49,78 @@ on.
 
 ## `src/engine`
 
-Diffing, target resolution, diagnostics, and version/update checking — the pure
-engine primitives that coordinate execution across surfaces, as opposed to
-`src/surfaces`, which defines _what_ each surface does, and `src/cli`, which
-defines argument definitions, fallbacks, and command pipeline composition.
+Pure, in-memory engine primitives that coordinate execution across surfaces. The
+engine returns results; it never renders or prints them. `src/surfaces` defines
+_what_ each surface does, and `src/cli` turns engine results into output.
 
-- `engine/diff.rs`: renders unified diffs for `fmt --check`/`fml lint` output.
-- `engine/doctor/`: workspace and toolchain verification diagnostics and
-  toolchain installations (`install_missing_tools_framed`).
-- `engine/lsp.rs` and `engine/lsp/diagnostics.rs`: the in-process Language
-  Server implementing document formatting and structured diagnostics.
-- `engine/runner.rs`: `Runner::run_into`, executing passes in parallel across
-  surfaces via `rayon::par_iter`. See [style-guide.md](style-guide.md) §4 for
+- `engine/lsp.rs` (+ `lsp/diagnostics.rs`): what the language server computes —
+  running one pass over one file, formatting edits, and structured per-violation
+  diagnostics parsed from each linter's machine-readable output.
+- `engine/diff.rs`: renders unified diffs for `fmt --check` output.
+- `engine/doctor.rs` (+ `doctor/gitignore.rs`, `doctor/venv.rs`): `check` (each
+  tool's presence and MSTV/pin status) and `install` (one tool, with
+  post-install verification), plus virtualenv detection and `.gitignore`
+  hygiene.
+- `engine/runner.rs`: `Runner::run` executes passes in parallel across surfaces
+  via `rayon::par_iter` and returns `Vec<SurfaceResult>`; `compute_exit_status`
+  folds those into an `ExitStatus`. See [style-guide.md](style-guide.md) §4 for
   `ExecutionContext` `Arc`-sharing and the three-stage fix pipeline.
 - `engine/target.rs`: git path resolution, candidate path resolution, scope
   resolution, and surface filtering.
-- `engine/update.rs`: implements self-update checks against GitHub Releases.
+- `engine/update.rs`: the background self-update check against GitHub Releases.
 - `engine/version/`: resolves tool versions and enforces minimum tool versions.
 
 ## `src/surfaces`
 
-The `LanguageSurface` trait and the fleet of 12 per-language implementations
-(`rust.rs`, `python.rs`, `cpp.rs`, `java.rs`, `go.rs`, `markdown.rs`, `yaml.rs`,
-`json.rs`, `toml.rs`, `typst.rs`, `javascript.rs`, `kotlin.rs`), plus the shared
-machinery they're all built on: `registry.rs` (the `SurfaceRegistry`,
-canonical-name/alias lookup, and fleet-consistency tests), `glob.rs`
-(candidate-file discovery and exclude-pattern matching), `native.rs` (the
-`NativeConfig` trait for reading/writing a tool's own dotfile config), `sync.rs`
-(`fml sync`'s generate-and-verify logic), `tooling.rs` (shared
-subprocess/tool-invocation helpers), and `editorconfig.rs` (`.editorconfig`
-generation, its own small domain sub-package per issue `#120 [pre-recreation]`).
-See [language-surfaces.md](language-surfaces.md) for what each surface wraps and
-[new-surface-guide.md](new-surface-guide.md) for how to add a 13th.
+The `LanguageSurface` trait (`surfaces.rs`) and everything the surfaces share:
 
-## `src/ui`
+- `lang/`: the 12 per-language implementations (`cpp`, `go`, `java`,
+  `javascript`, `json`, `kotlin`, `markdown`, `python`, `rust`, `toml`, `typst`,
+  `yaml`).
+- `registry.rs`: the `SurfaceRegistry`, canonical-name/alias lookup,
+  auto-detection, and fleet-consistency tests.
+- `tooling.rs`: the toolkit surfaces call to find and spawn their tools — binary
+  lookup, install chains, exit classification, and the shared missing-tool
+  results.
+- `glob.rs`: candidate-file discovery and exclude-pattern matching.
+- `sync.rs` + `sync/`: native config synchronization for `fml sync` —
+  `native.rs` (the `NativeConfig` trait for a tool's own dotfile config),
+  `prettier.rs` (the shared `.prettierrc.json`), and `editorconfig.rs`
+  (`.editorconfig` generation, per issue `#120 [pre-recreation]`).
 
-Terminal UI rendering, currently just semantic table formatting
-(`ui/table/mod.rs`, `render.rs`): width policies, wrapping/truncation,
-terminal-width clamping, and semantic color roles. This is the same machinery
-both `fml::ui::table`'s public JSON-spec renderer (the `fml table` CLI command
-that used to front it was removed in v0.3.0 (#255)) and `fml`'s own internal
-output (`fml doctor`) render through — see [table-spec.md](table-spec.md) for
-the JSON specification it consumes.
+`tooling`, `glob` and `registry` live here rather than in `engine` because the
+language implementations call them; `engine` depends on `surfaces`, never the
+reverse. See [language-surfaces.md](language-surfaces.md) for what each surface
+wraps and [new-surface-guide.md](new-surface-guide.md) for how to add a 13th.
 
 ## `src/cli`
 
-Modular adapters mapping CLI flags to engine pipelines:
+The binary's thin orchestration layer: each command composes library calls and
+prints their results.
 
-- `cli.rs`: top-level argument parser (`Cli`, `Commands`), validation, and
-  process execution coordinator (`cli::run()`).
-- `cli/doctor.rs`, `cli/fix.rs`, `cli/fmt.rs`, `cli/init.rs`, `cli/lint.rs`,
-  `cli/lsp.rs`, `cli/schema.rs`, `cli/sync.rs`: per-subcommand argument structs
-  and execution adapters delegating to corresponding `engine` pipelines.
+- `cli.rs`: the parser (`Cli` with its global `--root`, `--config` and `-v`
+  flags, and the `Command` enum), cargo-style help colors, config loading, and
+  the update notice.
+- `cli/pass.rs`: `fmt`, `lint` and `fix`, which share their file selection and
+  pipeline and differ only in the `runner::Plan`.
+  `cli/{sync,doctor,init, schema}.rs` hold one command each, as
+  `Args::run(self, ctx)`.
+- `cli/lsp.rs` (+ `lsp/server.rs`): the stdio JSON-RPC server over
+  `engine::lsp`.
+- `cli/log.rs`: the stderr logger. `cli/ui.rs`: plain-line output, one line per
+  result.
+
+## Tests
+
+- Unit tests sit next to the code they test: inline `#[cfg(test)] mod tests`, or
+  `foo/tests.rs` once a module's tests pass about 300 lines.
+- `tests/api/`: the library's public API — registry, `.editorconfig` generation,
+  and the `fmt`/`lint`/`fix`/`sync` passes over synthetic repositories.
+- `tests/cli/`: only what the process alone shows — exit codes and the LSP stdio
+  protocol.
+- `tests/repo/`: repository hygiene — schema drift, release workflow edits,
+  toolchain pins, version lockstep, and the source-tree rules in
+  `source_rules.rs` that rustc and clippy cannot express.
 
 ## Cross-cutting: process and release docs
 
