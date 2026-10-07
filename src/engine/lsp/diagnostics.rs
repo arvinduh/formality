@@ -50,7 +50,9 @@
 //! never actually looked at it, silently regressing behind the `fml lint`
 //! fallback this module exists to enhance, not replace.
 
+use std::ffi;
 use std::path;
+use std::process;
 
 use serde;
 use tower_lsp::lsp_types;
@@ -116,6 +118,55 @@ fn paths_match(reported: &str, target: &path::Path) -> bool {
 // ---------------------------------------------------------------------------
 // Rust — cargo clippy --message-format=json
 // ---------------------------------------------------------------------------
+
+/// The output stream a linter reports its violations on.
+#[derive(Clone, Copy)]
+enum Stream {
+  Stdout,
+  Stderr,
+}
+
+/// Runs `binary` with `args` in `root` and returns its exit status and the
+/// `stream` it reports on. Returns `None` when the binary is missing or
+/// fails to spawn, so the caller falls back to `fml lint`
+/// (#177 [pre-recreation]).
+fn run<I, S>(
+  root: &path::Path,
+  binary: &str,
+  args: I,
+  stream: Stream,
+) -> Option<(process::ExitStatus, String)>
+where
+  I: IntoIterator<Item = S>,
+  S: AsRef<ffi::OsStr>,
+{
+  if !tooling::check_binary_exists(binary) {
+    return None;
+  }
+  let output = tooling::create_tool_command(binary)
+    .args(args)
+    .current_dir(root)
+    .output()
+    .ok()?;
+  let bytes = match stream {
+    Stream::Stdout => &output.stdout,
+    Stream::Stderr => &output.stderr,
+  };
+  Some((output.status, String::from_utf8_lossy(bytes).into_owned()))
+}
+
+/// Parses a `path:line` or `path:line:col` location into `(path, line, col)`,
+/// defaulting the column to 1. A Windows drive letter (`C:\a.md:3`) stays
+/// part of the path: a segment only counts as a line or column when it
+/// parses as a number.
+fn parse_location(location: &str) -> Option<(&str, u32, u32)> {
+  let (head, last) = location.rsplit_once(':')?;
+  let last_num: u32 = last.parse().ok()?;
+  let with_column = head
+    .rsplit_once(':')
+    .and_then(|(path, mid)| Some((path, mid.parse::<u32>().ok()?, last_num)));
+  Some(with_column.unwrap_or((head, last_num, 1)))
+}
 
 #[derive(Debug, serde::Deserialize)]
 struct ClippyMessage {
@@ -215,28 +266,17 @@ fn clippy_diagnostics(
   file: &path::Path,
   _config: Option<&config::FormalityConfig>,
 ) -> Option<Vec<lsp_types::Diagnostic>> {
-  if !tooling::check_binary_exists("cargo")
-    || !glob::find_manifest_upwards(root, "Cargo.toml")
-  {
+  if !glob::find_manifest_upwards(root, "Cargo.toml") {
     return None;
   }
-
-  let mut cmd = tooling::create_tool_command("cargo");
-  cmd.args(lang::rust::build_clippy_json_args(&[]));
-  cmd.current_dir(root);
-
-  match cmd.output() {
-    Ok(output) => {
-      let diagnostics =
-        parse_clippy_json(&String::from_utf8_lossy(&output.stdout), file);
-      if !output.status.success() && diagnostics.is_empty() {
-        None
-      } else {
-        Some(diagnostics)
-      }
-    }
-    Err(_) => None,
-  }
+  let (status, out) = run(
+    root,
+    "cargo",
+    lang::rust::build_clippy_json_args(&[]),
+    Stream::Stdout,
+  )?;
+  let diagnostics = parse_clippy_json(&out, file);
+  (status.success() || !diagnostics.is_empty()).then_some(diagnostics)
 }
 
 // ---------------------------------------------------------------------------
@@ -307,24 +347,10 @@ fn ruff_diagnostics(
   file: &path::Path,
   _config: Option<&config::FormalityConfig>,
 ) -> Option<Vec<lsp_types::Diagnostic>> {
-  if !tooling::check_binary_exists("ruff") {
-    return None;
-  }
-
-  let mut cmd = tooling::create_tool_command("ruff");
-  cmd.args(lang::python::build_ruff_check_json_args(
-    &[file.to_path_buf()],
-    &[],
-  ));
-  cmd.current_dir(root);
-
-  match cmd.output() {
-    Ok(output) => Some(parse_ruff_json(
-      &String::from_utf8_lossy(&output.stdout),
-      file,
-    )),
-    Err(_) => None,
-  }
+  let args =
+    lang::python::build_ruff_check_json_args(&[file.to_path_buf()], &[]);
+  let (_, out) = run(root, "ruff", args, Stream::Stdout)?;
+  Some(parse_ruff_json(&out, file))
 }
 
 // ---------------------------------------------------------------------------
@@ -417,21 +443,9 @@ fn biome_diagnostics(
   file: &path::Path,
   _config: Option<&config::FormalityConfig>,
 ) -> Option<Vec<lsp_types::Diagnostic>> {
-  if !tooling::check_binary_exists("biome") {
-    return None;
-  }
-
-  let mut cmd = tooling::create_tool_command("biome");
-  cmd.args(lang::javascript::build_biome_lint_json_args(file));
-  cmd.current_dir(root);
-
-  match cmd.output() {
-    Ok(output) => Some(parse_biome_json(
-      &String::from_utf8_lossy(&output.stdout),
-      file,
-    )),
-    Err(_) => None,
-  }
+  let args = lang::javascript::build_biome_lint_json_args(file);
+  let (_, out) = run(root, "biome", args, Stream::Stdout)?;
+  Some(parse_biome_json(&out, file))
 }
 
 // ---------------------------------------------------------------------------
@@ -453,10 +467,7 @@ fn parse_yamllint_line(
     .get(rule_start + 2..rest.len().saturating_sub(1))
     .filter(|_| rest.ends_with(')'))?;
 
-  let mut parts = location.rsplitn(3, ':');
-  let col: u32 = parts.next()?.parse().ok()?;
-  let line_num: u32 = parts.next()?.parse().ok()?;
-  let path = parts.next()?;
+  let (path, line_num, col) = parse_location(location)?;
 
   Some((path, line_num, col, severity, message, rule))
 }
@@ -510,42 +521,14 @@ fn yamllint_diagnostics(
   file: &path::Path,
   _config: Option<&config::FormalityConfig>,
 ) -> Option<Vec<lsp_types::Diagnostic>> {
-  if !tooling::check_binary_exists("yamllint") {
-    return None;
-  }
-
-  let mut cmd = tooling::create_tool_command("yamllint");
-  cmd.args(lang::yaml::build_yamllint_parsable_args(file));
-  cmd.current_dir(root);
-
-  match cmd.output() {
-    Ok(output) => Some(parse_yamllint_parsable(
-      &String::from_utf8_lossy(&output.stdout),
-      file,
-    )),
-    Err(_) => None,
-  }
+  let args = lang::yaml::build_yamllint_parsable_args(file);
+  let (_, out) = run(root, "yamllint", args, Stream::Stdout)?;
+  Some(parse_yamllint_parsable(&out, file))
 }
 
 // ---------------------------------------------------------------------------
 // Markdown — markdownlint-cli2 / markdownlint text output
 // ---------------------------------------------------------------------------
-
-/// Parses a markdownlint location prefix — `path:line` or `path:line:col` —
-/// into `(path, line, col)`, defaulting the column to 1 when the tool didn't
-/// report one. A Windows drive letter (`C:\docs\a.md:3`) is left attached to
-/// the path rather than mistaken for a line number, since the segment before
-/// the last colon only counts as a line/column when it parses as a number.
-fn parse_markdownlint_location(location: &str) -> Option<(&str, u32, u32)> {
-  let (head, last) = location.rsplit_once(':')?;
-  let last_num: u32 = last.parse().ok()?;
-  // `path:line:col` when the segment before the last colon is itself a
-  // number; otherwise `path:line`, with the column defaulted to 1.
-  let with_column = head
-    .rsplit_once(':')
-    .and_then(|(path, mid)| Some((path, mid.parse::<u32>().ok()?, last_num)));
-  Some(with_column.unwrap_or((head, last_num, 1)))
-}
 
 /// Parses one line of markdownlint's default text report —
 /// `path:line[:col] [level ]rule1/rule2 description...` — into its component
@@ -570,7 +553,7 @@ fn parse_markdownlint_line(
   let (path, line_num, col, rest) =
     line.match_indices(' ').find_map(|(idx, _)| {
       let (location, rest) = (&line[..idx], &line[idx + 1..]);
-      let (path, line_num, col) = parse_markdownlint_location(location)?;
+      let (path, line_num, col) = parse_location(location)?;
       Some((path, line_num, col, rest))
     })?;
 
@@ -665,13 +648,9 @@ fn markdownlint_diagnostics(
   file: &path::Path,
   config: Option<&config::FormalityConfig>,
 ) -> Option<Vec<lsp_types::Diagnostic>> {
-  let binary = if tooling::check_binary_exists("markdownlint-cli2") {
-    "markdownlint-cli2"
-  } else if tooling::check_binary_exists("markdownlint") {
-    "markdownlint"
-  } else {
-    return None;
-  };
+  let binary = ["markdownlint-cli2", "markdownlint"]
+    .into_iter()
+    .find(|binary| tooling::check_binary_exists(binary))?;
 
   let lang_config = match config {
     Some(cfg) => cfg.resolve_for_lang("markdown"),
@@ -682,22 +661,14 @@ fn markdownlint_diagnostics(
   let temp_cfg =
     lang::markdown::write_markdownlint_temp_config(&lang_config).ok()?;
 
-  let mut cmd = tooling::create_tool_command(binary);
-  cmd.args(lang::markdown::build_markdownlint_args(
+  let args = lang::markdown::build_markdownlint_args(
     &[file.to_path_buf()],
     false,
     Some(temp_cfg.path()),
     &[],
-  ));
-  cmd.current_dir(root);
-
-  match cmd.output() {
-    Ok(output) => Some(parse_markdownlint_text(
-      &String::from_utf8_lossy(&output.stderr),
-      file,
-    )),
-    Err(_) => None,
-  }
+  );
+  let (_, out) = run(root, binary, args, Stream::Stderr)?;
+  Some(parse_markdownlint_text(&out, file))
 }
 
 // ---------------------------------------------------------------------------
@@ -735,10 +706,7 @@ fn parse_clang_tidy_line(line: &str) -> Option<ClangTidyLine<'_>> {
       rest = &rest[..bracket_start];
     }
 
-    let mut parts = location.rsplitn(3, ':');
-    let col: u32 = parts.next()?.parse().ok()?;
-    let line_num: u32 = parts.next()?.parse().ok()?;
-    let path = parts.next()?;
+    let (path, line_num, col) = parse_location(location)?;
     return Some((path, line_num, col, severity, rest, check));
   }
   None
@@ -799,27 +767,11 @@ fn clang_tidy_diagnostics(
   file: &path::Path,
   _config: Option<&config::FormalityConfig>,
 ) -> Option<Vec<lsp_types::Diagnostic>> {
-  if !tooling::check_binary_exists("clang-tidy") {
-    return None;
-  }
-
-  let std_flag = lang::cpp::std_flag_for_file(file, &[file.to_path_buf()]);
-  let mut cmd = tooling::create_tool_command("clang-tidy");
-  cmd.args(lang::cpp::build_clang_tidy_args(
-    &[file.to_path_buf()],
-    false,
-    std_flag,
-    &[],
-  ));
-  cmd.current_dir(root);
-
-  match cmd.output() {
-    Ok(output) => Some(parse_clang_tidy_plain(
-      &String::from_utf8_lossy(&output.stdout),
-      file,
-    )),
-    Err(_) => None,
-  }
+  let files = [file.to_path_buf()];
+  let std_flag = lang::cpp::std_flag_for_file(file, &files);
+  let args = lang::cpp::build_clang_tidy_args(&files, false, std_flag, &[]);
+  let (_, out) = run(root, "clang-tidy", args, Stream::Stdout)?;
+  Some(parse_clang_tidy_plain(&out, file))
 }
 
 // ---------------------------------------------------------------------------
@@ -929,40 +881,21 @@ fn golangci_lint_diagnostics(
   file: &path::Path,
   _config: Option<&config::FormalityConfig>,
 ) -> Option<Vec<lsp_types::Diagnostic>> {
-  if !tooling::check_binary_exists("golangci-lint")
-    || !glob::find_manifest_upwards(root, "go.mod")
-  {
+  if !glob::find_manifest_upwards(root, "go.mod") {
     return None;
   }
-
-  let mut cmd = tooling::create_tool_command("golangci-lint");
-  cmd.args(lang::go::build_golangci_lint_json_args(
-    &[file.to_path_buf()],
-    &[],
-  ));
-  cmd.current_dir(root);
-
-  match cmd.output() {
-    Ok(output) => {
-      // golangci-lint exits 0 for clean and 1 when violations are found;
-      // any other exit status is an execution failure. Furthermore, an
-      // unsuccessful invocation that yielded no parsed diagnostics must
-      // not be reported as a clean result (#177 [pre-recreation], #204).
-      if !output.status.success() && output.status.code() != Some(1) {
-        return None;
-      }
-      let diagnostics = parse_golangci_lint_json(
-        &String::from_utf8_lossy(&output.stdout),
-        file,
-      );
-      if !output.status.success() && diagnostics.is_empty() {
-        None
-      } else {
-        Some(diagnostics)
-      }
-    }
-    Err(_) => None,
+  let args =
+    lang::go::build_golangci_lint_json_args(&[file.to_path_buf()], &[]);
+  let (status, out) = run(root, "golangci-lint", args, Stream::Stdout)?;
+  // golangci-lint exits 0 for clean and 1 when violations are found; any
+  // other exit status is an execution failure. An unsuccessful run that
+  // yielded no parsed diagnostics is not a clean result either
+  // (#177 [pre-recreation], #204).
+  if !status.success() && status.code() != Some(1) {
+    return None;
   }
+  let diagnostics = parse_golangci_lint_json(&out, file);
+  (status.success() || !diagnostics.is_empty()).then_some(diagnostics)
 }
 
 // ---------------------------------------------------------------------------
@@ -978,7 +911,7 @@ fn golangci_lint_diagnostics(
 /// guarantees it) — a missing suffix falls back to an empty rule rather
 /// than dropping the diagnostic. Column is optional too: some checks
 /// (`NewlineAtEndOfFile`) report only `path:line: message`, defaulted to
-/// column 1 here, matching [`parse_markdownlint_location`]'s same default.
+/// column 1 by [`parse_location`].
 fn parse_checkstyle_line(
   line: &str,
 ) -> Option<(&str, u32, u32, &str, &str, &str)> {
@@ -998,25 +931,11 @@ fn parse_checkstyle_line(
     (after_sev, "")
   };
 
-  let first_colon = loc_and_msg.find(':')?;
-  let path = &loc_and_msg[..first_colon];
-  let after_path = &loc_and_msg[first_colon + 1..];
-  let second_colon = after_path.find(':')?;
-  let line_num: u32 = after_path[..second_colon].parse().ok()?;
-  let after_line = &after_path[second_colon + 1..];
-
-  let digit_end = after_line
-    .find(|c: char| !c.is_ascii_digit())
-    .unwrap_or(after_line.len());
-  let (col, message) =
-    if digit_end > 0 && after_line[digit_end..].starts_with(": ") {
-      (
-        after_line[..digit_end].parse().ok()?,
-        &after_line[digit_end + 2..],
-      )
-    } else {
-      (1, after_line.strip_prefix(' ').unwrap_or(after_line))
-    };
+  let (path, line_num, col, message) =
+    loc_and_msg.match_indices(": ").find_map(|(idx, _)| {
+      let (path, line_num, col) = parse_location(&loc_and_msg[..idx])?;
+      Some((path, line_num, col, &loc_and_msg[idx + 2..]))
+    })?;
 
   Some((path, line_num, col, severity, message, rule))
 }
@@ -1081,25 +1000,18 @@ fn checkstyle_diagnostics(
   _config: Option<&config::FormalityConfig>,
 ) -> Option<Vec<lsp_types::Diagnostic>> {
   let config_path = root.join("checkstyle.xml");
-  if !tooling::check_binary_exists("checkstyle") || !config_path.is_file() {
+  if !config_path.is_file() {
     return None;
   }
-
-  let mut cmd = tooling::create_tool_command("checkstyle");
-  cmd.arg("-c").arg(&config_path);
-  cmd.args(lang::java::build_checkstyle_plain_args(
-    &[file.to_path_buf()],
-    &[],
-  ));
-  cmd.current_dir(root);
-
-  match cmd.output() {
-    Ok(output) => Some(parse_checkstyle_plain(
-      &String::from_utf8_lossy(&output.stdout),
-      file,
-    )),
-    Err(_) => None,
-  }
+  let args = ["-c".into(), config_path.into_os_string()]
+    .into_iter()
+    .chain(
+      lang::java::build_checkstyle_plain_args(&[file.to_path_buf()], &[])
+        .into_iter()
+        .map(Into::into),
+    );
+  let (_, out) = run(root, "checkstyle", args, Stream::Stdout)?;
+  Some(parse_checkstyle_plain(&out, file))
 }
 
 // ---------------------------------------------------------------------------
@@ -1200,24 +1112,9 @@ fn ktlint_diagnostics(
   file: &path::Path,
   _config: Option<&config::FormalityConfig>,
 ) -> Option<Vec<lsp_types::Diagnostic>> {
-  if !tooling::check_binary_exists("ktlint") {
-    return None;
-  }
-
-  let mut cmd = tooling::create_tool_command("ktlint");
-  cmd.args(lang::kotlin::build_ktlint_json_args(
-    &[file.to_path_buf()],
-    &[],
-  ));
-  cmd.current_dir(root);
-
-  match cmd.output() {
-    Ok(output) => Some(parse_ktlint_json(
-      &String::from_utf8_lossy(&output.stdout),
-      file,
-    )),
-    Err(_) => None,
-  }
+  let args = lang::kotlin::build_ktlint_json_args(&[file.to_path_buf()], &[]);
+  let (_, out) = run(root, "ktlint", args, Stream::Stdout)?;
+  Some(parse_ktlint_json(&out, file))
 }
 
 // ---------------------------------------------------------------------------
@@ -1285,34 +1182,28 @@ fn parse_taplo_lint_plain(
       j += 1;
     }
 
-    if let Some(location) = location {
-      let mut parts = location.rsplitn(3, ':');
-      if let (Some(col_s), Some(line_s), Some(path)) =
-        (parts.next(), parts.next(), parts.next())
-        && let (Ok(col), Ok(line_num)) =
-          (col_s.parse::<u32>(), line_s.parse::<u32>())
-        && paths_match(path, target_file)
-      {
-        let position = lsp_types::Position {
-          line: line_num.saturating_sub(1),
-          character: col.saturating_sub(1),
-        };
-        let severity = if severity == "error" {
-          lsp_types::DiagnosticSeverity::ERROR
-        } else {
-          lsp_types::DiagnosticSeverity::WARNING
-        };
-        diagnostics.push(lsp_types::Diagnostic {
-          range: lsp_types::Range {
-            start: position,
-            end: position,
-          },
-          severity: Some(severity),
-          source: Some("taplo".to_string()),
-          message,
-          ..Default::default()
-        });
-      }
+    if let Some((path, line_num, col)) = location.and_then(parse_location)
+      && paths_match(path, target_file)
+    {
+      let position = lsp_types::Position {
+        line: line_num.saturating_sub(1),
+        character: col.saturating_sub(1),
+      };
+      let severity = if severity == "error" {
+        lsp_types::DiagnosticSeverity::ERROR
+      } else {
+        lsp_types::DiagnosticSeverity::WARNING
+      };
+      diagnostics.push(lsp_types::Diagnostic {
+        range: lsp_types::Range {
+          start: position,
+          end: position,
+        },
+        severity: Some(severity),
+        source: Some("taplo".to_string()),
+        message,
+        ..Default::default()
+      });
     }
 
     i = j.max(i + 1);
@@ -1331,24 +1222,9 @@ fn taplo_diagnostics(
   file: &path::Path,
   _config: Option<&config::FormalityConfig>,
 ) -> Option<Vec<lsp_types::Diagnostic>> {
-  if !tooling::check_binary_exists("taplo") {
-    return None;
-  }
-
-  let mut cmd = tooling::create_tool_command("taplo");
-  cmd.args(lang::toml::build_taplo_lsp_lint_args(
-    &[file.to_path_buf()],
-    &[],
-  ));
-  cmd.current_dir(root);
-
-  match cmd.output() {
-    Ok(output) => Some(parse_taplo_lint_plain(
-      &String::from_utf8_lossy(&output.stderr),
-      file,
-    )),
-    Err(_) => None,
-  }
+  let args = lang::toml::build_taplo_lsp_lint_args(&[file.to_path_buf()], &[]);
+  let (_, out) = run(root, "taplo", args, Stream::Stderr)?;
+  Some(parse_taplo_lint_plain(&out, file))
 }
 
 // ---------------------------------------------------------------------------
@@ -1367,10 +1243,7 @@ fn parse_typst_line(line: &str) -> Option<(&str, u32, u32, &str, &str)> {
     let location = &line[..idx];
     let message = &line[idx + marker.len()..];
 
-    let mut parts = location.rsplitn(3, ':');
-    let col: u32 = parts.next()?.parse().ok()?;
-    let line_num: u32 = parts.next()?.parse().ok()?;
-    let path = parts.next()?;
+    let (path, line_num, col) = parse_location(location)?;
     return Some((path, line_num, col, severity, message));
   }
   None
@@ -1430,26 +1303,11 @@ fn typst_diagnostics(
   file: &path::Path,
   _config: Option<&config::FormalityConfig>,
 ) -> Option<Vec<lsp_types::Diagnostic>> {
-  if !tooling::check_binary_exists("typst") {
-    return None;
-  }
-
-  let Ok(scratch_dir) = tempfile::tempdir() else {
-    return None;
-  };
+  let scratch_dir = tempfile::tempdir().ok()?;
   let output_path = scratch_dir.path().join("out.pdf");
-
-  let mut cmd = tooling::create_tool_command("typst");
-  cmd.args(lang::typst::build_typst_check_args(file, &output_path));
-  cmd.current_dir(root);
-
-  match cmd.output() {
-    Ok(output) => Some(parse_typst_short(
-      &String::from_utf8_lossy(&output.stderr),
-      file,
-    )),
-    Err(_) => None,
-  }
+  let args = lang::typst::build_typst_check_args(file, &output_path);
+  let (_, out) = run(root, "typst", args, Stream::Stderr)?;
+  Some(parse_typst_short(&out, file))
 }
 
 // ---------------------------------------------------------------------------
@@ -1518,6 +1376,40 @@ pub fn diagnostics_for_file_with_config(
 #[cfg(test)]
 mod tests {
   use super::*;
+
+  #[test]
+  fn parse_location_table() {
+    let cases = [
+      ("a.md:3:7", Some(("a.md", 3, 7))),
+      ("a.md:3", Some(("a.md", 3, 1))),
+      (r"C:\d\a.md:3:7", Some((r"C:\d\a.md", 3, 7))),
+      (r"C:\d\a.md:3", Some((r"C:\d\a.md", 3, 1))),
+      ("my doc.md:2:1", Some(("my doc.md", 2, 1))),
+      ("a.md", None),
+      ("a.md:x", None),
+      ("a.md:3:", None),
+    ];
+    for (input, expected) in cases {
+      assert_eq!(parse_location(input), expected, "{input}");
+    }
+  }
+
+  #[test]
+  fn parse_checkstyle_line_keeps_a_windows_drive() {
+    let line =
+      r"[WARN] C:\src\A.java:4:2: Missing a Javadoc comment. [Javadoc]";
+    assert_eq!(
+      parse_checkstyle_line(line),
+      Some((
+        r"C:\src\A.java",
+        4,
+        2,
+        "WARN",
+        "Missing a Javadoc comment.",
+        "Javadoc"
+      ))
+    );
+  }
 
   #[test]
   fn surface_name_for_file_known_extensions() {
