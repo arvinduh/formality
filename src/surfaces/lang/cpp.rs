@@ -112,7 +112,8 @@ impl DeclaresFacets for CppSurface {
 }
 
 /// Standard file extensions recognized for C/C++ source and header files.
-const CPP_EXTENSIONS: &[&str] = &["c", "cpp", "cc", "cxx", "h", "hpp", "hxx"];
+const CPP_EXTENSIONS: &[&str] =
+  &["c", "cc", "cpp", "cxx", "h", "hh", "hpp", "hxx"];
 
 /// Returns `true` if `ext` is a C++ source or header file extension.
 #[must_use]

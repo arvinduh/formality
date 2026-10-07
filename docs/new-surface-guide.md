@@ -36,8 +36,6 @@ repository:
     `every_surface_except_json_has_a_structured_parser()` fails if a newly
     registered surface has no arm. A format-only surface with no linter at all
     (`json`) is the one sanctioned exception, named explicitly in that test.
-  - `src/surfaces/sync/editorconfig.rs`: `glob_for_surface()` match arm and
-    `CANONICAL_FLEET_ORDER` entry.
   - Prose surface counts in doc comments and documentation.
 - [ ] **6. Test coverage** (see
       [Style Guide §1](style-guide.md#1-modulefile-hierarchy) for the
@@ -338,14 +336,8 @@ nothing for that file. See "Shared config files" in
 
 ## 6. Soft / Optional Integrations
 
-- **EditorConfig Generation (`src/surfaces/sync/editorconfig.rs`)**:
-  - Add section glob to `glob_for_surface()`:
-
-    ```rust
-    "foo" => "[*.foo]".to_string(),
-    ```
-
-  - Add `"foo"` to `CANONICAL_FLEET_ORDER`.
+- **EditorConfig Generation**: nothing to add. `.editorconfig` sections are
+  derived from `file_extensions()` and ordered by the registry.
 
 - **Prose surface counts**: Update doc comments and prose mentioning the fleet
   count (e.g. `cli.rs`, `README.md`).

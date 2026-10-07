@@ -12,51 +12,18 @@ use crate::config;
 use crate::config::facets;
 use crate::surfaces;
 use crate::surfaces::LanguageSurface;
+use crate::surfaces::registry;
 
 /// Default filename for `.editorconfig` files.
 const EDITORCONFIG_FILE_NAME: &str = ".editorconfig";
 
-/// Canonical ordering of supported surfaces when writing `.editorconfig` blocks.
-pub const CANONICAL_FLEET_ORDER: &[&str] = &[
-  "rust",
-  "python",
-  "cpp",
-  "java",
-  "go",
-  "yaml",
-  "json",
-  "toml",
-  "markdown",
-  "typst",
-  "javascript",
-  "kotlin",
-];
-
-/// Returns the standard `EditorConfig` section glob for a known or custom surface.
+/// Returns the `EditorConfig` section glob covering `surface`'s file
+/// extensions, so the section matches exactly the files the surface formats.
 fn glob_for_surface(surface: &dyn LanguageSurface) -> String {
-  match surface.name() {
-    "rust" => "[*.rs]".to_string(),
-    "python" => "[*.py]".to_string(),
-    "cpp" => "[*.{c,cc,cpp,cxx,h,hh,hpp,hxx}]".to_string(),
-    "java" => "[*.java]".to_string(),
-    "go" => "[*.go]".to_string(),
-    "yaml" => "[*.{yaml,yml}]".to_string(),
-    "json" => "[*.json]".to_string(),
-    "toml" => "[*.toml]".to_string(),
-    "markdown" => "[*.md]".to_string(),
-    "typst" => "[*.typ]".to_string(),
-    "javascript" => "[*.{js,jsx,ts,tsx,mjs,cjs,mts,cts}]".to_string(),
-    "kotlin" => "[*.{kt,kts}]".to_string(),
-    _ => {
-      let exts = surface.file_extensions();
-      if exts.len() == 1 {
-        format!("[*.{}]", exts[0])
-      } else if exts.is_empty() {
-        format!("[*.{}]", surface.name())
-      } else {
-        format!("[*.{{{}}}]", exts.join(","))
-      }
-    }
+  match surface.file_extensions() {
+    [] => format!("[*.{}]", surface.name()),
+    [ext] => format!("[*.{ext}]"),
+    exts => format!("[*.{{{}}}]", exts.join(",")),
   }
 }
 
@@ -116,27 +83,24 @@ where
   let _ = writeln!(out, "indent_size = {global_indent_size}");
   let _ = writeln!(out, "max_line_length = {}", global.line_length);
 
-  // Collect ordered distinct surfaces
+  // Sections follow registry order; surfaces outside the registry go last.
+  let registry = registry::default_registry().surfaces();
   let mut seen = collections::HashSet::new();
-  let mut ordered_surfaces: Vec<&Box<dyn LanguageSurface>> = Vec::new();
-
-  for &canonical_name in CANONICAL_FLEET_ORDER {
-    if let Some(s) = surfaces.iter().find(|s| s.name() == canonical_name)
-      && seen.insert(s.name())
-    {
-      ordered_surfaces.push(s);
-    }
-  }
-
-  for s in surfaces {
-    if seen.insert(s.name()) {
-      ordered_surfaces.push(s);
-    }
-  }
+  let mut ordered_surfaces: Vec<&dyn LanguageSurface> = surfaces
+    .iter()
+    .map(AsRef::as_ref)
+    .filter(|s| seen.insert(s.name()))
+    .collect();
+  ordered_surfaces.sort_by_key(|surface| {
+    registry
+      .iter()
+      .position(|r| r.name() == surface.name())
+      .unwrap_or(registry.len())
+  });
 
   for surface in ordered_surfaces {
-    let glob = glob_for_surface(surface.as_ref());
-    let (use_tabs, indent_size, line_length) = surface_layout(surface.as_ref());
+    let glob = glob_for_surface(surface);
+    let (use_tabs, indent_size, line_length) = surface_layout(surface);
 
     let indent_style = match surface.facet_support(facets::Facet::IndentTabs) {
       facets::FacetSupport::Fixed("spaces" | "space") => "space",
@@ -211,7 +175,7 @@ mod tests {
   #[test]
   fn generate_editorconfig_defaults() {
     let config = config::FormalityConfig::with_defaults();
-    let surfaces = surfaces::registry::all_surfaces();
+    let surfaces = registry::all_surfaces();
     let ec = generate_editorconfig_from_config(&config, &surfaces);
 
     assert!(ec.starts_with(native::AUTO_GENERATED_HEADER));
@@ -227,18 +191,20 @@ mod tests {
 
     // Surfaces matching [*] baseline are omitted
     assert!(!ec.contains("[*.rs]"));
-    assert!(!ec.contains("[*.py]"));
+    assert!(!ec.contains("[*.{py,pyi}]"));
     assert!(!ec.contains("[*.{c,cc,cpp,cxx,h,hh,hpp,hxx}]"));
     assert!(!ec.contains("[*.{yaml,yml}]"));
     assert!(!ec.contains("[*.toml]"));
-    assert!(!ec.contains("[*.md]"));
+    assert!(!ec.contains("[*.{md,markdown,mdown,mkdn}]"));
     assert!(!ec.contains("[*.typ]"));
 
     // JSON diverges due to unsupported line length
-    assert!(ec.contains("[*.json]"));
-    assert!(ec.contains("[*.json]\nindent_style = space\nindent_size = 2\n"));
+    assert!(ec.contains("[*.{json,jsonc}]"));
+    assert!(
+      ec.contains("[*.{json,jsonc}]\nindent_style = space\nindent_size = 2\n")
+    );
     assert!(!ec.contains(
-      "[*.json]\nindent_style = space\nindent_size = 2\nmax_line_length"
+      "[*.{json,jsonc}]\nindent_style = space\nindent_size = 2\nmax_line_length"
     ));
 
     // When all provided surfaces match [*], only [*] is emitted
@@ -252,7 +218,7 @@ mod tests {
     assert!(ec_matching.contains("[*]"));
     assert!(!ec_matching.contains("[*.rs]"));
     assert!(!ec_matching.contains("[*.toml]"));
-    assert!(!ec_matching.contains("[*.md]"));
+    assert!(!ec_matching.contains("[*.{md,markdown,mdown,mkdn}]"));
   }
 
   #[test]
@@ -265,7 +231,7 @@ mod tests {
     )
     .unwrap();
 
-    let surfaces = surfaces::registry::all_surfaces();
+    let surfaces = registry::all_surfaces();
     let ec = generate_editorconfig_from_config(&config, &surfaces);
 
     // Global has tab
@@ -277,15 +243,17 @@ mod tests {
     ));
 
     // Python is configurable -> tab (matches [*], omitted)
-    assert!(!ec.contains("[*.py]"));
+    assert!(!ec.contains("[*.{py,pyi}]"));
 
     // C++ is configurable -> tab (matches [*], omitted)
     assert!(!ec.contains("[*.{c,cc,cpp,cxx,h,hh,hpp,hxx}]"));
 
     // JSON is configurable for tabs, but unsupported for max_line_length (diverges from 100)
-    assert!(ec.contains("[*.json]\nindent_style = tab\nindent_size = 4\n"));
+    assert!(
+      ec.contains("[*.{json,jsonc}]\nindent_style = tab\nindent_size = 4\n")
+    );
     assert!(!ec.contains(
-      "[*.json]\nindent_style = tab\nindent_size = 4\nmax_line_length"
+      "[*.{json,jsonc}]\nindent_style = tab\nindent_size = 4\nmax_line_length"
     ));
 
     // YAML is fixed to spaces (diverges from tab)
@@ -295,7 +263,7 @@ mod tests {
     assert!(!ec.contains("[*.toml]"));
 
     // Markdown is configurable -> tab (matches [*], omitted)
-    assert!(!ec.contains("[*.md]"));
+    assert!(!ec.contains("[*.{md,markdown,mdown,mkdn}]"));
 
     // Typst is fixed to spaces (diverges from tab)
     assert!(ec.contains(
@@ -326,7 +294,7 @@ line_length = 88
       path::Path::new("formality.toml"),
     )
     .unwrap();
-    let surfaces = surfaces::registry::all_surfaces();
+    let surfaces = registry::all_surfaces();
     let ec = generate_editorconfig_from_config(&config, &surfaces);
 
     assert!(ec.contains("end_of_line = crlf"));
@@ -334,17 +302,19 @@ line_length = 88
       "[*.rs]\nindent_style = space\nindent_size = 4\nmax_line_length = 100"
     ));
     assert!(ec.contains(
-      "[*.py]\nindent_style = tab\nindent_size = 4\nmax_line_length = 88"
+      "[*.{py,pyi}]\nindent_style = tab\nindent_size = 4\nmax_line_length = 88"
     ));
 
     // Non-diverging surfaces matching [*] are omitted
     assert!(!ec.contains("[*.{c,cc,cpp,cxx,h,hh,hpp,hxx}]"));
     assert!(!ec.contains("[*.{yaml,yml}]"));
     assert!(!ec.contains("[*.toml]"));
-    assert!(!ec.contains("[*.md]"));
+    assert!(!ec.contains("[*.{md,markdown,mdown,mkdn}]"));
     assert!(!ec.contains("[*.typ]"));
 
     // JSON still diverges on unsupported max_line_length
-    assert!(ec.contains("[*.json]\nindent_style = space\nindent_size = 2\n"));
+    assert!(
+      ec.contains("[*.{json,jsonc}]\nindent_style = space\nindent_size = 2\n")
+    );
   }
 }
