@@ -15,7 +15,7 @@ on:
   push:
     tags:
       # Must match .github/workflows/release.yml (issue #165); guarded by
-      # tests/release_workflow_local_edits.rs.
+      # tests/repo/release_workflow.rs.
       - 'v[0-9]+.[0-9]+.[0-9]+*'
 
 permissions:

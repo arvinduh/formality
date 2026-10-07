@@ -68,7 +68,7 @@ jobs:
 
       - name: Check schema drift
         # Regenerate schema/formality.schema.json from the freshly built
-        # binary and assert it matches what's checked in. tests/schema_drift.rs
+        # binary and assert it matches what's checked in. tests/repo/schema_drift.rs
         # (Job 1) already asserts this in-process via generate_schema(); this
         # step is a CI-visible surface for the same invariant against this
         # repo's own committed artifact, exercising the real `fml schema` CLI
