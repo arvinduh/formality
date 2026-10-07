@@ -347,21 +347,15 @@ impl LanguageSurface for GoSurface {
           // parse failure — never to signal reformatting — so this is an
           // operational failure, not a lint result (Fixes #155), matching
           // the `--check` path's `classify_all_nonzero_as_error` above.
-          return surfaces::SurfaceResult {
-            surface_name: self.name(),
-            status: surfaces::SurfaceStatus::ExecutionError { message: msg },
-            duration: start.elapsed(),
-          };
+          return surfaces::SurfaceResult::error(self.name(), start, msg);
         }
       }
       Err(e) => {
-        return surfaces::SurfaceResult {
-          surface_name: self.name(),
-          status: surfaces::SurfaceStatus::ExecutionError {
-            message: format!("Failed to execute gofmt: {e}"),
-          },
-          duration: start.elapsed(),
-        };
+        return surfaces::SurfaceResult::error(
+          self.name(),
+          start,
+          format!("Failed to execute gofmt: {e}"),
+        );
       }
     }
 
@@ -376,11 +370,11 @@ impl LanguageSurface for GoSurface {
     match goimports_cmd.output() {
       Ok(output) => {
         if output.status.success() {
-          surfaces::SurfaceResult {
-            surface_name: self.name(),
-            status: surfaces::SurfaceStatus::Passed,
-            duration: start.elapsed(),
-          }
+          surfaces::SurfaceResult::new(
+            self.name(),
+            start,
+            surfaces::SurfaceStatus::Passed,
+          )
         } else {
           let stderr = String::from_utf8_lossy(&output.stderr).to_string();
           let stdout = String::from_utf8_lossy(&output.stdout).to_string();
@@ -395,20 +389,14 @@ impl LanguageSurface for GoSurface {
           // Same reasoning as the `gofmt` branch above: `goimports -w`
           // rewrites in place and exits non-zero only on a parse failure,
           // never to report reformatting (Fixes #155).
-          surfaces::SurfaceResult {
-            surface_name: self.name(),
-            status: surfaces::SurfaceStatus::ExecutionError { message: msg },
-            duration: start.elapsed(),
-          }
+          surfaces::SurfaceResult::error(self.name(), start, msg)
         }
       }
-      Err(e) => surfaces::SurfaceResult {
-        surface_name: self.name(),
-        status: surfaces::SurfaceStatus::ExecutionError {
-          message: format!("Failed to execute goimports: {e}"),
-        },
-        duration: start.elapsed(),
-      },
+      Err(e) => surfaces::SurfaceResult::error(
+        self.name(),
+        start,
+        format!("Failed to execute goimports: {e}"),
+      ),
     }
   }
 
@@ -431,19 +419,17 @@ impl LanguageSurface for GoSurface {
     // after (unlike the Rust surface, where cargo is always present in a
     // Rust dev environment and so ordering doesn't matter there).
     if !glob::find_manifest_upwards(&ctx.root, "go.mod") {
-      return surfaces::SurfaceResult {
-        surface_name: self.name(),
-        status: surfaces::SurfaceStatus::ExecutionError {
-          message: format!(
-            "No go.mod found in {} (or any parent directory). \
+      return surfaces::SurfaceResult::error(
+        self.name(),
+        start,
+        format!(
+          "No go.mod found in {} (or any parent directory). \
              `golangci-lint` needs a Go module to resolve a package graph \
              against — run `go mod init <module>` here, or point --root at \
              the module root.",
-            ctx.root.display()
-          ),
-        },
-        duration: start.elapsed(),
-      };
+          ctx.root.display()
+        ),
+      );
     }
 
     if let Some(res) =

@@ -703,13 +703,11 @@ fn escape_failed(
   start: time::Instant,
   e: &std::io::Error,
 ) -> surfaces::SurfaceResult {
-  surfaces::SurfaceResult {
+  surfaces::SurfaceResult::error(
     surface_name,
-    status: surfaces::SurfaceStatus::ExecutionError {
-      message: format!("Failed to escape a paragraph-continuation `#`: {e}"),
-    },
-    duration: start.elapsed(),
-  }
+    start,
+    format!("Failed to escape a paragraph-continuation `#`: {e}"),
+  )
 }
 
 /// markdownlint-cli2 line prefixes that carry only progress chatter, never a
@@ -903,15 +901,11 @@ impl LanguageSurface for MarkdownSurface {
       {
         Ok(f) => Some(f),
         Err(e) => {
-          return surfaces::SurfaceResult {
-            surface_name: self.name(),
-            status: surfaces::SurfaceStatus::ExecutionError {
-              message: format!(
-                "Failed to write temporary markdownlint config: {e}"
-              ),
-            },
-            duration: start.elapsed(),
-          };
+          return surfaces::SurfaceResult::error(
+            self.name(),
+            start,
+            format!("Failed to write temporary markdownlint config: {e}"),
+          );
         }
       }
     } else {
@@ -1096,15 +1090,11 @@ impl LanguageSurface for MarkdownSurface {
     let md_temp_cfg = match write_markdownlint_temp_config(&ctx.lang_config) {
       Ok(f) => f,
       Err(e) => {
-        return surfaces::SurfaceResult {
-          surface_name: self.name(),
-          status: surfaces::SurfaceStatus::ExecutionError {
-            message: format!(
-              "Failed to write temporary markdownlint config: {e}"
-            ),
-          },
-          duration: start.elapsed(),
-        };
+        return surfaces::SurfaceResult::error(
+          self.name(),
+          start,
+          format!("Failed to write temporary markdownlint config: {e}"),
+        );
       }
     };
 

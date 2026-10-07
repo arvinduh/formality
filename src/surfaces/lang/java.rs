@@ -402,15 +402,11 @@ impl LanguageSurface for JavaSurface {
       match native::temp_file("checkstyle-", ".xml", &xml) {
         Ok(file) => (file.path().to_path_buf(), Some(file)),
         Err(e) => {
-          return surfaces::SurfaceResult {
-            surface_name: self.name(),
-            status: surfaces::SurfaceStatus::ExecutionError {
-              message: format!(
-                "Failed to write temporary checkstyle config: {e}"
-              ),
-            },
-            duration: start.elapsed(),
-          };
+          return surfaces::SurfaceResult::error(
+            self.name(),
+            start,
+            format!("Failed to write temporary checkstyle config: {e}"),
+          );
         }
       }
     };
@@ -433,11 +429,11 @@ impl LanguageSurface for JavaSurface {
         let has_findings = stdout.contains("WARN") || stdout.contains("ERROR");
 
         if output.status.success() && !has_findings {
-          surfaces::SurfaceResult {
-            surface_name: self.name(),
-            status: surfaces::SurfaceStatus::Passed,
-            duration: start.elapsed(),
-          }
+          surfaces::SurfaceResult::new(
+            self.name(),
+            start,
+            surfaces::SurfaceStatus::Passed,
+          )
         } else {
           let msg = if !stdout.trim().is_empty() {
             stdout
@@ -447,23 +443,21 @@ impl LanguageSurface for JavaSurface {
             "Checkstyle violations found in Java files".to_string()
           };
 
-          surfaces::SurfaceResult {
-            surface_name: self.name(),
-            status: surfaces::SurfaceStatus::ViolationsFound {
+          surfaces::SurfaceResult::new(
+            self.name(),
+            start,
+            surfaces::SurfaceStatus::ViolationsFound {
               message: msg,
               diff: None,
             },
-            duration: start.elapsed(),
-          }
+          )
         }
       }
-      Err(e) => surfaces::SurfaceResult {
-        surface_name: self.name(),
-        status: surfaces::SurfaceStatus::ExecutionError {
-          message: format!("Failed to execute checkstyle: {e}"),
-        },
-        duration: start.elapsed(),
-      },
+      Err(e) => surfaces::SurfaceResult::error(
+        self.name(),
+        start,
+        format!("Failed to execute checkstyle: {e}"),
+      ),
     }
   }
 

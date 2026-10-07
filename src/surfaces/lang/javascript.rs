@@ -271,13 +271,11 @@ impl LanguageSurface for JavaScriptSurface {
       BIOME_LINTER_ENABLED_FLAG,
       ctx.lang_config.tool_args("biome"),
     ) {
-      return surfaces::SurfaceResult {
-        surface_name: self.name(),
-        status: surfaces::SurfaceStatus::ExecutionError {
-          message: linter_enabled_override_message(&offending),
-        },
-        duration: start.elapsed(),
-      };
+      return surfaces::SurfaceResult::error(
+        self.name(),
+        start,
+        linter_enabled_override_message(&offending),
+      );
     }
 
     if let Some(res) =

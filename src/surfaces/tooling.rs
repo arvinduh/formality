@@ -919,11 +919,8 @@ pub fn check_binary_exists(binary: &str) -> bool {
   resolve_binary_path(binary).is_some()
 }
 
-/// Builds the `surfaces::SurfaceResult` every surface returns from `format`/`lint` when
-/// a required tool binary is not on `PATH`. Every call site previously
-/// repeated this same `surfaces::SurfaceResult { .. status: surfaces::SurfaceStatus::ToolMissing
-/// { .. } .. }` struct literal by hand (~23 instances across the 12 language
-/// surfaces) — this is the single place that shape lives now.
+/// The result a surface returns from `format`/`lint` when a required tool
+/// binary is not on `PATH`.
 #[must_use]
 pub fn tool_missing_result(
   surface_name: &'static str,
@@ -931,14 +928,14 @@ pub fn tool_missing_result(
   binary: &str,
   install_hint: &str,
 ) -> surfaces::SurfaceResult {
-  surfaces::SurfaceResult {
+  surfaces::SurfaceResult::new(
     surface_name,
-    status: surfaces::SurfaceStatus::ToolMissing {
+    start,
+    surfaces::SurfaceStatus::ToolMissing {
       binary: binary.to_string(),
       install_hint: install_hint.to_string(),
     },
-    duration: start.elapsed(),
-  }
+  )
 }
 
 /// Returns `Some(surfaces::SurfaceResult)` with `surfaces::SurfaceStatus::ToolMissing` if `binary`
@@ -1032,13 +1029,13 @@ pub fn lint_fix_unsupported(
   name: &'static str,
   start: time::Instant,
 ) -> surfaces::SurfaceResult {
-  surfaces::SurfaceResult {
-    surface_name: name,
-    status: surfaces::SurfaceStatus::Skipped {
+  surfaces::SurfaceResult::new(
+    name,
+    start,
+    surfaces::SurfaceStatus::Skipped {
       reason: "Tool does not support autofix; run fml fmt instead".to_string(),
     },
-    duration: start.elapsed(),
-  }
+  )
 }
 
 /// Builds the `surfaces::SurfaceResult` a surface's `sync_config` returns when it has

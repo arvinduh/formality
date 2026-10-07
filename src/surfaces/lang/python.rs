@@ -416,9 +416,10 @@ impl surfaces::LanguageSurface for PythonSurface {
             check_args,
           );
 
-          return surfaces::SurfaceResult {
-            surface_name: self.name(),
-            status: if is_violation {
+          return surfaces::SurfaceResult::new(
+            self.name(),
+            start,
+            if is_violation {
               surfaces::SurfaceStatus::ViolationsFound {
                 message: msg,
                 diff: None,
@@ -426,18 +427,15 @@ impl surfaces::LanguageSurface for PythonSurface {
             } else {
               surfaces::SurfaceStatus::ExecutionError { message: msg }
             },
-            duration: start.elapsed(),
-          };
+          );
         }
       }
       Err(e) => {
-        return surfaces::SurfaceResult {
-          surface_name: self.name(),
-          status: surfaces::SurfaceStatus::ExecutionError {
-            message: format!("Failed to execute ruff import sorting: {e}"),
-          },
-          duration: start.elapsed(),
-        };
+        return surfaces::SurfaceResult::error(
+          self.name(),
+          start,
+          format!("Failed to execute ruff import sorting: {e}"),
+        );
       }
     }
 

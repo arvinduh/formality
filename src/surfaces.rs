@@ -115,11 +115,7 @@ fn passed_if_empty(
   start: time::Instant,
 ) -> Option<SurfaceResult> {
   if files.is_empty() {
-    Some(SurfaceResult {
-      surface_name: name,
-      status: SurfaceStatus::Passed,
-      duration: start.elapsed(),
-    })
+    Some(SurfaceResult::new(name, start, SurfaceStatus::Passed))
   } else {
     None
   }
@@ -400,6 +396,36 @@ pub struct SurfaceResult {
 }
 
 impl SurfaceResult {
+  /// A result for `surface_name` with `status`, timed from `start`.
+  #[must_use]
+  pub fn new(
+    surface_name: &'static str,
+    start: time::Instant,
+    status: SurfaceStatus,
+  ) -> Self {
+    Self {
+      surface_name,
+      status,
+      duration: start.elapsed(),
+    }
+  }
+
+  /// A [`SurfaceStatus::ExecutionError`] result carrying `message`.
+  #[must_use]
+  pub fn error(
+    surface_name: &'static str,
+    start: time::Instant,
+    message: impl Into<String>,
+  ) -> Self {
+    Self::new(
+      surface_name,
+      start,
+      SurfaceStatus::ExecutionError {
+        message: message.into(),
+      },
+    )
+  }
+
   /// Returns `true` if the status is a skip or a clean pass.
   #[must_use]
   pub fn is_success(&self) -> bool {

@@ -486,23 +486,21 @@ impl LanguageSurface for CppSurface {
           }
         }
         Err(e) => {
-          return surfaces::SurfaceResult {
-            surface_name: self.name(),
-            status: surfaces::SurfaceStatus::ExecutionError {
-              message: format!("Failed to execute clang-tidy: {e}"),
-            },
-            duration: start.elapsed(),
-          };
+          return surfaces::SurfaceResult::error(
+            self.name(),
+            start,
+            format!("Failed to execute clang-tidy: {e}"),
+          );
         }
       }
     }
 
     if failed_outputs.is_empty() {
-      surfaces::SurfaceResult {
-        surface_name: self.name(),
-        status: surfaces::SurfaceStatus::Passed,
-        duration: start.elapsed(),
-      }
+      surfaces::SurfaceResult::new(
+        self.name(),
+        start,
+        surfaces::SurfaceStatus::Passed,
+      )
     } else {
       let mut msgs = Vec::new();
       for output in failed_outputs {
@@ -523,14 +521,14 @@ impl LanguageSurface for CppSurface {
         msgs.join("\n")
       };
 
-      surfaces::SurfaceResult {
-        surface_name: self.name(),
-        status: surfaces::SurfaceStatus::ViolationsFound {
+      surfaces::SurfaceResult::new(
+        self.name(),
+        start,
+        surfaces::SurfaceStatus::ViolationsFound {
           message: final_msg,
           diff: None,
         },
-        duration: start.elapsed(),
-      }
+      )
     }
   }
 

@@ -312,18 +312,16 @@ impl surfaces::LanguageSurface for RustSurface {
     // only `ctx.root` produced false errors for any subdirectory of a real
     // crate, despite the message below already claiming to check parents.
     if !glob::find_manifest_upwards(&ctx.root, "Cargo.toml") {
-      return surfaces::SurfaceResult {
-        surface_name: self.name(),
-        status: surfaces::SurfaceStatus::ExecutionError {
-          message: format!(
-            "No Cargo.toml found in {} (or any parent directory). `cargo \
+      return surfaces::SurfaceResult::error(
+        self.name(),
+        start,
+        format!(
+          "No Cargo.toml found in {} (or any parent directory). `cargo \
              clippy` needs a Cargo manifest to lint against — run `cargo \
              init` here, or point --root at the crate/workspace root.",
-            ctx.root.display()
-          ),
-        },
-        duration: start.elapsed(),
-      };
+          ctx.root.display()
+        ),
+      );
     }
 
     let mut cmd = tooling::create_tool_command("cargo");
