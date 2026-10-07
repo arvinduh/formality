@@ -5,8 +5,10 @@
 
 use std::path;
 
+use log;
+
 /// Standard directories ignored across all surfaces during file discovery.
-pub const STANDARD_IGNORED_DIRS: &[&str] = &[
+const STANDARD_IGNORED_DIRS: &[&str] = &[
   "target",
   "node_modules",
   ".git",
@@ -15,9 +17,20 @@ pub const STANDARD_IGNORED_DIRS: &[&str] = &[
   "fixtures",
 ];
 
+/// Adds the ignore file at `path` to `builder`, logging (not failing) on a
+/// malformed one: discovery still runs, just without its patterns.
+fn add_ignore_file(
+  builder: &mut ignore::gitignore::GitignoreBuilder,
+  path: &path::Path,
+) {
+  if let Some(err) = builder.add(path) {
+    log::warn!("ignoring unreadable {}: {err}", path.display());
+  }
+}
+
 /// Returns `true` if `path` has a filename matching temporary file patterns.
 #[must_use]
-pub fn is_temp_file(path: &path::Path) -> bool {
+fn is_temp_file(path: &path::Path) -> bool {
   let is_tmp_ext = path
     .extension()
     .is_some_and(|ext| ext.eq_ignore_ascii_case("tmp"));
@@ -29,7 +42,7 @@ pub fn is_temp_file(path: &path::Path) -> bool {
 
 /// Returns `true` if any component of `path` (relative to `root`) matches a standard ignored directory.
 #[must_use]
-pub fn is_standard_ignored(path: &path::Path, root: &path::Path) -> bool {
+fn is_standard_ignored(path: &path::Path, root: &path::Path) -> bool {
   let rel = path.strip_prefix(root).unwrap_or(path);
   rel.components().any(|c| {
     let s = c.as_os_str().to_string_lossy();
@@ -40,18 +53,18 @@ pub fn is_standard_ignored(path: &path::Path, root: &path::Path) -> bool {
 /// Builds a [`ignore::gitignore::Gitignore`] matcher for the given repository root,
 /// loading the root `.gitignore`, `.git/info/exclude`, and any nested `.gitignore` files for specific targets.
 #[must_use]
-pub fn build_repo_gitignore(
+fn build_repo_gitignore(
   root: &path::Path,
   targets: &[path::PathBuf],
 ) -> Option<ignore::gitignore::Gitignore> {
   let mut builder = ignore::gitignore::GitignoreBuilder::new(root);
   let gitignore_path = root.join(".gitignore");
   if gitignore_path.is_file() {
-    let _ = builder.add(&gitignore_path);
+    add_ignore_file(&mut builder, &gitignore_path);
   }
   let git_info_exclude = root.join(".git").join("info").join("exclude");
   if git_info_exclude.is_file() {
-    let _ = builder.add(&git_info_exclude);
+    add_ignore_file(&mut builder, &git_info_exclude);
   }
   for p in targets {
     let full_p = if p.is_absolute() {
@@ -66,7 +79,7 @@ pub fn build_repo_gitignore(
         current.push(c);
         let nested = current.join(".gitignore");
         if nested.is_file() {
-          let _ = builder.add(&nested);
+          add_ignore_file(&mut builder, &nested);
         }
       }
     }
@@ -264,7 +277,7 @@ pub fn filter_candidates_with_ext(
 
 /// Matches a file path against a pattern (glob, exact filename, directory, or path suffix).
 #[must_use]
-pub fn matches_pattern(path: &path::Path, pattern: &str) -> bool {
+fn matches_pattern(path: &path::Path, pattern: &str) -> bool {
   let norm_pattern = pattern.replace('\\', "/");
   let trimmed = norm_pattern.trim_matches('/');
   let slash_path = path.to_string_lossy().replace('\\', "/");
@@ -311,35 +324,6 @@ pub fn matches_pattern(path: &path::Path, pattern: &str) -> bool {
   }
 
   false
-}
-
-/// Helper function to find matching files within a directory ignoring .git, target, `node_modules`, etc.
-#[must_use]
-pub fn find_files_with_ext(
-  root: &path::Path,
-  extensions: &[&str],
-  specific_paths: &[path::PathBuf],
-  files_override: &[path::PathBuf],
-  exclude: &[path::PathBuf],
-) -> Vec<path::PathBuf> {
-  let targets = if !specific_paths.is_empty() {
-    specific_paths
-  } else if !files_override.is_empty() {
-    files_override
-  } else {
-    &[]
-  };
-
-  let files = if targets.is_empty() {
-    walk_candidate_files(root, &[])
-  } else {
-    expand_targets(root, targets)
-  };
-  let filter = FileFilter::new(root, extensions, exclude);
-  files
-    .into_iter()
-    .filter(|file| filter.matches(file))
-    .collect()
 }
 
 /// Expands explicit path `targets` into candidate files: a file target as
@@ -520,7 +504,7 @@ fn is_excluded_normalized(
 
 /// Performs simple glob matching supporting `*` and `?` wildcard patterns.
 #[must_use]
-pub fn simple_glob_match(pattern: &str, text: &str) -> bool {
+fn simple_glob_match(pattern: &str, text: &str) -> bool {
   let norm_pattern = pattern.replace('\\', "/");
   let norm_text = text.replace('\\', "/");
   glob_match_slices(norm_pattern.as_bytes(), norm_text.as_bytes())
@@ -577,8 +561,8 @@ fn glob_match_slices(pattern: &[u8], text: &[u8]) -> bool {
 
 /// Walks `start` and each of its ancestor directories looking for a manifest
 /// file named `filename`, mirroring how build tools (`cargo`, `go`) resolve a
-/// project root from a subdirectory. Shared by [`crate::surfaces::rust`]'s
-/// `Cargo.toml` guard and [`crate::surfaces::go`]'s `go.mod` guard (Fixes
+/// project root from a subdirectory. Shared by the `rust` surface's
+/// `Cargo.toml` guard and the `go` surface's `go.mod` guard (Fixes
 /// #185) so a subdirectory of a real project isn't mistaken for one with no
 /// manifest at all.
 ///
@@ -592,9 +576,33 @@ pub fn find_manifest_upwards(start: &path::Path, filename: &str) -> bool {
 #[cfg(test)]
 mod tests {
   use super::*;
+  use crate::config;
+  use crate::surfaces;
+
+  /// The files with `extensions` a surface would act on, through the
+  /// production [`surfaces::ExecutionContext::matched_files`] path.
+  fn matched(
+    root: &path::Path,
+    extensions: &[&str],
+    paths: Vec<path::PathBuf>,
+    files: Vec<path::PathBuf>,
+    exclude: Vec<path::PathBuf>,
+  ) -> Vec<path::PathBuf> {
+    let cfg = config::FormalityConfig::default();
+    let mut lang =
+      cfg.resolve_for_lang_with_global("rust", &cfg.resolve_global());
+    lang.files = files;
+    lang.exclude = exclude;
+    let ctx = if paths.is_empty() {
+      surfaces::test_ctx(root, lang)
+    } else {
+      surfaces::test_ctx_with_paths(root, lang, paths)
+    };
+    ctx.matched_files(extensions)
+  }
 
   #[test]
-  fn test_present_extensions_ignores_case_and_ignored_dirs() {
+  fn present_extensions_ignores_case_and_ignored_dirs() {
     let temp = tempfile::TempDir::new().unwrap();
     let root = temp.path();
     std::fs::create_dir_all(root.join("a/b")).unwrap();
@@ -611,7 +619,7 @@ mod tests {
   }
 
   #[test]
-  fn test_present_extensions_scan_skips_globally_excluded_files() {
+  fn present_extensions_scan_skips_globally_excluded_files() {
     let temp = tempfile::TempDir::new().unwrap();
     let root = temp.path();
     std::fs::create_dir(root.join("ci")).unwrap();
@@ -625,7 +633,7 @@ mod tests {
   }
 
   #[test]
-  fn test_present_extensions_from_paths_reads_only_the_given_list() {
+  fn present_extensions_from_paths_reads_only_the_given_list() {
     let paths = [
       path::PathBuf::from("a/Main.RS"),
       path::PathBuf::from("b/notes"),
@@ -638,7 +646,7 @@ mod tests {
   }
 
   #[test]
-  fn test_find_manifest_upwards_walks_parent_directories() {
+  fn find_manifest_upwards_walks_parent_directories() {
     let temp = tempfile::TempDir::new().unwrap();
     std::fs::write(temp.path().join("Cargo.toml"), "[package]\n").unwrap();
     let nested = temp.path().join("src").join("deep");
@@ -648,7 +656,7 @@ mod tests {
   }
 
   #[test]
-  fn test_find_manifest_upwards_no_manifest_anywhere() {
+  fn find_manifest_upwards_no_manifest_anywhere() {
     let temp = tempfile::TempDir::new().unwrap();
     let nested = temp.path().join("src");
     std::fs::create_dir_all(&nested).unwrap();
@@ -657,7 +665,7 @@ mod tests {
   }
 
   #[test]
-  fn test_find_manifest_upwards_directory_named_like_manifest_is_ignored() {
+  fn find_manifest_upwards_directory_named_like_manifest_is_ignored() {
     let temp = tempfile::TempDir::new().unwrap();
     std::fs::create_dir(temp.path().join("Cargo.toml")).unwrap();
 
@@ -665,7 +673,7 @@ mod tests {
   }
 
   #[test]
-  fn test_find_files_with_ext_files_override() {
+  fn matched_files_files_override() {
     let temp = tempfile::TempDir::new().unwrap();
     let root = temp.path();
     let file_a = root.join("a.rs");
@@ -677,7 +685,7 @@ mod tests {
 
     let files_override =
       vec![path::PathBuf::from("a.rs"), path::PathBuf::from("c.rs")];
-    let matched = find_files_with_ext(root, &["rs"], &[], &files_override, &[]);
+    let matched = matched(root, &["rs"], vec![], files_override, vec![]);
     assert_eq!(matched.len(), 2);
     assert!(matched.contains(&file_a));
     assert!(matched.contains(&file_c));
@@ -685,7 +693,7 @@ mod tests {
   }
 
   #[test]
-  fn test_find_files_with_ext_exclude_patterns() {
+  fn matched_files_exclude_patterns() {
     let temp = tempfile::TempDir::new().unwrap();
     let root = temp.path();
     let src_dir = root.join("src");
@@ -703,13 +711,13 @@ mod tests {
       path::PathBuf::from("src/generated"),
       path::PathBuf::from("ignored.rs"),
     ];
-    let matched = find_files_with_ext(root, &["rs"], &[], &[], &exclude);
+    let matched = matched(root, &["rs"], vec![], vec![], exclude);
     assert_eq!(matched.len(), 1);
     assert_eq!(matched[0], normal);
   }
 
   #[test]
-  fn test_find_files_with_ext_specific_paths_precedence() {
+  fn matched_files_specific_paths_precedence() {
     let temp = tempfile::TempDir::new().unwrap();
     let root = temp.path();
     let file_a = root.join("a.rs");
@@ -719,14 +727,13 @@ mod tests {
 
     let specific = vec![path::PathBuf::from("a.rs")];
     let files_override = vec![path::PathBuf::from("b.rs")];
-    let matched =
-      find_files_with_ext(root, &["rs"], &specific, &files_override, &[]);
+    let matched = matched(root, &["rs"], specific, files_override, vec![]);
     assert_eq!(matched.len(), 1);
     assert_eq!(matched[0], file_a);
   }
 
   #[test]
-  fn test_find_files_with_ext_default_walk_finds_nested_files() {
+  fn matched_files_default_walk_finds_nested_files() {
     let temp = tempfile::TempDir::new().unwrap();
     let root = temp.path();
     let nested = root.join("src").join("nested");
@@ -739,7 +746,7 @@ mod tests {
     std::fs::write(&deep, "fn deep() {}").unwrap();
     std::fs::write(&wrong_ext, "# readme").unwrap();
 
-    let matched = find_files_with_ext(root, &["rs"], &[], &[], &[]);
+    let matched = matched(root, &["rs"], vec![], vec![], vec![]);
     assert_eq!(matched.len(), 2);
     assert!(matched.contains(&top));
     assert!(matched.contains(&deep));
@@ -747,7 +754,7 @@ mod tests {
   }
 
   #[test]
-  fn test_walk_dir_ext_skips_conventional_ignored_directories() {
+  fn walk_dir_ext_skips_conventional_ignored_directories() {
     let temp = tempfile::TempDir::new().unwrap();
     let root = temp.path();
 
@@ -762,7 +769,7 @@ mod tests {
       std::fs::write(dir.join("should_not_be_found.rs"), "fn x() {}").unwrap();
     }
 
-    let matched = find_files_with_ext(root, &["rs"], &[], &[], &[]);
+    let matched = matched(root, &["rs"], vec![], vec![], vec![]);
     assert_eq!(
       matched.len(),
       1,
@@ -772,7 +779,7 @@ mod tests {
   }
 
   #[test]
-  fn test_walk_dir_ext_skips_temporary_files() {
+  fn walk_dir_ext_skips_temporary_files() {
     let temp = tempfile::TempDir::new().unwrap();
     let root = temp.path();
 
@@ -792,7 +799,7 @@ mod tests {
     std::fs::write(&nested_real, "fn lib() {}").unwrap();
     std::fs::write(&nested_temp, "fn lib() {}").unwrap();
 
-    let matched = find_files_with_ext(root, &["rs", "tmp"], &[], &[], &[]);
+    let matched = matched(root, &["rs", "tmp"], vec![], vec![], vec![]);
     assert_eq!(matched.len(), 2);
     assert!(matched.contains(&real_rs));
     assert!(matched.contains(&nested_real));
@@ -803,7 +810,7 @@ mod tests {
   }
 
   #[test]
-  fn test_is_excluded_normalized_matches_directory_prefix() {
+  fn is_excluded_normalized_matches_directory_prefix() {
     let temp = tempfile::TempDir::new().unwrap();
     let root = temp.path();
     let excluded_file = root.join("build").join("out.rs");
@@ -852,7 +859,7 @@ mod tests {
   }
 
   #[test]
-  fn test_walk_candidate_files_discovers_files_and_respects_global_exclude() {
+  fn walk_candidate_files_discovers_files_and_respects_global_exclude() {
     let temp = tempfile::TempDir::new().unwrap();
     let root = temp.path();
 
@@ -891,7 +898,7 @@ mod tests {
   }
 
   #[test]
-  fn test_filter_candidates_with_ext_in_memory() {
+  fn filter_candidates_with_ext_in_memory() {
     let candidates = vec![
       path::PathBuf::from("/repo/src/main.rs"),
       path::PathBuf::from("/repo/src/lib.rs"),
@@ -900,11 +907,11 @@ mod tests {
       path::PathBuf::from("/repo/README.md"),
     ];
 
-    let rust_ext = crate::surfaces::LanguageSurface::file_extensions(
-      &crate::surfaces::rust::RustSurface,
+    let rust_ext = surfaces::LanguageSurface::file_extensions(
+      &surfaces::lang::rust::RustSurface,
     );
-    let python_ext = crate::surfaces::LanguageSurface::file_extensions(
-      &crate::surfaces::python::PythonSurface,
+    let python_ext = surfaces::LanguageSurface::file_extensions(
+      &surfaces::lang::python::PythonSurface,
     );
 
     // 1. Rust surface default matching
@@ -946,7 +953,7 @@ mod tests {
   }
 
   #[test]
-  fn test_matches_pattern_variants() {
+  fn matches_pattern_variants() {
     let p = path::Path::new("/workspace/src/generated/api.rs");
     assert!(matches_pattern(p, "src/generated"));
     assert!(matches_pattern(p, "generated"));
@@ -958,7 +965,7 @@ mod tests {
   }
 
   #[test]
-  fn test_standard_ignored_and_temp_files() {
+  fn standard_ignored_and_temp_files() {
     let temp = tempfile::TempDir::new().unwrap();
     let root = temp.path();
     let ignored =
@@ -981,7 +988,7 @@ mod tests {
   }
 
   #[test]
-  fn test_find_files_with_ext_staged_scope_filtering() {
+  fn matched_files_staged_scope_filtering() {
     let temp = tempfile::TempDir::new().unwrap();
     let root = temp.path();
 
@@ -1005,8 +1012,7 @@ mod tests {
       vec![main_rs.clone(), excluded_rs, fixture_rs, ignored_rs];
     let exclude = vec![path::PathBuf::from("src/generated.rs")];
 
-    let matched =
-      find_files_with_ext(root, &["rs"], &specific_staged, &[], &exclude);
+    let matched = matched(root, &["rs"], specific_staged, vec![], exclude);
 
     // Only main.rs survives: excluded_rs is filtered by exclude,
     // fixture_rs is filtered by conventional dir, and ignored_rs is filtered by .gitignore

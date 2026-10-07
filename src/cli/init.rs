@@ -1,90 +1,72 @@
-//! CLI argument definitions and scaffolding execution for `fml init`.
-//!
-//! Owns argument definitions for config initialization and writes starter
-//! configuration files directly.
+//! `fml init`: writes a starter config for the detected surfaces.
 
-use std::path;
+use std::fs;
 
 use clap;
-use colored::Colorize;
 
-use crate::config;
-use crate::errors;
-use crate::surfaces;
+use fml::config;
+use fml::engine::runner;
+use fml::surfaces::registry;
+
+use crate::cli;
+use crate::cli::ui;
 
 /// Arguments for `fml init`.
-#[derive(clap::Args, Clone, Copy, Debug)]
+#[derive(clap::Args, Debug)]
 pub struct Args {
-  /// Overwrite existing configuration file if it already exists
+  /// Overwrite an existing config
   #[arg(short = 'f', long)]
-  pub force: bool,
+  force: bool,
 
-  /// Create hidden config file (.formality.toml) instead of formality.toml
+  /// Write .formality.toml instead of formality.toml
   #[arg(long)]
-  pub hidden: bool,
+  hidden: bool,
 }
 
-/// Executes the `init` command: writes a starter config file (`formality.toml`
-/// by default, or the dotfile variant with `hidden`) pre-populated with the
-/// auto-detected surfaces, refusing to overwrite an existing config unless
-/// `force` is set.
-#[must_use]
-pub fn run(
-  args: Args,
-  root: &path::Path,
-  config: &config::FormalityConfig,
-) -> errors::ExitStatus {
-  let target_file_name = if args.hidden {
-    ".formality.toml"
-  } else {
-    config::DEFAULT_CONFIG_FILE_NAME
-  };
-  let target = root.join(target_file_name);
+impl Args {
+  /// Writes the config, refusing to replace an existing one without
+  /// `--force`.
+  pub fn run(self, ctx: &cli::Context) -> runner::ExitStatus {
+    let name = if self.hidden {
+      ".formality.toml"
+    } else {
+      config::DEFAULT_CONFIG_FILE_NAME
+    };
+    let target = ctx.root.join(name);
 
-  if let Some(existing) = config::find_project_config(root) {
-    if !args.force {
-      eprintln!(
-        "{} Config file already exists at {}. Use {} to overwrite.",
-        "[ERR]".red().bold(),
-        existing.display(),
-        "--force".bold()
-      );
-      return errors::ExitStatus::Violations;
+    if let Some(existing) = config::resolve::find_project_config(&ctx.root) {
+      if !self.force {
+        ui::error(&format!(
+          "{} already exists; use --force to overwrite",
+          existing.display()
+        ));
+        return runner::ExitStatus::Violations;
+      }
+      if existing != target {
+        ui::warn(&format!(
+          "{} takes precedence over {name}, which will be ignored until it \
+           is removed",
+          existing.display()
+        ));
+      }
     }
-    // Warn when --force would create a file that is shadowed by an existing
-    // higher-priority config (e.g. creating .formality.toml while
-    // formality.toml already exists).
-    if existing != target && existing.exists() {
-      eprintln!(
-        "{} '{}' already exists and takes precedence over '{}'. \
-         The new file will be shadowed and ignored unless '{}' is removed.",
-        "[WARN]".yellow().bold(),
-        existing.display(),
-        target_file_name,
-        existing.display(),
-      );
-    }
-  }
 
-  let detected = surfaces::detect_surfaces_smart(root, config);
-  let detected_names: Vec<&str> = detected.iter().map(|s| s.name()).collect();
-  let template =
-    config::FormalityConfig::generate_init_template(&detected_names);
-
-  match std::fs::write(&target, template) {
-    Ok(()) => {
-      println!(
-        "{} Initialized {} with {} detected surface(s).",
-        "[OK]".green().bold(),
-        target.display().to_string().cyan(),
-        detected.len()
-      );
-      errors::ExitStatus::Clean
-    }
-    Err(e) => {
-      errors::FormalityError::Io(errors::IoError::new(Some(target), e))
-        .print_diagnostic();
-      errors::ExitStatus::Error
+    let detected = registry::detect_surfaces_smart(&ctx.root, &ctx.config);
+    let names: Vec<&str> = detected.iter().map(|s| s.name()).collect();
+    let template = config::FormalityConfig::generate_init_template(&names);
+    match fs::write(&target, template) {
+      Ok(()) => {
+        ui::ok(&format!(
+          "wrote {} with {} surface(s)",
+          target.display(),
+          names.len()
+        ));
+        runner::ExitStatus::Clean
+      }
+      Err(err) => {
+        ui::error(&format!("cannot write {}: {err}", target.display()));
+        runner::ExitStatus::Error
+      }
     }
   }
 }

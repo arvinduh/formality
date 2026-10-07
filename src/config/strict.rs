@@ -11,10 +11,10 @@ use std::path;
 use serde::Deserialize;
 use toml::de;
 
-use super::lang_table::lang_options_table;
-use super::options;
 use crate::config;
-use crate::surfaces;
+use crate::config::lang_table::lang_options_table;
+use crate::config::options;
+use crate::surfaces::registry;
 
 /// Parses `content`, read from `path`, into a [`FormalityConfig`].
 ///
@@ -56,7 +56,7 @@ fn check_lang_names(
   else {
     return Ok(());
   };
-  let registry = surfaces::SurfaceRegistry::default();
+  let registry = registry::SurfaceRegistry::default();
   for key in sections.keys() {
     let name: &str = key.get_ref();
     match registry.resolve_canonical_name(name) {
@@ -89,7 +89,7 @@ fn check_extra_args(
   else {
     return Ok(());
   };
-  let registry = surfaces::SurfaceRegistry::default();
+  let registry = registry::SurfaceRegistry::default();
   for (name, section) in sections {
     let de::DeValue::Table(table) = section.get_ref() else {
       continue;

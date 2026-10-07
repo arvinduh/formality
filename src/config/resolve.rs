@@ -8,6 +8,8 @@ use std::fmt::Write;
 use std::fs;
 use std::path;
 
+use log;
+
 use crate::config;
 use crate::config::facets;
 // Macros, imported by name: the X-macro's recursion and its `$callback`
@@ -15,19 +17,9 @@ use crate::config::facets;
 use crate::config::lang_table::build_resolved_lang_config;
 use crate::config::lang_table::lang_options_table;
 use crate::config::options;
-use crate::surfaces;
+use crate::surfaces::registry;
 
 impl config::FormalityConfig {
-  /// Constructs an empty [`FormalityConfig`] with no global or language overrides.
-  #[cfg(test)]
-  #[must_use]
-  pub fn empty() -> Self {
-    Self {
-      global: None,
-      lang: collections::BTreeMap::new(),
-    }
-  }
-
   /// Constructs a [`config::FormalityConfig`] initialized with standard global default settings.
   #[must_use]
   pub fn with_defaults() -> Self {
@@ -219,7 +211,7 @@ impl config::FormalityConfig {
   #[must_use]
   pub fn unrecognized_lang_sections(
     &self,
-    registry: &surfaces::SurfaceRegistry,
+    registry: &registry::SurfaceRegistry,
   ) -> Vec<&str> {
     self
       .lang
@@ -265,6 +257,7 @@ impl config::FormalityConfig {
     if let Some(user_path) = find_user_config()
       && user_path.is_file()
     {
+      log::debug!("loading user config {}", user_path.display());
       let user_cfg = Self::load_file(&user_path)?;
       config.merge(user_cfg);
     }
@@ -273,6 +266,7 @@ impl config::FormalityConfig {
     let project_path_buf = if let Some(proj_path) = project_config_path
       && proj_path.is_file()
     {
+      log::debug!("loading project config {}", proj_path.display());
       let proj_cfg = Self::load_file(proj_path)?;
       config.merge(proj_cfg);
       Some(proj_path.to_path_buf())
@@ -376,7 +370,7 @@ pub fn find_project_config(start_dir: &path::Path) -> Option<path::PathBuf> {
 
 /// Finds the global user configuration across Linux, macOS, and Windows.
 #[must_use]
-pub fn find_user_config() -> Option<path::PathBuf> {
+fn find_user_config() -> Option<path::PathBuf> {
   // 1. XDG_CONFIG_HOME (Linux / Custom Unix)
   if let Ok(xdg_config) = std::env::var("XDG_CONFIG_HOME") {
     let path = path::PathBuf::from(&xdg_config)

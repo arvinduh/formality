@@ -20,7 +20,7 @@ mod tests {
   use super::*;
 
   #[test]
-  fn test_generate_schema_valid_json() {
+  fn generate_schema_valid_json() {
     let schema_str = generate_schema();
     assert!(!schema_str.is_empty());
     let parsed: serde_json::Value =

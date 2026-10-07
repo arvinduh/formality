@@ -9,27 +9,24 @@
 //! `fml fix --check` therefore needs no execution code of its own — it is
 //! `[Lint, Format]` under `Report`, a plan nobody had spelled before.
 
-use std::fmt::Write;
 use std::path;
 use std::sync;
-use std::time;
 
-use colored::Colorize;
 use rayon::iter::IndexedParallelIterator;
 use rayon::iter::IntoParallelRefIterator;
 use rayon::iter::ParallelIterator;
 
 use crate::config;
-use crate::errors;
 use crate::surfaces;
-use crate::ui::table;
+use crate::surfaces::sync::editorconfig;
+use crate::surfaces::sync::prettier;
 
 /// One unit of work the runner can dispatch to a [`surfaces::LanguageSurface`].
 ///
 /// A pass is not a command: `fml fix` is two passes, and `fml lint` is one
 /// pass that only ever runs in [`Mode::Report`]. Commands are spelled as
 /// [`Plan`]s over these.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq)]
 pub enum Pass {
   /// Lint pass — [`surfaces::LanguageSurface::lint`].
   Lint,
@@ -42,7 +39,7 @@ pub enum Pass {
 /// Whether a [`Plan`] may write to disk.
 ///
 /// This is the single axis `--check` selects, for every command that has it.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy)]
 pub enum Mode {
   /// Report what would change, writing nothing.
   Report,
@@ -53,7 +50,7 @@ pub enum Mode {
 impl Mode {
   /// Returns `true` for [`Mode::Report`].
   #[must_use]
-  pub const fn is_report(self) -> bool {
+  const fn is_report(self) -> bool {
     matches!(self, Self::Report)
   }
 
@@ -70,10 +67,10 @@ impl Mode {
 /// Passes run in list order and their per-surface results are folded
 /// left-to-right by `combine_pass_results`, so `[Lint, Format]` reports
 /// the lint pass's findings ahead of the format pass's.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug)]
 pub struct Plan {
   /// The passes to run, in execution order.
-  pub passes: Vec<Pass>,
+  passes: Vec<Pass>,
   /// Whether those passes may write to disk.
   pub mode: Mode,
   /// Whether a surface reporting [`surfaces::SurfaceStatus::ToolMissing`] alone should
@@ -185,7 +182,7 @@ impl Scope {
     global_exclude: &[path::PathBuf],
   ) -> Self {
     if paths.is_empty() {
-      Self::Workspace(sync::Arc::new(surfaces::walk_candidate_files(
+      Self::Workspace(sync::Arc::new(surfaces::glob::walk_candidate_files(
         root,
         global_exclude,
       )))
@@ -202,8 +199,8 @@ impl Scope {
 pub struct Runner;
 
 impl Runner {
-  /// Executes `plan` like [`Runner::run_into`], rendering to stdout as the
-  /// CLI's report.
+  /// Executes `plan`'s passes across the target surfaces, returning the
+  /// in-memory execution results per surface.
   #[must_use]
   pub fn run(
     surfaces: &[Box<dyn surfaces::LanguageSurface>],
@@ -211,37 +208,10 @@ impl Runner {
     scope: &Scope,
     plan: &Plan,
     config: &config::FormalityConfig,
-  ) -> errors::ExitStatus {
-    Self::run_into(&mut std::io::stdout(), surfaces, root, scope, plan, config)
-  }
-
-  /// Executes `plan`'s passes across the target surfaces, aggregates the
-  /// per-surface results, and renders the status table and diagnostics into
-  /// `out`.
-  ///
-  /// `out` is the caller's choice because stdout is not always free: under
-  /// `fml lsp` it is the JSON-RPC transport. A failed write to `out` is
-  /// ignored; the report is advisory and never changes the exit status.
-  #[expect(
-    clippy::too_many_lines,
-    reason = "coordinates multi-pass surface execution, result aggregation, and output rendering"
-  )]
-  #[must_use]
-  pub fn run_into(
-    out: &mut dyn std::io::Write,
-    surfaces: &[Box<dyn surfaces::LanguageSurface>],
-    root: &path::Path,
-    scope: &Scope,
-    plan: &Plan,
-    config: &config::FormalityConfig,
-  ) -> errors::ExitStatus {
+  ) -> Vec<surfaces::SurfaceResult> {
     if surfaces.is_empty() {
-      let _ =
-        writeln!(out, "{}", "No matching language surfaces found.".yellow());
-      return errors::ExitStatus::Clean;
+      return Vec::new();
     }
-
-    let start_time = time::Instant::now();
     // Shared across every surface's ExecutionContext below. All four are
     // wrapped in Arc so the per-surface parallel dispatch (rayon::par_iter)
     // clones a refcount instead of deep-copying the workspace root, the full
@@ -264,8 +234,6 @@ impl Runner {
       candidate_files,
     };
 
-    let action_verb = plan.verb();
-
     // One pass at a time, each fanned out across every surface in parallel.
     // A later pass sees what an earlier one wrote, which is the whole point
     // of `fix`'s ordering: lint fixes first, then format, so the tree is
@@ -275,37 +243,6 @@ impl Runner {
     for &pass in &plan.passes {
       let results = run_pass(pass, plan.mode, surfaces, &shared);
       pass_results.push((pass, results));
-    }
-
-    // Per-surface fix-pass evidence, gathered *before* the recheck below
-    // replaces a fix pass's own output with a check-only re-lint that no
-    // longer carries it (#119). `markdownlint-cli2` prints `Attempted: N
-    // fixes in M files` only when invoked with `--fix`, so without this the
-    // one signal that tool exposes would be discarded by the very recheck
-    // that makes its count trustworthy. Indexed by surface, matching the
-    // alignment every per-pass result vector already has with `surfaces`.
-    //
-    // Seeded from the invocation itself: markdownlint-cli2 prints its
-    // `Attempted:` line only when it attempted at least one fix, so a second
-    // `fml fix` over an unchanged tree would otherwise silently drop the
-    // `0 auto-fixable` the first one reported.
-    let lint_fix_ran = plan.mode.is_write() && plan.includes(Pass::Lint);
-    let mut fixer_evidence: Vec<violations::FixerEvidence> = surfaces
-      .iter()
-      .map(|s| {
-        violations::FixerEvidence::from_invocation(
-          lint_fix_ran && s.supports_lint_fix(),
-        )
-      })
-      .collect();
-    for (_, results) in &pass_results {
-      for (slot, res) in fixer_evidence.iter_mut().zip(results) {
-        if let surfaces::SurfaceStatus::ViolationsFound { message, .. } =
-          &res.status
-        {
-          *slot = slot.merge(violations::FixerEvidence::from_message(message));
-        }
-      }
     }
 
     // Targeted re-lint (check-only) for surfaces whose lint pass reported
@@ -368,7 +305,7 @@ impl Runner {
       .unwrap_or_default();
 
     if plan.includes(Pass::ConfigSync) {
-      if let Some(prettier_res) = surfaces::sync_shared_prettier_config(
+      if let Some(prettier_res) = prettier::sync_shared_prettier_config(
         root,
         config,
         surfaces,
@@ -376,7 +313,7 @@ impl Runner {
       ) {
         results.push(prettier_res);
       }
-      let editorconfig_res = surfaces::editorconfig::sync_editorconfig(
+      let editorconfig_res = editorconfig::sync_editorconfig(
         root,
         config,
         surfaces,
@@ -385,169 +322,55 @@ impl Runner {
       results.push(editorconfig_res);
     }
 
-    let mut exit_code = 0;
-    let mut pass_count = 0;
-    let mut violation_count = 0;
-    let mut tool_missing_count = 0;
-    let mut error_count = 0;
-    // The run-level remaining-violation figure, accumulated from the rows as
-    // they are built — never tallied independently (#119). Whatever the
-    // summary prints is by construction the sum of the numbers rendered
-    // above it, so the two can never drift.
-    let mut remaining = RemainingViolations::default();
-
-    let mut runner_table = table::Table::new(vec![
-      table::Column::new(table::Cell::text(""))
-        .width(table::WidthPolicy::Fixed(8)),
-      table::Column::new(table::Cell::text(""))
-        .width(table::WidthPolicy::Fixed(14)),
-      table::Column::new(table::Cell::text("")).width(table::WidthPolicy::Auto),
-      table::Column::new(table::Cell::text(""))
-        .align(table::Align::Right)
-        .width(table::WidthPolicy::Fixed(12)),
-    ])
-    .layout(
-      table::Layout::compact()
-        .indent(2)
-        .padding(0, 1)
-        .max_width(80),
-    );
-
-    for (idx, res) in results.iter().enumerate() {
-      let duration_str = format!("{:.2?}", res.duration);
-      // Rows appended after the per-surface fan-out (`fml sync`'s shared
-      // `.editorconfig` / `.prettierrc.json` passes) have no surface index
-      // and therefore no evidence — `unwrap_or_default` is the correct
-      // answer for them, not a fallback.
-      let tally = match &res.status {
-        surfaces::SurfaceStatus::ViolationsFound { message, .. } => {
-          violations::tally(
-            message,
-            fixer_evidence.get(idx).copied().unwrap_or_default(),
-          )
-        }
-        _ => None,
-      };
-      remaining.record(&res.status, tally);
-      let spec = row_spec(&res.status, plan, tally);
-
-      let severity = res.status.severity();
-      match severity {
-        surfaces::Severity::Skipped => {}
-        surfaces::Severity::Passed => pass_count += 1,
-        surfaces::Severity::ToolMissing => tool_missing_count += 1,
-        surfaces::Severity::Violation => violation_count += 1,
-        surfaces::Severity::Error => error_count += 1,
-      }
-      exit_code = exit_code.max(exit_floor(&severity, plan.allow_missing));
-
-      runner_table.add_row(table::Row::new(vec![
-        table::Cell::styled(spec.tag, spec.tag_style),
-        table::Cell::styled(res.surface_name, spec.name_style),
-        table::Cell::styled(spec.detail, spec.detail_style),
-        table::Cell::styled(duration_str, table::Style::Dim)
-          .align(table::Align::Right),
-      ]));
-    }
-
-    let palette = table::Palette::detect();
-    let rendered_table = table::render(&runner_table, &palette);
-    let frame = table::Frame::for_body(&rendered_table);
-
-    let title = format!(
-      "{} {} {}",
-      "fml".bold().cyan(),
-      action_verb.bold(),
-      format!("({})", header_count_label(results.len())).dimmed()
-    );
-    let _ =
-      writeln!(out, "{}", frame.section(&title, &rendered_table, &palette));
-
-    let diagnostics = collect_diagnostics(&results);
-    if !diagnostics.is_empty() {
-      let mut body = String::new();
-      for (surface, detail) in &diagnostics {
-        // Paths under the run root render relative here, via the same helper
-        // the table cells use — see `crate::ui::paths`.
-        let detail = crate::ui::paths::relativize_text(root, detail);
-        let _ = write!(
-          body,
-          "\n  {} {}\n",
-          "::".cyan().bold(),
-          surface.bold().magenta()
-        );
-        for line in detail.lines() {
-          let _ = writeln!(body, "    {line}");
-        }
-      }
-      let _ = writeln!(
-        out,
-        "{}",
-        frame.section(
-          &"Diagnostics & Suggestions:".bold().to_string(),
-          &frame.wrap_body(&body),
-          &palette,
-        )
-      );
-    }
-
-    let mut parts = Vec::new();
-    if pass_count > 0 {
-      parts.push(format!("{pass_count} passed").green().bold().to_string());
-    }
-    if violation_count > 0 {
-      parts.push(format!("{violation_count} failed").red().bold().to_string());
-    }
-    if tool_missing_count > 0 {
-      parts.push(
-        format!(
-          "{} missing tool{}{}",
-          tool_missing_count,
-          if tool_missing_count == 1 { "" } else { "s" },
-          if plan.allow_missing { " (allowed)" } else { "" }
-        )
-        .yellow()
-        .bold()
-        .to_string(),
-      );
-    }
-    if error_count > 0 {
-      parts.push(
-        format!(
-          "{} error{}",
-          error_count,
-          if error_count == 1 { "" } else { "s" }
-        )
-        .red()
-        .bold()
-        .to_string(),
-      );
-    }
-
-    let mut summary_text = if parts.is_empty() {
-      "0 surfaces".dimmed().to_string()
-    } else {
-      parts.join(", ")
-    };
-    if let Some(clause) = remaining.clause() {
-      summary_text.push(' ');
-      summary_text.push_str(&clause.dimmed().to_string());
-    }
-
-    let _ =
-      writeln!(out, "  {} in {:.2?}\n", summary_text, start_time.elapsed());
-
-    errors::ExitStatus::try_from(exit_code).unwrap_or(errors::ExitStatus::Error)
+    results
   }
+}
+
+/// How a run ends, ordered from best to worst; the process exit code is the
+/// variant's position (0, 1, 2).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
+pub enum ExitStatus {
+  /// Nothing to report.
+  Clean,
+  /// Violations, drift, or a missing tool.
+  Violations,
+  /// A tool or fml itself failed to run.
+  Error,
+}
+
+impl ExitStatus {
+  /// Returns `true` for [`ExitStatus::Clean`].
+  #[must_use]
+  pub const fn is_clean(self) -> bool {
+    matches!(self, Self::Clean)
+  }
+}
+
+/// Folds surface results into the run's exit status: the worst row wins.
+#[must_use]
+pub fn compute_exit_status(
+  results: &[surfaces::SurfaceResult],
+  allow_missing: bool,
+) -> ExitStatus {
+  results
+    .iter()
+    .map(|res| exit_floor(&res.status.severity(), allow_missing))
+    .max()
+    .unwrap_or(ExitStatus::Clean)
 }
 
 /// The lowest exit code a row of `severity` forces on the run.
 ///
 /// The results-row loop in [`Runner::run`] folds it in with
-/// `exit_code.max(..)`, so the worst row decides the exit code.
-fn exit_floor(severity: &surfaces::Severity, allow_missing: bool) -> i32 {
+/// `max`, so the worst row decides the exit code.
+fn exit_floor(
+  severity: &surfaces::Severity,
+  allow_missing: bool,
+) -> ExitStatus {
   match severity {
-    surfaces::Severity::Skipped | surfaces::Severity::Passed => 0,
+    surfaces::Severity::Skipped | surfaces::Severity::Passed => {
+      ExitStatus::Clean
+    }
     // An unmet precondition, not an operational fault (#252) — the
     // surface correctly determined it could not proceed. Exit 1
     // (`ExitStatus::Violations`), the same as a real violation, so a
@@ -562,264 +385,12 @@ fn exit_floor(severity: &surfaces::Severity, allow_missing: bool) -> i32 {
     // original bug, not the fix). The tally is untouched by this flag:
     // a missing tool is still counted, just not floored into a nonzero
     // exit.
-    surfaces::Severity::ToolMissing if allow_missing => 0,
-    surfaces::Severity::ToolMissing | surfaces::Severity::Violation => 1,
-    surfaces::Severity::Error => 2,
-  }
-}
-
-/// Everything one results-table row renders, decided once per
-/// [`surfaces::SurfaceStatus`] instead of once per hand-built arm (#277).
-///
-/// This is display data only: the row's tally bucket and exit floor come
-/// from [`surfaces::SurfaceStatus::severity`], not from here.
-struct RowSpec {
-  tag: &'static str,
-  tag_style: table::Style,
-  name_style: table::Style,
-  detail: String,
-  detail_style: table::Style,
-}
-
-/// Builds the row data for one surface's [`surfaces::SurfaceStatus`] (#277).
-///
-/// `name_style` is `Strong` for every status except `Skipped`, which is
-/// rendered `Dim` (the surface name of a skipped row was never emphasized —
-/// that's the one place the eight original arms disagreed on a cell other
-/// than tag/detail/counter/exit-floor).
-fn row_spec(
-  status: &surfaces::SurfaceStatus,
-  plan: &Plan,
-  tally: Option<violations::ViolationTally>,
-) -> RowSpec {
-  match status {
-    surfaces::SurfaceStatus::Passed => RowSpec {
-      tag: "[PASS] ",
-      tag_style: table::Style::Ok,
-      name_style: table::Style::Strong,
-      detail: passed_detail(plan).to_string(),
-      detail_style: table::Style::Dim,
-    },
-    surfaces::SurfaceStatus::ConfigSynced { files } => RowSpec {
-      tag: "[SYNC] ",
-      tag_style: table::Style::Ok,
-      name_style: table::Style::Strong,
-      // Every file the surface wrote is named, not just the last one
-      // (#130) — a config created on disk but absent from this row is the
-      // worst failure available to a command whose whole job is writing
-      // config files.
-      detail: synced_files_detail(files),
-      detail_style: table::Style::Info,
-    },
-    surfaces::SurfaceStatus::ConfigDrifted { file, .. } => RowSpec {
-      tag: "[DRIFT]",
-      tag_style: table::Style::Warn,
-      name_style: table::Style::Strong,
-      detail: format!("{file} out of sync"),
-      detail_style: table::Style::Warn,
-    },
-    surfaces::SurfaceStatus::ManualConfig { file, .. } => RowSpec {
-      tag: "[MANUAL]",
-      tag_style: table::Style::Warn,
-      name_style: table::Style::Strong,
-      detail: format!("{file} is manually managed"),
-      detail_style: table::Style::Warn,
-    },
-    surfaces::SurfaceStatus::ViolationsFound { .. } => RowSpec {
-      tag: "[FAIL] ",
-      tag_style: table::Style::Error,
-      name_style: table::Style::Strong,
-      detail: violations_detail(tally),
-      detail_style: table::Style::Error,
-    },
-    surfaces::SurfaceStatus::ToolMissing { binary, .. } => RowSpec {
-      tag: "[MISS] ",
-      tag_style: table::Style::Warn,
-      name_style: table::Style::Strong,
-      detail: format!("Missing binary: {binary}"),
-      detail_style: table::Style::Warn,
-    },
-    surfaces::SurfaceStatus::ExecutionError { .. } => RowSpec {
-      tag: "[ERR]  ",
-      tag_style: table::Style::Error,
-      name_style: table::Style::Strong,
-      detail: "Execution error".to_string(),
-      detail_style: table::Style::Error,
-    },
-    surfaces::SurfaceStatus::Skipped { reason } => RowSpec {
-      tag: "[SKIP] ",
-      tag_style: table::Style::Dim,
-      name_style: table::Style::Dim,
-      detail: reason.clone(),
-      detail_style: table::Style::Dim,
-    },
-  }
-}
-
-/// Detail text for a `[FAIL]` row (#119).
-///
-/// A bare `Violations found` says nothing about whether `fml fix` gave up
-/// early or finished everything mechanically possible — the defect this
-/// issue is about. When the surface's tools said how much is left, the row
-/// says so; when they also said how much of it they could still fix, the row
-/// says that too.
-///
-/// The no-tally arm is not a degraded path to be grown out of: it is what
-/// every tool exposing no count keeps rendering, unchanged, rather than
-/// having `fml` guess a number on its behalf.
-fn violations_detail(tally: Option<violations::ViolationTally>) -> String {
-  let Some(t) = tally else {
-    return "Violations found".to_string();
-  };
-  let noun = violation_noun(t.remaining);
-  match t.auto_fixable {
-    None => format!("{} {noun}", t.remaining),
-    Some(k) => format!("{} {noun}, {k} auto-fixable", t.remaining),
-  }
-}
-
-/// `violation` / `violations`, agreeing with `count`.
-const fn violation_noun(count: usize) -> &'static str {
-  if count == 1 {
-    "violation"
-  } else {
-    "violations"
-  }
-}
-
-/// The run-level remaining-violation figure, folded together as the rows are
-/// built (#119).
-///
-/// Deliberately *not* an independent pass over `results`: the summary's
-/// number is the sum of the per-surface numbers the table already printed,
-/// so a reader can add the column up by eye and get the footer. A separate
-/// tally could disagree with the rows, and the footer is the one a reader
-/// cannot check.
-struct RemainingViolations {
-  /// Sum of every row's remaining count.
-  total: usize,
-  /// Sum of every row's auto-fixable count, or `None` once any counted row
-  /// withheld the claim — a partial figure would read as a complete one.
-  ///
-  /// Starts at `Some(0)`: with no rows folded in yet, nothing has withheld
-  /// anything. `Default` would give `None`, which would latch the clause
-  /// into its claim-free form for every run.
-  auto_fixable: Option<usize>,
-  /// Set when a `ViolationsFound` row produced no count at all, which makes
-  /// `total` an undercount and suppresses the whole clause.
-  incomplete: bool,
-}
-
-impl Default for RemainingViolations {
-  fn default() -> Self {
-    Self {
-      total: 0,
-      auto_fixable: Some(0),
-      incomplete: false,
+    surfaces::Severity::ToolMissing if allow_missing => ExitStatus::Clean,
+    surfaces::Severity::ToolMissing | surfaces::Severity::Violation => {
+      ExitStatus::Violations
     }
+    surfaces::Severity::Error => ExitStatus::Error,
   }
-}
-
-impl RemainingViolations {
-  /// Folds one row in. `tally` is `None` both for statuses that are not
-  /// violations at all and for a `ViolationsFound` whose tools exposed no
-  /// count; only the latter makes the total incomplete.
-  fn record(
-    &mut self,
-    status: &surfaces::SurfaceStatus,
-    tally: Option<violations::ViolationTally>,
-  ) {
-    match tally {
-      None => {
-        if matches!(status, surfaces::SurfaceStatus::ViolationsFound { .. }) {
-          self.incomplete = true;
-        }
-      }
-      Some(t) => {
-        self.total += t.remaining;
-        self.auto_fixable = self
-          .auto_fixable
-          .zip(t.auto_fixable)
-          .map(|(acc, k)| acc + k);
-      }
-    }
-  }
-
-  /// The parenthesised clause appended to the run summary, or `None` when
-  /// there is nothing trustworthy to say.
-  ///
-  /// Suppressed entirely when any failing surface went uncounted: a total
-  /// that silently omits a surface is worse than no total, because nothing
-  /// in the line says it is partial.
-  fn clause(&self) -> Option<String> {
-    if self.incomplete || self.total == 0 {
-      return None;
-    }
-    let noun = violation_noun(self.total);
-    Some(match self.auto_fixable {
-      None => format!("({} {noun} remaining)", self.total),
-      Some(0) => format!(
-        "({} {noun} remaining, none auto-fixable — manual edits needed)",
-        self.total
-      ),
-      Some(k) => {
-        format!("({} {noun} remaining, {k} auto-fixable)", self.total)
-      }
-    })
-  }
-}
-
-/// Detail text for a `[PASS]` row.
-///
-/// `surfaces::SurfaceStatus::Passed` means "there was nothing to do", which for `fml
-/// sync` is "this native config file already matches formality.toml" — not
-/// "Clean / Formatted" (#130). Nothing was formatted during a sync, and a
-/// user reading `Clean / Formatted` next to a config filename has to guess
-/// whether the file was rewritten.
-fn passed_detail(plan: &Plan) -> &'static str {
-  if plan.includes(Pass::ConfigSync)
-    && !plan.includes(Pass::Format)
-    && !plan.includes(Pass::Lint)
-  {
-    "Already in sync"
-  } else {
-    "Clean / Formatted"
-  }
-}
-
-/// Renders the parenthesised count in the run header.
-///
-/// The count is the number of rows the table actually rendered, **not** the
-/// number of matched surfaces (#130). The two diverge for `fml sync`, which
-/// appends shared-config rows (`.editorconfig`, `.prettierrc.json`) after the
-/// per-surface fan-out: counting matched surfaces produced a deterministic
-/// off-by-one on every `fml sync` — the header said `1 surface` while two
-/// rows printed and the footer said `2 passed`. Every row still names one
-/// surface in its second column (the shared passes render as `editorconfig`
-/// and `prettier`), so the noun is unchanged.
-fn header_count_label(row_count: usize) -> String {
-  format!(
-    "{row_count} surface{}",
-    if row_count == 1 { "" } else { "s" }
-  )
-}
-
-/// Renders the detail cell of a `[SYNC]` row: every native config file the
-/// surface wrote, each labelled by whether it was created or updated in
-/// place — `Created .markdownlint.json, Synced .prettierrc.json`.
-///
-/// A surface may sync several files (#130), so this is a list rather than
-/// one filename. Ordering follows the surface's own write order, which is
-/// deterministic, so repeated runs render identically.
-fn synced_files_detail(files: &[surfaces::SyncedConfigFile]) -> String {
-  files
-    .iter()
-    .map(|f| {
-      let verb = if f.created { "Created" } else { "Synced" };
-      format!("{verb} {}", f.file)
-    })
-    .collect::<Vec<_>>()
-    .join(", ")
 }
 
 /// Runs one [`Pass`] under one [`Mode`] across every surface in parallel.
@@ -1004,149 +575,554 @@ fn precedence(status: &surfaces::SurfaceStatus) -> (surfaces::Severity, u8) {
   (status.severity(), within_severity)
 }
 
-/// Cleans and standardizes raw CLI tool diagnostics into uniform lines.
-///
-/// Trailing whitespace is trimmed from each line, and known non-diagnostic
-/// banner noise (e.g. `"Checking formatting..."`, `"All checks passed!"`) is
-/// suppressed.
-///
-/// ### Blank-Line Policy & Rationale
-///
-/// Single blank lines are preserved, while runs of two or more consecutive
-/// blank lines are collapsed to a single blank line. Leading and trailing blank
-/// lines are trimmed from the overall output.
-///
-/// Blank lines are frequently structural rather than noise — for example:
-/// - `rustc` separates individual diagnostic blocks with blank lines.
-/// - Go panics separate distinct goroutine stack traces with blank lines.
-/// - Multi-error outputs and stack traces rely on blank lines as their primary
-///   visual grouping mechanism.
-///
-/// Collapsing all blank lines turns multi-error dumps and stack traces into an
-/// undifferentiated wall of text. Collapsing runs of 2+ blank lines suppresses
-/// excess spacing and banner-removal padding while preserving grouping in both
-/// `ExecutionError` and `ViolationsFound` messages.
-fn normalize_diagnostics(raw: &str) -> String {
-  let lines: Vec<&str> = raw
-    .lines()
-    .filter_map(|l| {
-      let trimmed = l.trim();
-      if trimmed.starts_with("Checking formatting...")
-        || trimmed.starts_with("All checks passed!")
-      {
-        None
-      } else {
-        Some(l.trim_end())
-      }
-    })
-    .collect();
-
-  let Some(first_non_empty) = lines.iter().position(|l| !l.is_empty()) else {
-    return String::new();
-  };
-  let last_non_empty = lines.iter().rposition(|l| !l.is_empty()).unwrap();
-
-  let mut result = Vec::new();
-  let mut prev_was_empty = false;
-  for &line in &lines[first_non_empty..=last_non_empty] {
-    if line.is_empty() {
-      if !prev_was_empty {
-        result.push("");
-        prev_was_empty = true;
-      }
-    } else {
-      result.push(line);
-      prev_was_empty = false;
-    }
-  }
-
-  result.join("\n")
-}
-
-/// Shared diagnostic-detail computation for the two `surfaces::SurfaceStatus` arms that
-/// carry raw tool output (`ViolationsFound` and `ExecutionError`, per #146):
-/// the raw message is run through [`normalize_diagnostics`], and a rendered
-/// diff is appended verbatim below it. Called from both arms in
-/// [`collect_diagnostics`] so identical raw tool output renders identically
-/// regardless of which status it landed in.
-///
-/// **Both halves are rendered when both are present.** A diff used to
-/// replace the message outright, which was invisible while only one pass
-/// could fail at a time — but `fml fix --check` runs the lint pass and the
-/// format pass against the *same* unmodified tree, so on a dirty tree both
-/// routinely report, [`combine_pass_results`] merges them into one status
-/// carrying a lint message *and* a format diff, and returning only the diff
-/// silently dropped the lint findings. The only producer of a diff
-/// (`diff_check_via_tempcopy_classified`) always pairs it with an empty
-/// message, so a plain `fml fmt --check` renders byte-identically to before.
-///
-/// A diff deliberately bypasses [`normalize_diagnostics`]: that function
-/// trims line ends and normalizes blank lines, which in a diff body are file
-/// *contents* — exactly the drift a whitespace diff exists to show. Path
-/// relativization is not lost by the bypass; it runs over every detail at
-/// the diagnostics-render step, after this function.
-fn tool_output_detail(message: &str, diff: Option<&str>) -> String {
-  let normalized = normalize_diagnostics(message);
-  match diff {
-    None => normalized,
-    Some(d) if normalized.is_empty() => d.to_string(),
-    Some(d) => format!("{normalized}\n{d}"),
-  }
-}
-
-/// Collects surface diagnostics and suggestions from execution results.
-///
-/// Walks the results list and extracts diagnostic detail for any surface whose
-/// status produced actionable findings: drift diffs, manual config suggestions,
-/// missing tool install hints, or tool violation / execution error output.
-/// Clean passes, synced configs, and skipped surfaces produce no diagnostics.
-fn collect_diagnostics(
-  results: &[surfaces::SurfaceResult],
-) -> Vec<(String, String)> {
-  let mut diagnostics = Vec::new();
-  for res in results {
-    match &res.status {
-      surfaces::SurfaceStatus::Passed
-      | surfaces::SurfaceStatus::ConfigSynced { .. }
-      | surfaces::SurfaceStatus::Skipped { .. } => {}
-      surfaces::SurfaceStatus::ConfigDrifted { file, diff } => {
-        diagnostics.push((
-          res.surface_name.to_string(),
-          format!(
-            "Native config '{file}' drifted from formality.toml:\n{diff}"
-          ),
-        ));
-      }
-      surfaces::SurfaceStatus::ManualConfig { suggestion, .. } => {
-        diagnostics.push((res.surface_name.to_string(), suggestion.clone()));
-      }
-      surfaces::SurfaceStatus::ViolationsFound { message, diff } => {
-        let detail = tool_output_detail(message, diff.as_deref());
-        diagnostics.push((res.surface_name.to_string(), detail));
-      }
-      surfaces::SurfaceStatus::ToolMissing {
-        binary,
-        install_hint,
-      } => {
-        diagnostics.push((
-          res.surface_name.to_string(),
-          format!(
-            "Missing tool binary '{binary}'.\n  Install hint: {install_hint}"
-          ),
-        ));
-      }
-      surfaces::SurfaceStatus::ExecutionError { message } => {
-        diagnostics.push((
-          res.surface_name.to_string(),
-          tool_output_detail(message, None),
-        ));
-      }
-    }
-  }
-  diagnostics
-}
-
-mod violations;
-
 #[cfg(test)]
-mod tests;
+mod tests {
+  use super::*;
+  use std::time;
+
+  #[test]
+  fn combine_pass_results_passed_and_skipped() {
+    let lint_res = surfaces::SurfaceResult {
+      surface_name: "yaml",
+      status: surfaces::SurfaceStatus::Skipped {
+        reason: "Tool does not support autofix".to_string(),
+      },
+      duration: time::Duration::from_millis(10),
+    };
+    let fmt_res = surfaces::SurfaceResult {
+      surface_name: "yaml",
+      status: surfaces::SurfaceStatus::Passed,
+      duration: time::Duration::from_millis(20),
+    };
+
+    let combined = combine_pass_results(apply_recheck(lint_res, None), fmt_res);
+    assert_eq!(combined.surface_name, "yaml");
+    assert_eq!(combined.duration, time::Duration::from_millis(30));
+    assert!(matches!(combined.status, surfaces::SurfaceStatus::Passed));
+  }
+
+  #[test]
+  fn combine_pass_results_both_passed() {
+    let lint_res = surfaces::SurfaceResult {
+      surface_name: "python",
+      status: surfaces::SurfaceStatus::Passed,
+      duration: time::Duration::from_millis(15),
+    };
+    let fmt_res = surfaces::SurfaceResult {
+      surface_name: "python",
+      status: surfaces::SurfaceStatus::Passed,
+      duration: time::Duration::from_millis(25),
+    };
+
+    let combined = combine_pass_results(apply_recheck(lint_res, None), fmt_res);
+    assert_eq!(combined.surface_name, "python");
+    assert_eq!(combined.duration, time::Duration::from_millis(40));
+    assert!(matches!(combined.status, surfaces::SurfaceStatus::Passed));
+  }
+
+  #[test]
+  fn combine_pass_results_recheck_clears_lint_violation() {
+    // Issue #116: the lint pass reported a violation, but the post-format
+    // re-check came back clean. The re-check supersedes the stale lint status,
+    // so the surface reports Passed and its duration folds in all three passes.
+    let lint_res = surfaces::SurfaceResult {
+      surface_name: "markdown",
+      status: surfaces::SurfaceStatus::ViolationsFound {
+        message: "MD013/line-length".to_string(),
+        diff: None,
+      },
+      duration: time::Duration::from_millis(40),
+    };
+    let fmt_res = surfaces::SurfaceResult {
+      surface_name: "markdown",
+      status: surfaces::SurfaceStatus::Passed,
+      duration: time::Duration::from_millis(30),
+    };
+    let recheck = surfaces::SurfaceResult {
+      surface_name: "markdown",
+      status: surfaces::SurfaceStatus::Passed,
+      duration: time::Duration::from_millis(20),
+    };
+
+    let combined =
+      combine_pass_results(apply_recheck(lint_res, Some(recheck)), fmt_res);
+    assert!(matches!(combined.status, surfaces::SurfaceStatus::Passed));
+    assert_eq!(combined.duration, time::Duration::from_millis(90));
+  }
+
+  #[test]
+  fn combine_pass_results_recheck_preserves_surviving_violation() {
+    // Issue #116 inverse: the violation survived the format pass, so the
+    // re-check still reports it and the surface still fails.
+    let lint_res = surfaces::SurfaceResult {
+      surface_name: "markdown",
+      status: surfaces::SurfaceStatus::ViolationsFound {
+        message: "MD025/single-title".to_string(),
+        diff: None,
+      },
+      duration: time::Duration::from_millis(40),
+    };
+    let fmt_res = surfaces::SurfaceResult {
+      surface_name: "markdown",
+      status: surfaces::SurfaceStatus::Passed,
+      duration: time::Duration::from_millis(30),
+    };
+    let recheck = surfaces::SurfaceResult {
+      surface_name: "markdown",
+      status: surfaces::SurfaceStatus::ViolationsFound {
+        message: "MD025/single-title".to_string(),
+        diff: None,
+      },
+      duration: time::Duration::from_millis(20),
+    };
+
+    let combined =
+      combine_pass_results(apply_recheck(lint_res, Some(recheck)), fmt_res);
+    assert!(matches!(
+      combined.status,
+      surfaces::SurfaceStatus::ViolationsFound { message, .. }
+        if message.contains("MD025")
+    ));
+    assert_eq!(combined.duration, time::Duration::from_millis(90));
+  }
+
+  #[test]
+  fn combine_pass_results_violations_precedence() {
+    let lint_res = surfaces::SurfaceResult {
+      surface_name: "rust",
+      status: surfaces::SurfaceStatus::ViolationsFound {
+        message: "warning: unused".to_string(),
+        diff: None,
+      },
+      duration: time::Duration::from_millis(50),
+    };
+    let fmt_res = surfaces::SurfaceResult {
+      surface_name: "rust",
+      status: surfaces::SurfaceStatus::Passed,
+      duration: time::Duration::from_millis(30),
+    };
+
+    let combined = combine_pass_results(apply_recheck(lint_res, None), fmt_res);
+    assert!(matches!(
+      combined.status,
+      surfaces::SurfaceStatus::ViolationsFound { message, .. } if message.contains("warning: unused")
+    ));
+  }
+
+  #[test]
+  fn combine_pass_results_tool_missing_precedence() {
+    let lint_res = surfaces::SurfaceResult {
+      surface_name: "python",
+      status: surfaces::SurfaceStatus::ToolMissing {
+        binary: "ruff".to_string(),
+        install_hint: "pip install ruff".to_string(),
+      },
+      duration: time::Duration::from_millis(5),
+    };
+    let fmt_res = surfaces::SurfaceResult {
+      surface_name: "python",
+      status: surfaces::SurfaceStatus::Passed,
+      duration: time::Duration::from_millis(5),
+    };
+
+    let combined = combine_pass_results(apply_recheck(lint_res, None), fmt_res);
+    assert!(matches!(
+      combined.status,
+      surfaces::SurfaceStatus::ToolMissing { binary, .. } if binary == "ruff"
+    ));
+  }
+
+  #[test]
+  fn combine_pass_results_execution_error_precedence() {
+    let lint_res = surfaces::SurfaceResult {
+      surface_name: "cpp",
+      status: surfaces::SurfaceStatus::ExecutionError {
+        message: "clang-tidy crashed".to_string(),
+      },
+      duration: time::Duration::from_millis(10),
+    };
+    let fmt_res = surfaces::SurfaceResult {
+      surface_name: "cpp",
+      status: surfaces::SurfaceStatus::Passed,
+      duration: time::Duration::from_millis(10),
+    };
+
+    let combined = combine_pass_results(apply_recheck(lint_res, None), fmt_res);
+    assert!(matches!(
+      combined.status,
+      surfaces::SurfaceStatus::ExecutionError { message } if message.contains("clang-tidy crashed")
+    ));
+  }
+
+  /// One status per `surfaces::SurfaceStatus` variant, every payload tagged with `tag`,
+  /// ordered from lowest to highest `combine_pass_results` precedence.
+  fn every_status_by_precedence(tag: &str) -> Vec<surfaces::SurfaceStatus> {
+    vec![
+      surfaces::SurfaceStatus::Skipped {
+        reason: tag.to_string(),
+      },
+      surfaces::SurfaceStatus::Passed,
+      surfaces::SurfaceStatus::ConfigSynced {
+        files: vec![surfaces::SyncedConfigFile::new(tag, true)],
+      },
+      surfaces::SurfaceStatus::ToolMissing {
+        binary: tag.to_string(),
+        install_hint: tag.to_string(),
+      },
+      surfaces::SurfaceStatus::ManualConfig {
+        file: tag.to_string(),
+        suggestion: tag.to_string(),
+      },
+      surfaces::SurfaceStatus::ConfigDrifted {
+        file: tag.to_string(),
+        diff: tag.to_string(),
+      },
+      surfaces::SurfaceStatus::ViolationsFound {
+        message: tag.to_string(),
+        diff: Some(tag.to_string()),
+      },
+      surfaces::SurfaceStatus::ExecutionError {
+        message: tag.to_string(),
+      },
+    ]
+  }
+
+  /// The position `status` holds in [`every_status_by_precedence`].
+  ///
+  /// Exhaustive with no wildcard, so a new `surfaces::SurfaceStatus` does not compile
+  /// until it is given a position here; placing it shifts every later arm,
+  /// which fails `every_status_by_precedence_lists_each_variant_in_order`
+  /// until the fixture lists it at that position too. A variant placed last
+  /// shifts nothing, and stable Rust cannot count an enum's variants, so that
+  /// one case still needs its fixture entry added by hand.
+  fn variant_index(status: &surfaces::SurfaceStatus) -> usize {
+    match status {
+      surfaces::SurfaceStatus::Skipped { .. } => 0,
+      surfaces::SurfaceStatus::Passed => 1,
+      surfaces::SurfaceStatus::ConfigSynced { .. } => 2,
+      surfaces::SurfaceStatus::ToolMissing { .. } => 3,
+      surfaces::SurfaceStatus::ManualConfig { .. } => 4,
+      surfaces::SurfaceStatus::ConfigDrifted { .. } => 5,
+      surfaces::SurfaceStatus::ViolationsFound { .. } => 6,
+      surfaces::SurfaceStatus::ExecutionError { .. } => 7,
+    }
+  }
+
+  #[test]
+  fn every_status_by_precedence_lists_each_variant_in_order() {
+    let indices: Vec<usize> = every_status_by_precedence("x")
+      .iter()
+      .map(variant_index)
+      .collect();
+    assert_eq!(indices, (0..indices.len()).collect::<Vec<_>>());
+  }
+
+  fn combine_statuses(
+    first: surfaces::SurfaceStatus,
+    second: surfaces::SurfaceStatus,
+  ) -> surfaces::SurfaceStatus {
+    let result = |status| surfaces::SurfaceResult {
+      surface_name: "test",
+      status,
+      duration: time::Duration::ZERO,
+    };
+    combine_pass_results(result(first), result(second)).status
+  }
+
+  #[test]
+  fn combine_pass_results_higher_precedence_wins_in_either_order() {
+    let ranked = every_status_by_precedence("x");
+    for (i, lower) in ranked.iter().enumerate() {
+      for higher in &ranked[i + 1..] {
+        for (first, second) in [(lower, higher), (higher, lower)] {
+          let combined = combine_statuses(first.clone(), second.clone());
+          assert_eq!(
+            format!("{combined:?}"),
+            format!("{higher:?}"),
+            "{first:?} + {second:?}"
+          );
+        }
+      }
+    }
+  }
+
+  #[test]
+  fn combine_pass_results_same_variant_merges_or_keeps_first() {
+    let firsts = every_status_by_precedence("a");
+    let seconds = every_status_by_precedence("b");
+    for (first, second) in firsts.into_iter().zip(seconds) {
+      let expected = match &first {
+        surfaces::SurfaceStatus::Skipped { .. } => {
+          surfaces::SurfaceStatus::Skipped {
+            reason: "a; b".to_string(),
+          }
+        }
+        surfaces::SurfaceStatus::ViolationsFound { .. } => {
+          surfaces::SurfaceStatus::ViolationsFound {
+            message: "a\nb".to_string(),
+            diff: Some("a\nb".to_string()),
+          }
+        }
+        surfaces::SurfaceStatus::ExecutionError { .. } => {
+          surfaces::SurfaceStatus::ExecutionError {
+            message: "a\nb".to_string(),
+          }
+        }
+        other => other.clone(),
+      };
+      let combined = combine_statuses(first, second);
+      assert_eq!(format!("{combined:?}"), format!("{expected:?}"));
+    }
+  }
+
+  #[test]
+  fn exit_floor_agrees_with_is_success_and_rises_with_precedence() {
+    let mut previous_floor = ExitStatus::Clean;
+    for status in every_status_by_precedence("x") {
+      let floor = exit_floor(&status.severity(), false);
+      let result = surfaces::SurfaceResult {
+        surface_name: "test",
+        status,
+        duration: time::Duration::ZERO,
+      };
+      assert_eq!(result.is_success(), floor.is_clean(), "{:?}", result.status);
+      assert!(floor >= previous_floor, "{:?}", result.status);
+      previous_floor = floor;
+    }
+  }
+
+  #[test]
+  fn runner_single_walk_polyglot_repo() {
+    let manifest_dir = path::PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+    let fixture = manifest_dir.join("tests/fixtures/polyglot_repo");
+
+    // Single candidate filesystem walk
+    let candidates = surfaces::glob::walk_candidate_files(&fixture, &[]);
+    assert!(
+      candidates.len() >= 7,
+      "Expected at least 7 files in polyglot_repo, found {}",
+      candidates.len()
+    );
+
+    // Filter in-memory for each surface
+    let rust_files = surfaces::glob::filter_candidates_with_ext(
+      &candidates,
+      surfaces::LanguageSurface::file_extensions(
+        &surfaces::lang::rust::RustSurface,
+      ),
+      &[],
+      &[],
+    );
+    assert_eq!(rust_files.len(), 1);
+    assert!(rust_files[0].ends_with("main.rs"));
+
+    let py_files = surfaces::glob::filter_candidates_with_ext(
+      &candidates,
+      surfaces::LanguageSurface::file_extensions(
+        &surfaces::lang::python::PythonSurface,
+      ),
+      &[],
+      &[],
+    );
+    assert_eq!(py_files.len(), 1);
+    assert!(py_files[0].ends_with("script.py"));
+
+    let md_files = surfaces::glob::filter_candidates_with_ext(
+      &candidates,
+      surfaces::LanguageSurface::file_extensions(
+        &surfaces::lang::markdown::MarkdownSurface,
+      ),
+      &[],
+      &[],
+    );
+    assert_eq!(md_files.len(), 1);
+    assert!(md_files[0].ends_with("README.md"));
+
+    let yaml_files = surfaces::glob::filter_candidates_with_ext(
+      &candidates,
+      surfaces::LanguageSurface::file_extensions(
+        &surfaces::lang::yaml::YamlSurface,
+      ),
+      &[],
+      &[],
+    );
+    assert_eq!(yaml_files.len(), 1);
+    assert!(yaml_files[0].ends_with("config.yaml"));
+
+    let json_files = surfaces::glob::filter_candidates_with_ext(
+      &candidates,
+      surfaces::LanguageSurface::file_extensions(
+        &surfaces::lang::json::JsonSurface,
+      ),
+      &[],
+      &[],
+    );
+    assert_eq!(json_files.len(), 1);
+    assert!(json_files[0].ends_with("data.json"));
+
+    let typst_files = surfaces::glob::filter_candidates_with_ext(
+      &candidates,
+      surfaces::LanguageSurface::file_extensions(
+        &surfaces::lang::typst::TypstSurface,
+      ),
+      &[],
+      &[],
+    );
+    assert_eq!(typst_files.len(), 1);
+    assert!(typst_files[0].ends_with("doc.typ"));
+
+    let toml_files = surfaces::glob::filter_candidates_with_ext(
+      &candidates,
+      surfaces::LanguageSurface::file_extensions(
+        &surfaces::lang::toml::TomlSurface,
+      ),
+      &[],
+      &[],
+    );
+    assert_eq!(toml_files.len(), 1);
+    assert!(toml_files[0].ends_with("Cargo.toml"));
+  }
+
+  #[test]
+  fn execution_context_candidate_files_filtering() {
+    let candidates = sync::Arc::new(vec![
+      path::PathBuf::from("/ws/src/main.rs"),
+      path::PathBuf::from("/ws/src/lib.rs"),
+      path::PathBuf::from("/ws/src/ignored.rs"),
+      path::PathBuf::from("/ws/script.py"),
+    ]);
+
+    let mut lang_config = config::ResolvedLangConfig::new("rust");
+    lang_config.exclude = vec![path::PathBuf::from("ignored.rs")];
+
+    let ctx = surfaces::ExecutionContext {
+      root: sync::Arc::new(path::PathBuf::from("/ws")),
+      paths: sync::Arc::new(Vec::new()),
+      global_config: sync::Arc::new(config::ResolvedGlobalConfig::default()),
+      lang_config,
+      check_only: false,
+      candidate_files: candidates,
+    };
+
+    let matched = ctx.matched_files(&["rs"]);
+    assert_eq!(matched.len(), 2);
+    assert!(matched.contains(&path::PathBuf::from("/ws/src/main.rs")));
+    assert!(matched.contains(&path::PathBuf::from("/ws/src/lib.rs")));
+    assert!(!matched.contains(&path::PathBuf::from("/ws/src/ignored.rs")));
+    assert!(!matched.contains(&path::PathBuf::from("/ws/script.py")));
+  }
+
+  #[test]
+  fn execution_context_staged_files_filtering() {
+    let temp = tempfile::TempDir::new().unwrap();
+    let root = temp.path();
+
+    let src = root.join("src");
+    let fixtures = root.join("fixtures");
+    std::fs::create_dir_all(&src).unwrap();
+    std::fs::create_dir_all(&fixtures).unwrap();
+
+    let main_rs = src.join("main.rs");
+    let excluded_rs = src.join("generated.rs");
+    let fixture_rs = fixtures.join("mock.rs");
+    let py_file = root.join("script.py");
+
+    std::fs::write(&main_rs, "fn main() {}\n").unwrap();
+    std::fs::write(&excluded_rs, "fn gen() {}\n").unwrap();
+    std::fs::write(&fixture_rs, "fn mock() {}\n").unwrap();
+    std::fs::write(&py_file, "print('hi')\n").unwrap();
+
+    let staged_paths =
+      sync::Arc::new(vec![main_rs.clone(), excluded_rs, fixture_rs, py_file]);
+
+    let mut lang_config = config::ResolvedLangConfig::new("rust");
+    lang_config.exclude = vec![path::PathBuf::from("src/generated.rs")];
+
+    let ctx = surfaces::ExecutionContext {
+      root: sync::Arc::new(root.to_path_buf()),
+      paths: sync::Arc::clone(&staged_paths),
+      global_config: sync::Arc::new(config::ResolvedGlobalConfig::default()),
+      lang_config,
+      check_only: false,
+      candidate_files: sync::Arc::new(surfaces::glob::expand_targets(
+        root,
+        &staged_paths,
+      )),
+    };
+
+    let matched = ctx.matched_files(&["rs"]);
+    assert_eq!(matched, vec![main_rs]);
+  }
+
+  /// A missing tool fails the run unless `--allow-missing` (#252, #163), and
+  /// the flag never hides a real violation or tool error elsewhere.
+  #[test]
+  fn compute_exit_status_table() {
+    let missing = || surfaces::SurfaceStatus::ToolMissing {
+      binary: "t".into(),
+      install_hint: String::new(),
+    };
+    let violation = || surfaces::SurfaceStatus::ViolationsFound {
+      message: String::new(),
+      diff: None,
+    };
+    let error = || surfaces::SurfaceStatus::ExecutionError {
+      message: String::new(),
+    };
+    let skipped = || surfaces::SurfaceStatus::Skipped {
+      reason: String::new(),
+    };
+    let passed = || surfaces::SurfaceStatus::Passed;
+    let cases = [
+      (vec![], false, ExitStatus::Clean),
+      (vec![passed(), skipped()], false, ExitStatus::Clean),
+      (vec![missing()], false, ExitStatus::Violations),
+      (vec![missing()], true, ExitStatus::Clean),
+      (vec![missing(), violation()], true, ExitStatus::Violations),
+      (vec![missing(), error()], true, ExitStatus::Error),
+      (vec![error(), violation()], false, ExitStatus::Error),
+    ];
+    for (statuses, allow_missing, expected) in cases {
+      let results: Vec<_> = statuses
+        .into_iter()
+        .map(|status| surfaces::SurfaceResult {
+          surface_name: "t",
+          status,
+          duration: time::Duration::ZERO,
+        })
+        .collect();
+      assert_eq!(
+        compute_exit_status(&results, allow_missing),
+        expected,
+        "{results:?} allow_missing={allow_missing}"
+      );
+    }
+  }
+
+  #[test]
+  fn combine_pass_results_violations_over_tool_missing() {
+    let lint_res = surfaces::SurfaceResult {
+      surface_name: "markdown",
+      status: surfaces::SurfaceStatus::ToolMissing {
+        binary: "markdownlint-cli2".to_string(),
+        install_hint: "npm install -g markdownlint-cli2".to_string(),
+      },
+      duration: time::Duration::from_millis(10),
+    };
+    let fmt_res = surfaces::SurfaceResult {
+      surface_name: "markdown",
+      status: surfaces::SurfaceStatus::ViolationsFound {
+        message: "unformatted".to_string(),
+        diff: Some("diff".to_string()),
+      },
+      duration: time::Duration::from_millis(20),
+    };
+
+    let combined = combine_pass_results(apply_recheck(lint_res, None), fmt_res);
+    assert!(matches!(
+      combined.status,
+      surfaces::SurfaceStatus::ViolationsFound { .. }
+    ));
+    assert_eq!(combined.duration, time::Duration::from_millis(30));
+  }
+}

@@ -6,7 +6,7 @@
 use std::path;
 
 /// Indicates the origin of a detected Python virtual environment.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, PartialEq)]
 pub enum VirtualEnvSource {
   /// Virtual environment specified via `VIRTUAL_ENV` environment variable.
   EnvVar,
@@ -17,7 +17,7 @@ pub enum VirtualEnvSource {
 }
 
 /// Metadata about a detected Python virtual environment.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug)]
 pub struct VirtualEnvInfo {
   /// Whether the virtual environment is currently active.
   pub is_active: bool,

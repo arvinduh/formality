@@ -3,11 +3,11 @@
 //! Validates git ignore rules for cache and temporary files. Virtual environment
 //! checks are owned by `super::venv`.
 
-use crate::surfaces::LanguageSurface;
+use crate::surfaces;
 use std::path;
 
 /// Represents a missing `.gitignore` pattern category for a language surface.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug)]
 pub struct GitignoreHygieneIssue {
   /// Category label (e.g. "Python", "Rust").
   pub category: &'static str,
@@ -16,7 +16,7 @@ pub struct GitignoreHygieneIssue {
 }
 
 /// Overall report of `.gitignore` hygiene for the workspace.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug)]
 pub struct GitignoreHygieneReport {
   /// Indicates whether `.gitignore` file exists in workspace root.
   pub gitignore_exists: bool,
@@ -121,7 +121,7 @@ pub fn check_gitignore_hygiene_content(
 #[must_use]
 pub fn check_gitignore_hygiene(
   root: &path::Path,
-  surfaces: &[Box<dyn LanguageSurface>],
+  surfaces: &[Box<dyn surfaces::LanguageSurface>],
 ) -> GitignoreHygieneReport {
   let gitignore_path = root.join(".gitignore");
   let gitignore_content = std::fs::read_to_string(&gitignore_path).ok();

@@ -1,0 +1,685 @@
+//! TOML language surface: formats and lints via Taplo.
+//!
+//! Implements `super::LanguageSurface` for TOML, syncing `taplo.toml`.
+//! Fleet registration is owned by `super::registry`.
+
+use std::path;
+use std::time;
+
+use serde;
+
+use crate::config;
+use crate::config::facets;
+use crate::surfaces;
+use crate::surfaces::sync;
+use crate::surfaces::sync::native;
+use crate::surfaces::sync::native::NativeConfig;
+use crate::surfaces::tooling;
+
+// Directly mirrors Taplo's upstream native schema formatting flags.
+#[expect(
+  clippy::struct_excessive_bools,
+  reason = "directly mirrors Taplo's upstream native schema formatting flags"
+)]
+/// Formatting section for `taplo.toml`.
+#[derive(Debug, serde::Serialize, serde::Deserialize)]
+struct TaploFormattingConfig {
+  /// Whether to align entries across lines.
+  align_entries: bool,
+  /// Target column width for wrapping.
+  column_width: usize,
+  /// Whether to indent table entry keys.
+  indent_entries: bool,
+  /// String sequence used for indentation (spaces or tabs).
+  indent_string: String,
+  /// Whether to indent table contents.
+  indent_tables: bool,
+  /// Whether to use CRLF line endings.
+  crlf: bool,
+}
+
+/// Native `taplo.toml` configuration representation for TOML formatting.
+#[derive(Debug, serde::Serialize, serde::Deserialize)]
+struct TaploConfig {
+  /// Formatting configuration subsection.
+  formatting: TaploFormattingConfig,
+}
+
+impl NativeConfig for TaploConfig {
+  const FILE_NAME: &'static str = "taplo.toml";
+
+  fn from_context(ctx: &surfaces::ExecutionContext) -> Self {
+    let indent_spaces = if ctx.lang_config.use_tabs {
+      "\t".to_string()
+    } else {
+      " ".repeat(ctx.lang_config.indent_size)
+    };
+
+    let crlf = ctx.global_config.end_of_line.eq_ignore_ascii_case("crlf");
+
+    let toml_opts = ctx.lang_config.toml.as_ref();
+    let align_entries =
+      toml_opts.and_then(|t| t.align_entries).unwrap_or(false);
+    let indent_entries =
+      toml_opts.and_then(|t| t.indent_entries).unwrap_or(false);
+    let indent_tables =
+      toml_opts.and_then(|t| t.indent_tables).unwrap_or(false);
+
+    Self {
+      formatting: TaploFormattingConfig {
+        align_entries,
+        column_width: ctx.lang_config.line_length,
+        indent_entries,
+        indent_string: indent_spaces,
+        indent_tables,
+        crlf,
+      },
+    }
+  }
+
+  fn render(&self) -> Result<String, surfaces::Error> {
+    native::render_native_config(self)
+  }
+}
+
+/// Renders a [`TaploConfig`] as the `-o key=value` flags taplo's `format`
+/// subcommand accepts inline, so `fml fmt` can apply formality.toml's
+/// settings without writing `taplo.toml` to disk (Fixes #151 [pre-recreation]). Only `fml
+/// sync` writes that file now (see [`TomlSurface::sync_config`]). taplo's
+/// `lint` subcommand has no equivalent inline-override flag (only `-c/--config
+/// <path>`), but lint doesn't consume these formatting-layout options anyway.
+#[must_use]
+fn build_taplo_inline_config_args(cfg: &TaploConfig) -> Vec<String> {
+  vec![
+    "-o".to_string(),
+    format!("column_width={}", cfg.formatting.column_width),
+    "-o".to_string(),
+    format!("indent_string={}", cfg.formatting.indent_string),
+    "-o".to_string(),
+    format!("crlf={}", cfg.formatting.crlf),
+    "-o".to_string(),
+    format!("align_entries={}", cfg.formatting.align_entries),
+    "-o".to_string(),
+    format!("indent_entries={}", cfg.formatting.indent_entries),
+    "-o".to_string(),
+    format!("indent_tables={}", cfg.formatting.indent_tables),
+  ]
+}
+
+/// Builds argument vector for a `taplo lint` invocation whose output is
+/// safe to parse for the LSP server (`fml lsp`, Fixes #159 [pre-recreation], #165 [pre-recreation]). taplo has
+/// no JSON/structured reporter reachable by CLI flag — only a
+/// codespan-reporting-style human diagnostic block (`error: <message>` then
+/// a `┌─ path:line:col` location line, verified against a real taplo v0.10.0
+/// run) — so `--colors never` is the only flag needed to make that text
+/// output parseable (colored output otherwise interleaves ANSI escapes into
+/// the location line).
+#[must_use]
+pub fn build_taplo_lsp_lint_args(
+  files: &[path::PathBuf],
+  extra_args: &[String],
+) -> Vec<String> {
+  let mut args = vec![
+    "lint".to_string(),
+    "--colors".to_string(),
+    "never".to_string(),
+  ];
+  for f in files {
+    args.push(taplo_path_arg(&f.to_string_lossy(), cfg!(windows)));
+  }
+  args.extend(extra_args.iter().cloned());
+  args
+}
+
+/// Spells `path` as a taplo file argument that matches exactly that file.
+///
+/// taplo globs every file argument, so a path is a pattern: `[ ] { } ( ) * ?`
+/// are each wrapped in a one-character class, which both glob engines taplo
+/// ships with (Rust `glob` natively, `fast-glob` in the npm build) read as the
+/// literal. The npm build's `fast-glob` also reads `\` as an escape, so a
+/// Windows path matches nothing and taplo exits 0 having done nothing (Issue
+/// #501); `backslash_is_separator` (`cfg!(windows)` in production) turns `\`
+/// into `/`, which both engines accept as a Windows separator.
+fn taplo_path_arg(path: &str, backslash_is_separator: bool) -> String {
+  let mut arg = String::with_capacity(path.len());
+  for c in path.chars() {
+    match c {
+      '\\' if backslash_is_separator => arg.push('/'),
+      '[' | ']' | '{' | '}' | '(' | ')' | '*' | '?' => {
+        arg.push('[');
+        arg.push(c);
+        arg.push(']');
+      }
+      _ => arg.push(c),
+    }
+  }
+  arg
+}
+
+/// TOML language surface implementation.
+#[derive(Debug, Default)]
+pub struct TomlSurface;
+
+impl facets::DeclaresFacets for TomlSurface {
+  fn facet_support(&self, facet: facets::Facet) -> facets::FacetSupport {
+    match facet {
+      facets::Facet::IndentTabs
+      | facets::Facet::IndentWidth
+      | facets::Facet::LineLength => facets::FacetSupport::Configurable,
+      facets::Facet::QuoteStyle
+      | facets::Facet::TrailingComma
+      | facets::Facet::ImportSort
+      | facets::Facet::ProseWrap
+      | facets::Facet::Edition
+      | facets::Facet::Standard => facets::FacetSupport::Unsupported,
+    }
+  }
+}
+
+const TOML_EXTENSIONS: &[&str] = &["toml"];
+
+impl surfaces::LanguageSurface for TomlSurface {
+  fn name(&self) -> &'static str {
+    "toml"
+  }
+
+  fn extra_args_tools(&self) -> &'static [&'static str] {
+    &["taplo"]
+  }
+
+  fn aliases(&self) -> &[&'static str] {
+    &[]
+  }
+
+  fn file_extensions(&self) -> &[&'static str] {
+    TOML_EXTENSIONS
+  }
+
+  fn clone_box(&self) -> Box<dyn surfaces::LanguageSurface> {
+    Box::new(Self)
+  }
+
+  fn marker_files(&self) -> &[&'static str] {
+    &["taplo.toml", ".taplo.toml"]
+  }
+
+  fn tool_info(
+    &self,
+    _config: &config::ResolvedLangConfig,
+  ) -> Vec<surfaces::ToolInfo> {
+    vec![surfaces::ToolInfo {
+      binary: "taplo",
+      description: "TOML toolkit, formatter and linter",
+      install_hint: None,
+      is_required_for_fmt: true,
+      is_required_for_lint: true,
+    }]
+  }
+
+  fn format(
+    &self,
+    ctx: &surfaces::ExecutionContext,
+  ) -> surfaces::SurfaceResult {
+    let start = time::Instant::now();
+
+    if let Some(res) =
+      tooling::tool_missing_guard(self.name(), "taplo", start, None)
+    {
+      return res;
+    }
+
+    let files = ctx.matched_files(TOML_EXTENSIONS);
+    if let Some(res) = surfaces::passed_if_empty(&files, self.name(), start) {
+      return res;
+    }
+
+    // Inline `-o key=value` instead of writing `taplo.toml` to disk — see
+    // `build_taplo_inline_config_args` (Fixes #151 [pre-recreation]). `fml sync` remains the
+    // only path that materializes the file.
+    let inline_config =
+      build_taplo_inline_config_args(&TaploConfig::from_context(ctx));
+
+    if ctx.check_only {
+      return sync::diff_check_via_tempcopy(
+        &files,
+        |scratch| {
+          let mut cmd = tooling::create_tool_command("taplo");
+          cmd
+            .arg("format")
+            .args(&inline_config)
+            .arg(taplo_path_arg(&scratch.to_string_lossy(), cfg!(windows)));
+          cmd.args(ctx.lang_config.tool_args("taplo"));
+          cmd.current_dir(ctx.root.as_path());
+          cmd.output()
+        },
+        self.name(),
+        start,
+      );
+    }
+
+    let mut cmd = tooling::create_tool_command("taplo");
+    cmd.arg("format");
+    cmd.args(&inline_config);
+
+    for f in &files {
+      cmd.arg(taplo_path_arg(&f.to_string_lossy(), cfg!(windows)));
+    }
+
+    cmd.args(ctx.lang_config.tool_args("taplo"));
+    cmd.current_dir(ctx.root.as_path());
+
+    tooling::run_tool_command(self.name(), &mut cmd)
+  }
+
+  fn lint(
+    &self,
+    ctx: &surfaces::ExecutionContext,
+    fix: bool,
+  ) -> surfaces::SurfaceResult {
+    let start = time::Instant::now();
+
+    if fix {
+      return tooling::lint_fix_unsupported(self.name(), start);
+    }
+
+    if let Some(res) =
+      tooling::tool_missing_guard(self.name(), "taplo", start, None)
+    {
+      return res;
+    }
+
+    let files = ctx.matched_files(TOML_EXTENSIONS);
+    if let Some(res) = surfaces::passed_if_empty(&files, self.name(), start) {
+      return res;
+    }
+
+    let mut cmd = tooling::create_tool_command("taplo");
+    cmd.arg("lint");
+
+    for f in &files {
+      cmd.arg(taplo_path_arg(&f.to_string_lossy(), cfg!(windows)));
+    }
+
+    cmd.args(ctx.lang_config.tool_args("taplo"));
+    cmd.current_dir(ctx.root.as_path());
+
+    tooling::run_tool_command(self.name(), &mut cmd)
+  }
+
+  // `fml fmt` no longer goes through this path (Fixes #151 [pre-recreation]): it passes the
+  // resolved config to taplo inline via repeated `-o key=value` flags (see
+  // `build_taplo_inline_config_args`, used in `format()` above). This method
+  // is now reached only by `fml sync`, for users who explicitly want
+  // `taplo.toml` materialized on disk.
+  fn sync_config(
+    &self,
+    ctx: &surfaces::ExecutionContext,
+    check: bool,
+  ) -> surfaces::SurfaceResult {
+    let start = time::Instant::now();
+    native::sync_native_config::<TaploConfig>(ctx, check, start, self.name())
+  }
+}
+
+#[cfg(test)]
+mod tests {
+  use super::*;
+  use crate::config;
+  use crate::config::facets::DeclaresFacets;
+  use crate::surfaces;
+  use crate::surfaces::LanguageSurface;
+
+  #[test]
+  fn toml_surface_facets() {
+    let surface = TomlSurface;
+    assert_eq!(
+      surface.facet_support(facets::Facet::IndentTabs),
+      facets::FacetSupport::Configurable
+    );
+    assert_eq!(
+      surface.facet_support(facets::Facet::IndentWidth),
+      facets::FacetSupport::Configurable
+    );
+    assert_eq!(
+      surface.facet_support(facets::Facet::LineLength),
+      facets::FacetSupport::Configurable
+    );
+    assert_eq!(
+      surface.facet_support(facets::Facet::QuoteStyle),
+      facets::FacetSupport::Unsupported
+    );
+  }
+
+  #[test]
+  fn toml_surface_tool_info() {
+    let surface = TomlSurface;
+    let cfg = config::ResolvedLangConfig::new("toml");
+    let tools = surface.tool_info(&cfg);
+    assert_eq!(tools.len(), 1);
+    assert_eq!(tools[0].binary, "taplo");
+    assert!(tools[0].is_required_for_fmt);
+    assert!(tools[0].is_required_for_lint);
+  }
+
+  #[test]
+  fn taplo_config_typed_serialization() {
+    let cfg = TaploConfig {
+      formatting: TaploFormattingConfig {
+        align_entries: false,
+        column_width: 100,
+        indent_entries: false,
+        indent_string: "    ".to_string(),
+        indent_tables: false,
+        crlf: true,
+      },
+    };
+    let rendered = cfg.render().unwrap();
+    assert!(rendered.starts_with(native::AUTO_GENERATED_HEADER));
+    assert!(rendered.contains("[formatting]"));
+    assert!(rendered.contains("column_width = 100"));
+    assert!(rendered.contains("indent_string = \"    \""));
+    assert!(rendered.contains("crlf = true"));
+  }
+
+  #[test]
+  fn toml_sync_config() {
+    let temp = tempfile::TempDir::new().unwrap();
+    let surface = TomlSurface;
+    let mut lang_cfg = config::ResolvedLangConfig::new("toml");
+    lang_cfg.line_length = 80;
+    lang_cfg.indent_size = 2;
+
+    let ctx = surfaces::test_ctx(temp.path(), lang_cfg);
+
+    let res = surface.sync_config(&ctx, false);
+    assert_eq!(res.status.created_file_names(), ["taplo.toml"]);
+
+    let config_path = temp.path().join("taplo.toml");
+    assert!(config_path.is_file());
+
+    let content = std::fs::read_to_string(&config_path).unwrap();
+    assert!(content.contains("column_width = 80"));
+    assert!(content.contains("indent_string = \"  \""));
+  }
+
+  #[test]
+  fn toml_extra_args_propagation() {
+    let mut cmd = tooling::create_tool_command("taplo");
+    cmd.arg("format").arg("-");
+    let extra_args = vec!["--colors".to_string(), "never".to_string()];
+    cmd.args(&extra_args);
+    let args: Vec<String> = cmd
+      .get_args()
+      .map(|a| a.to_string_lossy().to_string())
+      .collect();
+    assert_eq!(args, vec!["format", "-", "--colors", "never"]);
+  }
+
+  #[test]
+  fn build_taplo_inline_config_args_shape() {
+    let cfg = TaploConfig {
+      formatting: TaploFormattingConfig {
+        align_entries: false,
+        column_width: 100,
+        indent_entries: false,
+        indent_string: "    ".to_string(),
+        indent_tables: false,
+        crlf: true,
+      },
+    };
+    let args = build_taplo_inline_config_args(&cfg);
+    assert!(args.contains(&"column_width=100".to_string()));
+    assert!(args.contains(&"indent_string=    ".to_string()));
+    assert!(args.contains(&"crlf=true".to_string()));
+  }
+
+  #[test]
+  fn taplo_path_arg_windows_path_uses_forward_slashes() {
+    assert_eq!(
+      taplo_path_arg(r"C:\Users\RUNNER~1\Temp\fml-check-x\0\a.toml", true),
+      "C:/Users/RUNNER~1/Temp/fml-check-x/0/a.toml"
+    );
+  }
+
+  #[test]
+  fn taplo_path_arg_keeps_backslash_where_it_is_a_name_char() {
+    assert_eq!(taplo_path_arg(r"/srv/a\b.toml", false), r"/srv/a\b.toml");
+  }
+
+  #[test]
+  fn taplo_path_arg_escapes_glob_metacharacters() {
+    assert_eq!(
+      taplo_path_arg(r"C:\w\a[b]\{c}(d)*?!.toml", true),
+      "C:/w/a[[]b[]]/[{]c[}][(]d[)][*][?]!.toml"
+    );
+    assert_eq!(
+      taplo_path_arg("/w/a[b]/c{d}.toml", false),
+      "/w/a[[]b[]]/c[{]d[}].toml"
+    );
+  }
+
+  #[test]
+  fn toml_format_writes_file_under_glob_metacharacter_dir() {
+    if !tooling::check_binary_exists("taplo") {
+      return;
+    }
+    let temp = tempfile::TempDir::new().unwrap();
+    // Unescaped, `[b]` matches only `b` (Rust `glob`) and `(c){d,e}` is a
+    // group and an alternation (`fast-glob`): no engine finds this file.
+    let dir = temp.path().join("a[b](c){d,e}");
+    std::fs::create_dir(&dir).unwrap();
+    let file = dir.join("f.toml");
+    std::fs::write(&file, "[package]\n name =   \"x\"\n").unwrap();
+
+    let ctx = surfaces::test_ctx_with_paths(
+      temp.path(),
+      config::ResolvedLangConfig::new("toml"),
+      vec![file.clone()],
+    );
+    let res = TomlSurface.format(&ctx);
+
+    assert!(
+      matches!(res.status, surfaces::SurfaceStatus::Passed),
+      "{:?}",
+      res.status
+    );
+    assert_eq!(
+      std::fs::read_to_string(&file).unwrap(),
+      "[package]\nname = \"x\"\n"
+    );
+  }
+
+  #[test]
+  fn toml_lint_reads_file_under_glob_metacharacter_dir() {
+    if !tooling::check_binary_exists("taplo") {
+      return;
+    }
+    let temp = tempfile::TempDir::new().unwrap();
+    let dir = temp.path().join("a[b](c){d,e}");
+    std::fs::create_dir(&dir).unwrap();
+    let file = dir.join("f.toml");
+    std::fs::write(&file, "a = [\n").unwrap();
+
+    let ctx = surfaces::test_ctx_with_paths(
+      temp.path(),
+      config::ResolvedLangConfig::new("toml"),
+      vec![file],
+    );
+    let res = TomlSurface.lint(&ctx, false);
+
+    assert!(
+      matches!(res.status, surfaces::SurfaceStatus::ViolationsFound { .. }),
+      "{:?}",
+      res.status
+    );
+  }
+
+  #[test]
+  fn test_build_taplo_lsp_lint_args() {
+    let files = vec![path::PathBuf::from("a.toml")];
+    let args = build_taplo_lsp_lint_args(&files, &[]);
+    assert_eq!(
+      args,
+      vec![
+        "lint".to_string(),
+        "--colors".to_string(),
+        "never".to_string(),
+        "a.toml".to_string(),
+      ]
+    );
+  }
+
+  #[test]
+  fn build_taplo_lsp_lint_args_spells_path_as_taplo_pattern() {
+    let files = vec![path::PathBuf::from(r"C:\w\a[b]\c.toml")];
+    let args = build_taplo_lsp_lint_args(&files, &[]);
+    let expected = if cfg!(windows) {
+      "C:/w/a[[]b[]]/c.toml"
+    } else {
+      r"C:\w\a[[]b[]]\c.toml"
+    };
+    assert_eq!(args[3], expected);
+  }
+
+  #[test]
+  fn toml_format_does_not_write_taplo_toml() {
+    // Fixes #151 [pre-recreation]: `fml fmt` must not write `taplo.toml` as a side effect;
+    // only `fml sync` should materialize the native config file.
+    if !tooling::check_binary_exists("taplo") {
+      return;
+    }
+    let temp = tempfile::TempDir::new().unwrap();
+    std::fs::write(temp.path().join("a.toml"), "a=1\n").unwrap();
+
+    let surface = TomlSurface;
+    let ctx =
+      surfaces::test_ctx(temp.path(), config::ResolvedLangConfig::new("toml"));
+
+    let _ = surface.format(&ctx);
+
+    assert!(!temp.path().join("taplo.toml").exists());
+    assert!(!temp.path().join(".taplo.toml").exists());
+  }
+
+  #[test]
+  fn toml_format_check_large_file_no_deadlock() {
+    // Fixes #22: formatting large TOML files (>128 KB) in check mode must not deadlock.
+    if !tooling::check_binary_exists("taplo") {
+      return;
+    }
+    let temp = tempfile::TempDir::new().unwrap();
+    let file_path = temp.path().join("large_unformatted.toml");
+
+    let mut large_content = String::with_capacity(180_000);
+    for i in 0..8000 {
+      use std::fmt::Write;
+      let _ = writeln!(large_content, "key_{i}=\"value_{i}\"");
+    }
+    assert!(large_content.len() > 128 * 1024);
+    std::fs::write(&file_path, &large_content).unwrap();
+
+    let surface = TomlSurface;
+    let mut ctx = surfaces::test_ctx_with_paths(
+      temp.path(),
+      config::ResolvedLangConfig::new("toml"),
+      vec![file_path],
+    );
+    ctx.check_only = true;
+
+    let res = surface.format(&ctx);
+    let surfaces::SurfaceStatus::ViolationsFound { diff, .. } = res.status
+    else {
+      panic!(
+        "expected formatting violations for unformatted TOML, got {:?}",
+        res.status
+      );
+    };
+    let diff_str = diff.expect("diff should be present");
+    assert!(diff_str.contains("key_0"));
+
+    // Check mode on already-formatted >128 KB file must also complete cleanly and return Passed.
+    let formatted_path = temp.path().join("large_formatted.toml");
+    let mut formatted_content = String::with_capacity(180_000);
+    for i in 0..8000 {
+      use std::fmt::Write;
+      let _ = writeln!(formatted_content, "key_{i} = \"value_{i}\"");
+    }
+    assert!(formatted_content.len() > 128 * 1024);
+    std::fs::write(&formatted_path, &formatted_content).unwrap();
+
+    let mut ctx_formatted = surfaces::test_ctx_with_paths(
+      temp.path(),
+      config::ResolvedLangConfig::new("toml"),
+      vec![formatted_path],
+    );
+    ctx_formatted.check_only = true;
+
+    let res_formatted = surface.format(&ctx_formatted);
+    assert!(
+      matches!(res_formatted.status, surfaces::SurfaceStatus::Passed),
+      "expected Passed for formatted TOML, got {:?}",
+      res_formatted.status
+    );
+  }
+
+  #[test]
+  fn taplo_config_from_context_options() {
+    let temp = tempfile::TempDir::new().unwrap();
+
+    // 1. Default/omitted case -> all false
+    let lang_config_default = config::ResolvedLangConfig::new("toml");
+    let ctx_default = surfaces::test_ctx(temp.path(), lang_config_default);
+    let taplo_cfg_default = TaploConfig::from_context(&ctx_default);
+    assert!(!taplo_cfg_default.formatting.align_entries);
+    assert!(!taplo_cfg_default.formatting.indent_entries);
+    assert!(!taplo_cfg_default.formatting.indent_tables);
+
+    // 2. Configured case -> true
+    let mut lang_config_configured = config::ResolvedLangConfig::new("toml");
+    lang_config_configured.toml = Some(config::options::TomlOptions {
+      align_entries: Some(true),
+      indent_entries: Some(true),
+      indent_tables: Some(true),
+    });
+    let ctx_configured =
+      surfaces::test_ctx(temp.path(), lang_config_configured);
+    let taplo_cfg_configured = TaploConfig::from_context(&ctx_configured);
+    assert!(taplo_cfg_configured.formatting.align_entries);
+    assert!(taplo_cfg_configured.formatting.indent_entries);
+    assert!(taplo_cfg_configured.formatting.indent_tables);
+
+    let inline_args = build_taplo_inline_config_args(&taplo_cfg_configured);
+    assert!(inline_args.contains(&"align_entries=true".to_string()));
+    assert!(inline_args.contains(&"indent_entries=true".to_string()));
+    assert!(inline_args.contains(&"indent_tables=true".to_string()));
+  }
+
+  #[test]
+  fn toml_sync_config_with_alignment_options() {
+    let temp = tempfile::TempDir::new().unwrap();
+    let surface = TomlSurface;
+    let mut lang_cfg = config::ResolvedLangConfig::new("toml");
+    lang_cfg.line_length = 100;
+    lang_cfg.indent_size = 4;
+    lang_cfg.toml = Some(config::options::TomlOptions {
+      align_entries: Some(true),
+      indent_entries: Some(true),
+      indent_tables: Some(true),
+    });
+
+    let ctx = surfaces::test_ctx(temp.path(), lang_cfg);
+
+    let res = surface.sync_config(&ctx, false);
+    assert_eq!(res.status.created_file_names(), ["taplo.toml"]);
+
+    let config_path = temp.path().join("taplo.toml");
+    assert!(config_path.is_file());
+
+    let content = std::fs::read_to_string(&config_path).unwrap();
+    assert!(content.contains("align_entries = true"));
+    assert!(content.contains("indent_entries = true"));
+    assert!(content.contains("indent_tables = true"));
+    assert!(content.contains("column_width = 100"));
+    assert!(content.contains("indent_string = \"    \""));
+  }
+}

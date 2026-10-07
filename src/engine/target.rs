@@ -4,17 +4,53 @@
 //! path normalization, candidate file scope resolution, and language surface
 //! filtering.
 
+use std::io;
 use std::path;
+
+use thiserror;
 
 use crate::config;
 use crate::engine::runner;
-use crate::errors;
 use crate::surfaces;
-use crate::surfaces::LanguageSurface;
+use crate::surfaces::registry;
+
+/// Why targets could not be resolved.
+#[derive(Debug, thiserror::Error)]
+pub enum Error {
+  /// `git` could not be started.
+  #[error("could not run git: {0}")]
+  GitSpawn(#[from] io::Error),
+  /// `git diff` exited non-zero while listing the selected files.
+  #[error("git could not list {0} files")]
+  Git(Changes),
+  /// `--lang` named something no surface answers to.
+  #[error(
+    "unknown language surface '{0}'; run 'fml doctor --all' to list them"
+  )]
+  UnknownSurface(String),
+}
+
+/// Which uncommitted files a run is limited to.
+#[derive(Debug, Clone, Copy)]
+pub enum Changes {
+  /// Files staged for commit.
+  Staged,
+  /// Modified files, staged or not.
+  Changed,
+}
+
+impl std::fmt::Display for Changes {
+  fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+    f.write_str(match self {
+      Self::Staged => "staged",
+      Self::Changed => "changed",
+    })
+  }
+}
 
 /// Normalizes path components by resolving `.` and `..` segments lexically.
 #[must_use]
-pub fn normalize_path(path: &path::Path) -> path::PathBuf {
+fn normalize_path(path: &path::Path) -> path::PathBuf {
   let mut components = Vec::new();
   for component in path.components() {
     match component {
@@ -41,28 +77,17 @@ pub fn normalize_path(path: &path::Path) -> path::PathBuf {
 ///
 /// # Errors
 ///
-/// Returns a [`errors::FormalityError`] if both `staged` and `changed` are set, or if
+/// Returns an [`Error`] if both `staged` and `changed` are set, or if
 /// the underlying git query fails.
-pub fn resolve_git_paths(
+fn resolve_git_paths(
   root: &path::Path,
-  staged: bool,
-  changed: bool,
+  changes: Option<Changes>,
   explicit_paths: Vec<path::PathBuf>,
-) -> Result<Vec<path::PathBuf>, errors::FormalityError> {
-  if staged && changed {
-    return Err(errors::FormalityError::Git(
-      errors::GitError::MutuallyExclusiveFlags,
-    ));
-  }
-  if !staged && !changed {
+) -> Result<Vec<path::PathBuf>, Error> {
+  let Some(changes) = changes else {
     return Ok(explicit_paths);
-  }
-
-  let git_files = if staged {
-    get_git_staged_files(root)?
-  } else {
-    get_git_changed_files(root)?
   };
+  let git_files = git_diff_files(root, changes)?;
 
   if explicit_paths.is_empty() {
     return Ok(git_files);
@@ -99,62 +124,27 @@ pub fn resolve_git_paths(
   Ok(filtered)
 }
 
-fn get_git_diff_files(
+/// Lists the files `git diff` reports for `changes`, as paths under `root`.
+fn git_diff_files(
   root: &path::Path,
-  staged: bool,
-  error_context: &str,
-) -> Result<Vec<path::PathBuf>, errors::FormalityError> {
+  changes: Changes,
+) -> Result<Vec<path::PathBuf>, Error> {
   let mut cmd = std::process::Command::new("git");
-  cmd.arg("diff").arg("--name-only");
-  if staged {
+  cmd.args(["diff", "--name-only", "--diff-filter=ACMR"]);
+  if let Changes::Staged = changes {
     cmd.arg("--cached");
   }
-  cmd.arg("--diff-filter=ACMR").current_dir(root);
-
-  let output = cmd.output().map_err(|e| {
-    errors::FormalityError::Git(errors::GitError::ExecutionFailed(
-      e.to_string(),
-    ))
-  })?;
-
+  let output = cmd.current_dir(root).output()?;
   if !output.status.success() {
-    return Err(errors::FormalityError::Git(
-      errors::GitError::CommandFailed(format!(
-        "Failed to query git {error_context} files."
-      )),
-    ));
+    return Err(Error::Git(changes));
   }
-
-  let stdout = String::from_utf8_lossy(&output.stdout);
-  let files: Vec<path::PathBuf> = stdout
-    .lines()
-    .map(|l| root.join(l.trim()))
-    .filter(|p| p.is_file())
-    .collect();
-
-  Ok(files)
-}
-
-/// Returns the list of staged git files relative to `root`.
-///
-/// # Errors
-///
-/// Returns a [`errors::FormalityError`] if git execution fails or the git command cannot be run.
-pub fn get_git_staged_files(
-  root: &path::Path,
-) -> Result<Vec<path::PathBuf>, errors::FormalityError> {
-  get_git_diff_files(root, true, "staged")
-}
-
-/// Returns the list of changed git files relative to `root`.
-///
-/// # Errors
-///
-/// Returns a [`errors::FormalityError`] if git execution fails or the git command cannot be run.
-pub fn get_git_changed_files(
-  root: &path::Path,
-) -> Result<Vec<path::PathBuf>, errors::FormalityError> {
-  get_git_diff_files(root, false, "changed")
+  Ok(
+    String::from_utf8_lossy(&output.stdout)
+      .lines()
+      .map(|l| root.join(l.trim()))
+      .filter(|p| p.is_file())
+      .collect(),
+  )
 }
 
 /// The target files and matching surfaces resolved for a command run.
@@ -162,7 +152,7 @@ pub struct ResolvedTarget {
   /// The scope of files to act on.
   pub scope: runner::Scope,
   /// The language surfaces that match the target scope.
-  pub surfaces: Vec<Box<dyn LanguageSurface>>,
+  pub surfaces: Vec<Box<dyn surfaces::LanguageSurface>>,
 }
 
 /// Resolves target files and matching surfaces based on git filters and path arguments.
@@ -171,19 +161,18 @@ pub struct ResolvedTarget {
 ///
 /// # Errors
 ///
-/// Returns a [`errors::FormalityError`] if `--staged` and `--changed` are both set,
+/// Returns an [`Error`] if `--staged` and `--changed` are both set,
 /// if the git command fails, or if a requested language surface does not exist.
 pub fn resolve_targets(
   root: &path::Path,
-  staged: bool,
-  changed: bool,
+  changes: Option<Changes>,
   paths: Vec<path::PathBuf>,
   lang_filter: &[String],
   config: &config::FormalityConfig,
-) -> Result<Option<ResolvedTarget>, errors::FormalityError> {
-  let target_paths = resolve_git_paths(root, staged, changed, paths)?;
+) -> Result<Option<ResolvedTarget>, Error> {
+  let target_paths = resolve_git_paths(root, changes, paths)?;
 
-  if (staged || changed) && target_paths.is_empty() {
+  if changes.is_some() && target_paths.is_empty() {
     return Ok(None);
   }
 
@@ -201,12 +190,12 @@ pub fn resolve_targets(
 ///
 /// # Errors
 ///
-/// Returns a [`errors::FormalityError`] if a requested language surface does not exist.
+/// Returns an [`Error`] if a requested language surface does not exist.
 pub fn resolve_workspace_targets(
   root: &path::Path,
   lang_filter: &[String],
   config: &config::FormalityConfig,
-) -> Result<ResolvedTarget, errors::FormalityError> {
+) -> Result<ResolvedTarget, Error> {
   let scope =
     runner::Scope::resolve(root, &[], &config.resolve_global().exclude);
   let surfaces = resolve_target_surfaces(root, lang_filter, &scope, config)?;
@@ -220,23 +209,21 @@ pub fn resolve_workspace_targets(
 ///
 /// # Errors
 ///
-/// Returns a [`errors::FormalityError`] if `lang_filter` names a surface that doesn't
+/// Returns an [`Error`] if `lang_filter` names a surface that doesn't
 /// exist.
 pub fn resolve_target_surfaces(
   root: &path::Path,
   lang_filter: &[String],
   scope: &runner::Scope,
   config: &config::FormalityConfig,
-) -> Result<Vec<Box<dyn LanguageSurface>>, errors::FormalityError> {
+) -> Result<Vec<Box<dyn surfaces::LanguageSurface>>, Error> {
   if !lang_filter.is_empty() {
     let mut selected = Vec::new();
     for name in lang_filter {
-      if let Some(s) = surfaces::get_surface_by_name(name) {
+      if let Some(s) = registry::get_surface_by_name(name) {
         selected.push(s);
       } else {
-        return Err(errors::FormalityError::Surface(
-          surfaces::Error::UnknownSurface(name.clone()),
-        ));
+        return Err(Error::UnknownSurface(name.clone()));
       }
     }
     return Ok(selected);
@@ -251,7 +238,7 @@ pub fn resolve_target_surfaces(
         surfaces::glob::PresentExtensions::from_paths(candidates)
       });
       Ok(
-        surfaces::default_registry().detect_surfaces_in(root, config, &present),
+        registry::default_registry().detect_surfaces_in(root, config, &present),
       )
     }
   }
@@ -260,13 +247,13 @@ pub fn resolve_target_surfaces(
 /// Every surface with at least one of its files among the explicit paths'
 /// expanded `files`.
 #[must_use]
-pub fn surfaces_with_files_under(
+fn surfaces_with_files_under(
   root: &path::Path,
   files: &[path::PathBuf],
   config: &config::FormalityConfig,
-) -> Vec<Box<dyn LanguageSurface>> {
+) -> Vec<Box<dyn surfaces::LanguageSurface>> {
   let global = config.resolve_global();
-  surfaces::all_surfaces()
+  registry::all_surfaces()
     .into_iter()
     .filter(|surface| {
       let lang_cfg =
@@ -289,7 +276,7 @@ mod tests {
   use super::*;
 
   #[test]
-  fn test_normalize_path_components() {
+  fn normalize_path_components() {
     let p = path::Path::new("a/b/../c/./d");
     let norm = normalize_path(p);
     assert_eq!(norm, path::PathBuf::from("a/c/d"));
@@ -300,30 +287,18 @@ mod tests {
   }
 
   #[test]
-  fn test_resolve_git_paths_mutual_exclusion() {
-    let res = resolve_git_paths(path::Path::new("."), true, true, vec![]);
-    assert!(matches!(
-      res,
-      Err(errors::FormalityError::Git(
-        errors::GitError::MutuallyExclusiveFlags
-      ))
-    ));
-  }
-
-  #[test]
-  fn test_resolve_git_paths_no_git_flags_returns_explicit() {
+  fn resolve_git_paths_no_git_flags_returns_explicit() {
     let explicit = vec![
       path::PathBuf::from("src/main.rs"),
       path::PathBuf::from("README.md"),
     ];
     let res =
-      resolve_git_paths(path::Path::new("."), false, false, explicit.clone())
-        .unwrap();
+      resolve_git_paths(path::Path::new("."), None, explicit.clone()).unwrap();
     assert_eq!(res, explicit);
   }
 
   #[test]
-  fn test_resolve_git_paths_staged_filtering() {
+  fn resolve_git_paths_staged_filtering() {
     let temp = tempfile::TempDir::new().unwrap();
     let root = temp.path();
 
@@ -380,23 +355,26 @@ mod tests {
       .output();
 
     // 1. Staged without explicit paths returns both staged files
-    let staged_all = resolve_git_paths(root, true, false, vec![]).unwrap();
+    let staged_all =
+      resolve_git_paths(root, Some(Changes::Staged), vec![]).unwrap();
     assert_eq!(staged_all.len(), 2);
     assert!(staged_all.contains(&file_a));
     assert!(staged_all.contains(&file_c));
     assert!(!staged_all.contains(&file_b));
 
     // 2. Staged filtered by explicit directory "src"
-    let staged_src =
-      resolve_git_paths(root, true, false, vec![path::PathBuf::from("src")])
-        .unwrap();
+    let staged_src = resolve_git_paths(
+      root,
+      Some(Changes::Staged),
+      vec![path::PathBuf::from("src")],
+    )
+    .unwrap();
     assert_eq!(staged_src, vec![file_a]);
 
     // 3. Staged filtered by explicit file "tests/c.rs"
     let staged_file = resolve_git_paths(
       root,
-      true,
-      false,
+      Some(Changes::Staged),
       vec![path::PathBuf::from("tests/c.rs")],
     )
     .unwrap();
@@ -405,8 +383,7 @@ mod tests {
     // 4. Staged filtered by non-matching explicit path returns empty
     let staged_none = resolve_git_paths(
       root,
-      true,
-      false,
+      Some(Changes::Staged),
       vec![path::PathBuf::from("nonexistent")],
     )
     .unwrap();
@@ -414,7 +391,7 @@ mod tests {
   }
 
   #[test]
-  fn test_resolve_git_paths_changed_filtering() {
+  fn resolve_git_paths_changed_filtering() {
     let temp = tempfile::TempDir::new().unwrap();
     let root = temp.path();
 
@@ -451,13 +428,13 @@ mod tests {
     // Modify tracked file (unstaged)
     fs::write(&file_tracked, "v2\n").unwrap();
 
-    let changed = resolve_git_paths(root, false, true, vec![]).unwrap();
+    let changed =
+      resolve_git_paths(root, Some(Changes::Changed), vec![]).unwrap();
     assert_eq!(changed, vec![file_tracked.clone()]);
 
     let changed_filtered = resolve_git_paths(
       root,
-      false,
-      true,
+      Some(Changes::Changed),
       vec![path::PathBuf::from("tracked.txt")],
     )
     .unwrap();
@@ -465,8 +442,7 @@ mod tests {
 
     let changed_unmatched = resolve_git_paths(
       root,
-      false,
-      true,
+      Some(Changes::Changed),
       vec![path::PathBuf::from("other.txt")],
     )
     .unwrap();
@@ -474,7 +450,7 @@ mod tests {
   }
 
   #[test]
-  fn test_staged_surface_discovery_ignores_ignored_files() {
+  fn staged_surface_discovery_ignores_ignored_files() {
     let temp = tempfile::TempDir::new().unwrap();
     let root = temp.path();
 
@@ -538,11 +514,12 @@ mod tests {
       .output();
 
     // Verify git reports all 4 files staged
-    let staged_files = resolve_git_paths(root, true, false, vec![]).unwrap();
+    let staged_files =
+      resolve_git_paths(root, Some(Changes::Staged), vec![]).unwrap();
     assert_eq!(staged_files.len(), 4);
 
     // Formality config with surface exclusion for Rust
-    let mut config = config::FormalityConfig::empty();
+    let mut config = config::FormalityConfig::default();
     let rust_lang = config::LangConfig {
       exclude: Some(vec![path::PathBuf::from("src/generated.rs")]),
       ..Default::default()
@@ -563,13 +540,9 @@ mod tests {
     // Discover staged files for the surface
     let global = config.resolve_global();
     let lang_cfg = config.resolve_for_lang_with_global("rust", &global);
-    let resolved_files = surfaces::glob::find_files_with_ext(
-      root,
-      surfaces[0].file_extensions(),
-      &staged_files,
-      &lang_cfg.files,
-      &lang_cfg.exclude,
-    );
+    let resolved_files =
+      surfaces::test_ctx_with_paths(root, lang_cfg, staged_files)
+        .matched_files(surfaces[0].file_extensions());
 
     // Per #214 / style guide §6: assert on the resolved file set directly
     assert_eq!(resolved_files, vec![file_active.clone()]);
@@ -580,7 +553,7 @@ mod tests {
   }
 
   #[test]
-  fn test_staged_file_discovery_respects_surface_exclusions() {
+  fn staged_file_discovery_respects_surface_exclusions() {
     let temp = tempfile::TempDir::new().unwrap();
     let root = temp.path();
 
@@ -628,10 +601,11 @@ mod tests {
       .current_dir(root)
       .output();
 
-    let staged_files = resolve_git_paths(root, true, false, vec![]).unwrap();
+    let staged_files =
+      resolve_git_paths(root, Some(Changes::Staged), vec![]).unwrap();
     assert_eq!(staged_files.len(), 2);
 
-    let mut config = config::FormalityConfig::empty();
+    let mut config = config::FormalityConfig::default();
     let rust_lang = config::LangConfig {
       exclude: Some(vec![path::PathBuf::from("src/ignored.rs")]),
       ..Default::default()
@@ -647,54 +621,50 @@ mod tests {
     .unwrap();
     let global = config.resolve_global();
     let lang_cfg = config.resolve_for_lang_with_global("rust", &global);
-    let resolved_files = surfaces::glob::find_files_with_ext(
-      root,
-      surfaces[0].file_extensions(),
-      &staged_files,
-      &lang_cfg.files,
-      &lang_cfg.exclude,
-    );
+    let resolved_files =
+      surfaces::test_ctx_with_paths(root, lang_cfg, staged_files)
+        .matched_files(surfaces[0].file_extensions());
     assert_eq!(resolved_files.len(), 1);
     assert_eq!(resolved_files[0], file_active);
   }
 
   #[test]
-  fn test_explicit_directory_path_expands_candidates_once_across_surfaces() {
+  fn explicit_directory_path_expands_candidates_once_across_surfaces() {
     let temp = tempfile::TempDir::new().unwrap();
     let src = temp.path().join("src");
     fs::create_dir_all(&src).unwrap();
     fs::write(src.join("lib.rs"), "fn a() {}\n").unwrap();
     fs::write(src.join("README.md"), "# Title\n").unwrap();
 
-    let mut out = Vec::new();
     let target = resolve_targets(
       temp.path(),
-      false,
-      false,
+      None,
       vec![src.clone()],
       &[],
-      &config::FormalityConfig::empty(),
+      &config::FormalityConfig::default(),
     )
     .unwrap()
     .unwrap();
     let plan = runner::Plan::fmt(true, true);
-    let _ = runner::Runner::run_into(
-      &mut out,
+    let results = runner::Runner::run(
       &target.surfaces,
       temp.path(),
       &target.scope,
       &plan,
-      &config::FormalityConfig::empty(),
+      &config::FormalityConfig::default(),
     );
 
     // Selection and both surfaces' runs share one expansion of `src`.
-    let out = String::from_utf8_lossy(&out);
-    assert!(out.contains("rust") && out.contains("markdown"), "{out}");
+    let names: Vec<&str> = results.iter().map(|r| r.surface_name).collect();
+    assert!(
+      names.contains(&"rust") && names.contains(&"markdown"),
+      "{names:?}"
+    );
     assert_eq!(surfaces::glob::walk_count::of(&src), 1);
   }
 
   #[test]
-  fn test_file_matched_only_by_global_exclude_does_not_activate_its_surface() {
+  fn file_matched_only_by_global_exclude_does_not_activate_its_surface() {
     let temp = tempfile::TempDir::new().unwrap();
     let root = temp.path();
     fs::write(root.join("main.rs"), "fn main() {}\n").unwrap();
@@ -711,7 +681,7 @@ mod tests {
     };
 
     assert_eq!(
-      detected(&config::FormalityConfig::empty()),
+      detected(&config::FormalityConfig::default()),
       ["rust", "python"]
     );
     let excluding = config::FormalityConfig::parse_str(
@@ -723,7 +693,7 @@ mod tests {
   }
 
   #[test]
-  fn test_root_marker_activates_its_surface_despite_global_exclude() {
+  fn root_marker_activates_its_surface_despite_global_exclude() {
     let temp = tempfile::TempDir::new().unwrap();
     let root = temp.path();
     fs::write(root.join("pyproject.toml"), "[project]\n").unwrap();

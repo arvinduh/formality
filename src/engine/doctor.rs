@@ -1,1386 +1,542 @@
-//! `fml doctor` command: probes toolchains and reports environment health.
+//! Toolchain checks and installs for `fml doctor` and the stale-tool preflight.
 //!
-//! Checks binary existence and versions via `crate::engine::version` and
-//! provides installation hints. Execution of linters and formatters is owned
-//! by `crate::engine::runner`.
+//! Owns the granular operations: which tools a set of surfaces needs, whether
+//! each is on `PATH` and at a supported version, and installing one tool.
+//! Virtualenv detection and `.gitignore` hygiene live in submodules. Choosing
+//! what to check, in what order, and what to print is the CLI's job.
 
-mod gitignore;
-mod venv;
+/// `.gitignore` coverage of each surface's cache and build artifacts.
+pub mod gitignore;
+/// Python virtual environment detection.
+pub mod venv;
+
+use std::collections;
+use std::io;
+use std::path;
 
 use crate::config;
 use crate::engine::version;
-use crate::errors;
 use crate::surfaces;
-use crate::surfaces::LanguageSurface;
-use crate::ui::paths;
-use crate::ui::table;
-use colored::Colorize;
-use std::collections;
-use std::fmt::Write;
-use std::path;
+use crate::surfaces::tooling;
 
-/// Installs a deduplicated list of missing tools, rendered inside `frame` so
-/// `fml doctor --install` brackets this block with the same rule width as every other section it
-/// prints (the "Installing…" progress block, then the Install Summary table).
+/// One tool a surface needs, with what probing it found.
+#[derive(Debug)]
+pub struct Check {
+  /// The first surface (in scan order) that needs the tool.
+  pub surface: &'static str,
+  /// The tool itself.
+  pub tool: surfaces::ToolInfo,
+  /// Where the binary resolved, when it did.
+  pub path: Option<path::PathBuf>,
+  /// Presence and version relative to the MSTV floor and the pin.
+  pub status: version::ToolStatus,
+}
+
+impl Check {
+  /// Returns whether `fml doctor --install` would (re)install this tool: it
+  /// is missing, or stale and its selected installer can pin the version.
+  #[must_use]
+  pub fn needs_install(&self) -> bool {
+    match &self.status {
+      version::ToolStatus::NotFound => true,
+      version::ToolStatus::Stale { pinned, .. } => {
+        tooling::selected_pinned_version_for(self.tool.binary).as_ref()
+          == Some(pinned)
+      }
+      _ => false,
+    }
+  }
+}
+
+/// Checks every tool `surfaces` need, once per binary, in surface order.
 ///
-/// Returns the whole per-tool outcome set rather than just a pass/fail bit,
-/// because `fml doctor --install`'s closing tally has to be reconciled
-/// against what this run actually did (#106).
-#[expect(
-  clippy::too_many_lines,
-  reason = "orchestrates tool installations, cache invalidation, and progress reporting"
-)]
+/// `filter` keeps a tool by its [`surfaces::ToolInfo`]; pass `|_| true` for
+/// all of them.
+///
+/// # Side Effects
+///
+/// Spawns each found tool once to probe its version.
 #[must_use]
-fn install_missing_tools_framed(
-  missing: &[surfaces::ToolInfo],
-  frame: table::Frame,
-) -> InstallRunReport {
-  if missing.is_empty() {
-    return InstallRunReport {
-      all_ok: true,
-      rows: Vec::new(),
-    };
-  }
-
-  let palette = table::Palette::detect();
-  println!(
-    "\n{}",
-    "Installing Missing / Stale Toolchains:".bold().cyan()
-  );
-  println!("{}", frame.dim_rule(&palette));
-
-  // Bootstrap cargo-binstall once, up front, if any tool here would prefer
-  // it and it isn't on PATH yet. Tools like typstyle have no real
-  // native package on any OS -- cargo-binstall (a prebuilt binary, fetched
-  // from the crate's GitHub releases) is their only non-source-compile
-  // install path everywhere, including Linux. Without this, a chain would
-  // silently skip past it (since `CargoBinstall::is_available()` is false)
-  // straight to the `cargo install --locked` source-compile fallback. It's
-  // also what lets a pin-carrying `CargoBinstall` entry win over an earlier
-  // *available* but unpinned installer (Homebrew's lagging `typstyle` bottle
-  // -- #102), which `tool_would_benefit_from_cargo_binstall_bootstrap` now
-  // detects.
-  //
-  // Known limitation: `ensure_cargo_binstall()` needs `cargo` on PATH to
-  // bootstrap, so a machine with a package manager but no Rust toolchain at
-  // all (e.g. Homebrew-only macOS) can't take this path -- for those the
-  // chain still resolves to the lagging system-package install and #102's
-  // spurious post-install `[WARN]` can still occur. Giving no-cargo hosts a
-  // real prebuilt install path is the broader question tracked in #104.
-  if !surfaces::has_cargo_binstall()
-    && missing.iter().any(|tool| {
-      surfaces::tool_would_benefit_from_cargo_binstall_bootstrap(tool.binary)
-    })
-  {
-    println!(
-      "\n  {} Bootstrapping {} (prebuilt-binary installer for cargo crates)...",
-      "[INSTALL]".cyan().bold(),
-      "cargo-binstall".bold()
-    );
-    if surfaces::ensure_cargo_binstall() {
-      println!("    {} cargo-binstall is ready", "[OK]  ".green().bold());
-    } else {
-      println!(
-        "    {} Could not bootstrap cargo-binstall (no cargo, no network, \
-         or the install script failed) -- tools that would have used it fall \
-         back to the next installer in their chain (a system package manager, \
-         or source-compiling with cargo).",
-        "[WARN]".yellow().bold()
-      );
-    }
-  }
-
-  let mut all_ok = true;
-  let mut summary_rows: Vec<InstallSummaryRow> = Vec::new();
-
-  for tool in missing {
-    if let Some((program, args)) = tool.get_auto_install_cmd() {
-      println!(
-        "\n  {} Installing {} via: {} {}",
-        "[INSTALL]".cyan().bold(),
-        tool.binary.bold(),
-        program.cyan(),
-        args.join(" ").cyan()
-      );
-
-      let mut cmd = surfaces::create_tool_command(&program);
-      cmd.args(&args);
-
-      match cmd.status() {
-        Ok(status) if status.success() => {
-          // The preflight scan that put this tool in `missing` already
-          // called `check_binary_exists(tool.binary)` and memoized the miss
-          // in `BINARY_CACHE` (`surfaces::tooling`). Evict that entry now
-          // that the install just succeeded, so every lookup for the rest
-          // of this process -- including the `Runner::run` pass that
-          // executes right after `install_missing_tools_framed` returns -- sees
-          // the binary on `PATH` instead of replaying the stale "not
-          // found" result and reporting a tool we just installed as still
-          // missing.
-          surfaces::forget_binary(tool.binary);
-
-          // Some installers place the binary in a directory this
-          // already-running process's `PATH` doesn't contain at all --
-          // scoop/winget register the new entry in the Windows registry,
-          // and `go install` writes into $GOBIN / $GOPATH/bin. Evicting
-          // BINARY_CACHE above isn't enough in those cases, since the
-          // underlying `PATH` string genuinely lacks the directory. A
-          // no-op for every other installer (npm/cargo/pipx/brew/...,
-          // which install alongside a package manager already on `PATH`).
-          surfaces::refresh_path_after_install(&program);
-
-          // Resolution guard: an exit code of 0 only proves the package
-          // manager ran to completion, never that the binary it produced is
-          // reachable from *this* process. `npm i -g prettier` exits 0 with
-          // npm's global bin directory absent from `PATH` (routine under
-          // nvm, a user-level npm prefix, or a container whose prefix was
-          // set after the shell started), and `refresh_path_after_install`
-          // is a deliberate no-op for npm. Claiming `[OK]` there would make
-          // the doctor footer count a tool as installed that the very next
-          // `fml fmt` reports missing -- so ask the same question the scan
-          // asks, once, before any row is emitted.
-          let on_path = tool_is_on_path(tool.binary);
-
-          // Convergence guard: nor does that exit code prove the binary
-          // reports the pinned version — re-probe and warn (once, this
-          // invocation) rather than silently claiming success on a tool
-          // that would still show `[STALE]` on the very next `fml doctor`.
-          // This can only fire for a legitimately misconfigured pin now (an
-          // `expected_binary_version` that doesn't actually match what gets
-          // installed) -- see `surfaces::tooling::ToolChain`'s doc comment
-          // for why most tools deliberately opt out of the pin comparison
-          // entirely rather than risk exactly this. Skipped entirely when
-          // the binary isn't resolvable: there is nothing to probe, and an
-          // unpinned tool must not pay for a probe it never needed.
-          let expected = if on_path {
-            surfaces::pinned_version_for(tool.binary)
-          } else {
-            None
-          };
-          let actual = expected
-            .as_ref()
-            .and_then(|_| version::probe_tool_version(tool.binary));
-
-          match classify_install_outcome(
-            on_path,
-            expected.as_ref(),
-            actual.as_ref(),
-          ) {
-            InstallOutcome::Ok => {
-              let detail = expected.map(|v| v.to_string()).unwrap_or_default();
-              if detail.is_empty() {
-                println!(
-                  "    {} Successfully installed {}",
-                  "[OK]  ".green().bold(),
-                  tool.binary.bold()
-                );
-              } else {
-                println!(
-                  "    {} Successfully installed {} ({detail})",
-                  "[OK]  ".green().bold(),
-                  tool.binary.bold()
-                );
-              }
-              summary_rows.push(InstallSummaryRow {
-                binary: tool.binary,
-                installer: program.clone(),
-                outcome: InstallOutcome::Ok,
-                detail,
-              });
-            }
-            InstallOutcome::Warn => {
-              let actual_str = actual.map_or_else(
-                || "an unparseable version".to_string(),
-                |v| v.to_string(),
-              );
-              let expected_str =
-                expected.map(|v| v.to_string()).unwrap_or_default();
-              println!(
-                "    {} Installed {}, but it still reports {actual_str} \
-                 (expected {expected_str}) -- the pin for this tool may not \
-                 match what the binary itself reports; not retrying \
-                 automatically.",
-                "[WARN]".yellow().bold(),
-                tool.binary.bold()
-              );
-              all_ok = false;
-              summary_rows.push(InstallSummaryRow {
-                binary: tool.binary,
-                installer: program.clone(),
-                outcome: InstallOutcome::Warn,
-                detail: format!(
-                  "reports {actual_str}, expected {expected_str}"
-                ),
-              });
-            }
-            outcome @ InstallOutcome::NotOnPath => {
-              println!(
-                "    {} {} reported success, but {} is still not on PATH -- \
-                 the installer most likely wrote it to a directory this \
-                 shell's PATH doesn't contain. Reopen your shell (or add \
-                 that directory to PATH) and re-run; treating it as \
-                 installed here would only move the failure to the next \
-                 command.",
-                "[FAIL]".red().bold(),
-                program.bold(),
-                tool.binary.bold()
-              );
-              all_ok = false;
-              summary_rows.push(InstallSummaryRow {
-                binary: tool.binary,
-                installer: program.clone(),
-                outcome,
-                detail: format!("{program} exited 0, but it is not on PATH"),
-              });
-            }
-            // `classify_install_outcome` only ever returns the three above:
-            // these two describe an install command that failed or never
-            // ran, which this arm has already ruled out.
-            InstallOutcome::Fail | InstallOutcome::NoInstaller => {}
-          }
-        }
-        Ok(status) => {
-          println!(
-            "    {} Failed to install {} (exit code: {})",
-            "[FAIL]".red().bold(),
-            tool.binary.bold(),
-            status.code().unwrap_or(1)
-          );
-          all_ok = false;
-          summary_rows.push(InstallSummaryRow {
-            binary: tool.binary,
-            installer: program.clone(),
-            outcome: InstallOutcome::Fail,
-            detail: format!("exit code {}", status.code().unwrap_or(1)),
-          });
-        }
-        Err(e) => {
-          println!(
-            "    {} Error running {}: {}",
-            "[ERR] ".red().bold(),
-            program,
-            e
-          );
-          all_ok = false;
-          summary_rows.push(InstallSummaryRow {
-            binary: tool.binary,
-            installer: program.clone(),
-            outcome: InstallOutcome::Fail,
-            detail: e.to_string(),
-          });
-        }
-      }
-    } else {
-      let install_hint = tool.effective_install_hint();
-      println!(
-        "\n  {} {}\n    Manual install: {}",
-        "[MISS]".yellow().bold(),
-        miss_headline(tool.binary, std::env::consts::OS),
-        install_hint
-      );
-      all_ok = false;
-      summary_rows.push(InstallSummaryRow {
-        binary: tool.binary,
-        installer: "-".to_string(),
-        outcome: InstallOutcome::NoInstaller,
-        detail: install_hint,
-      });
-    }
-  }
-
-  // Close the live-progress block, then the Install Summary renders as its
-  // own framed section below it.
-  println!("{}", frame.dim_rule(&palette));
-  print_install_summary_table(&summary_rows, frame);
-
-  InstallRunReport {
-    all_ok,
-    rows: summary_rows,
-  }
-}
-
-/// What one [`install_missing_tools_framed`] run did, for a caller that needs
-/// more than the pass/fail bit — specifically `fml doctor --install`, whose
-/// closing tally is reconciled against these per-tool outcomes rather than by
-/// re-probing every tool a second time (#106). Carries the very rows the
-/// Install Summary table was rendered from, so the tally and that table can
-/// never disagree: there is only one source of truth for both.
-struct InstallRunReport {
-  /// `true` iff every attempted tool installed cleanly.
-  all_ok: bool,
-  /// One entry per tool this run attempted, in attempt order.
-  rows: Vec<InstallSummaryRow>,
-}
-
-/// One row of the recap table [`print_install_summary_table`] renders after
-/// every tool in a `--install` run has been attempted. Kept separate from
-/// the live `[INSTALL]`/`[OK]`/`[FAIL]` lines printed during the loop above
-/// -- those are progress output for a run that can take minutes (source
-/// compiles included), this is the "what actually happened, at a glance"
-/// recap once it's done, the same relationship `fml doctor`'s own scan
-/// table has to its live tool-by-tool output.
-struct InstallSummaryRow {
-  binary: &'static str,
-  installer: String,
-  outcome: InstallOutcome,
-  detail: String,
-}
-
-/// Outcome of one tool's install attempt, for [`InstallSummaryRow`].
-///
-/// `PartialEq`/`Debug` exist so [`classify_install_outcome`]'s decision table
-/// can be asserted directly in tests, rather than inferred from rendered
-/// output.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-enum InstallOutcome {
-  /// Installed and (where a pin exists) confirmed at the expected version.
-  Ok,
-  /// Installed, but the convergence guard above found its reported version
-  /// didn't match the pin.
-  Warn,
-  /// The installer exited 0, but the binary it claims to have installed is
-  /// still not resolvable on `PATH` — so nothing in this process (or the
-  /// next command the user runs) can actually invoke it.
-  NotOnPath,
-  /// The installer command ran and failed, or failed to run at all.
-  Fail,
-  /// No installer chain entry was available at all -- manual install only.
-  NoInstaller,
-}
-
-/// Says why `binary` got no install command on `os` (a
-/// [`std::env::consts::OS`] value): no step of its install chain can run
-/// there (`gofmt` has no chain, it ships with Go; `checkstyle` has only
-/// `brew` and `apt` steps, so none on Windows), or some step can and its
-/// package manager is not on `PATH`.
-fn miss_headline(binary: &str, os: &str) -> String {
-  let has_path = surfaces::install_chain_for(binary)
-    .is_some_and(|chain| chain.iter().any(|method| method.runs_on(os)));
-  if has_path {
-    format!("No automatic package manager found for {}.", binary.bold())
-  } else {
-    format!("fml has no install path for {} on this OS.", binary.bold())
-  }
-}
-
-/// Decide what a successful install *command* actually accomplished, from
-/// the two facts the install site has just established: whether the binary
-/// now resolves on `PATH`, and — for a pinned tool only — what version it
-/// reports.
-///
-/// Split out as a pure function so the case this exists for is unit-testable
-/// without spawning a package manager: an installer that exits 0 while the
-/// binary never lands on `PATH` must not be reported as installed (#106).
-/// `PATH` resolution is checked first and unconditionally, because a tool
-/// that cannot be invoked is not "installed at the wrong version", it is
-/// absent — and unpinned tools (most of them, per
-/// `surfaces::tooling::ToolChain`) would otherwise have no post-install
-/// verification at all.
-fn classify_install_outcome(
-  on_path: bool,
-  expected: Option<&version::Version>,
-  probed: Option<&version::Version>,
-) -> InstallOutcome {
-  if !on_path {
-    return InstallOutcome::NotOnPath;
-  }
-  match expected {
-    Some(expected) if probed != Some(expected) => InstallOutcome::Warn,
-    _ => InstallOutcome::Ok,
-  }
-}
-
-/// Renders and prints the post-install recap table as a framed section, using
-/// the caller's `frame` so its rule matches the rest of the command's output:
-/// one row per tool this `install_missing_tools_framed` call attempted, its
-/// installer, and the outcome. A no-op if `rows` is empty.
-fn print_install_summary_table(
-  rows: &[InstallSummaryRow],
-  frame: table::Frame,
-) {
-  if rows.is_empty() {
-    return;
-  }
-
-  let mut table = table::Table::new(vec![
-    table::Column::new(table::Cell::text(""))
-      .width(table::WidthPolicy::Fixed(10)),
-    table::Column::new(table::Cell::text(""))
-      .width(table::WidthPolicy::Fixed(20)),
-    table::Column::new(table::Cell::text(""))
-      .width(table::WidthPolicy::Fixed(14)),
-    table::Column::new(table::Cell::text("")).width(table::WidthPolicy::Auto),
-  ])
-  .layout(
-    table::Layout::compact()
-      .indent(2)
-      .padding(0, 1)
-      .max_width(80),
-  );
-
-  for row in rows {
-    let (label, style) = match row.outcome {
-      InstallOutcome::Ok => ("[OK]  ", table::Style::Ok),
-      InstallOutcome::Warn => ("[WARN]", table::Style::Warn),
-      // Renders like a failure because that is what it is from the caller's
-      // side: the tool is not usable. The `detail` column carries the
-      // distinction (installer exited 0) that the label can't.
-      InstallOutcome::NotOnPath | InstallOutcome::Fail => {
-        ("[FAIL]", table::Style::Error)
-      }
-      InstallOutcome::NoInstaller => ("[MISS]", table::Style::Warn),
-    };
-    table.add_row(table::Row::new(vec![
-      table::Cell::styled(label, style),
-      table::Cell::styled(row.binary, table::Style::Tool),
-      table::Cell::styled(row.installer.as_str(), table::Style::Dim),
-      table::Cell::styled(row.detail.as_str(), table::Style::Dim),
-    ]));
-  }
-
-  let palette = table::Palette::detect();
-  let rendered = table::render(&table, &palette);
-  println!(
-    "\n{}",
-    frame.section(
-      &"Install Summary:".bold().cyan().to_string(),
-      &rendered,
-      &palette,
-    )
-  );
-}
-
-/// Preflight check for `fml fmt`, `fml lint`, and `fml fix`: scans all
-/// required tools for the active target surfaces and emits a non-blocking
-/// warning to stderr if any tool is present but `ToolStatus::Stale`
-/// relative to its pinned version.
-pub fn preflight_warn_stale_tools(
-  surfaces: &[Box<dyn LanguageSurface>],
+pub fn check(
+  surfaces: &[Box<dyn surfaces::LanguageSurface>],
   config: &config::FormalityConfig,
-  for_fmt: bool,
-  for_lint: bool,
-) {
-  for (tool, lookup) in required_tools(surfaces, config, for_fmt, for_lint) {
-    if lookup.is_installed
-      && let Some(version::ToolStatus::Stale { current, pinned }) =
-        lookup.status.as_ref()
-    {
-      let warning = format_stale_tool_warning(tool.binary, current, pinned);
-      eprintln!("{} {warning}", "[WARN]".yellow().bold());
-    }
-  }
-}
-
-/// Collects the deduplicated set of tools that `surfaces` requires for the
-/// given actions (format and/or lint), each paired with its resolved
-/// [`ToolLookupResult`], for [`preflight_warn_stale_tools`].
-fn required_tools(
-  surfaces: &[Box<dyn LanguageSurface>],
-  config: &config::FormalityConfig,
-  for_fmt: bool,
-  for_lint: bool,
-) -> Vec<(surfaces::ToolInfo, ToolLookupResult)> {
-  let mut seen: collections::HashSet<&'static str> =
-    collections::HashSet::new();
-  let mut result = Vec::new();
+  filter: impl Fn(&surfaces::ToolInfo) -> bool,
+) -> Vec<Check> {
   let global = config.resolve_global();
-
+  let mut seen = collections::HashSet::new();
+  let mut checks = Vec::new();
   for surface in surfaces {
     let resolved = config.resolve_for_lang_with_global(surface.name(), &global);
     for tool in surface.tool_info(&resolved) {
-      if seen.contains(tool.binary) {
+      if !filter(&tool) || !seen.insert(tool.binary) {
         continue;
       }
-      let needed = (for_fmt && tool.is_required_for_fmt)
-        || (for_lint && tool.is_required_for_lint);
-      if !needed {
-        continue;
-      }
-      seen.insert(tool.binary);
-
-      let lookup = lookup_tool_info(tool.binary);
-      result.push((tool, lookup));
+      let (path, status) = probe(tool.binary);
+      checks.push(Check {
+        surface: surface.name(),
+        tool,
+        path,
+        status,
+      });
     }
   }
-
-  result
-}
-
-/// Formats a preflight warning message for a tool whose installed version is
-/// stale relative to its pinned version.
-#[must_use]
-pub fn format_stale_tool_warning(
-  binary: &str,
-  current: &version::Version,
-  pinned: &version::Version,
-) -> String {
-  format!(
-    "tool '{binary}' is stale (v{current} != pinned v{pinned}); run 'fml doctor --install' to update"
-  )
-}
-
-/// Formats a version info string for a doctor table row, appending `— reported <raw>`
-/// whenever the raw banner version differs from the normalized version.
-#[must_use]
-pub(crate) fn format_version_details(
-  current: &version::Version,
-  detail: Option<&str>,
-  raw_banner: Option<&str>,
-) -> String {
-  let raw_reported =
-    version::reported_raw_version_if_differing(current, raw_banner);
-  let raw_suffix = match raw_reported {
-    Some(r) => format!(" — reported {r}"),
-    None => String::new(),
-  };
-  match detail {
-    Some(d) => format!(" (v{current} {d}{raw_suffix})"),
-    None => format!(" (v{current}{raw_suffix})"),
-  }
-}
-
-/// Result of probing system installation and compatibility for a tool binary.
-pub struct ToolLookupResult {
-  /// Whether the binary was found on system PATH.
-  pub is_installed: bool,
-  /// Path to the binary executable if found.
-  pub path: Option<String>,
-  /// Raw version output string from `--version`.
-  pub raw_version: Option<String>,
-  /// Parsed semver version structure.
-  pub parsed_version: Option<version::Version>,
-  /// Combined status relative to the MSTV floor and the exact version pin
-  /// (`None` when neither is registered for this tool).
-  pub status: Option<version::ToolStatus>,
-}
-
-#[cfg(test)]
-thread_local! {
-  /// The surfaces the last [`run_doctor`] on this thread detected, so a test
-  /// can check detection at its real call site.
-  static LAST_DETECTED: std::cell::RefCell<Vec<&'static str>> =
-    const { std::cell::RefCell::new(Vec::new()) };
-}
-
-/// Executes the doctor diagnostic pipeline to scan tools, environment, and hygiene.
-#[must_use]
-pub fn run(
-  root: &path::Path,
-  show_all: bool,
-  install: bool,
-  config: &config::FormalityConfig,
-) -> errors::ExitStatus {
-  // One walk at most, shared by detection, the table's detected column
-  // and the unconfigured-languages note. `global.exclude` applies, so the
-  // detected column agrees with what `fml fmt` runs.
-  let present = std::cell::LazyCell::new(|| {
-    surfaces::glob::PresentExtensions::scan(
-      root,
-      &config.resolve_global().exclude,
-    )
-  });
-  let detected =
-    surfaces::default_registry().detect_surfaces_in(root, config, &present);
-  #[cfg(test)]
-  LAST_DETECTED.set(detected.iter().map(|s| s.name()).collect());
-  let detected_names: collections::HashSet<&'static str> =
-    detected.iter().map(|s| s.name()).collect();
-  let surfaces: Vec<Box<dyn LanguageSurface>> =
-    if show_all || detected.is_empty() {
-      surfaces::all_surfaces()
-    } else {
-      detected
-    };
-
-  let scan = scan_tools_and_build_table(
-    root,
-    &surfaces,
-    &detected_names,
-    &present,
-    config,
-  );
-
-  let palette = table::Palette::detect();
-  let rendered_table = table::render(&scan.table, &palette);
-  let frame = table::Frame::for_body(&rendered_table);
-
-  let title = format!(
-    "{} {}",
-    "fml doctor".bold().cyan(),
-    if show_all {
-      "(all surfaces)".dimmed()
-    } else {
-      "(active surfaces)".dimmed()
-    }
-  );
-  println!("{}", frame.section(&title, &rendered_table, &palette));
-
-  // Check for unconfigured surfaces if explicit `languages` is set
-  print_unconfigured_languages(root, config, &present, frame, &palette);
-
-  // Virtual Environment status
-  print_virtualenv_status(root, &surfaces, show_all, frame, &palette);
-
-  // .gitignore Cache Hygiene Check
-  print_gitignore_hygiene(root, &surfaces, frame, &palette);
-
-  // Auto-install mode. Genuinely `[MISS]`ing tools and `[STALE]` tools whose
-  // selected installer carries a matching pin are reinstalled. If a stale tool's
-  // selected installer cannot pin to `expected_binary_version`, reinstall is
-  // skipped and explained (#11).
-  let mut to_install: Vec<surfaces::ToolInfo> = scan.missing.clone();
-  let mut unpinnable_stale_tools: Vec<(
-    surfaces::ToolInfo,
-    version::Version,
-    version::Version,
-  )> = Vec::new();
-
-  for tool in &scan.stale {
-    let expected = surfaces::pinned_version_for(tool.binary);
-    let selected_pin = surfaces::selected_pinned_version_for(tool.binary);
-    if let Some(ref exp) = expected {
-      if selected_pin.as_ref() == Some(exp) {
-        to_install.push(tool.clone());
-      } else {
-        let current = version::probe_tool_version(tool.binary)
-          .unwrap_or_else(|| version::Version::new(0, 0, 0));
-        unpinnable_stale_tools.push((tool.clone(), current, exp.clone()));
-      }
-    }
-  }
-
-  // Stale tools with unpinnable installers notice
-  print_stale_unpinnable_warnings(&unpinnable_stale_tools, frame, &palette);
-
-  // `fml sync` optionality notice — always prints, so its closing rule is the
-  // divider above the summary line below.
-  print_sync_notice(frame, &palette);
-
-  // The closing tally is a value derived from the scan *and then* updated by
-  // the install run below — never read back off `scan` again. Keeping it in
-  // its own binding is what makes the ordering structural rather than a
-  // comment: an install that happens after this point still has somewhere to
-  // record itself, whereas the previous code rendered straight from the
-  // pre-install snapshot and could only ever contradict the Install Summary
-  // table printed a few lines above it (#106).
-  let mut tally = ToolTally::from_scan(&scan);
-
-  let mut install_failed = false;
-  if install && !to_install.is_empty() {
-    let report = install_missing_tools_framed(&to_install, frame);
-    install_failed = !report.all_ok;
-    tally.apply_install_run(&report);
-  }
-
-  println!("{}\n", tally.render(!to_install.is_empty() && !install));
-
-  if (tally.missing.is_empty() || install) && !install_failed {
-    errors::ExitStatus::Clean
-  } else {
-    errors::ExitStatus::Error
-  }
+  checks
 }
 
 /// Whether a subprocess invocation's result indicates the tool actually ran
 /// and exited successfully — as opposed to merely existing on disk. Split
 /// out from [`clippy_probe_succeeds`] so the success decision is
-/// unit-testable without spawning any subprocess at all (see `tests.rs`).
-#[must_use]
-fn command_ran_successfully(
-  result: &std::io::Result<std::process::Output>,
-) -> bool {
+/// unit-testable without spawning any subprocess at all.
+fn command_ran_successfully(result: &io::Result<std::process::Output>) -> bool {
   matches!(result, Ok(output) if output.status.success())
 }
 
 /// Whether the `clippy` component is actually installed and functional, by
 /// invoking `<driver_bin> --version` and falling back to
-/// `<cargo_bin> clippy --version` (mirroring `get_raw_tool_version`'s own
-/// clippy fallback) — a bare `which` presence check is not enough, because
-/// `clippy-driver` is a rustup shim that exists on disk whenever rustup is
-/// installed, regardless of whether the `clippy` component itself is (see
-/// #192 [pre-recreation]). Parameterized over the binary names so tests can substitute a
-/// real stand-in binary (e.g. `false`) for a broken shim without mutating
-/// `PATH`.
-#[must_use]
+/// `<cargo_bin> clippy --version` — a bare `which` presence check is not
+/// enough, because `clippy-driver` is a rustup shim that exists on disk
+/// whenever rustup is installed, regardless of whether the `clippy` component
+/// itself is (#192 [pre-recreation]). Parameterized over the binary names so
+/// tests can substitute a stand-in binary for a broken shim.
 fn clippy_probe_succeeds(driver_bin: &str, cargo_bin: &str) -> bool {
   command_ran_successfully(
-    &surfaces::create_tool_command(driver_bin)
+    &tooling::create_tool_command(driver_bin)
       .arg("--version")
       .output(),
   ) || command_ran_successfully(
-    &surfaces::create_tool_command(cargo_bin)
+    &tooling::create_tool_command(cargo_bin)
       .args(["clippy", "--version"])
       .output(),
   )
 }
 
-/// Whether `binary` is reachable from this process right now.
+/// Returns whether `binary` is reachable from this process right now.
 ///
-/// The single predicate for "is this tool present": both the scan that fills
-/// the doctor table ([`lookup_tool_info`]) and the post-install check in
-/// [`install_missing_tools_framed`] go through here, so the table, the
-/// Install Summary and the closing tally cannot disagree about what
-/// "installed" means (#106). [`check_binary_exists`] is a memoized
-/// `which::which` — a filesystem lookup, no process spawn — so asking it
-/// again after an install costs nothing and is not a second round of version
-/// probes. (A cache miss for a Go-installed binary can spawn `go env` once,
-/// as the lookup-time fallback for `$GOBIN`/`$GOPATH/bin` -- see
-/// `surfaces::tooling::resolve_via_known_install_dir` -- but that result is
-/// memoized in the same `BINARY_CACHE` too, so it still costs nothing on
-/// the second ask.)
-fn tool_is_on_path(binary: &str) -> bool {
-  // The rust surface (and `probe_tool_version`/`get_raw_tool_version`
-  // elsewhere in this crate) register/accept the clippy tool under any of
-  // these three names — match all of them, not just the literal `"clippy"`
-  // that production code never actually passes (`src/surfaces/rust.rs`
-  // registers it as `"clippy-driver"`).
+/// The single predicate for "is this tool present", shared by [`check`] and
+/// [`install`]'s post-install verification so they cannot disagree (#106).
+/// Clippy is registered under three names and is probed by running it.
+#[must_use]
+pub fn on_path(binary: &str) -> bool {
   if matches!(binary, "clippy" | "clippy-driver" | "cargo-clippy") {
     clippy_probe_succeeds("clippy-driver", "cargo")
   } else {
-    surfaces::check_binary_exists(binary)
+    tooling::check_binary_exists(binary)
   }
 }
 
-fn lookup_tool_info(binary: &'static str) -> ToolLookupResult {
-  if tool_is_on_path(binary) {
-    let path = which::which(binary)
-      .or_else(|_| which::which("clippy-driver"))
-      .or_else(|_| which::which("cargo"))
-      .ok()
-      .map(|p| p.display().to_string());
-    let raw_version = version::get_raw_tool_version(binary);
-    let parsed_version = raw_version
-      .as_deref()
-      .and_then(|raw| version::normalize_probed_version(binary, raw));
-    let mstv = version::minimum_supported_tool_version(binary);
-    let pinned = surfaces::pinned_version_for(binary);
-    // Only fabricate a status when there's an actual floor or pin to check
-    // against — a tool with neither (no MSTV entry, no known pin) keeps the
-    // prior behavior of `status: None`, rendered as a plain `[READY]` by
-    // `scan_tools_and_build_table`'s catch-all arm.
-    let status = match parsed_version.clone() {
-      Some(curr) => Some(version::evaluate_tool_status(
-        Some(curr),
-        raw_version.clone(),
-        mstv.as_ref(),
-        pinned.as_ref(),
-      )),
-      None => Some(version::ToolStatus::UnknownVersion(
-        raw_version.clone().unwrap_or_default(),
-      )),
-    };
-
-    ToolLookupResult {
-      is_installed: true,
-      path,
-      raw_version,
-      parsed_version,
-      status,
-    }
-  } else {
-    ToolLookupResult {
-      is_installed: false,
-      path: None,
-      raw_version: None,
-      parsed_version: None,
-      status: Some(version::ToolStatus::NotFound),
-    }
+/// Probes `binary` for its resolved path and its status against the MSTV
+/// floor and the pin.
+fn probe(binary: &'static str) -> (Option<path::PathBuf>, version::ToolStatus) {
+  if !on_path(binary) {
+    return (None, version::ToolStatus::NotFound);
   }
-}
-
-struct DoctorScanResult {
-  table: table::Table,
-  missing: Vec<surfaces::ToolInfo>,
-  installed: collections::HashSet<&'static str>,
-  outdated: collections::HashSet<&'static str>,
-  stale: Vec<surfaces::ToolInfo>,
-  unknown: collections::HashSet<&'static str>,
-}
-
-/// The counts `fml doctor` closes with ("`8 installed (1 unknown), 0
-/// missing`"), held apart from [`DoctorScanResult`] on purpose.
-///
-/// The scan is a snapshot of the world *before* `--install` runs; this is the
-/// running tally the footer is actually rendered from, so a successful
-/// install has a place to land. Rendering the footer directly off the scan is
-/// what made `fml doctor --install` report tools as missing in the same breath as the
-/// Install Summary table listing them `[OK]` (#106) — the counts were
-/// structurally the pre-install snapshot and could not have been anything
-/// else.
-///
-/// The three buckets `--install` moves tools between (`installed`, `stale`,
-/// `missing`) stay as name sets so reconciliation can be idempotent;
-/// `outdated` and `unknown` collapse to their pre-install counts, since
-/// neither is what `--install` fixes. That collapse is a deliberate
-/// approximation, not an invariant: a tool installed this run whose version
-/// turns out to be unprobeable would ideally join `unknown`, and does not —
-/// it is counted plainly as installed. #106's stated expected output matches
-/// that, so it stays; anything that later needs `unknown` to be exact must
-/// widen it back to a name set rather than assume an install cannot touch it.
-struct ToolTally {
-  installed: collections::HashSet<&'static str>,
-  outdated: usize,
-  stale: collections::HashSet<&'static str>,
-  unknown: usize,
-  missing: collections::HashSet<&'static str>,
-}
-
-impl ToolTally {
-  /// The pre-install tally, straight off the scan.
-  fn from_scan(scan: &DoctorScanResult) -> Self {
-    Self {
-      installed: scan.installed.clone(),
-      outdated: scan.outdated.len(),
-      stale: scan.stale.iter().map(|tool| tool.binary).collect(),
-      unknown: scan.unknown.len(),
-      missing: scan.missing.iter().map(|tool| tool.binary).collect(),
-    }
-  }
-
-  /// Fold one install run's per-tool outcomes into the tally, so the footer
-  /// agrees with the Install Summary table rendered from those same rows
-  /// (#106). Driven by the outcomes that table already computed — no second
-  /// round of version probes.
-  ///
-  /// Only the tools that actually landed on `PATH` move: a `[FAIL]` or
-  /// `[MISS]` row leaves the tally alone, so a tool that could not be
-  /// installed stays counted as missing. A reinstalled `[STALE]` tool was
-  /// already present and therefore already in `installed`, so dropping it
-  /// from `stale` is the whole change — the `insert` is idempotent and never
-  /// double-counts.
-  fn apply_install_run(&mut self, report: &InstallRunReport) {
-    for row in &report.rows {
-      match row.outcome {
-        InstallOutcome::Ok => {
-          self.missing.remove(row.binary);
-          self.stale.remove(row.binary);
-          self.installed.insert(row.binary);
-        }
-        // Installed, and confirmed resolvable on `PATH` by the same
-        // predicate this scan used — so it stops being missing. But
-        // "present at the wrong version" is exactly what `[STALE]` means,
-        // so it lands there rather than being quietly counted as a clean
-        // install.
-        InstallOutcome::Warn => {
-          self.missing.remove(row.binary);
-          self.installed.insert(row.binary);
-          self.stale.insert(row.binary);
-        }
-        // `NotOnPath` is an installer that exited 0 without producing a
-        // usable binary: the tool stays counted as missing, matching the
-        // `[FAIL]` row the Install Summary printed for it.
-        InstallOutcome::NotOnPath
-        | InstallOutcome::Fail
-        | InstallOutcome::NoInstaller => {}
-      }
-    }
-  }
-
-  /// The footer line itself. `offer_install_hint` appends the "run
-  /// 'fml doctor --install'" nudge, which only makes sense on a run that found work to
-  /// do and wasn't already `--install`.
-  fn render(&self, offer_install_hint: bool) -> String {
-    let qualifier = |count: usize, label: &str| {
-      if count == 0 {
-        String::new()
-      } else {
-        format!(" ({count} {label})").yellow().to_string()
-      }
-    };
-
-    let counts = format!(
-      "  {} installed{}{}{}, {} missing",
-      self.installed.len().to_string().green().bold(),
-      qualifier(self.outdated, "outdated"),
-      qualifier(self.stale.len(), "stale"),
-      qualifier(self.unknown, "unknown"),
-      if self.missing.is_empty() {
-        "0".green().bold().to_string()
-      } else {
-        self.missing.len().to_string().yellow().bold().to_string()
-      },
-    );
-
-    if offer_install_hint {
-      format!(
-        "{counts}\n  {}",
-        "(run 'fml doctor --install' to install missing/stale tools)".dimmed()
-      )
-    } else {
-      counts
-    }
-  }
-}
-
-/// Builds the doctor table for `surfaces`. `detected_names` is the
-/// registry's detection result; only a surface outside the registry forces
-/// `present` for its own `detect`.
-#[expect(
-  clippy::too_many_lines,
-  reason = "scans toolchains across surfaces and builds diagnostic status table"
-)]
-fn scan_tools_and_build_table(
-  root: &path::Path,
-  surfaces: &[Box<dyn LanguageSurface>],
-  detected_names: &collections::HashSet<&'static str>,
-  present: &std::cell::LazyCell<
-    surfaces::glob::PresentExtensions,
-    impl FnOnce() -> surfaces::glob::PresentExtensions,
-  >,
-  config: &config::FormalityConfig,
-) -> DoctorScanResult {
-  let mut cache: collections::HashMap<&'static str, ToolLookupResult> =
-    collections::HashMap::new();
-  let mut missing_unique_tools: Vec<surfaces::ToolInfo> = Vec::new();
-  let mut installed_unique_tools = collections::HashSet::new();
-  let mut outdated_unique_tools = collections::HashSet::new();
-  // Tools that are present and executable, but whose installed version
-  // doesn't match the exact pin `fml doctor --install` would install — [`ToolStatus::
-  // Stale`]. Kept as a `Vec<ToolInfo>` (not just a name set, like
-  // `installed_unique_tools`/`outdated_unique_tools`) because `fml doctor --install`
-  // needs the full `ToolInfo` to reinstall it, same as `missing_unique_tools`.
-  let mut stale_unique_tools: Vec<surfaces::ToolInfo> = Vec::new();
-  let mut unknown_unique_tools = collections::HashSet::new();
-  let global = config.resolve_global();
-
-  let mut doctor_table = table::Table::new(vec![
-    table::Column::new(table::Cell::text(""))
-      .width(table::WidthPolicy::Fixed(10)),
-    table::Column::new(table::Cell::text(""))
-      .width(table::WidthPolicy::Fixed(20)),
-    table::Column::new(table::Cell::text(""))
-      .width(table::WidthPolicy::Fixed(11)),
-    table::Column::new(table::Cell::text(""))
-      .width(table::WidthPolicy::Fixed(11)),
-    table::Column::new(table::Cell::text("")).width(table::WidthPolicy::Auto),
-  ])
-  .layout(
-    table::Layout::compact()
-      .indent(2)
-      .padding(0, 1)
-      .max_width(80),
-  );
-
-  for surface in surfaces {
-    let is_detected = detected_names.contains(surface.name())
-      || (surfaces::default_registry()
-        .get_surface_by_name(surface.name())
-        .is_none()
-        && surface.detect(root, present));
-    let detected_cell = if is_detected {
-      table::Cell::styled("detected", table::Style::Ok)
-    } else {
-      table::Cell::styled("undetected", table::Style::Dim)
-    };
-
-    let resolved = config.resolve_for_lang_with_global(surface.name(), &global);
-    let tools = surface.tool_info(&resolved);
-
-    for tool in tools {
-      let lookup = cache
-        .entry(tool.binary)
-        .or_insert_with(|| lookup_tool_info(tool.binary));
-
-      if lookup.is_installed {
-        if installed_unique_tools.insert(tool.binary) {
-          // A single path value — use the component-wise helper, not the
-          // free-text scanner.
-          let path_rel = lookup
-            .path
-            .as_deref()
-            .map(|p| paths::display_path(root, path::Path::new(p)))
-            .unwrap_or_default();
-          let path_str = path_rel.as_str();
-          match &lookup.status {
-            Some(version::ToolStatus::Outdated { current, minimum }) => {
-              outdated_unique_tools.insert(tool.binary);
-              let v_info = format_version_details(
-                current,
-                Some(&format!("< MSTV v{minimum}")),
-                lookup.raw_version.as_deref(),
-              );
-              let row = table::Row::new(vec![
-                table::Cell::styled("[WARN] ", table::Style::Warn),
-                table::Cell::styled(tool.binary, table::Style::Warn),
-                table::Cell::styled(surface.name(), table::Style::Dim),
-                detected_cell.clone(),
-                table::Cell::new(vec![
-                  table::Span::styled(path_str, table::Style::Dim),
-                  table::Span::styled(v_info, table::Style::Warn),
-                ]),
-              ]);
-              doctor_table.add_row(row);
-            }
-            Some(version::ToolStatus::Stale { current, pinned }) => {
-              if !stale_unique_tools.iter().any(|t| t.binary == tool.binary) {
-                stale_unique_tools.push(tool.clone());
-              }
-              let v_info = format_version_details(
-                current,
-                Some(&format!("!= pinned v{pinned}")),
-                lookup.raw_version.as_deref(),
-              );
-              let row = table::Row::new(vec![
-                table::Cell::styled("[STALE]", table::Style::Warn),
-                table::Cell::styled(tool.binary, table::Style::Warn),
-                table::Cell::styled(surface.name(), table::Style::Dim),
-                detected_cell.clone(),
-                table::Cell::new(vec![
-                  table::Span::styled(path_str, table::Style::Dim),
-                  table::Span::styled(v_info, table::Style::Warn),
-                ]),
-              ]);
-              doctor_table.add_row(row);
-            }
-            Some(version::ToolStatus::Compatible { current, .. }) => {
-              let v_info = format_version_details(
-                current,
-                None,
-                lookup.raw_version.as_deref(),
-              );
-              let row = table::Row::new(vec![
-                table::Cell::styled("[READY]", table::Style::Ok),
-                table::Cell::styled(tool.binary, table::Style::Tool),
-                table::Cell::styled(surface.name(), table::Style::Dim),
-                detected_cell.clone(),
-                table::Cell::new(vec![
-                  table::Span::styled(path_str, table::Style::Dim),
-                  table::Span::styled(v_info, table::Style::Info),
-                ]),
-              ]);
-              doctor_table.add_row(row);
-            }
-            Some(version::ToolStatus::UnknownVersion(raw)) => {
-              unknown_unique_tools.insert(tool.binary);
-              let v_info = if raw.trim().is_empty() {
-                " (version unprobeable)".to_string()
-              } else {
-                format!(" ({})", raw.trim())
-              };
-              let row = table::Row::new(vec![
-                table::Cell::styled("[UNKNOWN]", table::Style::Warn),
-                table::Cell::styled(tool.binary, table::Style::Warn),
-                table::Cell::styled(surface.name(), table::Style::Dim),
-                detected_cell.clone(),
-                table::Cell::new(vec![
-                  table::Span::styled(path_str, table::Style::Dim),
-                  table::Span::styled(v_info, table::Style::Warn),
-                ]),
-              ]);
-              doctor_table.add_row(row);
-            }
-            _ => {
-              let v_info = if let Some(ref v) = lookup.parsed_version {
-                format_version_details(v, None, lookup.raw_version.as_deref())
-              } else if let Some(ref v) = lookup.raw_version {
-                format!(" ({})", v.trim())
-              } else {
-                String::new()
-              };
-              let row = table::Row::new(vec![
-                table::Cell::styled("[READY]", table::Style::Ok),
-                table::Cell::styled(tool.binary, table::Style::Tool),
-                table::Cell::styled(surface.name(), table::Style::Dim),
-                detected_cell.clone(),
-                table::Cell::new(vec![
-                  table::Span::styled(path_str, table::Style::Dim),
-                  table::Span::styled(v_info, table::Style::Info),
-                ]),
-              ]);
-              doctor_table.add_row(row);
-            }
-          }
-        }
-      } else if !missing_unique_tools.iter().any(|t| t.binary == tool.binary) {
-        missing_unique_tools.push(tool.clone());
-
-        let row = table::Row::new(vec![
-          table::Cell::styled("[MISS] ", table::Style::Warn),
-          table::Cell::styled(tool.binary, table::Style::Warn),
-          table::Cell::styled(surface.name(), table::Style::Dim),
-          detected_cell.clone(),
-          table::Cell::styled(tool.description, table::Style::Dim),
-        ]);
-        doctor_table.add_row(row);
-      }
-    }
-  }
-
-  DoctorScanResult {
-    table: doctor_table,
-    missing: missing_unique_tools,
-    installed: installed_unique_tools,
-    outdated: outdated_unique_tools,
-    stale: stale_unique_tools,
-    unknown: unknown_unique_tools,
-  }
-}
-
-fn print_unconfigured_languages(
-  root: &path::Path,
-  config: &config::FormalityConfig,
-  present: &std::cell::LazyCell<
-    surfaces::glob::PresentExtensions,
-    impl FnOnce() -> surfaces::glob::PresentExtensions,
-  >,
-  frame: table::Frame,
-  palette: &table::Palette,
-) {
-  let Some(ref explicit_langs) = config.resolve_global().languages else {
-    return;
-  };
-  let mut unconfigured = Vec::new();
-  for surface in surfaces::all_surfaces() {
-    if !explicit_langs.iter().any(|l| {
-      surfaces::matches_name_or_alias(surface.name(), surface.aliases(), l)
-    }) && surface.detect(root, present)
-    {
-      unconfigured.push(surface.name());
-    }
-  }
-  if unconfigured.is_empty() {
-    return;
-  }
-
-  let mut body = String::new();
-  for name in unconfigured {
-    let _ = writeln!(
-      body,
-      "  • Files for '{}' exist in workspace, but '{}' is not in global.languages",
-      name.bold(),
-      name
-    );
-  }
-  let _ = write!(
-    body,
-    "    {} Add them to {} if you want formality to manage them.",
-    "Tip:".cyan().bold(),
-    "languages = [...]".bold()
-  );
-  println!(
-    "{}",
-    frame.section(
-      &"Unconfigured Workspace Languages:"
-        .yellow()
-        .bold()
-        .to_string(),
-      &frame.wrap_body(&body),
-      palette,
-    )
-  );
-}
-
-fn print_virtualenv_status(
-  root: &path::Path,
-  surfaces: &[Box<dyn LanguageSurface>],
-  show_all: bool,
-  frame: table::Frame,
-  palette: &table::Palette,
-) {
-  let has_python = surfaces
-    .iter()
-    .any(|s| s.name() == "python" || s.aliases().contains(&"py"))
-    || root.join("pyproject.toml").is_file()
-    || root.join("requirements.txt").is_file()
-    || root.join("setup.py").is_file()
-    || root.join("Pipfile").is_file();
-  let venv_info = venv::detect_virtualenv(root);
-  if !(has_python || venv_info.venv_path.is_some() || show_all) {
-    return;
-  }
-
-  let venv_path_display = || {
-    venv_info
-      .venv_path
-      .as_ref()
-      .map(|p| paths::display_path(root, p))
-      .unwrap_or_default()
-  };
-
-  let mut body = String::new();
-  match &venv_info.source {
-    venv::VirtualEnvSource::EnvVar => {
-      let _ = writeln!(
-        body,
-        "  • {} Active virtualenv via VIRTUAL_ENV: {}",
-        "[ACTIVE]".green().bold(),
-        venv_path_display().cyan()
-      );
-    }
-    venv::VirtualEnvSource::Workspace(dir_name) => {
-      let _ = writeln!(
-        body,
-        "  • {} Detected workspace virtualenv ({}): {}",
-        "[FOUND] ".cyan().bold(),
-        dir_name.bold(),
-        venv_path_display().dimmed()
-      );
-    }
-    venv::VirtualEnvSource::None => {
-      let _ = writeln!(
-        body,
-        "  • {} No virtual environment detected",
-        "[NONE]  ".dimmed()
-      );
-    }
-  }
-
-  if let Some(ref interp) = venv_info.interpreter_path {
-    let _ = write!(
-      body,
-      "  • Python interpreter: {}",
-      paths::display_path(root, interp).cyan()
-    );
-  } else {
-    let _ = write!(
-      body,
-      "  • {} No Python interpreter found on PATH or in virtualenv",
-      "[WARN] ".yellow().bold()
-    );
-  }
-
-  println!(
-    "{}",
-    frame.section(
-      &"Python Virtual Environment:".bold().cyan().to_string(),
-      &frame.wrap_body(&body),
-      palette,
-    )
-  );
-}
-
-fn print_gitignore_hygiene(
-  root: &path::Path,
-  surfaces: &[Box<dyn LanguageSurface>],
-  frame: table::Frame,
-  palette: &table::Palette,
-) {
-  let hygiene_report = gitignore::check_gitignore_hygiene(root, surfaces);
-  if hygiene_report.issues.is_empty() {
-    return;
-  }
-
-  let mut body = String::new();
-  if !hygiene_report.gitignore_exists {
-    let _ = writeln!(
-      body,
-      "  • {} No {} file found in workspace root",
-      "[WARN] ".yellow().bold(),
-      ".gitignore".bold()
-    );
-  }
-  for issue in &hygiene_report.issues {
-    let missing_list = issue.missing_patterns.join(", ");
-    let _ = writeln!(
-      body,
-      "  • {} {} cache/artifact entries missing from {}: {}",
-      "[WARN] ".yellow().bold(),
-      issue.category.bold(),
-      ".gitignore".bold(),
-      missing_list.yellow().bold()
-    );
-  }
-  let _ = write!(
-    body,
-    "    {} Add missing patterns to {} to prevent committing artifacts.",
-    "Tip:".cyan().bold(),
-    ".gitignore".bold()
-  );
-  println!(
-    "{}",
-    frame.section(
-      &"Gitignore Cache Hygiene:".yellow().bold().to_string(),
-      &frame.wrap_body(&body),
-      palette,
-    )
-  );
-}
-
-/// Builds the user-facing explanation for why a stale tool was not scheduled
-/// for auto-reinstall (#11).
-#[must_use]
-pub fn stale_unpinnable_explanation(
-  binary: &str,
-  current: &version::Version,
-  expected: &version::Version,
-) -> String {
-  let selected = surfaces::selected_install_method_for(binary);
-  let available_desc = match selected {
-    Some(m) => format!("the available installer ({})", m.installer_name()),
-    None => "no available installer".to_string(),
-  };
-  let suggestion = match surfaces::pinned_installer_for(binary) {
-    Some(installer) => format!(
-      "install {installer} to get the exact pinned version, or accept this drift"
+  let path = which::which(binary)
+    .or_else(|_| which::which("clippy-driver"))
+    .or_else(|_| which::which("cargo"))
+    .ok();
+  let raw = version::get_raw_tool_version(binary);
+  let status = match raw
+    .as_deref()
+    .and_then(|r| version::normalize_probed_version(binary, r))
+  {
+    Some(current) => version::evaluate_tool_status(
+      Some(current),
+      raw,
+      version::minimum_supported_tool_version(binary).as_ref(),
+      tooling::pinned_version_for(binary).as_ref(),
     ),
-    None => {
-      "accept this drift or install the pinned version manually".to_string()
-    }
+    None => version::ToolStatus::UnknownVersion(raw.unwrap_or_default()),
   };
-  format!(
-    "{binary} is stale (v{current} != pinned v{expected}), but {available_desc} can't pin to v{expected} — {suggestion}."
-  )
+  (path, status)
 }
 
-fn print_stale_unpinnable_warnings(
-  unpinnable_stale: &[(
-    surfaces::ToolInfo,
-    version::Version,
-    version::Version,
-  )],
-  frame: table::Frame,
-  palette: &table::Palette,
-) {
-  if unpinnable_stale.is_empty() {
-    return;
-  }
-  let mut body = String::new();
-  for (tool, current, expected) in unpinnable_stale {
-    let expl = stale_unpinnable_explanation(tool.binary, current, expected);
-    let _ = writeln!(body, "  • {} {}", "[WARN] ".yellow().bold(), expl);
-  }
-  println!(
-    "{}",
-    frame.section(
-      &"Stale Toolchain Version Drift:".yellow().bold().to_string(),
-      &frame.wrap_body(&body),
-      palette,
-    )
-  );
+/// What one [`install`] attempt achieved.
+#[derive(Debug)]
+pub enum Install {
+  /// Installed, and at the pinned version where a pin exists.
+  Installed,
+  /// Installed, but it reports a version other than its pin.
+  Mismatch {
+    /// The version the pin expects.
+    expected: version::Version,
+    /// The version the binary reports, if it could be probed.
+    actual: Option<version::Version>,
+  },
+  /// The installer exited 0, but the binary is still not on `PATH`.
+  NotOnPath {
+    /// The installer program that ran.
+    installer: String,
+  },
+  /// The installer ran and failed.
+  Failed {
+    /// The installer program that ran.
+    installer: String,
+    /// Its exit code, when it had one.
+    code: Option<i32>,
+  },
+  /// The installer could not be spawned.
+  Spawn(io::Error),
+  /// No installer in the tool's chain is available here.
+  NoInstaller,
 }
 
-/// The informational message printed by `print_sync_notice`, exposed as a
-/// standalone constant so it can be asserted on directly in tests without
-/// capturing stdout.
-pub const SYNC_NOTICE_SUMMARY: &str = "`fml sync` is optional for the primary fml fmt / fml lint / VS Code workflow now \
-— config is passed inline and the VS Code extension talks to `fml lsp` directly.";
+/// Decides what an installer that exited 0 actually achieved, from whether
+/// the binary now resolves and, for a pinned tool, what version it reports.
+///
+/// `PATH` comes first: a tool that cannot be invoked is absent, not merely at
+/// the wrong version (#106).
+fn classify(
+  on_path: bool,
+  installer: String,
+  expected: Option<version::Version>,
+  actual: Option<version::Version>,
+) -> Install {
+  if !on_path {
+    return Install::NotOnPath { installer };
+  }
+  match expected {
+    Some(expected) if actual.as_ref() != Some(&expected) => {
+      Install::Mismatch { expected, actual }
+    }
+    _ => Install::Installed,
+  }
+}
 
-/// The informational message's second line, describing why `fml sync` still
-/// exists for editors that aren't wired up to `fml lsp`.
-pub const SYNC_NOTICE_DETAIL: &str = "It remains available for other editor integrations that read native config \
-files directly (e.g. `.rustfmt.toml`, for editors whose LSP setup expects a \
-real file on disk rather than talking to `fml lsp`).";
-
-/// Prints a purely informational notice that `fml sync` is optional for the
-/// primary `fml fmt` / `fml lint` / VS Code workflow now that config is
-/// passed inline and the VS Code extension talks to `fml lsp` directly. This
-/// does not change `fml sync`'s behavior in any way — it still works exactly
-/// as before for editor integrations that read native config files directly.
-fn print_sync_notice(frame: table::Frame, palette: &table::Palette) {
-  let body = format!(
-    "  {} {}\n    {SYNC_NOTICE_DETAIL}",
-    "[INFO] ".cyan().bold(),
-    SYNC_NOTICE_SUMMARY.dimmed()
+/// Installs `tool` with the first available installer in its chain.
+///
+/// Bootstraps `cargo-binstall` first when the tool's chain prefers it and it
+/// is missing, so a prebuilt binary wins over a source compile.
+///
+/// # Side Effects
+///
+/// Runs the installer with inherited stdio, evicts the tool from the binary
+/// cache, and may extend this process's `PATH`.
+#[must_use]
+pub fn install(tool: &surfaces::ToolInfo) -> Install {
+  if !tooling::has_cargo_binstall()
+    && tooling::tool_would_benefit_from_cargo_binstall_bootstrap(tool.binary)
+    && !tooling::ensure_cargo_binstall()
+  {
+    log::warn!("could not bootstrap cargo-binstall for {}", tool.binary);
+  }
+  let Some((program, args)) = tool.get_auto_install_cmd() else {
+    return Install::NoInstaller;
+  };
+  log::info!(
+    "installing {} via {program} {}",
+    tool.binary,
+    args.join(" ")
   );
-  println!(
-    "{}",
-    frame.section(
-      &"fml sync:".bold().cyan().to_string(),
-      &frame.wrap_body(&body),
-      palette,
-    )
-  );
+  let status = match tooling::create_tool_command(&program).args(&args).status()
+  {
+    Ok(status) => status,
+    Err(err) => return Install::Spawn(err),
+  };
+  if !status.success() {
+    return Install::Failed {
+      installer: program,
+      code: status.code(),
+    };
+  }
+  // The scan memoized the miss; a fresh lookup must see the new binary,
+  // including in a directory the installer only just added to `PATH`.
+  tooling::forget_binary(tool.binary);
+  tooling::refresh_path_after_install(&program);
+  let found = on_path(tool.binary);
+  let expected = found
+    .then(|| tooling::pinned_version_for(tool.binary))
+    .flatten();
+  let actual = expected
+    .as_ref()
+    .and_then(|_| version::probe_tool_version(tool.binary));
+  classify(found, program, expected, actual)
 }
 
 #[cfg(test)]
-mod tests;
+mod tests {
+  use super::*;
+
+  #[test]
+  fn detect_virtualenv_from_env_var() {
+    let temp = tempfile::tempdir().unwrap();
+    let mock_venv = temp.path().join("custom_venv");
+    std::fs::create_dir_all(&mock_venv).unwrap();
+
+    let info =
+      venv::detect_virtualenv_with_env(temp.path(), Some(mock_venv.clone()));
+    assert!(info.is_active);
+    assert_eq!(info.venv_path, Some(mock_venv));
+    assert_eq!(info.source, venv::VirtualEnvSource::EnvVar);
+  }
+
+  #[test]
+  fn detect_virtualenv_from_workspace_dirs() {
+    for dir_name in &[".venv", "venv", "env", ".env"] {
+      let temp = tempfile::tempdir().unwrap();
+      let venv_dir = temp.path().join(dir_name);
+      std::fs::create_dir_all(&venv_dir).unwrap();
+
+      let info = venv::detect_virtualenv_with_env(temp.path(), None);
+      assert!(!info.is_active);
+      assert_eq!(info.venv_path, Some(venv_dir));
+      assert_eq!(
+        info.source,
+        venv::VirtualEnvSource::Workspace(dir_name.to_string())
+      );
+    }
+  }
+
+  #[test]
+  fn detect_virtualenv_precedence() {
+    let temp = tempfile::tempdir().unwrap();
+    let dot_venv = temp.path().join(".venv");
+    let venv = temp.path().join("venv");
+    std::fs::create_dir_all(&dot_venv).unwrap();
+    std::fs::create_dir_all(&venv).unwrap();
+
+    let info = venv::detect_virtualenv_with_env(temp.path(), None);
+    assert_eq!(info.venv_path, Some(dot_venv));
+    assert_eq!(
+      info.source,
+      venv::VirtualEnvSource::Workspace(".venv".to_string())
+    );
+  }
+
+  #[test]
+  fn detect_virtualenv_none() {
+    let temp = tempfile::tempdir().unwrap();
+    let info = venv::detect_virtualenv_with_env(temp.path(), None);
+    assert!(!info.is_active);
+    assert_eq!(info.venv_path, None);
+    assert_eq!(info.source, venv::VirtualEnvSource::None);
+  }
+
+  #[test]
+  fn find_venv_interpreter() {
+    let temp = tempfile::tempdir().unwrap();
+    let bin_dir = temp.path().join("bin");
+    std::fs::create_dir_all(&bin_dir).unwrap();
+    let python_bin = bin_dir.join("python");
+    std::fs::write(&python_bin, "#!/bin/sh\n").unwrap();
+
+    let found = venv::find_venv_interpreter(temp.path());
+    assert_eq!(found, Some(python_bin));
+  }
+
+  #[test]
+  fn is_pattern_ignored() {
+    let lines = vec![
+      "# Comments should be ignored",
+      "",
+      "target/",
+      "/.ruff_cache/",
+      "__pycache__",
+      "**/node_modules/**",
+      "!not_ignored",
+    ];
+
+    assert!(gitignore::is_pattern_ignored(&lines, "target"));
+    assert!(gitignore::is_pattern_ignored(&lines, ".ruff_cache"));
+    assert!(gitignore::is_pattern_ignored(&lines, "__pycache__"));
+    assert!(gitignore::is_pattern_ignored(&lines, "node_modules"));
+    assert!(!gitignore::is_pattern_ignored(&lines, ".pytest_cache"));
+    assert!(!gitignore::is_pattern_ignored(&lines, "not_ignored"));
+  }
+
+  #[test]
+  fn is_pattern_ignored_pyc_alias() {
+    let lines = vec!["*.pyc"];
+    assert!(gitignore::is_pattern_ignored(&lines, "__pycache__"));
+  }
+
+  #[test]
+  fn check_gitignore_hygiene_all_satisfied() {
+    let gitignore = r"
+  /target/
+  .ruff_cache/
+  __pycache__/
+  .pytest_cache/
+  node_modules/
+  ";
+    let report = gitignore::check_gitignore_hygiene_content(
+      Some(gitignore),
+      true, // has_python
+      true, // has_rust
+      true, // has_js
+    );
+    assert!(report.gitignore_exists);
+    assert!(report.issues.is_empty());
+  }
+
+  #[test]
+  fn check_gitignore_hygiene_missing_entries() {
+    let gitignore = r"
+  target/
+  ";
+    let report = gitignore::check_gitignore_hygiene_content(
+      Some(gitignore),
+      true, // has_python
+      true, // has_rust
+      true, // has_js
+    );
+    assert!(report.gitignore_exists);
+    assert_eq!(report.issues.len(), 2);
+    let py_issue = report
+      .issues
+      .iter()
+      .find(|i| i.category == "Python")
+      .unwrap();
+    assert_eq!(
+      py_issue.missing_patterns,
+      vec![".ruff_cache", "__pycache__", ".pytest_cache"]
+    );
+    let js_issue = report
+      .issues
+      .iter()
+      .find(|i| i.category == "JavaScript / Node")
+      .unwrap();
+    assert_eq!(js_issue.missing_patterns, vec!["node_modules"]);
+  }
+
+  #[test]
+  fn check_gitignore_hygiene_no_file() {
+    let report = gitignore::check_gitignore_hygiene_content(
+      None, true,  // has_python
+      true,  // has_rust
+      false, // has_js
+    );
+    assert!(!report.gitignore_exists);
+    assert_eq!(report.issues.len(), 2);
+    assert!(report.issues.iter().any(|i| i.category == "Python"));
+    assert!(report.issues.iter().any(|i| i.category == "Rust"));
+  }
+
+  #[test]
+  fn command_ran_successfully_true_on_zero_exit() {
+    #[cfg(unix)]
+    let output = std::process::Command::new("sh")
+      .args(["-c", "exit 0"])
+      .output();
+    #[cfg(windows)]
+    let output = std::process::Command::new("cmd")
+      .args(["/C", "exit 0"])
+      .output();
+    assert!(command_ran_successfully(&output));
+  }
+
+  #[test]
+  fn command_ran_successfully_false_on_nonzero_exit() {
+    #[cfg(unix)]
+    let output = std::process::Command::new("sh")
+      .args(["-c", "exit 1"])
+      .output();
+    #[cfg(windows)]
+    let output = std::process::Command::new("cmd")
+      .args(["/C", "exit 1"])
+      .output();
+    assert!(!command_ran_successfully(&output));
+  }
+
+  #[test]
+  fn command_ran_successfully_false_on_spawn_error() {
+    // A binary name that should never exist on PATH — spawning it fails
+    // outright, which must not be mistaken for a successful run.
+    let output =
+      std::process::Command::new("definitely_not_a_real_binary_xyz_192")
+        .output();
+    assert!(!command_ran_successfully(&output));
+  }
+
+  /// Regression test for #192 [pre-recreation]: `clippy_probe_succeeds` (what [`on_path`]
+  /// gates presence on for every alias clippy can be registered under —
+  /// `"clippy"`, `"clippy-driver"`, `"cargo-clippy"`) must require an actual
+  /// successful invocation, not just presence on `PATH`. Parameterized over
+  /// the binary names lets this substitute the real `true`/`false` binaries as
+  /// deterministic stand-ins for a functional vs. a present-but-broken shim,
+  /// with no `PATH` mutation needed.
+  #[cfg(unix)]
+  #[test]
+  fn clippy_probe_succeeds_requires_functional_driver() {
+    // Both the driver and the cargo fallback are broken (`false` always exits
+    // 1) — this is the shim-present-but-component-missing case from #192 [pre-recreation], and
+    // must be reported as NOT installed.
+    assert!(!clippy_probe_succeeds("false", "false"));
+
+    // Driver alone works.
+    assert!(clippy_probe_succeeds("true", "false"));
+
+    // Driver is broken but the `cargo clippy` fallback works.
+    assert!(clippy_probe_succeeds("false", "true"));
+
+    // Neither binary exists at all (not even a broken shim on PATH).
+    assert!(!clippy_probe_succeeds(
+      "definitely_not_a_real_binary_xyz_192_driver",
+      "definitely_not_a_real_binary_xyz_192_cargo"
+    ));
+  }
+
+  /// Regression test for #192 [pre-recreation]: [`on_path`] must use the
+  /// functional clippy probe for every name clippy is registered under,
+  /// including `"clippy-driver"`, the one production code passes.
+  #[test]
+  fn on_path_uses_functional_clippy_probe_for_every_alias() {
+    let functional = clippy_probe_succeeds("clippy-driver", "cargo");
+    for alias in ["clippy", "clippy-driver", "cargo-clippy"] {
+      assert_eq!(on_path(alias), functional, "{alias}");
+    }
+  }
+
+  /// #106: an installer that exits 0 while the binary never lands on `PATH`
+  /// is not an install, whatever the pin says.
+  #[test]
+  fn classify_checks_path_before_version() {
+    let pin = version::Version::new(1, 2, 3);
+    assert!(matches!(
+      classify(false, "npm".into(), Some(pin.clone()), Some(pin)),
+      Install::NotOnPath { .. }
+    ));
+    assert!(matches!(
+      classify(false, "npm".into(), None, None),
+      Install::NotOnPath { .. }
+    ));
+  }
+
+  #[test]
+  fn classify_compares_a_pinned_version() {
+    let pin = version::Version::new(1, 2, 3);
+    assert!(matches!(
+      classify(true, "brew".into(), Some(pin.clone()), Some(pin.clone())),
+      Install::Installed
+    ));
+    assert!(matches!(
+      classify(
+        true,
+        "brew".into(),
+        Some(pin.clone()),
+        Some(version::Version::new(1, 2, 0))
+      ),
+      Install::Mismatch { .. }
+    ));
+    assert!(matches!(
+      classify(true, "brew".into(), Some(pin), None),
+      Install::Mismatch { actual: None, .. }
+    ));
+  }
+
+  #[test]
+  fn classify_unpinned_present_binary_is_installed() {
+    assert!(matches!(
+      classify(true, "cargo".into(), None, None),
+      Install::Installed
+    ));
+  }
+
+  #[test]
+  fn find_system_python() {
+    let found = venv::find_system_python();
+    let expected = which::which("python3")
+      .or_else(|_| which::which("python"))
+      .ok();
+    assert_eq!(found, expected);
+  }
+}
