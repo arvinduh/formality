@@ -6,104 +6,63 @@
 use std::path;
 use std::time;
 
-use serde;
-
 use crate::config;
 use crate::config::facets;
 use crate::surfaces;
 use crate::surfaces::sync;
 use crate::surfaces::sync::native;
-use crate::surfaces::sync::native::NativeConfig;
 use crate::surfaces::tooling;
 
-// Directly mirrors Taplo's upstream native schema formatting flags.
-#[expect(
-  clippy::struct_excessive_bools,
-  reason = "directly mirrors Taplo's upstream native schema formatting flags"
-)]
-/// Formatting section for `taplo.toml`.
-#[derive(Debug, serde::Serialize, serde::Deserialize)]
-struct TaploFormattingConfig {
-  /// Whether to align entries across lines.
-  align_entries: bool,
-  /// Target column width for wrapping.
-  column_width: usize,
-  /// Whether to indent table entry keys.
-  indent_entries: bool,
-  /// String sequence used for indentation (spaces or tabs).
-  indent_string: String,
-  /// Whether to indent table contents.
-  indent_tables: bool,
-  /// Whether to use CRLF line endings.
-  crlf: bool,
+/// The `taplo.toml` settings `ctx` resolves to.
+fn taplo_config(ctx: &surfaces::ExecutionContext) -> native::ToolConfig {
+  let toml = ctx.lang_config.toml.as_ref();
+  let indent = if ctx.lang_config.use_tabs {
+    "\t".to_string()
+  } else {
+    " ".repeat(ctx.lang_config.indent_size)
+  };
+  native::ToolConfig::new("taplo.toml")
+    .set(
+      "formatting.align_entries",
+      toml.and_then(|t| t.align_entries).unwrap_or(false),
+    )
+    .set(
+      "formatting.column_width",
+      native::int(ctx.lang_config.line_length),
+    )
+    .set(
+      "formatting.indent_entries",
+      toml.and_then(|t| t.indent_entries).unwrap_or(false),
+    )
+    .set("formatting.indent_string", indent)
+    .set(
+      "formatting.indent_tables",
+      toml.and_then(|t| t.indent_tables).unwrap_or(false),
+    )
+    .set(
+      "formatting.crlf",
+      ctx.global_config.end_of_line.eq_ignore_ascii_case("crlf"),
+    )
 }
 
-/// Native `taplo.toml` configuration representation for TOML formatting.
-#[derive(Debug, serde::Serialize, serde::Deserialize)]
-struct TaploConfig {
-  /// Formatting configuration subsection.
-  formatting: TaploFormattingConfig,
-}
+/// The `[formatting]` keys `taplo format` takes inline through `-o k=v`.
+/// `taplo lint` has no inline override, and needs none of them.
+const TAPLO_INLINE_KEYS: &[&str] = &[
+  "column_width",
+  "indent_string",
+  "crlf",
+  "align_entries",
+  "indent_entries",
+  "indent_tables",
+];
 
-impl NativeConfig for TaploConfig {
-  const FILE_NAME: &'static str = "taplo.toml";
-
-  fn from_context(ctx: &surfaces::ExecutionContext) -> Self {
-    let indent_spaces = if ctx.lang_config.use_tabs {
-      "\t".to_string()
-    } else {
-      " ".repeat(ctx.lang_config.indent_size)
-    };
-
-    let crlf = ctx.global_config.end_of_line.eq_ignore_ascii_case("crlf");
-
-    let toml_opts = ctx.lang_config.toml.as_ref();
-    let align_entries =
-      toml_opts.and_then(|t| t.align_entries).unwrap_or(false);
-    let indent_entries =
-      toml_opts.and_then(|t| t.indent_entries).unwrap_or(false);
-    let indent_tables =
-      toml_opts.and_then(|t| t.indent_tables).unwrap_or(false);
-
-    Self {
-      formatting: TaploFormattingConfig {
-        align_entries,
-        column_width: ctx.lang_config.line_length,
-        indent_entries,
-        indent_string: indent_spaces,
-        indent_tables,
-        crlf,
-      },
-    }
-  }
-
-  fn render(&self) -> Result<String, surfaces::Error> {
-    native::render_native_config(self)
-  }
-}
-
-/// Renders a [`TaploConfig`] as the `-o key=value` flags taplo's `format`
-/// subcommand accepts inline, so `fml fmt` can apply formality.toml's
-/// settings without writing `taplo.toml` to disk (Fixes #151 [pre-recreation]). Only `fml
-/// sync` writes that file now (see [`TomlSurface::sync_config`]). taplo's
-/// `lint` subcommand has no equivalent inline-override flag (only `-c/--config
-/// <path>`), but lint doesn't consume these formatting-layout options anyway.
-#[must_use]
-fn build_taplo_inline_config_args(cfg: &TaploConfig) -> Vec<String> {
-  vec![
-    "-o".to_string(),
-    format!("column_width={}", cfg.formatting.column_width),
-    "-o".to_string(),
-    format!("indent_string={}", cfg.formatting.indent_string),
-    "-o".to_string(),
-    format!("crlf={}", cfg.formatting.crlf),
-    "-o".to_string(),
-    format!("align_entries={}", cfg.formatting.align_entries),
-    "-o".to_string(),
-    format!("indent_entries={}", cfg.formatting.indent_entries),
-    "-o".to_string(),
-    format!("indent_tables={}", cfg.formatting.indent_tables),
-  ]
+/// The inline `-o` overrides for `taplo format`.
+fn taplo_format_args(ctx: &surfaces::ExecutionContext) -> Vec<String> {
+  taplo_config(ctx).section("formatting").flagged(
+    "-o",
+    TAPLO_INLINE_KEYS,
+    native::Quote::None,
+  )
 }
 
 /// Builds argument vector for a `taplo lint` invocation whose output is
@@ -234,10 +193,9 @@ impl surfaces::LanguageSurface for TomlSurface {
     }
 
     // Inline `-o key=value` instead of writing `taplo.toml` to disk — see
-    // `build_taplo_inline_config_args` (Fixes #151 [pre-recreation]). `fml sync` remains the
+    // `taplo_format_args` (Fixes #151 [pre-recreation]). `fml sync` remains the
     // only path that materializes the file.
-    let inline_config =
-      build_taplo_inline_config_args(&TaploConfig::from_context(ctx));
+    let inline_config = taplo_format_args(ctx);
 
     if ctx.check_only {
       return sync::diff_check_via_tempcopy(
@@ -308,7 +266,7 @@ impl surfaces::LanguageSurface for TomlSurface {
 
   // `fml fmt` no longer goes through this path (Fixes #151 [pre-recreation]): it passes the
   // resolved config to taplo inline via repeated `-o key=value` flags (see
-  // `build_taplo_inline_config_args`, used in `format()` above). This method
+  // `taplo_format_args`, used in `format()` above). This method
   // is now reached only by `fml sync`, for users who explicitly want
   // `taplo.toml` materialized on disk.
   fn sync_config(
@@ -317,7 +275,7 @@ impl surfaces::LanguageSurface for TomlSurface {
     check: bool,
   ) -> surfaces::SurfaceResult {
     let start = time::Instant::now();
-    native::sync_native_config::<TaploConfig>(ctx, check, start, self.name())
+    taplo_config(ctx).sync(ctx, check, start, self.name())
   }
 }
 
@@ -361,24 +319,66 @@ mod tests {
     assert!(tools[0].is_required_for_lint);
   }
 
+  /// Options default to off and flow through when set; indentation, width
+  /// and CRLF reach both the file and the inline `-o` flags unprefixed.
   #[test]
-  fn taplo_config_typed_serialization() {
-    let cfg = TaploConfig {
-      formatting: TaploFormattingConfig {
-        align_entries: false,
-        column_width: 100,
-        indent_entries: false,
-        indent_string: "    ".to_string(),
-        indent_tables: false,
-        crlf: true,
-      },
+  fn taplo_config_table() {
+    let temp = tempfile::TempDir::new().unwrap();
+    let on = config::options::TomlOptions {
+      align_entries: Some(true),
+      indent_entries: Some(true),
+      indent_tables: Some(true),
     };
-    let rendered = cfg.render().unwrap();
-    assert!(rendered.starts_with(native::AUTO_GENERATED_HEADER));
-    assert!(rendered.contains("[formatting]"));
-    assert!(rendered.contains("column_width = 100"));
-    assert!(rendered.contains("indent_string = \"    \""));
-    assert!(rendered.contains("crlf = true"));
+    // (options, indent, width, eol, expected inline args)
+    let cases = [
+      (
+        None,
+        2,
+        80,
+        "lf",
+        vec![
+          "column_width=80",
+          "indent_string=  ",
+          "crlf=false",
+          "align_entries=false",
+          "indent_entries=false",
+          "indent_tables=false",
+        ],
+      ),
+      (
+        Some(on),
+        4,
+        100,
+        "crlf",
+        vec![
+          "column_width=100",
+          "indent_string=    ",
+          "crlf=true",
+          "align_entries=true",
+          "indent_entries=true",
+          "indent_tables=true",
+        ],
+      ),
+    ];
+    for (toml, indent, width, eol, expected) in cases {
+      let mut lang = config::ResolvedLangConfig::new("toml");
+      lang.toml = toml;
+      lang.indent_size = indent;
+      lang.line_length = width;
+      let mut ctx = surfaces::test_ctx(temp.path(), lang);
+      ctx.global_config = std::sync::Arc::new(config::ResolvedGlobalConfig {
+        end_of_line: eol.to_string(),
+        ..Default::default()
+      });
+      let args = taplo_format_args(&ctx);
+      let values: Vec<&str> =
+        args.iter().skip(1).step_by(2).map(String::as_str).collect();
+      assert_eq!(values, expected);
+      assert!(args.iter().step_by(2).all(|flag| flag == "-o"));
+      let file = taplo_config(&ctx).render();
+      assert!(file.contains("[formatting]"), "{file}");
+      assert!(file.contains(&format!("column_width = {width}")), "{file}");
+    }
   }
 
   #[test]
@@ -413,24 +413,6 @@ mod tests {
       .map(|a| a.to_string_lossy().to_string())
       .collect();
     assert_eq!(args, vec!["format", "-", "--colors", "never"]);
-  }
-
-  #[test]
-  fn build_taplo_inline_config_args_shape() {
-    let cfg = TaploConfig {
-      formatting: TaploFormattingConfig {
-        align_entries: false,
-        column_width: 100,
-        indent_entries: false,
-        indent_string: "    ".to_string(),
-        indent_tables: false,
-        crlf: true,
-      },
-    };
-    let args = build_taplo_inline_config_args(&cfg);
-    assert!(args.contains(&"column_width=100".to_string()));
-    assert!(args.contains(&"indent_string=    ".to_string()));
-    assert!(args.contains(&"crlf=true".to_string()));
   }
 
   #[test]
@@ -620,38 +602,6 @@ mod tests {
       "expected Passed for formatted TOML, got {:?}",
       res_formatted.status
     );
-  }
-
-  #[test]
-  fn taplo_config_from_context_options() {
-    let temp = tempfile::TempDir::new().unwrap();
-
-    // 1. Default/omitted case -> all false
-    let lang_config_default = config::ResolvedLangConfig::new("toml");
-    let ctx_default = surfaces::test_ctx(temp.path(), lang_config_default);
-    let taplo_cfg_default = TaploConfig::from_context(&ctx_default);
-    assert!(!taplo_cfg_default.formatting.align_entries);
-    assert!(!taplo_cfg_default.formatting.indent_entries);
-    assert!(!taplo_cfg_default.formatting.indent_tables);
-
-    // 2. Configured case -> true
-    let mut lang_config_configured = config::ResolvedLangConfig::new("toml");
-    lang_config_configured.toml = Some(config::options::TomlOptions {
-      align_entries: Some(true),
-      indent_entries: Some(true),
-      indent_tables: Some(true),
-    });
-    let ctx_configured =
-      surfaces::test_ctx(temp.path(), lang_config_configured);
-    let taplo_cfg_configured = TaploConfig::from_context(&ctx_configured);
-    assert!(taplo_cfg_configured.formatting.align_entries);
-    assert!(taplo_cfg_configured.formatting.indent_entries);
-    assert!(taplo_cfg_configured.formatting.indent_tables);
-
-    let inline_args = build_taplo_inline_config_args(&taplo_cfg_configured);
-    assert!(inline_args.contains(&"align_entries=true".to_string()));
-    assert!(inline_args.contains(&"indent_entries=true".to_string()));
-    assert!(inline_args.contains(&"indent_tables=true".to_string()));
   }
 
   #[test]

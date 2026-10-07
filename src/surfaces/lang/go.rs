@@ -7,8 +7,6 @@ use std::path;
 use std::sync;
 use std::time;
 
-use serde;
-
 use crate::config;
 use crate::config::facets;
 use crate::config::facets::DeclaresFacets;
@@ -17,7 +15,6 @@ use crate::surfaces::LanguageSurface;
 use crate::surfaces::glob;
 use crate::surfaces::sync as surface_sync;
 use crate::surfaces::sync::native;
-use crate::surfaces::sync::native::NativeConfig;
 use crate::surfaces::tooling;
 
 /// Default set of linters enabled in the generated `.golangci.yml` — matches
@@ -34,42 +31,17 @@ fn default_go_linters() -> Vec<String> {
   ]
 }
 
-/// Linters configuration block for `.golangci.yml`.
-#[derive(Debug, serde::Serialize, serde::Deserialize)]
-struct GolangciLintersConfig {
-  /// Enabled linter names.
-  enable: Vec<String>,
-}
-
-/// Native `.golangci.yml` configuration representation for Go linting.
-#[derive(Debug, serde::Serialize, serde::Deserialize)]
-struct GolangciLintConfig {
-  /// Schema/version identifier string for golangci-lint.
-  version: String,
-  /// Linters configuration subsection.
-  linters: GolangciLintersConfig,
-}
-
-impl NativeConfig for GolangciLintConfig {
-  const FILE_NAME: &'static str = ".golangci.yml";
-
-  fn from_context(ctx: &surfaces::ExecutionContext) -> Self {
-    let enable = ctx
-      .lang_config
-      .go
-      .as_ref()
-      .and_then(|g| g.linters.clone())
-      .unwrap_or_else(default_go_linters);
-
-    Self {
-      version: "2".to_string(),
-      linters: GolangciLintersConfig { enable },
-    }
-  }
-
-  fn render(&self) -> Result<String, surfaces::Error> {
-    native::render_native_config(self)
-  }
+/// The `.golangci.yml` settings `ctx` resolves to.
+fn golangci_config(ctx: &surfaces::ExecutionContext) -> native::ToolConfig {
+  let linters = ctx
+    .lang_config
+    .go
+    .as_ref()
+    .and_then(|g| g.linters.clone())
+    .unwrap_or_else(default_go_linters);
+  native::ToolConfig::new(".golangci.yml")
+    .set("version", "2")
+    .set("linters.enable", linters)
 }
 
 /// Go language surface implementation.
@@ -198,22 +170,6 @@ fn build_goimports_args(
   args.extend(lang.tool_args("goimports").iter().cloned());
   args.extend(files.iter().map(|f| f.to_string_lossy().to_string()));
   args
-}
-
-/// Renders the resolved linter set as the `--enable-only <comma-list>` flag
-/// golangci-lint v2 accepts inline, so `fml lint` can apply
-/// formality.toml's configured linter set without writing `.golangci.yml`
-/// to disk (Fixes #157 [pre-recreation]). Unlike `--enable`/`--disable` (which toggle
-/// individual linters against whatever the active config, or the tool's own
-/// default set, already enables), `--enable-only` *replaces* the active
-/// linter set outright — verified with golangci-lint v2.12.2 to produce
-/// identical diagnostic output to a `.golangci.yml` with the same
-/// `linters.enable` list (both correctly flag/omit an unchecked
-/// `os.Open` return depending on whether `errcheck` is in the set). Only
-/// `fml sync` writes that file now (see [`GoSurface::sync_config`]).
-#[must_use]
-fn build_golangci_lint_inline_args(linters: &[String]) -> Vec<String> {
-  vec!["--enable-only".to_string(), linters.join(",")]
 }
 
 /// Returns whether the installed `golangci-lint` accepts `--enable-only`
@@ -505,18 +461,16 @@ impl LanguageSurface for GoSurface {
 
     // Inline `--enable-only linter1,linter2,...` instead of relying on
     // `.golangci.yml` being present on disk — see
-    // `build_golangci_lint_inline_args` (Fixes #157 [pre-recreation]). `fml sync` remains the
+    // `golangci_config` (Fixes #157 [pre-recreation]). `fml sync` remains the
     // only path that materializes the file.
-    let linters = ctx
-      .lang_config
-      .go
-      .as_ref()
-      .and_then(|g| g.linters.clone())
-      .unwrap_or_else(default_go_linters);
-
     let mut cmd = tooling::create_tool_command("golangci-lint");
     if golangci_lint_supports_enable_only() {
-      cmd.args(build_golangci_lint_inline_args(&linters));
+      // `--enable-only` replaces the active linter set outright, so it gives
+      // the same diagnostics as a `.golangci.yml` with this `linters.enable`
+      // (verified with golangci-lint v2.12.2).
+      cmd
+        .arg("--enable-only")
+        .arg(golangci_config(ctx).join("linters.enable", ","));
     }
     // Older golangci-lint v1 installs (no `--enable-only`, see above) fall
     // through here with no inline linter-set flag, same as before #157 [pre-recreation] —
@@ -542,7 +496,7 @@ impl LanguageSurface for GoSurface {
 
   // `fml lint` no longer goes through this path (Fixes #157 [pre-recreation]): it passes the
   // resolved linter set to golangci-lint inline via `--enable-only
-  // linter1,linter2,...` (see `build_golangci_lint_inline_args`, used in
+  // linter1,linter2,...` (see `golangci_config`, used in
   // `lint()` above). Unlike `--enable`/`--disable` (which the #151 [pre-recreation]-era
   // comment here correctly noted only toggle individual linters against
   // whatever's already active), golangci-lint v2's `--enable-only` *replaces*
@@ -568,12 +522,7 @@ impl LanguageSurface for GoSurface {
     check: bool,
   ) -> surfaces::SurfaceResult {
     let start = time::Instant::now();
-    native::sync_native_config::<GolangciLintConfig>(
-      ctx,
-      check,
-      start,
-      self.name(),
-    )
+    golangci_config(ctx).sync(ctx, check, start, self.name())
   }
 }
 
@@ -751,30 +700,32 @@ pub mod tests {
     );
   }
 
+  /// The configured linters, or the defaults, reach both the file and the
+  /// `--enable-only` value.
   #[test]
-  fn test_default_go_linters() {
-    let linters = default_go_linters();
-    assert!(linters.contains(&"errcheck".to_string()));
-    assert!(linters.contains(&"govet".to_string()));
-    assert!(linters.contains(&"staticcheck".to_string()));
-    assert!(linters.contains(&"unused".to_string()));
-  }
-
-  #[test]
-  fn golangci_lint_config_typed_serialization() {
-    let cfg = GolangciLintConfig {
-      version: "2".to_string(),
-      linters: GolangciLintersConfig {
-        enable: vec!["errcheck".to_string(), "govet".to_string()],
-      },
-    };
-    let rendered = cfg.render().unwrap();
-    assert!(rendered.starts_with(native::AUTO_GENERATED_HEADER));
-    assert!(
-      rendered.contains("version: '2'") || rendered.contains("version: \"2\"")
-    );
-    assert!(rendered.contains("errcheck"));
-    assert!(rendered.contains("govet"));
+  fn golangci_config_table() {
+    let temp = tempfile::TempDir::new().unwrap();
+    let cases = [
+      (None, "errcheck,govet,ineffassign,staticcheck,unused"),
+      (
+        Some(vec!["errcheck".to_string(), "govet".to_string()]),
+        "errcheck,govet",
+      ),
+    ];
+    for (linters, expected) in cases {
+      let mut lang = config::ResolvedLangConfig::new("go");
+      lang.go = linters.map(|l| config::options::GoOptions {
+        linters: Some(l),
+        ..Default::default()
+      });
+      let cfg = golangci_config(&surfaces::test_ctx(temp.path(), lang));
+      assert_eq!(cfg.join("linters.enable", ","), expected);
+      let file = cfg.render();
+      assert!(file.contains("version: '2'"), "{file}");
+      for linter in expected.split(',') {
+        assert!(file.contains(&format!("- {linter}")), "{file}");
+      }
+    }
   }
 
   #[test]
@@ -923,16 +874,6 @@ pub mod tests {
       res.status
     );
     assert!(!res.is_success());
-  }
-
-  #[test]
-  fn build_golangci_lint_inline_args_shape() {
-    let linters = vec!["errcheck".to_string(), "govet".to_string()];
-    let args = build_golangci_lint_inline_args(&linters);
-    assert_eq!(
-      args,
-      vec!["--enable-only".to_string(), "errcheck,govet".to_string()]
-    );
   }
 
   #[test]

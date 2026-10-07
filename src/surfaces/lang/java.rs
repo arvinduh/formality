@@ -10,9 +10,7 @@ use crate::surfaces;
 use crate::surfaces::LanguageSurface;
 use crate::surfaces::sync;
 use crate::surfaces::sync::native;
-use crate::surfaces::sync::native::NativeConfig;
 use crate::surfaces::tooling;
-use std::io::Write;
 use std::path;
 use std::time;
 
@@ -96,51 +94,20 @@ fn explain_jvm_incompatibility(
   surfaces::SurfaceResult { status, ..result }
 }
 
-/// Typed configuration for Checkstyle, rendered as a Checkstyle XML module
-/// tree. `indent_size` is read from `ResolvedLangConfig::indent_size` — the
-/// same value `fml sync` uses to generate `.editorconfig` — rather than
-/// being recomputed locally, so `checkstyle.xml` and `.editorconfig` can
-/// never disagree on indentation. `resolve_for_lang` is what actually
-/// derives that value from the configured `style` (Google = 2, AOSP = 4)
-/// when the user hasn't pinned `indent_size` themselves. `line_length` is
-/// hardcoded to 100 (google-java-format's fixed column limit; there is no
-/// knob to change it), so `fml fmt` output always passes `fml lint`
-/// immediately afterward ("Smart Format").
+/// The Checkstyle config file name.
+const CHECKSTYLE_FILE: &str = "checkstyle.xml";
+
+/// Renders `checkstyle.xml`, an XML module tree no key/value settings map
+/// can express.
 ///
-/// ### XML Emission Special Case
-/// Unlike other surfaces (which serialize to JSON, TOML, or YAML via `super::render_native_config`),
-/// Checkstyle uses an XML DTD hierarchy with strict module nests and comment headers.
-/// `CheckstyleConfig` implements `NativeConfig` by emitting this XML module structure directly
-/// in `NativeConfig::render`, integrating into the standard `sync_native_config` workflow
-/// without requiring serde serialization overhead or an XML serializer crate.
-#[derive(Debug)]
-struct CheckstyleConfig {
-  /// Maximum line length rule limit.
-  line_length: usize,
-  /// Basic offset indentation size in spaces.
-  indent_size: usize,
-}
-
-impl NativeConfig for CheckstyleConfig {
-  const FILE_NAME: &'static str = "checkstyle.xml";
-
-  fn from_context(ctx: &surfaces::ExecutionContext) -> Self {
-    Self {
-      // google-java-format enforces a fixed 100-column limit; there is no
-      // knob to change it, so the generated lint config mirrors that rather
-      // than the user's generic `line_length` facet.
-      line_length: 100,
-      // Already resolved from the configured `style` (Google = 2, AOSP = 4)
-      // by `FormalityConfig::resolve_for_lang` — reusing it here (instead of
-      // recomputing from `style` locally) is what keeps this in agreement
-      // with the generated `.editorconfig`.
-      indent_size: ctx.lang_config.indent_size,
-    }
-  }
-
-  fn render(&self) -> Result<String, surfaces::Error> {
-    Ok(format!(
-      "<?xml version=\"1.0\"?>\n\
+/// `indent` is the resolved `indent_size`, which `resolve_for_lang` derives
+/// from the configured `style` (Google = 2, AOSP = 4) and `.editorconfig`
+/// also uses, so the two never disagree. The line limit is fixed at 100
+/// because google-java-format's is, so `fml fmt` output always passes
+/// `fml lint`.
+fn checkstyle_xml(indent: usize) -> String {
+  format!(
+    "<?xml version=\"1.0\"?>\n\
 <!DOCTYPE module PUBLIC\n\
     \"-//Checkstyle//DTD Checkstyle Configuration 1.3//EN\"\n\
     \"https://checkstyle.org/dtds/configuration_1_3.dtd\">\n\
@@ -149,11 +116,11 @@ impl NativeConfig for CheckstyleConfig {
   <property name=\"charset\" value=\"UTF-8\"/>\n\
   <property name=\"severity\" value=\"warning\"/>\n\
   <module name=\"LineLength\">\n\
-    <property name=\"max\" value=\"{line_length}\"/>\n\
+    <property name=\"max\" value=\"100\"/>\n\
   </module>\n\
   <module name=\"TreeWalker\">\n\
     <module name=\"Indentation\">\n\
-      <property name=\"basicOffset\" value=\"{indent_size}\"/>\n\
+      <property name=\"basicOffset\" value=\"{indent}\"/>\n\
     </module>\n\
     <module name=\"RedundantImport\"/>\n\
     <module name=\"UnusedImports\"/>\n\
@@ -163,10 +130,7 @@ impl NativeConfig for CheckstyleConfig {
     </module>\n\
   </module>\n\
 </module>\n",
-      line_length = self.line_length,
-      indent_size = self.indent_size,
-    ))
-  }
+  )
 }
 
 /// Java language surface implementation.
@@ -401,10 +365,6 @@ impl LanguageSurface for JavaSurface {
     ))
   }
 
-  #[expect(
-    clippy::too_many_lines,
-    reason = "orchestrates checkstyle execution with fallback temp config generation"
-  )]
   fn lint(
     &self,
     ctx: &surfaces::ExecutionContext,
@@ -434,50 +394,20 @@ impl LanguageSurface for JavaSurface {
     // run yet and `checkstyle.xml` is missing from `ctx.root`, render a temporary
     // config to the system temp directory so `fml lint` remains a read-only
     // pass without writing files into `ctx.root`.
-    let root_config = ctx.root.join(CheckstyleConfig::FILE_NAME);
+    let root_config = ctx.root.join(CHECKSTYLE_FILE);
     let (config_path, _temp_config) = if root_config.is_file() {
       (root_config, None)
     } else {
-      let cfg = CheckstyleConfig::from_context(ctx);
-      match cfg.render() {
-        Ok(rendered) => {
-          let mut temp_file = match tempfile::Builder::new()
-            .prefix("checkstyle-")
-            .suffix(".xml")
-            .tempfile()
-          {
-            Ok(tf) => tf,
-            Err(e) => {
-              return surfaces::SurfaceResult {
-                surface_name: self.name(),
-                status: surfaces::SurfaceStatus::ExecutionError {
-                  message: format!(
-                    "Failed to create temporary checkstyle config: {e}"
-                  ),
-                },
-                duration: start.elapsed(),
-              };
-            }
-          };
-          if let Err(e) = temp_file.write_all(rendered.as_bytes()) {
-            return surfaces::SurfaceResult {
-              surface_name: self.name(),
-              status: surfaces::SurfaceStatus::ExecutionError {
-                message: format!(
-                  "Failed to write temporary checkstyle config: {e}"
-                ),
-              },
-              duration: start.elapsed(),
-            };
-          }
-          let path = temp_file.path().to_path_buf();
-          (path, Some(temp_file))
-        }
+      let xml = checkstyle_xml(ctx.lang_config.indent_size);
+      match native::temp_file("checkstyle-", ".xml", &xml) {
+        Ok(file) => (file.path().to_path_buf(), Some(file)),
         Err(e) => {
           return surfaces::SurfaceResult {
             surface_name: self.name(),
             status: surfaces::SurfaceStatus::ExecutionError {
-              message: format!("Failed to render checkstyle config: {e}"),
+              message: format!(
+                "Failed to write temporary checkstyle config: {e}"
+              ),
             },
             duration: start.elapsed(),
           };
@@ -539,7 +469,7 @@ impl LanguageSurface for JavaSurface {
 
   // Left as a documented exception, verified not feasible for #157 [pre-recreation]:
   // checkstyle's config is an XML *module tree* (see
-  // `CheckstyleConfig::render` above), not a flat key=value map. Confirmed
+  // `checkstyle_xml` above), not a flat key=value map. Confirmed
   // against checkstyle 10.20.2's own `-h` output (actually installed and
   // run, not just docs): `-c=<configurationFile>` is described as
   // "Specifies the location of the file that defines the configuration
@@ -564,8 +494,10 @@ impl LanguageSurface for JavaSurface {
     check: bool,
   ) -> surfaces::SurfaceResult {
     let start = time::Instant::now();
-    native::sync_native_config::<CheckstyleConfig>(
+    native::sync_file(
       ctx,
+      CHECKSTYLE_FILE,
+      &checkstyle_xml(ctx.lang_config.indent_size),
       check,
       start,
       self.name(),
@@ -649,44 +581,22 @@ mod tests {
     assert!(surfaces::detect_in(&surface, temp.path()));
   }
 
+  /// The rendered module tree carries the indent it is given, the fixed
+  /// 100-column limit, and the import rules.
   #[test]
-  fn checkstyle_config_render_google_style() {
-    let cfg = CheckstyleConfig {
-      line_length: 100,
-      indent_size: 2,
-    };
-    let rendered = cfg.render().unwrap();
-    assert!(rendered.contains("DO NOT EDIT THIS FILE DIRECTLY!"));
-    assert!(rendered.contains("<property name=\"max\" value=\"100\"/>"));
-    assert!(rendered.contains("<property name=\"basicOffset\" value=\"2\"/>"));
-    assert!(rendered.contains("<module name=\"UnusedImports\"/>"));
-    assert!(rendered.contains("<module name=\"ImportOrder\">"));
-    assert!(rendered.contains("<module name=\"RedundantImport\"/>"));
-  }
-
-  #[test]
-  fn checkstyle_config_from_context_aosp_style() {
-    let temp = tempfile::TempDir::new().unwrap();
-    // Go through real config parsing + resolve_for_lang (not a hand-built
-    // ResolvedLangConfig) so this exercises the same indent_size derivation
-    // `fml sync` actually uses.
-    let toml_str = r#"
-      [lang.java]
-      style = "aosp"
-    "#;
-    let cfg = config::FormalityConfig::parse_str(
-      toml_str,
-      path::Path::new("formality.toml"),
-    )
-    .unwrap();
-    let lang_cfg = cfg.resolve_for_lang("java");
-    assert_eq!(lang_cfg.indent_size, 4);
-
-    let ctx = surfaces::test_ctx(temp.path(), lang_cfg);
-
-    let checkstyle_cfg = CheckstyleConfig::from_context(&ctx);
-    assert_eq!(checkstyle_cfg.indent_size, 4);
-    assert_eq!(checkstyle_cfg.line_length, 100);
+  fn checkstyle_xml_table() {
+    for indent in [2, 4] {
+      let xml = checkstyle_xml(indent);
+      for line in [
+        "DO NOT EDIT THIS FILE DIRECTLY!".to_string(),
+        "<property name=\"max\" value=\"100\"/>".to_string(),
+        format!("<property name=\"basicOffset\" value=\"{indent}\"/>"),
+        "<module name=\"UnusedImports\"/>".to_string(),
+        "<module name=\"ImportOrder\">".to_string(),
+      ] {
+        assert!(xml.contains(&line), "{line} missing:\n{xml}");
+      }
+    }
   }
 
   /// Regression test for the AOSP indent-width contradiction: `fml sync`
@@ -711,7 +621,7 @@ mod tests {
     let mut ctx = surfaces::test_ctx(temp.path(), lang_cfg);
     ctx.global_config = std::sync::Arc::new(cfg.resolve_global());
 
-    let checkstyle_indent = CheckstyleConfig::from_context(&ctx).indent_size;
+    let checkstyle_indent = ctx.lang_config.indent_size;
 
     let test_surfaces: Vec<Box<dyn LanguageSurface>> =
       vec![Box::new(JavaSurface)];

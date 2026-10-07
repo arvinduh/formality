@@ -7,14 +7,11 @@ use std::path;
 use std::process;
 use std::time;
 
-use serde;
-
 use crate::config;
 use crate::config::facets;
 use crate::surfaces;
 use crate::surfaces::glob;
 use crate::surfaces::sync::native;
-use crate::surfaces::sync::native::NativeConfig;
 use crate::surfaces::tooling;
 
 /// Single source for `cargo`'s manual install hint: it has no `ALL_CHAINS`
@@ -28,56 +25,40 @@ use crate::surfaces::tooling;
 /// existed.
 const CARGO_INSTALL_HINT: &str = "Install Rust via rustup: https://rustup.rs";
 
-/// Native `.rustfmt.toml` configuration representation for Rust formatting.
-#[derive(Debug, serde::Serialize, serde::Deserialize)]
-struct RustfmtConfig {
-  /// Indentation spaces count per level.
-  tab_spaces: usize,
-  /// Maximum line width before wrapping.
-  max_width: usize,
-  /// Line end newline style (`"Unix"`, `"Windows"`, or `"Auto"`).
-  newline_style: String,
-  /// Small heuristics formatting setting.
-  use_small_heuristics: String,
-  /// Target Rust edition.
-  edition: String,
-  /// Whether to reorder import statements.
-  reorder_imports: bool,
+/// The `.rustfmt.toml` settings `ctx` resolves to.
+fn rustfmt_config(ctx: &surfaces::ExecutionContext) -> native::ToolConfig {
+  let eol = &ctx.global_config.end_of_line;
+  let newline_style = if eol.eq_ignore_ascii_case("crlf") {
+    "Windows"
+  } else if eol.eq_ignore_ascii_case("cr") {
+    "Auto"
+  } else {
+    "Unix"
+  };
+  let edition = ctx
+    .lang_config
+    .rust
+    .as_ref()
+    .and_then(|r| r.edition.as_deref())
+    .unwrap_or("2024");
+  native::ToolConfig::new(".rustfmt.toml")
+    .set("tab_spaces", native::int(ctx.lang_config.indent_size))
+    .set("max_width", native::int(ctx.lang_config.line_length))
+    .set("newline_style", newline_style)
+    .set("use_small_heuristics", "Default")
+    .set("edition", edition)
+    .set("reorder_imports", true)
 }
 
-impl NativeConfig for RustfmtConfig {
-  const FILE_NAME: &'static str = ".rustfmt.toml";
-
-  fn from_context(ctx: &surfaces::ExecutionContext) -> Self {
-    let newline_style = match ctx.lang_config.indent_size {
-      _ if ctx.global_config.end_of_line.eq_ignore_ascii_case("crlf") => {
-        "Windows"
-      }
-      _ if ctx.global_config.end_of_line.eq_ignore_ascii_case("cr") => "Auto",
-      _ => "Unix",
-    };
-
-    let edition = ctx
-      .lang_config
-      .rust
-      .as_ref()
-      .and_then(|r| r.edition.as_deref())
-      .unwrap_or("2024");
-
-    Self {
-      tab_spaces: ctx.lang_config.indent_size,
-      max_width: ctx.lang_config.line_length,
-      newline_style: newline_style.to_string(),
-      use_small_heuristics: "Default".to_string(),
-      edition: edition.to_string(),
-      reorder_imports: true,
-    }
-  }
-
-  fn render(&self) -> Result<String, surfaces::Error> {
-    native::render_native_config(self)
-  }
-}
+/// The settings rustfmt takes inline through `--config k=v,...`; the edition
+/// goes through its own `--edition` flag.
+const RUSTFMT_INLINE_KEYS: &[&str] = &[
+  "max_width",
+  "tab_spaces",
+  "newline_style",
+  "use_small_heuristics",
+  "reorder_imports",
+];
 
 /// Rust language surface implementation.
 #[derive(Debug, Default)]
@@ -135,23 +116,6 @@ pub fn build_clippy_json_args(extra_args: &[String]) -> Vec<String> {
   ];
   args.extend(extra_args.iter().cloned());
   args
-}
-
-/// Renders a [`RustfmtConfig`] as the inline `key1=val1,key2=val2` string
-/// accepted by rustfmt's/`cargo fmt`'s `--config` flag, so `fml fmt`/`fml
-/// lint` can apply the resolved formality.toml settings without writing
-/// `.rustfmt.toml` to disk. Only `fml sync` writes that file now (see
-/// [`RustSurface::sync_config`]).
-#[must_use]
-fn build_rustfmt_inline_config(cfg: &RustfmtConfig) -> String {
-  format!(
-    "max_width={},tab_spaces={},newline_style={},use_small_heuristics={},reorder_imports={}",
-    cfg.max_width,
-    cfg.tab_spaces,
-    cfg.newline_style,
-    cfg.use_small_heuristics,
-    cfg.reorder_imports,
-  )
 }
 
 fn build_rustfmt_fallback_cmd(
@@ -278,11 +242,12 @@ impl surfaces::LanguageSurface for RustSurface {
     };
 
     // Inline `--config key=val,...` instead of writing `.rustfmt.toml` to
-    // disk — see `build_rustfmt_inline_config` (Fixes #151 [pre-recreation]). `fml sync`
+    // disk — see `RUSTFMT_INLINE_KEYS` (Fixes #151 [pre-recreation]). `fml sync`
     // remains the only path that materializes the file, for users who want
     // it on disk (e.g. for editor integrations that don't go through `fml`).
-    let inline_config =
-      build_rustfmt_inline_config(&RustfmtConfig::from_context(ctx));
+    let inline_config = rustfmt_config(ctx)
+      .pairs(RUSTFMT_INLINE_KEYS, native::Quote::None)
+      .join(",");
 
     let mut cmd = if tooling::check_binary_exists("cargo")
       && glob::find_manifest_upwards(&ctx.root, "Cargo.toml")
@@ -373,7 +338,7 @@ impl surfaces::LanguageSurface for RustSurface {
 
   // `fml fmt`/`fml lint` no longer go through this path (Fixes #151 [pre-recreation]): they
   // pass the resolved config to rustfmt inline via `--config` (see
-  // `build_rustfmt_inline_config`, used in `format()` above). This method is
+  // `RUSTFMT_INLINE_KEYS`, used in `format()` above). This method is
   // now reached only by `fml sync`, for users who explicitly want
   // `.rustfmt.toml` materialized on disk (e.g. for editor/rust-analyzer
   // integration outside of `fml`).
@@ -383,7 +348,7 @@ impl surfaces::LanguageSurface for RustSurface {
     check: bool,
   ) -> surfaces::SurfaceResult {
     let start = time::Instant::now();
-    native::sync_native_config::<RustfmtConfig>(ctx, check, start, self.name())
+    rustfmt_config(ctx).sync(ctx, check, start, self.name())
   }
 }
 
@@ -594,23 +559,37 @@ mod tests {
     assert!(matches!(check_res.status, surfaces::SurfaceStatus::Passed));
   }
 
+  /// `fml sync`'s file and `fml fmt`'s inline `--config` come from the same
+  /// settings, so they agree on every value, including the CRLF mapping.
   #[test]
-  fn rustfmt_config_typed_serialization() {
-    let cfg = RustfmtConfig {
-      tab_spaces: 4,
-      max_width: 100,
-      newline_style: "Windows".to_string(),
-      use_small_heuristics: "Default".to_string(),
-      edition: "2021".to_string(),
-      reorder_imports: true,
-    };
-    let rendered = cfg.render().unwrap();
-    assert!(rendered.starts_with(native::AUTO_GENERATED_HEADER));
-    assert!(rendered.contains("tab_spaces = 4"));
-    assert!(rendered.contains("max_width = 100"));
-    assert!(rendered.contains("newline_style = \"Windows\""));
-    assert!(rendered.contains("edition = \"2021\""));
-    assert!(rendered.contains("reorder_imports = true"));
+  fn rustfmt_config_file_and_inline_agree() {
+    let temp = tempfile::TempDir::new().unwrap();
+    let mut lang = config::ResolvedLangConfig::new("rust");
+    lang.indent_size = 2;
+    lang.line_length = 80;
+    let mut ctx = surfaces::test_ctx(temp.path(), lang);
+    ctx.global_config = std::sync::Arc::new(config::ResolvedGlobalConfig {
+      end_of_line: "crlf".to_string(),
+      ..Default::default()
+    });
+
+    let cfg = rustfmt_config(&ctx);
+    let file = cfg.render();
+    for line in [
+      "tab_spaces = 2",
+      "max_width = 80",
+      "newline_style = \"Windows\"",
+      "edition = \"2024\"",
+    ] {
+      assert!(file.contains(line), "{line} missing from:\n{file}");
+    }
+    assert_eq!(
+      cfg
+        .pairs(RUSTFMT_INLINE_KEYS, native::Quote::None)
+        .join(","),
+      "max_width=80,tab_spaces=2,newline_style=Windows,\
+       use_small_heuristics=Default,reorder_imports=true"
+    );
   }
 
   #[test]
@@ -669,23 +648,6 @@ mod tests {
       Some("2021")
     );
     assert!(check_args.contains(&"--check".to_string()));
-  }
-
-  #[test]
-  fn build_rustfmt_inline_config_shape() {
-    let cfg = RustfmtConfig {
-      tab_spaces: 2,
-      max_width: 80,
-      newline_style: "Unix".to_string(),
-      use_small_heuristics: "Default".to_string(),
-      edition: "2024".to_string(),
-      reorder_imports: true,
-    };
-    let inline = build_rustfmt_inline_config(&cfg);
-    assert_eq!(
-      inline,
-      "max_width=80,tab_spaces=2,newline_style=Unix,use_small_heuristics=Default,reorder_imports=true"
-    );
   }
 
   #[test]

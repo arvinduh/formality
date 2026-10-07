@@ -10,7 +10,6 @@ use crate::surfaces;
 use crate::surfaces::LanguageSurface;
 use crate::surfaces::sync;
 use crate::surfaces::sync::native;
-use crate::surfaces::sync::native::NativeConfig;
 use crate::surfaces::sync::prettier;
 use crate::surfaces::tooling;
 use rayon::iter::IntoParallelRefIterator;
@@ -18,145 +17,47 @@ use rayon::iter::ParallelIterator;
 use std::path;
 use std::time;
 
-/// Comment field container for markdownlint config.
-#[derive(Debug, serde::Serialize, serde::Deserialize)]
-struct MarkdownlintComment {
-  /// Comment description string.
-  description: String,
-}
-
-/// MD007 (ul-indent) rule options for markdownlint.
-#[derive(Debug, serde::Serialize, serde::Deserialize)]
-struct MarkdownlintMd007 {
-  /// Number of spaces for list indentation.
-  indent: usize,
-}
-
-/// MD013 (line length) rule options for markdownlint.
-#[derive(Debug, serde::Serialize, serde::Deserialize)]
-struct MarkdownlintMd013 {
-  /// Maximum line length allowed.
-  line_length: usize,
-  /// Whether to check code blocks.
-  code_blocks: bool,
-  /// Whether to check tables.
-  tables: bool,
-}
-
-/// Native `.markdownlint.json` configuration representation for Markdown linting.
-#[expect(
-  clippy::struct_excessive_bools,
-  reason = "mirrors markdownlint's native per-rule keys"
-)]
-#[derive(Debug, serde::Serialize, serde::Deserialize)]
-struct MarkdownlintConfig {
-  /// Warning comment header block.
-  #[serde(rename = "$comment")]
-  comment: MarkdownlintComment,
-  /// Default rule enablement setting.
-  default: bool,
-  /// MD007 (ul-indent) list indentation rule settings. Synced with
-  /// prettier's `tabWidth` (`indent_size`) so nested lists agree across both
-  /// tools (#394).
-  #[serde(rename = "MD007")]
-  md007: MarkdownlintMd007,
-  /// MD010 (no-hard-tabs) rule enablement, `false` in the config fml
-  /// generates (#479). Its fixer swaps each tab for a fixed run of spaces,
-  /// not the tab stop, so a tab-indented paragraph leaves its list item;
-  /// prettier already turns such tabs into spaces that render the same, and
-  /// a tab left in fenced code is content. A project's own `.markdownlint.*`
-  /// replaces this config entirely, so it brings the rule and its fixer back
-  /// unless it also sets `MD010` to `false`.
-  #[serde(rename = "MD010")]
-  md010: bool,
-  /// MD013 line length rule settings.
-  #[serde(rename = "MD013")]
-  md013: MarkdownlintMd013,
-  /// MD029 (ol-prefix) rule enablement, `false` in the config fml generates
-  /// (#479). It demands that a list start at 1, which `<ol start>` makes a
-  /// change in what the list renders as, and its fixer can right-align a
-  /// long marker into indented code; prettier already renumbers the items
-  /// after the first. A project's own `.markdownlint.*` replaces this config
-  /// entirely, so it brings the rule and its fixer back unless it also sets
-  /// `MD029` to `false`.
-  #[serde(rename = "MD029")]
-  md029: bool,
-  /// MD031 (blanks-around-fences) rule enablement, `false` in the config fml
-  /// generates (#513). Its fixer puts blank lines around a fence inside a
-  /// list item, which makes a tight list loose, and writes a bare `>` at
-  /// column 0 into a quote nested in an item, which ends the list; prettier
-  /// already puts blank lines around a top-level fence. A project's own
-  /// `.markdownlint.*` replaces this config entirely, so it brings the rule
-  /// and its fixer back unless it also sets `MD031` to `false`.
-  #[serde(rename = "MD031")]
-  md031: bool,
-  /// MD032 (blanks-around-lists) rule enablement, `false` in the config fml
-  /// generates (#513) for the same reason as [`Self::md031`]: after a list
-  /// whose item holds a quoted fence, its fixer writes a bare `>` at column
-  /// 0, which renders as an extra empty quote. prettier already puts blank
-  /// lines around a list. A project's own `.markdownlint.*` brings it back
-  /// unless it also sets `MD032` to `false`.
-  #[serde(rename = "MD032")]
-  md032: bool,
-  /// MD033 (no-inline-html) rule enablement. Shipped default is `false` —
-  /// see [`crate::config::MarkdownOptions::no_inline_html`] for why, and
-  /// how to opt back in from `formality.toml`.
-  #[serde(rename = "MD033")]
-  md033: bool,
-}
-
-impl NativeConfig for MarkdownlintConfig {
-  const FILE_NAME: &'static str = ".markdownlint.json";
-
-  fn from_context(ctx: &surfaces::ExecutionContext) -> Self {
-    markdownlint_config_for_lang(&ctx.lang_config)
-  }
-
-  fn render(&self) -> Result<String, surfaces::Error> {
-    native::render_native_config(self)
-  }
-}
-
-/// Builds the resolved [`MarkdownlintConfig`] from a [`config::ResolvedLangConfig`]
-/// alone — the shared logic behind both [`NativeConfig::from_context`]
-/// (used by `fml sync`/`fml fmt`/`fml lint`, which all have a full
-/// [`surfaces::ExecutionContext`] on hand) and [`write_markdownlint_temp_config`]
-/// (also called from `fml lsp`'s `markdownlint_diagnostics`, which only
-/// ever resolves a per-language config, not a full `ExecutionContext`).
-fn markdownlint_config_for_lang(
-  lang_config: &config::ResolvedLangConfig,
-) -> MarkdownlintConfig {
-  // MD033/no-inline-html is a house-style rule, not a correctness one —
-  // there is no markdown equivalent for centered badge blocks
-  // (`<p align="center">` + `<img>`) or `<details>`/`<summary>` disclosure
-  // widgets, so it ships disabled by default. Opt back in via
-  // `[lang.markdown] no_inline_html = true` in `formality.toml` (see
-  // `MarkdownOptions::no_inline_html`, issue #120).
-  let no_inline_html = lang_config
-    .markdown
-    .as_ref()
-    .and_then(|m| m.no_inline_html)
-    .unwrap_or(false);
-
-  MarkdownlintConfig {
-    comment: MarkdownlintComment {
-      description: native::AUTO_GENERATED_JSON_COMMENT.to_string(),
-    },
-    default: true,
-    md007: MarkdownlintMd007 {
-      indent: lang_config.indent_size,
-    },
-    md010: false,
-    md013: MarkdownlintMd013 {
-      line_length: lang_config.line_length,
-      code_blocks: false,
-      tables: false,
-    },
-    md029: false,
-    md031: false,
-    md032: false,
-    md033: no_inline_html,
-  }
+/// The `.markdownlint.json` settings a resolved language config yields.
+///
+/// Takes only the language config so `fml lsp`'s diagnostics, which resolve
+/// no full execution context, share it with `fml sync`/`fmt`/`lint`. A
+/// project's own `.markdownlint.*` replaces this config entirely, so each rule
+/// disabled here comes back unless that file disables it too.
+fn markdownlint_config(
+  lang: &config::ResolvedLangConfig,
+) -> native::ToolConfig {
+  native::ToolConfig::new(".markdownlint.json")
+    .set("$comment.description", native::AUTO_GENERATED_JSON_COMMENT)
+    .set("default", true)
+    // MD007 (ul-indent) follows prettier's `tabWidth` so nested lists agree
+    // across both tools (#394).
+    .set("MD007.indent", native::int(lang.indent_size))
+    // MD010 (no-hard-tabs, #479): its fixer swaps a tab for a fixed run of
+    // spaces rather than the tab stop, pulling a paragraph out of its list
+    // item; prettier already converts such tabs, and a tab in fenced code is
+    // content.
+    .set("MD010", false)
+    .set("MD013.line_length", native::int(lang.line_length))
+    .set("MD013.code_blocks", false)
+    .set("MD013.tables", false)
+    // MD029 (ol-prefix, #479) demands lists start at 1, which `<ol start>`
+    // turns into a rendering change, and its fixer can push a long marker
+    // into indented code; prettier renumbers the items after the first.
+    .set("MD029", false)
+    // MD031 (blanks-around-fences, #513): its fixer loosens tight lists and
+    // writes a bare `>` at column 0 inside a quoted list item, ending the
+    // list; prettier already surrounds top-level fences.
+    .set("MD031", false)
+    // MD032 (blanks-around-lists, #513): same bare `>` defect after a list
+    // whose item holds a quoted fence; prettier already surrounds lists.
+    .set("MD032", false)
+    // MD033 (no-inline-html) is house style, not correctness: badge blocks
+    // and `<details>` have no markdown equivalent, so it ships off and
+    // `[lang.markdown] no_inline_html = true` opts back in (#120).
+    .set(
+      "MD033",
+      lang.markdown.as_ref().and_then(|m| m.no_inline_html).unwrap_or(false),
+    )
 }
 
 /// Builds argument vector for markdownlint-cli2 invocation. `config_path`,
@@ -216,7 +117,7 @@ fn build_markdownlint_fix_argv(
   )
 }
 
-/// Renders the resolved [`MarkdownlintConfig`] to a throwaway temp file and
+/// Renders [`markdownlint_config`] to a throwaway temp file and
 /// returns the guard holding it, so `fml fmt`/`fml lint`/`fml lsp` can pass
 /// `--config <temp-path>` to markdownlint-cli2 without ever writing
 /// `.markdownlint.json` into the project tree. markdownlint-cli2 only
@@ -240,20 +141,11 @@ fn build_markdownlint_fix_argv(
 pub fn write_markdownlint_temp_config(
   lang_config: &config::ResolvedLangConfig,
 ) -> std::io::Result<tempfile::NamedTempFile> {
-  use std::io::Write;
-
-  let cfg = markdownlint_config_for_lang(lang_config);
-  let content = cfg
-    .render()
-    .map_err(|e| std::io::Error::other(e.to_string()))?;
-
-  let mut file = tempfile::Builder::new()
-    .prefix(".markdownlint-")
-    .suffix(".json")
-    .tempfile()?;
-  file.write_all(content.as_bytes())?;
-  file.flush()?;
-  Ok(file)
+  native::temp_file(
+    ".markdownlint-",
+    ".json",
+    &markdownlint_config(lang_config).render(),
+  )
 }
 
 /// Builds the prettier `--write` argv shared by `fml fmt` and `fml fmt
@@ -993,11 +885,9 @@ impl LanguageSurface for MarkdownSurface {
     };
 
     // Inline `--tab-width`/`--print-width`/etc. instead of writing
-    // `.prettierrc.json` to disk — see `build_prettier_inline_args` (Fixes
+    // `.prettierrc.json` to disk — see `prettier::prettier_args` (Fixes
     // #151 [pre-recreation]). `fml sync` remains the only path that materializes the file.
-    let inline_config = prettier::build_prettier_inline_args(
-      &prettier::PrettierConfig::from_context(ctx),
-    );
+    let inline_config = prettier::prettier_args(ctx);
 
     // markdownlint-cli2's own `--fix` pass has no per-flag inline config
     // (it only accepts `--config <path>`), so the resolved settings are
@@ -1268,7 +1158,7 @@ impl LanguageSurface for MarkdownSurface {
     ctx: &surfaces::ExecutionContext,
     check: bool,
   ) -> surfaces::SurfaceResult {
-    native::sync_native_config::<MarkdownlintConfig>(
+    markdownlint_config(&ctx.lang_config).sync(
       ctx,
       check,
       time::Instant::now(),
@@ -1284,53 +1174,29 @@ mod tests {
   use crate::surfaces;
   use std::path;
 
+  /// MD033 ships off and opts back in (#120), MD007 follows the indent size
+  /// (#394), and the fixer-hostile rules stay off (#479, #513).
   #[test]
-  fn prettier_config_typed_serialization() {
-    let cfg = prettier::PrettierConfig {
-      comment: "warning".to_string(),
-      tab_width: 4,
-      print_width: 100,
-      use_tabs: true,
-      end_of_line: "crlf".to_string(),
-      prose_wrap: "preserve".to_string(),
-    };
-    let rendered = cfg.render().unwrap();
-    assert!(rendered.contains("\"$comment\": \"warning\""));
-    assert!(rendered.contains("\"tabWidth\": 4"));
-    assert!(rendered.contains("\"printWidth\": 100"));
-    assert!(rendered.contains("\"useTabs\": true"));
-    assert!(rendered.contains("\"endOfLine\": \"crlf\""));
-    assert!(rendered.contains("\"proseWrap\": \"preserve\""));
-  }
-
-  #[test]
-  fn markdownlint_config_typed_serialization() {
-    let cfg = MarkdownlintConfig {
-      comment: MarkdownlintComment {
-        description: "desc".to_string(),
-      },
-      default: true,
-      md007: MarkdownlintMd007 { indent: 2 },
-      md010: false,
-      md013: MarkdownlintMd013 {
-        line_length: 120,
-        code_blocks: false,
-        tables: false,
-      },
-      md029: false,
-      md031: false,
-      md032: false,
-      md033: false,
-    };
-    let rendered = cfg.render().unwrap();
-    assert!(rendered.contains("\"$comment\":"));
-    assert!(rendered.contains("\"description\": \"desc\""));
-    assert!(rendered.contains("\"default\": true"));
-    assert!(rendered.contains("\"MD007\":"));
-    assert!(rendered.contains("\"indent\": 2"));
-    assert!(rendered.contains("\"MD013\":"));
-    assert!(rendered.contains("\"line_length\": 120"));
-    assert!(rendered.contains("\"MD033\": false"));
+  fn markdownlint_config_table() {
+    // (indent, no_inline_html, expected MD007.indent, expected MD033)
+    let cases = [(2, None, 2, false), (4, Some(true), 4, true)];
+    for (indent, no_inline_html, md007, md033) in cases {
+      let mut lang = config::ResolvedLangConfig::new("markdown");
+      lang.indent_size = indent;
+      lang.markdown = Some(config::options::MarkdownOptions {
+        prose_wrap: None,
+        no_inline_html,
+      });
+      let rendered = markdownlint_config(&lang).render();
+      let parsed: serde_json::Value = serde_json::from_str(&rendered).unwrap();
+      assert_eq!(parsed["MD007"]["indent"], md007);
+      assert_eq!(parsed["MD033"], md033);
+      for rule in ["MD010", "MD029", "MD031", "MD032"] {
+        assert_eq!(parsed[rule], false, "{rule}");
+      }
+      assert_eq!(parsed["MD013"]["code_blocks"], false);
+      assert!(parsed["$comment"]["description"].is_string());
+    }
   }
 
   #[test]
@@ -1419,43 +1285,6 @@ mod tests {
     assert_eq!(parsed["MD013"]["line_length"], 100);
     assert_eq!(parsed["MD013"]["code_blocks"], false);
     assert_eq!(parsed["MD013"]["tables"], false);
-  }
-
-  #[test]
-  fn markdownlint_config_for_lang_disables_md033_by_default() {
-    // Issue #120: MD033/no-inline-html fires unfixably on ordinary README
-    // idioms (centered badge blocks, `<details>` disclosure widgets), so the
-    // shipped default must disable it.
-    let lang_cfg = config::ResolvedLangConfig::new("markdown");
-    let cfg = markdownlint_config_for_lang(&lang_cfg);
-    assert!(!cfg.md033, "MD033 must be disabled by default");
-  }
-
-  #[test]
-  fn markdownlint_config_for_lang_reenables_md033_from_formality_toml() {
-    // Issue #120 acceptance criterion: MD033 must be re-enablable, not just
-    // removed — `[lang.markdown] no_inline_html = true`.
-    let mut lang_cfg = config::ResolvedLangConfig::new("markdown");
-    lang_cfg.markdown = Some(config::options::MarkdownOptions {
-      prose_wrap: None,
-      no_inline_html: Some(true),
-    });
-    let cfg = markdownlint_config_for_lang(&lang_cfg);
-    assert!(cfg.md033, "MD033 must be re-enabled when opted back in");
-  }
-
-  #[test]
-  fn markdownlint_config_for_lang_syncs_md007_indent_with_indent_size() {
-    // Issue #394: prettier indents nested lists using tabWidth (indent_size),
-    // so markdownlint's MD007 indent must match indent_size to avoid oscillation.
-    let mut lang_cfg = config::ResolvedLangConfig::new("markdown");
-    lang_cfg.indent_size = 4;
-    let cfg = markdownlint_config_for_lang(&lang_cfg);
-    assert_eq!(cfg.md007.indent, 4);
-
-    let rendered = cfg.render().unwrap();
-    let parsed: serde_json::Value = serde_json::from_str(&rendered).unwrap();
-    assert_eq!(parsed["MD007"]["indent"], 4);
   }
 
   #[test]
@@ -1597,7 +1426,7 @@ mod tests {
     // this test pass even with the fix reverted). With real spaces,
     // markdownlint-cli2's built-in MD013 default (`code_blocks: true`)
     // flags this; formality.toml's default (`code_blocks: false`, set in
-    // `MarkdownlintConfig::from_context`) must not.
+    // `markdownlint_config`) must not.
     let long_line = "lorem ipsum dolor sit amet ".repeat(5);
     std::fs::write(
       temp.path().join("a.md"),
@@ -2261,24 +2090,6 @@ mod tests {
     // parallel fan-out — never from here (#130).
     assert!(surface.uses_prettier());
     assert!(!temp.path().join(".prettierrc.json").exists());
-  }
-
-  #[test]
-  fn build_prettier_inline_args_shape() {
-    let cfg = prettier::PrettierConfig {
-      comment: "warning".to_string(),
-      tab_width: 4,
-      print_width: 100,
-      use_tabs: true,
-      end_of_line: "crlf".to_string(),
-      prose_wrap: "preserve".to_string(),
-    };
-    let args = prettier::build_prettier_inline_args(&cfg);
-    assert!(args.contains(&"--tab-width=4".to_string()));
-    assert!(args.contains(&"--print-width=100".to_string()));
-    assert!(args.contains(&"--end-of-line=crlf".to_string()));
-    assert!(args.contains(&"--prose-wrap=preserve".to_string()));
-    assert!(args.contains(&"--use-tabs".to_string()));
   }
 
   #[test]

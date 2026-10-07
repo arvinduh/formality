@@ -12,7 +12,6 @@ use crate::config::facets::DeclaresFacets;
 use crate::surfaces;
 use crate::surfaces::LanguageSurface;
 use crate::surfaces::sync;
-use crate::surfaces::sync::native::NativeConfig;
 use crate::surfaces::sync::prettier;
 use crate::surfaces::tooling;
 
@@ -98,11 +97,9 @@ impl LanguageSurface for JsonSurface {
     }
 
     // Inline `--tab-width`/`--print-width`/etc. instead of writing
-    // `.prettierrc.json` to disk — see `build_prettier_inline_args` (Fixes
+    // `.prettierrc.json` to disk — see `prettier::prettier_args` (Fixes
     // #151 [pre-recreation]). `fml sync` remains the only path that materializes the file.
-    let inline_config = prettier::build_prettier_inline_args(
-      &prettier::PrettierConfig::from_context(ctx),
-    );
+    let inline_config = prettier::prettier_args(ctx);
 
     if ctx.check_only {
       return sync::diff_check_via_tempcopy_classified(
@@ -188,10 +185,7 @@ impl LanguageSurface for JsonSurface {
   ) -> surfaces::SurfaceResult {
     tooling::no_native_config(
       self.name(),
-      &format!(
-        "No config of its own (shares {})",
-        prettier::PrettierConfig::FILE_NAME
-      ),
+      &format!("No config of its own (shares {})", prettier::FILE_NAME),
     )
   }
 }

@@ -7,104 +7,49 @@ use std::fmt::Write;
 use std::path;
 use std::time;
 
-use serde;
-
 use crate::config;
 use crate::surfaces;
 use crate::surfaces::LanguageSurface;
-use crate::surfaces::sync::native::NativeConfig;
+use crate::surfaces::sync::native;
 
-/// Native `.prettierrc.json` configuration representation for Markdown, YAML, and JSON formatting.
-#[derive(Debug, serde::Serialize, serde::Deserialize, PartialEq)]
-#[serde(rename_all = "camelCase")]
-pub struct PrettierConfig {
-  /// Warning comment field.
-  #[serde(rename = "$comment")]
-  pub comment: String,
-  /// Indentation tab width in spaces.
-  pub tab_width: usize,
-  /// Maximum print width limit.
-  pub print_width: usize,
-  /// Whether tab indentation is enabled.
-  pub use_tabs: bool,
-  /// End of line newline style.
-  pub end_of_line: String,
-  /// Prose wrapping strategy string.
-  pub prose_wrap: String,
-}
+/// The shared `.prettierrc.json` file name.
+pub const FILE_NAME: &str = ".prettierrc.json";
 
-impl NativeConfig for PrettierConfig {
-  const FILE_NAME: &'static str = ".prettierrc.json";
-
-  fn from_context(ctx: &surfaces::ExecutionContext) -> Self {
-    Self::from_resolved(&ctx.global_config, &ctx.lang_config)
-  }
-
-  fn render(&self) -> Result<String, surfaces::Error> {
-    super::native::render_native_config(self)
-  }
-}
-
-impl PrettierConfig {
-  /// Resolves the config from an already-resolved global/language pair.
-  ///
-  /// [`NativeConfig::from_context`] delegates here. The split exists because
-  /// the shared single-writer pass ([`sync_shared_prettier_config`]) runs
-  /// outside the per-surface fan-out and so has no [`surfaces::ExecutionContext`] — it
-  /// needs to resolve what *each* prettier surface would have asked for in
-  /// order to detect a conflict between them.
-  #[must_use]
-  fn from_resolved(
-    global: &config::ResolvedGlobalConfig,
-    lang: &config::ResolvedLangConfig,
-  ) -> Self {
-    let eol = match global.end_of_line.to_lowercase().as_str() {
-      "crlf" => "crlf",
-      "cr" => "cr",
-      _ => "lf",
-    };
-
-    Self {
-      comment: super::native::AUTO_GENERATED_JSON_COMMENT.to_string(),
-      tab_width: lang.indent_size,
-      print_width: lang.line_length,
-      use_tabs: lang.use_tabs,
-      end_of_line: eol.to_string(),
-      prose_wrap: lang.prose_wrap.as_deref().unwrap_or("always").to_string(),
-    }
-  }
-
-  /// The settings this config carries, as `(key, value)` pairs in the order
-  /// they are serialized. Used to explain a conflict between two surfaces
-  /// that resolve `.prettierrc.json` differently.
-  fn settings(&self) -> [(&'static str, String); 5] {
-    [
-      ("tabWidth", self.tab_width.to_string()),
-      ("printWidth", self.print_width.to_string()),
-      ("useTabs", self.use_tabs.to_string()),
-      ("endOfLine", self.end_of_line.clone()),
-      ("proseWrap", self.prose_wrap.clone()),
-    ]
-  }
-}
-
-/// Renders the resolved [`PrettierConfig`] as the inline `--tab-width`/
-/// `--print-width`/etc. flags `prettier` accepts on the CLI, so `fml fmt`
-/// can apply formality.toml's settings without writing `.prettierrc.json`
-/// to disk (Fixes #151 [pre-recreation]). Shared by the Markdown, YAML, and JSON surfaces,
-/// which all format via prettier. Only `fml sync` writes that file now.
+/// The `.prettierrc.json` settings a global/language pair resolves to.
+///
+/// Takes resolved configs rather than an execution context because the
+/// shared single-writer pass ([`sync_shared_prettier_config`]) runs outside
+/// the per-surface fan-out and compares what each surface would ask for.
 #[must_use]
-pub fn build_prettier_inline_args(cfg: &PrettierConfig) -> Vec<String> {
-  let mut args = vec![
-    format!("--tab-width={}", cfg.tab_width),
-    format!("--print-width={}", cfg.print_width),
-    format!("--end-of-line={}", cfg.end_of_line),
-    format!("--prose-wrap={}", cfg.prose_wrap),
-  ];
-  if cfg.use_tabs {
-    args.push("--use-tabs".to_string());
-  }
-  args
+pub fn prettier_config(
+  global: &config::ResolvedGlobalConfig,
+  lang: &config::ResolvedLangConfig,
+) -> native::ToolConfig {
+  let eol = match global.end_of_line.to_lowercase().as_str() {
+    "crlf" => "crlf",
+    "cr" => "cr",
+    _ => "lf",
+  };
+  native::ToolConfig::new(FILE_NAME)
+    .set("$comment", native::AUTO_GENERATED_JSON_COMMENT)
+    .set("tabWidth", native::int(lang.indent_size))
+    .set("printWidth", native::int(lang.line_length))
+    .set("useTabs", lang.use_tabs)
+    .set("endOfLine", eol)
+    .set("proseWrap", lang.prose_wrap.as_deref().unwrap_or("always"))
+}
+
+/// The prettier flags `fml fmt` passes inline instead of writing
+/// `.prettierrc.json`; shared by the Markdown, YAML and JSON surfaces.
+#[must_use]
+pub fn prettier_args(ctx: &surfaces::ExecutionContext) -> Vec<String> {
+  prettier_config(&ctx.global_config, &ctx.lang_config).flags(&[
+    ("tab-width", "tabWidth"),
+    ("print-width", "printWidth"),
+    ("end-of-line", "endOfLine"),
+    ("prose-wrap", "proseWrap"),
+    ("use-tabs", "useTabs"),
+  ])
 }
 
 /// Surface name reported by the shared `.prettierrc.json` pass, mirroring
@@ -117,7 +62,7 @@ const PRETTIER_PASS_NAME: &str = "prettier";
 /// # Why this exists
 ///
 /// `json`, `markdown` and `yaml` all format via prettier, and all three used
-/// to call `sync_native_config::<PrettierConfig>` from their own
+/// to sync it from their own
 /// `sync_config` — which the runner invokes concurrently under
 /// `surfaces.par_iter()`. Three threads
 /// therefore ran the read-compare-write in `sync_file_helper` against the
@@ -145,7 +90,7 @@ const PRETTIER_PASS_NAME: &str = "prettier";
 ///
 /// # Conflicting settings are an error, not a coin flip
 ///
-/// [`PrettierConfig::from_context`] resolves from each surface's *own*
+/// [`prettier_config`] resolves from each surface's *own*
 /// `[lang.<name>]` block, so `[lang.markdown] line_length = 100` beside a
 /// global `80` genuinely asks for two different `.prettierrc.json` files.
 /// With the old fan-out that was last-writer-wins, silently. Since one path
@@ -167,12 +112,12 @@ pub fn sync_shared_prettier_config(
 
   // Deterministic order: the surfaces are matched in a fixed order, so the
   // conflict message and the "winning" config are stable run to run.
-  let claims: Vec<(&'static str, PrettierConfig)> = surfaces
+  let claims: Vec<(&'static str, native::ToolConfig)> = surfaces
     .iter()
     .filter(|s| s.uses_prettier())
     .map(|s| {
       let lang = config.resolve_for_lang_with_global(s.name(), &global);
-      (s.name(), PrettierConfig::from_resolved(&global, &lang))
+      (s.name(), prettier_config(&global, &lang))
     })
     .collect();
 
@@ -186,26 +131,10 @@ pub fn sync_shared_prettier_config(
     });
   }
 
-  let content = match expected.render() {
-    Ok(c) => c,
-    Err(e) => {
-      return Some(surfaces::SurfaceResult {
-        surface_name: PRETTIER_PASS_NAME,
-        status: surfaces::SurfaceStatus::ExecutionError {
-          message: format!(
-            "Failed to serialize {}: {e}",
-            PrettierConfig::FILE_NAME
-          ),
-        },
-        duration: start.elapsed(),
-      });
-    }
-  };
-
   Some(super::sync_file_helper(
-    &root.join(PrettierConfig::FILE_NAME),
-    PrettierConfig::FILE_NAME,
-    &content,
+    &root.join(FILE_NAME),
+    FILE_NAME,
+    &expected.render(),
     check,
     start,
     PRETTIER_PASS_NAME,
@@ -220,10 +149,10 @@ pub fn sync_shared_prettier_config(
 /// points at the `[lang.<name>]` override the user needs to change rather
 /// than dumping both configs.
 fn describe_prettier_conflict(
-  claims: &[(&'static str, PrettierConfig)],
+  claims: &[(&'static str, native::ToolConfig)],
 ) -> Option<String> {
   let (first_name, first_cfg) = claims.first()?;
-  let conflicting: Vec<&(&'static str, PrettierConfig)> = claims
+  let conflicting: Vec<&(&'static str, native::ToolConfig)> = claims
     .iter()
     .skip(1)
     .filter(|(_, cfg)| cfg != first_cfg)
@@ -232,15 +161,13 @@ fn describe_prettier_conflict(
     return None;
   }
 
-  let file = PrettierConfig::FILE_NAME;
+  let file = FILE_NAME;
   let mut msg = format!(
     "'{file}' is a single file shared by every prettier-formatted surface, \
      but these surfaces resolve it to conflicting settings:\n"
   );
   for (name, cfg) in conflicting {
-    for ((key, mine), (_, theirs)) in
-      cfg.settings().iter().zip(first_cfg.settings())
-    {
+    for ((key, mine), (_, theirs)) in cfg.entries().zip(first_cfg.entries()) {
       if *mine != theirs {
         let _ = writeln!(
           msg,
@@ -268,23 +195,43 @@ mod tests {
 
   use super::*;
 
+  /// The file and the inline flags carry the same values; `useTabs` is a bare
+  /// flag that only appears when true.
   #[test]
-  fn prettier_config_typed_serialization() {
-    let cfg = PrettierConfig {
-      comment: "warning".to_string(),
-      tab_width: 4,
-      print_width: 100,
-      use_tabs: true,
-      end_of_line: "crlf".to_string(),
-      prose_wrap: "preserve".to_string(),
-    };
-    let rendered = cfg.render().unwrap();
-    assert!(rendered.contains("\"$comment\": \"warning\""));
-    assert!(rendered.contains("\"tabWidth\": 4"));
-    assert!(rendered.contains("\"printWidth\": 100"));
-    assert!(rendered.contains("\"useTabs\": true"));
-    assert!(rendered.contains("\"endOfLine\": \"crlf\""));
-    assert!(rendered.contains("\"proseWrap\": \"preserve\""));
+  fn prettier_file_and_flags_agree() {
+    let temp = tempfile::TempDir::new().unwrap();
+    for use_tabs in [false, true] {
+      let mut lang = config::ResolvedLangConfig::new("markdown");
+      lang.indent_size = 4;
+      lang.line_length = 100;
+      lang.use_tabs = use_tabs;
+      lang.prose_wrap = Some("preserve".to_string());
+      let mut ctx = surfaces::test_ctx(temp.path(), lang);
+      ctx.global_config = sync::Arc::new(config::ResolvedGlobalConfig {
+        end_of_line: "crlf".to_string(),
+        ..Default::default()
+      });
+      let file = prettier_config(&ctx.global_config, &ctx.lang_config).render();
+      for line in [
+        "\"tabWidth\": 4",
+        "\"printWidth\": 100",
+        "\"endOfLine\": \"crlf\"",
+        "\"proseWrap\": \"preserve\"",
+      ] {
+        assert!(file.contains(line), "{line} missing:\n{file}");
+      }
+      assert!(file.contains("\"$comment\""), "{file}");
+      let mut expected = vec![
+        "--tab-width=4",
+        "--print-width=100",
+        "--end-of-line=crlf",
+        "--prose-wrap=preserve",
+      ];
+      if use_tabs {
+        expected.push("--use-tabs");
+      }
+      assert_eq!(prettier_args(&ctx), expected);
+    }
   }
 
   fn prettier_surfaces() -> Vec<Box<dyn LanguageSurface>> {
@@ -400,30 +347,13 @@ mod tests {
   fn agreeing_surfaces_report_no_conflict() {
     let global = config::ResolvedGlobalConfig::default();
     let config = config::FormalityConfig::default();
-    let claims: Vec<(&'static str, PrettierConfig)> = ["json", "markdown"]
+    let claims: Vec<(&'static str, native::ToolConfig)> = ["json", "markdown"]
       .into_iter()
       .map(|n| {
         let lang = config.resolve_for_lang_with_global(n, &global);
-        (n, PrettierConfig::from_resolved(&global, &lang))
+        (n, prettier_config(&global, &lang))
       })
       .collect();
     assert!(describe_prettier_conflict(&claims).is_none());
-  }
-
-  #[test]
-  fn from_resolved_matches_from_context() {
-    // `from_context` delegates to `from_resolved`; the shared pass depends
-    // on the two agreeing, since it resolves without an ExecutionContext.
-    let config = config::FormalityConfig::default();
-    let global = config.resolve_global();
-    let lang = config.resolve_for_lang_with_global("markdown", &global);
-    let temp = tempfile::TempDir::new().unwrap();
-    let mut ctx = surfaces::test_ctx(temp.path(), lang.clone());
-    ctx.global_config = sync::Arc::new(global.clone());
-
-    assert_eq!(
-      PrettierConfig::from_context(&ctx),
-      PrettierConfig::from_resolved(&global, &lang)
-    );
   }
 }

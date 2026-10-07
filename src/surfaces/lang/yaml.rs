@@ -6,117 +6,44 @@
 use std::path;
 use std::time;
 
-use serde;
-use serde_yaml;
-
 use crate::config;
 use crate::config::facets;
 use crate::surfaces;
 use crate::surfaces::sync;
 use crate::surfaces::sync::native;
-use crate::surfaces::sync::native::NativeConfig;
 use crate::surfaces::sync::prettier;
 use crate::surfaces::tooling;
 
-/// Toggle state enum for yamllint rules (`"enable"` or `"disable"`).
-#[derive(Debug, serde::Serialize, serde::Deserialize, PartialEq)]
-#[serde(rename_all = "lowercase")]
-enum YamllintRuleToggle {
-  /// Enable rule.
-  Enable,
-  /// Disable rule.
-  Disable,
-}
-
-/// Line length rule parameters for yamllint.
-#[derive(Debug, serde::Serialize, serde::Deserialize)]
-struct YamllintLineLengthRule {
-  /// Maximum line length limit.
-  max: usize,
-}
-
-/// Indentation rule parameters for yamllint.
-#[derive(Debug, serde::Serialize, serde::Deserialize)]
-struct YamllintIndentationRule {
-  /// Number of spaces per indent level.
-  spaces: usize,
-  /// Whether to indent sequence items.
-  #[serde(rename = "indent-sequences")]
-  indent_sequences: bool,
-}
-
-/// Rules configuration subsection for `.yamllint.yaml`.
-#[derive(Debug, serde::Serialize, serde::Deserialize)]
-struct YamllintRulesConfig {
-  /// Line length rule options.
-  #[serde(rename = "line-length")]
-  line_length: YamllintLineLengthRule,
-  /// Indentation rule options.
-  indentation: YamllintIndentationRule,
-  /// Document start marker rule toggle.
-  #[serde(rename = "document-start")]
-  document_start: YamllintRuleToggle,
-  /// Boolean truthy check rule toggle.
-  truthy: YamllintRuleToggle,
-}
-
-/// Native `.yamllint.yaml` configuration representation for YAML linting.
-#[derive(Debug, serde::Serialize, serde::Deserialize)]
-struct YamllintConfig {
-  /// Parent configuration preset name to extend.
-  extends: String,
-  /// Rules configuration subsection.
-  rules: YamllintRulesConfig,
-}
-
-impl NativeConfig for YamllintConfig {
-  const FILE_NAME: &'static str = ".yamllint.yaml";
-
-  fn from_context(ctx: &surfaces::ExecutionContext) -> Self {
-    let yaml_opts = ctx.lang_config.yaml.as_ref();
-    let indent_sequences =
-      yaml_opts.and_then(|y| y.indent_sequence).unwrap_or(true);
-    let document_start = match yaml_opts.and_then(|y| y.document_start) {
-      Some(true) => YamllintRuleToggle::Enable,
-      _ => YamllintRuleToggle::Disable,
-    };
-    let truthy = match yaml_opts.and_then(|y| y.truthy) {
-      Some(true) => YamllintRuleToggle::Enable,
-      _ => YamllintRuleToggle::Disable,
-    };
-
-    Self {
-      extends: "default".to_string(),
-      rules: YamllintRulesConfig {
-        line_length: YamllintLineLengthRule {
-          max: ctx.lang_config.line_length,
-        },
-        indentation: YamllintIndentationRule {
-          spaces: ctx.lang_config.indent_size,
-          indent_sequences,
-        },
-        document_start,
-        truthy,
-      },
+/// The `.yamllint.yaml` settings `ctx` resolves to. yamllint's `-d` takes
+/// the same document inline, so `fml lint` passes [`native::ToolConfig::yaml`].
+fn yamllint_config(ctx: &surfaces::ExecutionContext) -> native::ToolConfig {
+  let yaml = ctx.lang_config.yaml.as_ref();
+  let toggle = |on: Option<bool>| {
+    if on == Some(true) {
+      "enable"
+    } else {
+      "disable"
     }
-  }
-
-  fn render(&self) -> Result<String, surfaces::Error> {
-    native::render_native_config(self)
-  }
-}
-
-/// Renders a [`YamllintConfig`] as the inline YAML source text yamllint's
-/// `-d`/`--config-data` flag accepts, so `fml lint` can apply
-/// formality.toml's settings without writing `.yamllint.yaml` to disk
-/// (Fixes #151 [pre-recreation]). `fml sync` still writes that file for users who want it
-/// materialized on disk (see [`YamlSurface::sync_config`], Fixes #158 [pre-recreation]).
-#[must_use]
-fn build_yamllint_inline_config(cfg: &YamllintConfig) -> String {
-  // yamllint's `-d` takes a literal YAML document, so this just reuses the
-  // same renderer as the on-disk file (minus formality's auto-generated
-  // header comment, which isn't meaningful for an inline value).
-  serde_yaml::to_string(cfg).unwrap_or_default()
+  };
+  native::ToolConfig::new(".yamllint.yaml")
+    .set("extends", "default")
+    .set(
+      "rules.line-length.max",
+      native::int(ctx.lang_config.line_length),
+    )
+    .set(
+      "rules.indentation.spaces",
+      native::int(ctx.lang_config.indent_size),
+    )
+    .set(
+      "rules.indentation.indent-sequences",
+      yaml.and_then(|y| y.indent_sequence).unwrap_or(true),
+    )
+    .set(
+      "rules.document-start",
+      toggle(yaml.and_then(|y| y.document_start)),
+    )
+    .set("rules.truthy", toggle(yaml.and_then(|y| y.truthy)))
 }
 
 /// Builds the argument vector for `yamllint -f parsable <file>`, used by
@@ -125,7 +52,7 @@ fn build_yamllint_inline_config(cfg: &YamllintConfig) -> String {
 /// `path:line:col: [level] message (rule)` — verified against a locally
 /// installed yamllint. Like the existing clippy/ruff diagnostics paths, this
 /// intentionally runs with yamllint's own default rule set rather than
-/// threading through `build_yamllint_inline_config`'s resolved
+/// threading through `yamllint_config`'s resolved
 /// `formality.toml` settings — the same known simplification noted in this
 /// module's callers (see `engine::lsp::diagnostics` module docs).
 #[must_use]
@@ -224,11 +151,9 @@ impl surfaces::LanguageSurface for YamlSurface {
     }
 
     // Inline `--tab-width`/`--print-width`/etc. instead of writing
-    // `.prettierrc.json` to disk — see `build_prettier_inline_args` (Fixes
+    // `.prettierrc.json` to disk — see `prettier::prettier_args` (Fixes
     // #151 [pre-recreation]). `fml sync` remains the only path that materializes the file.
-    let inline_config = prettier::build_prettier_inline_args(
-      &prettier::PrettierConfig::from_context(ctx),
-    );
+    let inline_config = prettier::prettier_args(ctx);
 
     if ctx.check_only {
       return sync::diff_check_via_tempcopy_classified(
@@ -297,10 +222,9 @@ impl surfaces::LanguageSurface for YamlSurface {
     }
 
     // Inline `-d <yaml source>` instead of writing `.yamllint.yaml` to disk
-    // — see `build_yamllint_inline_config` (Fixes #151 [pre-recreation]). `fml sync` remains
+    // — see `yamllint_config` (Fixes #151 [pre-recreation]). `fml sync` remains
     // the only path that materializes the file.
-    let inline_config =
-      build_yamllint_inline_config(&YamllintConfig::from_context(ctx));
+    let inline_config = yamllint_config(ctx).yaml();
 
     let mut cmd = tooling::create_tool_command("yamllint");
     cmd.arg("-d").arg(&inline_config);
@@ -327,11 +251,11 @@ impl surfaces::LanguageSurface for YamlSurface {
 
   // `fml fmt`/`fml lint` no longer go through this path (Fixes #151 [pre-recreation]): they
   // pass the resolved config to prettier/yamllint inline (see
-  // `build_prettier_inline_args` and `build_yamllint_inline_config`, used in
+  // `prettier::prettier_args` and `yamllint_config`, used in
   // `format()`/`lint()` above). This method is now reached only by `fml
   // sync`, for users who explicitly want `.yamllint.yaml` materialized on
   // disk (Fixes #158 [pre-recreation]: previously this never called
-  // `sync_native_config::<YamllintConfig>`, so `.yamllint.yaml` was never
+  // `yamllint_config(ctx).sync`, so `.yamllint.yaml` was never
   // actually written by `fml sync`).
   //
   // `.prettierrc.json` is deliberately not written here — it is shared with
@@ -343,12 +267,7 @@ impl surfaces::LanguageSurface for YamlSurface {
     ctx: &surfaces::ExecutionContext,
     check: bool,
   ) -> surfaces::SurfaceResult {
-    native::sync_native_config::<YamllintConfig>(
-      ctx,
-      check,
-      time::Instant::now(),
-      self.name(),
-    )
+    yamllint_config(ctx).sync(ctx, check, time::Instant::now(), self.name())
   }
 }
 
@@ -357,29 +276,50 @@ mod tests {
   use super::*;
   use crate::surfaces::LanguageSurface;
 
+  /// Rules default to disabled and sequence indentation on; set options flip
+  /// them. The inline `-d` document carries the same rules, minus the header.
   #[test]
-  fn yamllint_config_typed_serialization() {
-    let cfg = YamllintConfig {
-      extends: "default".to_string(),
-      rules: YamllintRulesConfig {
-        line_length: YamllintLineLengthRule { max: 120 },
-        indentation: YamllintIndentationRule {
-          spaces: 4,
-          indent_sequences: true,
-        },
-        document_start: YamllintRuleToggle::Disable,
-        truthy: YamllintRuleToggle::Disable,
-      },
+  fn yamllint_config_table() {
+    let temp = tempfile::TempDir::new().unwrap();
+    let flipped = config::options::YamlOptions {
+      indent_sequence: Some(false),
+      document_start: Some(true),
+      truthy: Some(true),
     };
-    let rendered = cfg.render().unwrap();
-    assert!(rendered.starts_with(native::AUTO_GENERATED_HEADER));
-    assert!(rendered.contains("extends: default"));
-    assert!(rendered.contains("line-length:"));
-    assert!(rendered.contains("max: 120"));
-    assert!(rendered.contains("spaces: 4"));
-    assert!(rendered.contains("indent-sequences: true"));
-    assert!(rendered.contains("document-start: disable"));
-    assert!(rendered.contains("truthy: disable"));
+    let cases = [
+      (
+        None,
+        [
+          "document-start: disable",
+          "truthy: disable",
+          "indent-sequences: true",
+        ],
+      ),
+      (
+        Some(flipped),
+        [
+          "document-start: enable",
+          "truthy: enable",
+          "indent-sequences: false",
+        ],
+      ),
+    ];
+    for (yaml, expected) in cases {
+      let mut lang = config::ResolvedLangConfig::new("yaml");
+      lang.yaml = yaml;
+      lang.line_length = 120;
+      let cfg = yamllint_config(&surfaces::test_ctx(temp.path(), lang));
+      let (file, inline) = (cfg.render(), cfg.yaml());
+      assert!(file.starts_with(native::AUTO_GENERATED_HEADER), "{file}");
+      assert!(
+        !inline.starts_with(native::AUTO_GENERATED_HEADER),
+        "{inline}"
+      );
+      for line in expected.into_iter().chain(["max: 120"]) {
+        assert!(file.contains(line), "{line} missing from file:\n{file}");
+        assert!(inline.contains(line), "{line} missing inline:\n{inline}");
+      }
+    }
   }
 
   #[test]
@@ -393,44 +333,6 @@ mod tests {
         "config/app.yaml".to_string(),
       ]
     );
-  }
-
-  #[test]
-  fn yamllint_config_from_context_rules_disabled_by_default() {
-    let temp = tempfile::TempDir::new().unwrap();
-    let ctx =
-      surfaces::test_ctx(temp.path(), config::ResolvedLangConfig::new("yaml"));
-    let cfg = YamllintConfig::from_context(&ctx);
-    assert_eq!(cfg.rules.document_start, YamllintRuleToggle::Disable);
-    assert_eq!(cfg.rules.truthy, YamllintRuleToggle::Disable);
-    assert!(cfg.rules.indentation.indent_sequences);
-
-    let rendered = cfg.render().unwrap();
-    assert!(rendered.contains("document-start: disable"));
-    assert!(rendered.contains("truthy: disable"));
-    assert!(rendered.contains("indent-sequences: true"));
-  }
-
-  #[test]
-  fn yamllint_config_from_context_rules_enabled() {
-    let temp = tempfile::TempDir::new().unwrap();
-    let mut lang_cfg = config::ResolvedLangConfig::new("yaml");
-    lang_cfg.yaml = Some(config::options::YamlOptions {
-      indent_sequence: Some(false),
-      document_start: Some(true),
-      truthy: Some(true),
-    });
-
-    let ctx = surfaces::test_ctx(temp.path(), lang_cfg);
-    let cfg = YamllintConfig::from_context(&ctx);
-    assert_eq!(cfg.rules.document_start, YamllintRuleToggle::Enable);
-    assert_eq!(cfg.rules.truthy, YamllintRuleToggle::Enable);
-    assert!(!cfg.rules.indentation.indent_sequences);
-
-    let rendered = cfg.render().unwrap();
-    assert!(rendered.contains("document-start: enable"));
-    assert!(rendered.contains("truthy: enable"));
-    assert!(rendered.contains("indent-sequences: false"));
   }
 
   #[test]
@@ -466,26 +368,6 @@ mod tests {
     assert!(content.contains("indent-sequences: false"));
     assert!(content.contains("document-start: enable"));
     assert!(content.contains("truthy: enable"));
-  }
-
-  #[test]
-  fn build_yamllint_inline_config_shape() {
-    let cfg = YamllintConfig {
-      extends: "default".to_string(),
-      rules: YamllintRulesConfig {
-        line_length: YamllintLineLengthRule { max: 120 },
-        indentation: YamllintIndentationRule {
-          spaces: 4,
-          indent_sequences: true,
-        },
-        document_start: YamllintRuleToggle::Disable,
-        truthy: YamllintRuleToggle::Disable,
-      },
-    };
-    let inline = build_yamllint_inline_config(&cfg);
-    assert!(inline.contains("max: 120"));
-    assert!(inline.contains("spaces: 4"));
-    assert!(!inline.starts_with(native::AUTO_GENERATED_HEADER));
   }
 
   #[test]

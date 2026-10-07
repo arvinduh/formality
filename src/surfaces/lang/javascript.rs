@@ -10,182 +10,74 @@ use crate::surfaces;
 use crate::surfaces::LanguageSurface;
 use crate::surfaces::sync;
 use crate::surfaces::sync::native;
-use crate::surfaces::sync::native::NativeConfig;
 use crate::surfaces::tooling;
 use std::path;
 use std::time;
 
-/// Formatter configuration block for `biome.json`.
-#[derive(Debug, serde::Serialize, serde::Deserialize)]
-#[serde(rename_all = "camelCase")]
-struct BiomeFormatterConfig {
-  /// Whether the formatter is enabled.
-  enabled: bool,
-  /// Indent style (`"space"` or `"tab"`).
-  indent_style: String,
-  /// Indentation spaces count per level.
-  indent_width: usize,
-  /// Maximum line width.
-  line_width: usize,
-}
-
-/// JS-specific formatter options for `biome.json`.
-#[derive(Debug, serde::Serialize, serde::Deserialize)]
-#[serde(rename_all = "camelCase")]
-struct BiomeJsFormatterConfig {
-  /// Preferred string quote style.
-  quote_style: String,
-  /// Trailing comma policy.
-  trailing_commas: String,
-  /// Semicolon requirement policy.
-  semicolons: String,
-}
-
-/// JS configuration wrapper for `biome.json`.
-#[derive(Debug, serde::Serialize, serde::Deserialize)]
-struct BiomeJsConfig {
-  /// JavaScript formatter configuration.
-  formatter: BiomeJsFormatterConfig,
-}
-
-/// `assist.actions.source.organizeImports` — the modern (Biome >= 2.0) home
-/// for import sorting, replacing the removed top-level `organizeImports`
-/// config block from Biome 1.x. Value is `"on"` or `"off"`.
-#[derive(Debug, serde::Serialize, serde::Deserialize)]
-#[serde(rename_all = "camelCase")]
-struct BiomeAssistSourceActions {
-  /// Organize imports action state (`"on"` or `"off"`).
-  organize_imports: String,
-}
-
-/// Assist actions sub-block for `biome.json`.
-#[derive(Debug, serde::Serialize, serde::Deserialize)]
-struct BiomeAssistActions {
-  /// Source assist actions.
-  source: BiomeAssistSourceActions,
-}
-
-/// Assist configuration block for `biome.json`.
-#[derive(Debug, serde::Serialize, serde::Deserialize)]
-struct BiomeAssistConfig {
-  /// Whether assist feature is enabled.
-  enabled: bool,
-  /// Assist actions settings.
-  actions: BiomeAssistActions,
-}
-
-/// Linter rules sub-block for `biome.json`.
-#[derive(Debug, serde::Serialize, serde::Deserialize)]
-struct BiomeLinterRules {
-  /// Linter rule preset name (e.g. `"recommended"`).
-  preset: String,
-}
-
-/// Linter configuration block for `biome.json`.
-#[derive(Debug, serde::Serialize, serde::Deserialize)]
-#[serde(rename_all = "camelCase")]
-struct BiomeLinterConfig {
-  /// Whether the linter is enabled.
-  enabled: bool,
-  /// Linter rules configuration.
-  rules: BiomeLinterRules,
-}
-
-/// Native `biome.json` configuration representation for JavaScript/TypeScript formatting and linting.
-#[derive(Debug, serde::Serialize, serde::Deserialize)]
-#[serde(rename_all = "camelCase")]
-struct BiomeConfig {
-  /// JSON Schema reference URI.
-  #[serde(rename = "$schema")]
-  schema: String,
-  /// Formatter configuration block.
-  formatter: BiomeFormatterConfig,
-  /// JavaScript language options.
-  javascript: BiomeJsConfig,
-  /// Code assist / import sorting configuration.
-  assist: BiomeAssistConfig,
-  /// Linter configuration block.
-  linter: BiomeLinterConfig,
-}
-
-impl NativeConfig for BiomeConfig {
-  const FILE_NAME: &'static str = "biome.json";
-
-  fn from_context(ctx: &surfaces::ExecutionContext) -> Self {
-    let indent_style = if ctx.lang_config.use_tabs {
-      "tab"
-    } else {
-      "space"
-    };
-
-    let quote_style = ctx
-      .lang_config
-      .javascript
-      .as_ref()
-      .and_then(|j| j.quote_style.as_deref())
-      .unwrap_or("double");
-
-    let trailing_comma = ctx
-      .lang_config
-      .javascript
-      .as_ref()
-      .and_then(|j| j.trailing_comma.as_deref())
-      .unwrap_or("all");
-
-    let semicolons = ctx
-      .lang_config
-      .javascript
-      .as_ref()
-      .and_then(|j| j.semicolons.as_deref())
-      .unwrap_or("always");
-
-    let organize_imports_enabled = ctx
-      .lang_config
-      .javascript
-      .as_ref()
-      .and_then(|j| j.organize_imports)
-      .unwrap_or(true);
-
-    Self {
-      schema: "https://biomejs.dev/schemas/2.0.0/schema.json".to_string(),
-      formatter: BiomeFormatterConfig {
-        enabled: true,
-        indent_style: indent_style.to_string(),
-        indent_width: ctx.lang_config.indent_size,
-        line_width: ctx.lang_config.line_length,
+/// The `biome.json` settings `ctx` resolves to. Import sorting lives under
+/// `assist.actions.source.organizeImports` (Biome >= 2.0).
+fn biome_config(ctx: &surfaces::ExecutionContext) -> native::ToolConfig {
+  let js = ctx.lang_config.javascript.as_ref();
+  native::ToolConfig::new("biome.json")
+    .set("$schema", "https://biomejs.dev/schemas/2.0.0/schema.json")
+    .set("formatter.enabled", true)
+    .set(
+      "formatter.indentStyle",
+      if ctx.lang_config.use_tabs {
+        "tab"
+      } else {
+        "space"
       },
-      javascript: BiomeJsConfig {
-        formatter: BiomeJsFormatterConfig {
-          quote_style: quote_style.to_string(),
-          trailing_commas: trailing_comma.to_string(),
-          semicolons: semicolons.to_string(),
-        },
+    )
+    .set(
+      "formatter.indentWidth",
+      native::int(ctx.lang_config.indent_size),
+    )
+    .set(
+      "formatter.lineWidth",
+      native::int(ctx.lang_config.line_length),
+    )
+    .set(
+      "javascript.formatter.quoteStyle",
+      js.and_then(|j| j.quote_style.as_deref())
+        .unwrap_or("double"),
+    )
+    .set(
+      "javascript.formatter.trailingCommas",
+      js.and_then(|j| j.trailing_comma.as_deref())
+        .unwrap_or("all"),
+    )
+    .set(
+      "javascript.formatter.semicolons",
+      js.and_then(|j| j.semicolons.as_deref()).unwrap_or("always"),
+    )
+    .set("assist.enabled", true)
+    .set(
+      "assist.actions.source.organizeImports",
+      if js.and_then(|j| j.organize_imports).unwrap_or(true) {
+        "on"
+      } else {
+        "off"
       },
-      assist: BiomeAssistConfig {
-        enabled: true,
-        actions: BiomeAssistActions {
-          source: BiomeAssistSourceActions {
-            organize_imports: if organize_imports_enabled {
-              "on".to_string()
-            } else {
-              "off".to_string()
-            },
-          },
-        },
-      },
-      linter: BiomeLinterConfig {
-        enabled: true,
-        rules: BiomeLinterRules {
-          preset: "recommended".to_string(),
-        },
-      },
-    }
-  }
-
-  fn render(&self) -> Result<String, surfaces::Error> {
-    native::render_native_config(self)
-  }
+    )
+    .set("linter.enabled", true)
+    .set("linter.rules.preset", "recommended")
 }
+
+/// The formatting-layout flags `biome check`/`format` take inline. The linter
+/// preset and the import-sorting toggle have no single-action flag, so they
+/// stay file-only; biome's defaults already match them.
+const BIOME_INLINE_FLAGS: &[(&str, &str)] = &[
+  ("indent-style", "formatter.indentStyle"),
+  ("indent-width", "formatter.indentWidth"),
+  ("line-width", "formatter.lineWidth"),
+  (
+    "javascript-formatter-quote-style",
+    "javascript.formatter.quoteStyle",
+  ),
+  ("trailing-commas", "javascript.formatter.trailingCommas"),
+  ("semicolons", "javascript.formatter.semicolons"),
+];
 
 /// JavaScript/TypeScript language surface implementation.
 #[derive(Debug, Default)]
@@ -211,35 +103,6 @@ impl DeclaresFacets for JavaScriptSurface {
 /// files.
 const JS_TS_EXTENSIONS: &[&str] =
   &["js", "jsx", "ts", "tsx", "mjs", "cjs", "mts", "cts"];
-
-/// Renders the resolved [`BiomeConfig`]'s formatting-layout settings as the
-/// inline `--indent-style`/`--line-width`/etc. flags `biome check`/`biome
-/// format` accept, so `fml fmt` can apply formality.toml's settings without
-/// writing `biome.json` to disk (Fixes #151 [pre-recreation]). Only `fml sync` writes that
-/// file now (see [`JavaScriptSurface::sync_config`]). This covers the
-/// formatting-layout options only — the linter preset and the
-/// `assist.actions.source.organizeImports` toggle have no equivalent
-/// single-action inline flag (only the coarser `--assist-enabled` /
-/// `--javascript-assist-enabled`), so those two stay config-file-only;
-/// biome's own defaults for both already match what `BiomeConfig::default`
-/// would render, so this is a low-risk gap, not a functional regression.
-#[must_use]
-fn build_biome_inline_format_args(cfg: &BiomeConfig) -> Vec<String> {
-  vec![
-    format!("--indent-style={}", cfg.formatter.indent_style),
-    format!("--indent-width={}", cfg.formatter.indent_width),
-    format!("--line-width={}", cfg.formatter.line_width),
-    format!(
-      "--javascript-formatter-quote-style={}",
-      cfg.javascript.formatter.quote_style
-    ),
-    format!(
-      "--trailing-commas={}",
-      cfg.javascript.formatter.trailing_commas
-    ),
-    format!("--semicolons={}", cfg.javascript.formatter.semicolons),
-  ]
-}
 
 /// The biome flag `fml fmt` passes to keep the linter out of the Smart Format
 /// pass, and the value it passes it with. Named because the format path both
@@ -424,10 +287,9 @@ impl LanguageSurface for JavaScriptSurface {
     }
 
     // Inline `--indent-style`/`--line-width`/etc. instead of writing
-    // `biome.json` to disk — see `build_biome_inline_format_args` (Fixes
+    // `biome.json` to disk — see `BIOME_INLINE_FLAGS` (Fixes
     // #151 [pre-recreation]). `fml sync` remains the only path that materializes the file.
-    let inline_config =
-      build_biome_inline_format_args(&BiomeConfig::from_context(ctx));
+    let inline_config = biome_config(ctx).flags(BIOME_INLINE_FLAGS);
 
     if ctx.check_only {
       return sync::diff_check_via_tempcopy_classified(
@@ -508,7 +370,7 @@ impl LanguageSurface for JavaScriptSurface {
 
   // `fml fmt` no longer goes through this path for the formatting-layout
   // options (Fixes #151 [pre-recreation]): it passes them to biome inline (see
-  // `build_biome_inline_format_args`, used in `format()` above). The
+  // `BIOME_INLINE_FLAGS`, used in `format()` above). The
   // linter preset and `organizeImports` toggle have no equivalent
   // single-action CLI flag (see that function's doc comment for why), so
   // `fml lint` still relies on biome's own defaults there rather than on
@@ -520,7 +382,7 @@ impl LanguageSurface for JavaScriptSurface {
     check: bool,
   ) -> surfaces::SurfaceResult {
     let start = time::Instant::now();
-    native::sync_native_config::<BiomeConfig>(ctx, check, start, self.name())
+    biome_config(ctx).sync(ctx, check, start, self.name())
   }
 }
 
@@ -617,48 +479,63 @@ mod tests {
     assert!(surfaces::detect_in(&surface, temp.path()));
   }
 
+  /// Defaults and options reach both `biome.json` and the inline flags; the
+  /// import-sorting toggle is file-only.
   #[test]
-  fn biome_config_typed_serialization() {
-    let cfg = BiomeConfig {
-      schema: "https://biomejs.dev/schemas/1.5.0/schema.json".to_string(),
-      formatter: BiomeFormatterConfig {
-        enabled: true,
-        indent_style: "space".to_string(),
-        indent_width: 2,
-        line_width: 80,
-      },
-      javascript: BiomeJsConfig {
-        formatter: BiomeJsFormatterConfig {
-          quote_style: "single".to_string(),
-          trailing_commas: "all".to_string(),
-          semicolons: "always".to_string(),
-        },
-      },
-      assist: BiomeAssistConfig {
-        enabled: true,
-        actions: BiomeAssistActions {
-          source: BiomeAssistSourceActions {
-            organize_imports: "on".to_string(),
-          },
-        },
-      },
-      linter: BiomeLinterConfig {
-        enabled: true,
-        rules: BiomeLinterRules {
-          preset: "recommended".to_string(),
-        },
-      },
+  fn biome_config_table() {
+    let temp = tempfile::TempDir::new().unwrap();
+    let opts = config::options::JavaScriptOptions {
+      quote_style: Some("single".to_string()),
+      trailing_comma: Some("es5".to_string()),
+      semicolons: Some("asNeeded".to_string()),
+      organize_imports: Some(false),
     };
-    let rendered = cfg.render().unwrap();
-    assert!(rendered.contains("\"$schema\""));
-    assert!(rendered.contains("\"indentWidth\": 2"));
-    assert!(rendered.contains("\"lineWidth\": 80"));
-    assert!(rendered.contains("\"quoteStyle\": \"single\""));
-    assert!(rendered.contains("\"trailingCommas\": \"all\""));
-    assert!(rendered.contains("\"assist\""));
-    assert!(rendered.contains("\"organizeImports\": \"on\""));
-    assert!(rendered.contains("\"linter\""));
-    assert!(rendered.contains("\"preset\": \"recommended\""));
+    // (options, tabs, expected flags, expected organizeImports)
+    let cases = [
+      (
+        None,
+        false,
+        [
+          "--indent-style=space",
+          "--indent-width=4",
+          "--line-width=100",
+          "--javascript-formatter-quote-style=double",
+          "--trailing-commas=all",
+          "--semicolons=always",
+        ],
+        "on",
+      ),
+      (
+        Some(opts),
+        true,
+        [
+          "--indent-style=tab",
+          "--indent-width=4",
+          "--line-width=100",
+          "--javascript-formatter-quote-style=single",
+          "--trailing-commas=es5",
+          "--semicolons=asNeeded",
+        ],
+        "off",
+      ),
+    ];
+    for (js, tabs, flags, organize) in cases {
+      let mut lang = config::ResolvedLangConfig::new("javascript");
+      lang.line_length = 100;
+      lang.indent_size = 4;
+      lang.use_tabs = tabs;
+      lang.javascript = js;
+      let cfg = biome_config(&surfaces::test_ctx(temp.path(), lang));
+      assert_eq!(cfg.flags(BIOME_INLINE_FLAGS), flags);
+      let file: serde_json::Value =
+        serde_json::from_str(&cfg.render()).unwrap();
+      assert_eq!(
+        file["assist"]["actions"]["source"]["organizeImports"],
+        organize
+      );
+      assert_eq!(file["linter"]["rules"]["preset"], "recommended");
+      assert_eq!(file["formatter"]["lineWidth"], 100);
+    }
   }
 
   #[test]
@@ -722,30 +599,6 @@ mod tests {
       surface.facet_support(facets::Facet::Standard),
       facets::FacetSupport::Unsupported
     );
-  }
-
-  #[test]
-  fn build_biome_inline_format_args_shape() {
-    let temp = tempfile::TempDir::new().unwrap();
-    let mut lang_cfg = config::ResolvedLangConfig::new("javascript");
-    lang_cfg.line_length = 100;
-    lang_cfg.indent_size = 4;
-    lang_cfg.javascript = Some(config::options::JavaScriptOptions {
-      quote_style: Some("single".to_string()),
-      trailing_comma: Some("es5".to_string()),
-      semicolons: Some("as-needed".to_string()),
-      organize_imports: Some(true),
-    });
-    let ctx = surfaces::test_ctx(temp.path(), lang_cfg);
-    let cfg = BiomeConfig::from_context(&ctx);
-    let args = build_biome_inline_format_args(&cfg);
-    assert!(args.contains(&"--indent-width=4".to_string()));
-    assert!(args.contains(&"--line-width=100".to_string()));
-    assert!(
-      args.contains(&"--javascript-formatter-quote-style=single".to_string())
-    );
-    assert!(args.contains(&"--trailing-commas=es5".to_string()));
-    assert!(args.contains(&"--semicolons=as-needed".to_string()));
   }
 
   #[test]

@@ -10,132 +10,85 @@ use crate::surfaces;
 use crate::surfaces::LanguageSurface;
 use crate::surfaces::sync;
 use crate::surfaces::sync::native;
-use crate::surfaces::sync::native::NativeConfig;
 use crate::surfaces::tooling;
 use std::collections;
-use std::fmt::Write;
 use std::hash;
 use std::path;
 use std::time;
 
-/// Native `.clang-format` configuration representation for C/C++ formatting.
-#[derive(Debug, serde::Serialize, serde::Deserialize)]
-#[serde(rename_all = "PascalCase")]
-struct ClangFormatConfig {
-  /// Target language specification.
-  language: String,
-  /// Base style sheet (e.g. `"LLVM"`, `"Google"`).
-  based_on_style: String,
-  /// Indentation spaces width per level.
-  indent_width: usize,
-  /// Maximum line column limit.
-  column_limit: usize,
-  /// Tab usage policy (`"Always"`, `"Never"`).
-  use_tab: String,
-  /// Line ending style (`"LF"`, `"CRLF"`).
-  line_ending: String,
-  /// Pointer alignment style (`"Left"`, `"Right"`, `"Middle"`).
-  pointer_alignment: String,
-  /// Brace breaking style (`"Attach"`, `"Allman"`).
-  break_before_braces: String,
-  /// Whether to sort `#include` statements.
-  sort_includes: bool,
-  /// Language standard (e.g. `"c++17"`, `"c++20"`, `"Latest"`).
-  #[serde(skip_serializing_if = "Option::is_none")]
-  standard: Option<String>,
-}
-
-impl NativeConfig for ClangFormatConfig {
-  const FILE_NAME: &'static str = ".clang-format";
-
-  fn from_context(ctx: &surfaces::ExecutionContext) -> Self {
-    let use_tab = if ctx.lang_config.use_tabs {
-      "Always"
+/// The `.clang-format` settings `ctx` resolves to. clang-format's `-style=`
+/// takes the same keys as one flow map, so `fml fmt` passes
+/// [`native::ToolConfig::flow`] instead of writing the file
+/// (#157 [pre-recreation]).
+fn clang_format_config(ctx: &surfaces::ExecutionContext) -> native::ToolConfig {
+  let cpp = ctx.lang_config.cpp.as_ref();
+  let line_ending =
+    if ctx.global_config.end_of_line.eq_ignore_ascii_case("crlf") {
+      "CRLF"
     } else {
-      "Never"
+      "LF"
     };
-    let line_ending =
-      match ctx.global_config.end_of_line.to_lowercase().as_str() {
-        "crlf" => "CRLF",
-        _ => "LF",
-      };
-
-    let cpp_opts = ctx.lang_config.cpp.as_ref();
-    let based_on_style = cpp_opts
-      .and_then(|c| c.based_on_style.clone())
-      .unwrap_or_else(|| "LLVM".to_string());
-    let column_limit = cpp_opts
-      .and_then(|c| c.column_limit)
-      .unwrap_or(ctx.lang_config.line_length);
-    let pointer_alignment = cpp_opts
-      .and_then(|c| c.pointer_alignment.clone())
-      .unwrap_or_else(|| "Left".to_string());
-    let break_before_braces = cpp_opts
-      .and_then(|c| c.break_before_braces.clone())
-      .unwrap_or_else(|| "Attach".to_string());
-    let sort_includes = cpp_opts.and_then(|c| c.sort_includes).unwrap_or(true);
-    let standard = cpp_opts.and_then(|c| {
-      c.standard
-        .as_ref()
-        .map(|s| s.trim().trim_start_matches("-std=").to_string())
-    });
-
-    Self {
-      language: "Cpp".to_string(),
-      based_on_style,
-      indent_width: ctx.lang_config.indent_size,
-      column_limit,
-      use_tab: use_tab.to_string(),
-      line_ending: line_ending.to_string(),
-      pointer_alignment,
-      break_before_braces,
-      sort_includes,
-      standard,
+  let cfg = native::ToolConfig::new(".clang-format")
+    .set("Language", "Cpp")
+    .set(
+      "BasedOnStyle",
+      cpp
+        .and_then(|c| c.based_on_style.as_deref())
+        .unwrap_or("LLVM"),
+    )
+    .set("IndentWidth", native::int(ctx.lang_config.indent_size))
+    .set(
+      "ColumnLimit",
+      native::int(
+        cpp
+          .and_then(|c| c.column_limit)
+          .unwrap_or(ctx.lang_config.line_length),
+      ),
+    )
+    .set(
+      "UseTab",
+      if ctx.lang_config.use_tabs {
+        "Always"
+      } else {
+        "Never"
+      },
+    )
+    .set("LineEnding", line_ending)
+    .set(
+      "PointerAlignment",
+      cpp
+        .and_then(|c| c.pointer_alignment.as_deref())
+        .unwrap_or("Left"),
+    )
+    .set(
+      "BreakBeforeBraces",
+      cpp
+        .and_then(|c| c.break_before_braces.as_deref())
+        .unwrap_or("Attach"),
+    )
+    .set(
+      "SortIncludes",
+      cpp.and_then(|c| c.sort_includes).unwrap_or(true),
+    );
+  match cpp.and_then(|c| c.standard.as_deref()) {
+    Some(standard) => {
+      cfg.set("Standard", standard.trim().trim_start_matches("-std="))
     }
-  }
-
-  fn render(&self) -> Result<String, surfaces::Error> {
-    native::render_native_config(self)
+    None => cfg,
   }
 }
 
-/// Native `.clang-tidy` configuration representation for C/C++ linting.
-#[derive(Debug, serde::Serialize, serde::Deserialize)]
-#[serde(rename_all = "PascalCase")]
-struct ClangTidyConfig {
-  /// Enabled clang-tidy check patterns.
-  checks: String,
-  /// Warnings to treat as fatal errors.
-  warnings_as_errors: String,
-  /// Header file filter regex pattern.
-  header_filter_regex: String,
-  /// Code format style.
-  format_style: String,
-}
-
-impl Default for ClangTidyConfig {
-  fn default() -> Self {
-    Self {
-      checks:
-        "*,-fuchsia-*,-google-readability-todo,-llvm-header-guard,-llvmlibc-*"
-          .to_string(),
-      warnings_as_errors: String::new(),
-      header_filter_regex: String::new(),
-      format_style: "none".to_string(),
-    }
-  }
-}
-
-impl NativeConfig for ClangTidyConfig {
-  const FILE_NAME: &'static str = ".clang-tidy";
-
-  fn from_context(_ctx: &surfaces::ExecutionContext) -> Self {
-    Self::default()
-  }
-
-  fn render(&self) -> Result<String, surfaces::Error> {
-    native::render_native_config(self)
-  }
+/// The `.clang-tidy` settings. clang-tidy's `--config=` takes them as one
+/// flow map, so `fml lint` passes [`native::ToolConfig::flow`].
+fn clang_tidy_config() -> native::ToolConfig {
+  native::ToolConfig::new(".clang-tidy")
+    .set(
+      "Checks",
+      "*,-fuchsia-*,-google-readability-todo,-llvm-header-guard,-llvmlibc-*",
+    )
+    .set("WarningsAsErrors", "")
+    .set("HeaderFilterRegex", "")
+    .set("FormatStyle", "none")
 }
 
 /// C/C++ language surface implementation.
@@ -156,50 +109,6 @@ impl DeclaresFacets for CppSurface {
       | facets::Facet::Edition => facets::FacetSupport::Unsupported,
     }
   }
-}
-
-/// Renders a [`ClangFormatConfig`] as the inline `{Key: Value, ...}` YAML-flow
-/// style string accepted by clang-format's `-style=` flag, so `fml fmt` can
-/// apply the resolved formality.toml settings without writing
-/// `.clang-format` to disk. Only `fml sync` writes that file now (see
-/// [`CppSurface::sync_config`]). Verified byte-identical against the
-/// file-based path for both the LLVM/2-space defaults and a custom
-/// Google/4-space/Allman configuration (Fixes #157 [pre-recreation]).
-#[must_use]
-fn build_clang_format_inline_style(cfg: &ClangFormatConfig) -> String {
-  let mut style = format!(
-    "{{Language: {}, BasedOnStyle: {}, IndentWidth: {}, ColumnLimit: {}, UseTab: {}, LineEnding: {}, PointerAlignment: {}, BreakBeforeBraces: {}, SortIncludes: {}",
-    cfg.language,
-    cfg.based_on_style,
-    cfg.indent_width,
-    cfg.column_limit,
-    cfg.use_tab,
-    cfg.line_ending,
-    cfg.pointer_alignment,
-    cfg.break_before_braces,
-    cfg.sort_includes,
-  );
-  if let Some(ref standard) = cfg.standard {
-    let _ = write!(style, ", Standard: {standard}");
-  }
-  style.push('}');
-  style
-}
-
-/// Renders a [`ClangTidyConfig`] as the inline `{Key: Value, ...}` YAML-flow
-/// string accepted by clang-tidy's `--config=` flag, so `fml lint` can apply
-/// the resolved checks without writing `.clang-tidy` to disk. Only `fml
-/// sync` writes that file now (see [`CppSurface::sync_config`]). Verified
-/// byte-identical against the file-based path (Fixes #157 [pre-recreation]).
-#[must_use]
-fn build_clang_tidy_inline_config(cfg: &ClangTidyConfig) -> String {
-  format!(
-    "{{Checks: '{}', WarningsAsErrors: '{}', HeaderFilterRegex: '{}', FormatStyle: {}}}",
-    cfg.checks,
-    cfg.warnings_as_errors,
-    cfg.header_filter_regex,
-    cfg.format_style,
-  )
 }
 
 /// Standard file extensions recognized for C/C++ source and header files.
@@ -440,10 +349,9 @@ impl LanguageSurface for CppSurface {
     }
 
     // Inline `-style='{...}'` instead of writing `.clang-format` to disk —
-    // see `build_clang_format_inline_style` (Fixes #157 [pre-recreation]). `fml sync` remains
+    // see `clang_format_config` (Fixes #157 [pre-recreation]). `fml sync` remains
     // the only path that materializes the file.
-    let inline_style =
-      build_clang_format_inline_style(&ClangFormatConfig::from_context(ctx));
+    let inline_style = clang_format_config(ctx).flow(native::Quote::None);
 
     if ctx.check_only {
       return sync::diff_check_via_tempcopy_classified(
@@ -553,10 +461,9 @@ impl LanguageSurface for CppSurface {
         .collect();
 
     // Inline `--config='{...}'` instead of reading `.clang-tidy` off disk —
-    // see `build_clang_tidy_inline_config` (Fixes #157 [pre-recreation]). `fml sync` remains
+    // see `clang_tidy_config` (Fixes #157 [pre-recreation]). `fml sync` remains
     // the only path that materializes the file.
-    let inline_config =
-      build_clang_tidy_inline_config(&ClangTidyConfig::from_context(ctx));
+    let inline_config = clang_tidy_config().flow(native::Quote::Single);
 
     let mut failed_outputs = Vec::new();
 
@@ -629,8 +536,8 @@ impl LanguageSurface for CppSurface {
 
   // `fml fmt`/`fml lint` no longer go through this path (Fixes #157 [pre-recreation]): they
   // pass the resolved config to clang-format/clang-tidy inline via
-  // `-style='{...}'`/`--config='{...}'` (see `build_clang_format_inline_style`
-  // and `build_clang_tidy_inline_config`, used in `format()`/`lint()`
+  // `-style='{...}'`/`--config='{...}'` (see `clang_format_config`
+  // and `clang_tidy_config`, used in `format()`/`lint()`
   // above). This was left as a documented exception in #151 [pre-recreation] because neither
   // tool was installed in that pass's environment to verify byte-identical
   // output — verified here with LLVM 22.1.8 (clang-format/clang-tidy)
@@ -649,7 +556,7 @@ impl LanguageSurface for CppSurface {
     // Each file is timed from its own `Instant` because
     // `merge_sync_results` sums the durations it is given; sharing one start
     // would double-count the first file's time.
-    let format_res = native::sync_native_config::<ClangFormatConfig>(
+    let format_res = clang_format_config(ctx).sync(
       ctx,
       check,
       time::Instant::now(),
@@ -678,7 +585,7 @@ fn sync_clang_tidy_config(
   start: time::Instant,
   surface_name: &'static str,
 ) -> surfaces::SurfaceResult {
-  native::sync_native_config::<ClangTidyConfig>(ctx, check, start, surface_name)
+  clang_tidy_config().sync(ctx, check, start, surface_name)
 }
 
 #[cfg(test)]
@@ -897,42 +804,56 @@ mod tests {
     let check_res = surface.sync_config(&ctx, true);
     assert!(matches!(check_res.status, surfaces::SurfaceStatus::Passed));
   }
+  /// `-style=` carries exactly the file's keys in file order, `Standard` only
+  /// when set (with any `-std=` prefix dropped), and CR falls back to LF.
   #[test]
-  fn clang_format_config_typed_serialization() {
-    let cfg = ClangFormatConfig {
-      language: "Cpp".to_string(),
-      based_on_style: "LLVM".to_string(),
-      indent_width: 4,
-      column_limit: 100,
-      use_tab: "Never".to_string(),
-      line_ending: "LF".to_string(),
-      pointer_alignment: "Left".to_string(),
-      break_before_braces: "Attach".to_string(),
-      sort_includes: true,
-      standard: Some("c++17".to_string()),
-    };
-    let rendered = cfg.render().unwrap();
-    assert!(rendered.starts_with(native::AUTO_GENERATED_HEADER));
-    assert!(rendered.contains("Language: Cpp"));
-    assert!(rendered.contains("BasedOnStyle: LLVM"));
-    assert!(rendered.contains("IndentWidth: 4"));
-    assert!(rendered.contains("ColumnLimit: 100"));
-    assert!(rendered.contains("UseTab: Never"));
-    assert!(rendered.contains("LineEnding: LF"));
-    assert!(rendered.contains("PointerAlignment: Left"));
-    assert!(rendered.contains("BreakBeforeBraces: Attach"));
-    assert!(rendered.contains("SortIncludes: true"));
-    assert!(rendered.contains("Standard: c++17"));
+  fn clang_format_inline_style_table() {
+    let base = "{Language: Cpp, BasedOnStyle: LLVM, IndentWidth: 2, \
+                ColumnLimit: 80, UseTab: Never, LineEnding: LF, \
+                PointerAlignment: Left, BreakBeforeBraces: Attach, \
+                SortIncludes: true";
+    // (standard option, end_of_line, expected -style=)
+    let cases = [
+      (None, "lf", format!("{base}}}")),
+      (None, "cr", format!("{base}}}")),
+      (
+        Some("-std=c++20"),
+        "lf",
+        format!("{base}, Standard: c++20}}"),
+      ),
+      (
+        None,
+        "crlf",
+        format!("{base}}}").replace("LineEnding: LF", "LineEnding: CRLF"),
+      ),
+    ];
+    for (standard, eol, expected) in cases {
+      let mut lang = config::ResolvedLangConfig::new("cpp");
+      lang.indent_size = 2;
+      lang.line_length = 80;
+      lang.cpp = standard.map(|s| config::options::CppOptions {
+        standard: Some(s.to_string()),
+        ..Default::default()
+      });
+      let mut ctx = surfaces::test_ctx(path::Path::new("."), lang);
+      ctx.global_config = sync::Arc::new(config::ResolvedGlobalConfig {
+        end_of_line: eol.to_string(),
+        ..Default::default()
+      });
+      assert_eq!(
+        clang_format_config(&ctx).flow(native::Quote::None),
+        expected
+      );
+    }
+    let tidy = clang_tidy_config();
+    assert!(
+      tidy
+        .flow(native::Quote::Single)
+        .starts_with("{Checks: '*,-fuchsia-*")
+    );
+    assert!(tidy.render().contains("FormatStyle: none"));
   }
 
-  #[test]
-  fn clang_tidy_config_typed_serialization() {
-    let cfg = ClangTidyConfig::default();
-    let rendered = cfg.render().unwrap();
-    assert!(rendered.starts_with(native::AUTO_GENERATED_HEADER));
-    assert!(rendered.contains("Checks:"));
-    assert!(rendered.contains("FormatStyle: none"));
-  }
   #[test]
   fn build_clang_tidy_args_with_fix_and_extra_args() {
     let files = vec![path::PathBuf::from("src/app.cpp")];
@@ -999,60 +920,6 @@ mod tests {
 
     let check_res = surface.sync_config(&ctx, true);
     assert!(matches!(check_res.status, surfaces::SurfaceStatus::Passed));
-  }
-
-  #[test]
-  fn build_clang_format_inline_style_shape() {
-    let cfg = ClangFormatConfig {
-      language: "Cpp".to_string(),
-      based_on_style: "Google".to_string(),
-      indent_width: 4,
-      column_limit: 100,
-      use_tab: "Never".to_string(),
-      line_ending: "LF".to_string(),
-      pointer_alignment: "Right".to_string(),
-      break_before_braces: "Allman".to_string(),
-      sort_includes: false,
-      standard: None,
-    };
-    let inline = build_clang_format_inline_style(&cfg);
-    assert_eq!(
-      inline,
-      "{Language: Cpp, BasedOnStyle: Google, IndentWidth: 4, ColumnLimit: 100, UseTab: Never, LineEnding: LF, PointerAlignment: Right, BreakBeforeBraces: Allman, SortIncludes: false}"
-    );
-
-    let cfg_with_std = ClangFormatConfig {
-      standard: Some("c++20".to_string()),
-      ..cfg
-    };
-    let inline_with_std = build_clang_format_inline_style(&cfg_with_std);
-    assert_eq!(
-      inline_with_std,
-      "{Language: Cpp, BasedOnStyle: Google, IndentWidth: 4, ColumnLimit: 100, UseTab: Never, LineEnding: LF, PointerAlignment: Right, BreakBeforeBraces: Allman, SortIncludes: false, Standard: c++20}"
-    );
-  }
-
-  #[test]
-  fn clang_format_config_line_ending_cr_fallback() {
-    let global = config::ResolvedGlobalConfig {
-      end_of_line: "cr".to_string(),
-      ..Default::default()
-    };
-    let mut ctx = surfaces::test_ctx(
-      path::Path::new("."),
-      config::ResolvedLangConfig::new("cpp"),
-    );
-    ctx.global_config = sync::Arc::new(global);
-    let cfg = ClangFormatConfig::from_context(&ctx);
-    assert_eq!(cfg.line_ending, "LF");
-  }
-
-  #[test]
-  fn build_clang_tidy_inline_config_shape() {
-    let cfg = ClangTidyConfig::default();
-    let inline = build_clang_tidy_inline_config(&cfg);
-    assert!(inline.starts_with("{Checks: '*,-fuchsia-*"));
-    assert!(inline.contains("FormatStyle: none"));
   }
 
   #[test]

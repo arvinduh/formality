@@ -6,115 +6,76 @@
 use std::path;
 use std::time;
 
-use serde;
-
 use crate::config;
 use crate::config::facets;
 use crate::surfaces;
 use crate::surfaces::sync;
 use crate::surfaces::sync::native;
-use crate::surfaces::sync::native::NativeConfig;
 use crate::surfaces::tooling;
 
-/// Format configuration subsection for `ruff.toml`.
-#[derive(Debug, serde::Serialize, serde::Deserialize)]
-#[serde(rename_all = "kebab-case")]
-struct RuffFormatConfig {
-  /// Indent style (`"space"` or `"tab"`).
-  indent_style: String,
-  /// Preferred quote style (`"single"` or `"double"`).
-  quote_style: String,
-  /// Line ending style (`"auto"`, `"lf"`, `"crlf"`).
-  line_ending: String,
-}
-
-/// Lint configuration subsection for `ruff.toml`.
-#[derive(Debug, serde::Serialize, serde::Deserialize)]
-struct RuffLintConfig {
-  /// Selected rule codes to enable.
-  select: Vec<String>,
-  /// Ignored rule codes.
-  ignore: Vec<String>,
-}
-
-/// Native `ruff.toml` configuration representation for Python formatting and linting.
-#[derive(Debug, serde::Serialize, serde::Deserialize)]
-#[serde(rename_all = "kebab-case")]
-struct RuffConfig {
-  /// Line length limit.
-  line_length: usize,
-  /// Indentation spaces width.
-  indent_width: usize,
-  /// Target Python version.
-  #[serde(skip_serializing_if = "Option::is_none")]
-  target_version: Option<String>,
-  /// Format configuration subsection.
-  format: RuffFormatConfig,
-  /// Lint configuration subsection.
-  lint: RuffLintConfig,
-}
-
-impl NativeConfig for RuffConfig {
-  const FILE_NAME: &'static str = "ruff.toml";
-
-  fn from_context(ctx: &surfaces::ExecutionContext) -> Self {
-    let indent_style = if ctx.lang_config.use_tabs {
-      "tab"
+/// The `ruff.toml` settings `ctx` resolves to.
+fn ruff_config(ctx: &surfaces::ExecutionContext) -> native::ToolConfig {
+  let python = ctx.lang_config.python.as_ref();
+  let line_ending =
+    if ctx.global_config.end_of_line.eq_ignore_ascii_case("crlf") {
+      "crlf"
     } else {
-      "space"
+      "lf"
     };
-    let line_ending =
-      match ctx.global_config.end_of_line.to_lowercase().as_str() {
-        "crlf" => "crlf",
-        _ => "lf",
-      };
-
-    let quote_style = ctx
-      .lang_config
-      .python
-      .as_ref()
-      .and_then(|p| p.quote_style.clone())
-      .unwrap_or_else(|| "double".to_string());
-
-    let target_version = ctx
-      .lang_config
-      .python
-      .as_ref()
-      .and_then(|p| p.target_version.clone());
-
-    let ignore = ctx
-      .lang_config
-      .python
-      .as_ref()
-      .and_then(|p| p.ignore_rules.clone())
-      .unwrap_or_default();
-
-    Self {
-      line_length: ctx.lang_config.line_length,
-      indent_width: ctx.lang_config.indent_size,
-      target_version,
-      format: RuffFormatConfig {
-        indent_style: indent_style.to_string(),
-        quote_style,
-        line_ending: line_ending.to_string(),
-      },
-      lint: RuffLintConfig {
-        select: vec![
-          "E".to_string(),
-          "F".to_string(),
-          "I".to_string(),
-          "UP".to_string(),
-          "B".to_string(),
-          "SIM".to_string(),
-        ],
-        ignore,
-      },
-    }
+  let mut cfg = native::ToolConfig::new("ruff.toml")
+    .set("line-length", native::int(ctx.lang_config.line_length))
+    .set("indent-width", native::int(ctx.lang_config.indent_size));
+  if let Some(target) = python.and_then(|p| p.target_version.as_deref()) {
+    cfg = cfg.set("target-version", target);
   }
+  cfg
+    .set(
+      "format.indent-style",
+      if ctx.lang_config.use_tabs {
+        "tab"
+      } else {
+        "space"
+      },
+    )
+    .set(
+      "format.quote-style",
+      python
+        .and_then(|p| p.quote_style.as_deref())
+        .unwrap_or("double"),
+    )
+    .set("format.line-ending", line_ending)
+    .set("lint.select", vec!["E", "F", "I", "UP", "B", "SIM"])
+    .set(
+      "lint.ignore",
+      python
+        .and_then(|p| p.ignore_rules.clone())
+        .unwrap_or_default(),
+    )
+}
 
-  fn render(&self) -> Result<String, surfaces::Error> {
-    native::render_native_config(self)
-  }
+/// The settings `ruff format` takes inline through repeated `--config`.
+const RUFF_FORMAT_INLINE_KEYS: &[&str] = &[
+  "line-length",
+  "indent-width",
+  "format.indent-style",
+  "format.quote-style",
+  "format.line-ending",
+  "target-version",
+];
+
+/// The inline `--config` overrides for `ruff check`. An empty ignore list is
+/// left out, so a project's own `ruff.toml` ignores still apply.
+fn ruff_lint_args(cfg: &native::ToolConfig) -> Vec<String> {
+  let ignores = cfg
+    .get("lint.ignore")
+    .as_array()
+    .is_some_and(|a| !a.is_empty());
+  let keys: &[&str] = if ignores {
+    &["line-length", "lint.select", "lint.ignore"]
+  } else {
+    &["line-length", "lint.select"]
+  };
+  cfg.flagged("--config", keys, native::Quote::Single)
 }
 
 /// Python language surface implementation.
@@ -295,64 +256,6 @@ pub fn build_ruff_check_json_args(
   args
 }
 
-/// Renders the resolved [`RuffConfig`] as the inline `--config "<key> =
-/// <value>"` overrides `ruff format`/`ruff check` accept, so `fml
-/// fmt`/`fml lint` can apply formality.toml's settings without writing
-/// `ruff.toml` to disk (Fixes #151 [pre-recreation]). Only `fml sync` writes that file now
-/// (see [`PythonSurface::sync_config`]).
-#[must_use]
-fn build_ruff_inline_config_args(cfg: &RuffConfig) -> Vec<String> {
-  let mut args = vec![
-    "--config".to_string(),
-    format!("line-length={}", cfg.line_length),
-    "--config".to_string(),
-    format!("indent-width={}", cfg.indent_width),
-    "--config".to_string(),
-    format!("format.indent-style='{}'", cfg.format.indent_style),
-    "--config".to_string(),
-    format!("format.quote-style='{}'", cfg.format.quote_style),
-    "--config".to_string(),
-    format!("format.line-ending='{}'", cfg.format.line_ending),
-  ];
-  if let Some(target_version) = &cfg.target_version {
-    args.push("--config".to_string());
-    args.push(format!("target-version='{target_version}'"));
-  }
-  args
-}
-
-/// Renders the resolved [`RuffConfig`]'s lint-relevant settings as inline
-/// `--config` overrides for `ruff check` (Fixes #151 [pre-recreation], sibling of
-/// [`build_ruff_inline_config_args`] above).
-#[must_use]
-fn build_ruff_inline_lint_config_args(cfg: &RuffConfig) -> Vec<String> {
-  let select = cfg
-    .lint
-    .select
-    .iter()
-    .map(|s| format!("'{s}'"))
-    .collect::<Vec<_>>()
-    .join(",");
-  let mut args = vec![
-    "--config".to_string(),
-    format!("line-length={}", cfg.line_length),
-    "--config".to_string(),
-    format!("lint.select=[{select}]"),
-  ];
-  if !cfg.lint.ignore.is_empty() {
-    let ignore = cfg
-      .lint
-      .ignore
-      .iter()
-      .map(|s| format!("'{s}'"))
-      .collect::<Vec<_>>()
-      .join(",");
-    args.push("--config".to_string());
-    args.push(format!("lint.ignore=[{ignore}]"));
-  }
-  args
-}
-
 impl surfaces::LanguageSurface for PythonSurface {
   fn name(&self) -> &'static str {
     "python"
@@ -425,10 +328,13 @@ impl surfaces::LanguageSurface for PythonSurface {
     }
 
     // Inline `--config key=value` instead of writing `ruff.toml` to disk —
-    // see `build_ruff_inline_config_args` (Fixes #151 [pre-recreation]). `fml sync` remains
+    // see `RUFF_FORMAT_INLINE_KEYS` (Fixes #151 [pre-recreation]). `fml sync` remains
     // the only path that materializes the file.
-    let inline_config =
-      build_ruff_inline_config_args(&RuffConfig::from_context(ctx));
+    let inline_config = ruff_config(ctx).flagged(
+      "--config",
+      RUFF_FORMAT_INLINE_KEYS,
+      native::Quote::Single,
+    );
 
     let check_args = ctx.lang_config.tool_args(RUFF_CHECK);
     let widens_selection = extra_args_widen_selection(check_args);
@@ -573,8 +479,7 @@ impl surfaces::LanguageSurface for PythonSurface {
 
     let files_to_pass = ctx.files_to_pass(files);
 
-    let lint_config =
-      build_ruff_inline_lint_config_args(&RuffConfig::from_context(ctx));
+    let lint_config = ruff_lint_args(&ruff_config(ctx));
 
     let mut cmd = tooling::create_tool_command("ruff");
     cmd.args(build_ruff_check_args(&files_to_pass, fix, &ctx.lang_config));
@@ -586,8 +491,8 @@ impl surfaces::LanguageSurface for PythonSurface {
 
   // `fml fmt`/`fml lint` no longer go through this path (Fixes #151 [pre-recreation]): they
   // pass the resolved config to ruff inline via repeated `--config key=val`
-  // flags (see `build_ruff_inline_config_args` /
-  // `build_ruff_inline_lint_config_args`, used in `format()`/`lint()`
+  // flags (see `RUFF_FORMAT_INLINE_KEYS` /
+  // `ruff_lint_args`, used in `format()`/`lint()`
   // above). This method is now reached only by `fml sync`, for users who
   // explicitly want `ruff.toml` materialized on disk.
   fn sync_config(
@@ -596,7 +501,7 @@ impl surfaces::LanguageSurface for PythonSurface {
     check: bool,
   ) -> surfaces::SurfaceResult {
     let start = time::Instant::now();
-    native::sync_native_config::<RuffConfig>(ctx, check, start, self.name())
+    ruff_config(ctx).sync(ctx, check, start, self.name())
   }
 }
 
@@ -735,32 +640,77 @@ mod tests {
     assert!(content.contains("ignore = []"));
   }
 
+  /// The file, the format overrides and the lint overrides all come from one
+  /// settings value: options flow through, CR falls back to LF, and an empty
+  /// ignore list is left out of the lint overrides.
   #[test]
-  fn ruff_config_typed_serialization() {
-    let cfg = RuffConfig {
-      line_length: 100,
-      indent_width: 4,
+  fn ruff_config_table() {
+    let options = |ignore: &[&str]| config::options::PythonOptions {
+      quote_style: Some("single".to_string()),
       target_version: Some("py311".to_string()),
-      format: RuffFormatConfig {
-        indent_style: "space".to_string(),
-        quote_style: "single".to_string(),
-        line_ending: "lf".to_string(),
-      },
-      lint: RuffLintConfig {
-        select: vec!["E".to_string(), "F".to_string()],
-        ignore: vec!["E501".to_string()],
-      },
+      ignore_rules: Some(ignore.iter().map(|s| (*s).to_string()).collect()),
     };
-    let rendered = cfg.render().unwrap();
-    assert!(rendered.starts_with(native::AUTO_GENERATED_HEADER));
-    assert!(rendered.contains("line-length = 100"));
-    assert!(rendered.contains("indent-width = 4"));
-    assert!(rendered.contains("target-version = \"py311\""));
-    assert!(rendered.contains("[format]"));
-    assert!(rendered.contains("quote-style = \"single\""));
-    assert!(rendered.contains("[lint]"));
-    assert!(rendered.contains("ignore = [\"E501\"]"));
+    // (options, end_of_line, file lines, format arg, lint arg present?)
+    let cases = [
+      (
+        None,
+        "lf",
+        vec![
+          "line-length = 80",
+          "quote-style = \"double\"",
+          "ignore = []",
+        ],
+        "format.quote-style='double'",
+        ("lint.ignore=", false),
+      ),
+      (
+        Some(options(&["E501", "F401"])),
+        "cr",
+        vec!["target-version = \"py311\"", "line-ending = \"lf\""],
+        "target-version='py311'",
+        ("lint.ignore=['E501','F401']", true),
+      ),
+      (
+        Some(options(&[])),
+        "crlf",
+        vec!["line-ending = \"crlf\"", "quote-style = \"single\""],
+        "format.line-ending='crlf'",
+        ("lint.ignore=", false),
+      ),
+    ];
+    for (python, eol, file_lines, format_arg, (lint_arg, lint_present)) in cases
+    {
+      let mut lang = config::ResolvedLangConfig::new("python");
+      lang.python = python;
+      let mut ctx = surfaces::test_ctx(path::Path::new("."), lang);
+      ctx.global_config = std::sync::Arc::new(config::ResolvedGlobalConfig {
+        end_of_line: eol.to_string(),
+        ..Default::default()
+      });
+      let cfg = ruff_config(&ctx);
+      let file = cfg.render();
+      for line in file_lines {
+        assert!(file.contains(line), "{eol}: {line} missing:\n{file}");
+      }
+      let format_args =
+        cfg.flagged("--config", RUFF_FORMAT_INLINE_KEYS, native::Quote::Single);
+      assert!(
+        format_args.iter().any(|a| a == format_arg),
+        "{format_args:?}"
+      );
+      let lint_args = ruff_lint_args(&cfg);
+      assert!(
+        lint_args
+          .contains(&"lint.select=['E','F','I','UP','B','SIM']".to_string())
+      );
+      assert_eq!(
+        lint_args.iter().any(|a| a.starts_with(lint_arg)),
+        lint_present,
+        "{lint_args:?}"
+      );
+    }
   }
+
   #[test]
   fn python_surface_file_extensions_and_pyi_detection() {
     let surface = PythonSurface;
@@ -852,67 +802,6 @@ mod tests {
   }
 
   #[test]
-  fn build_ruff_inline_config_args_shape() {
-    let cfg = RuffConfig {
-      line_length: 100,
-      indent_width: 4,
-      target_version: Some("py311".to_string()),
-      format: RuffFormatConfig {
-        indent_style: "space".to_string(),
-        quote_style: "single".to_string(),
-        line_ending: "lf".to_string(),
-      },
-      lint: RuffLintConfig {
-        select: vec!["E".to_string(), "F".to_string()],
-        ignore: vec![],
-      },
-    };
-    let args = build_ruff_inline_config_args(&cfg);
-    assert!(args.contains(&"line-length=100".to_string()));
-    assert!(args.contains(&"indent-width=4".to_string()));
-    assert!(args.contains(&"format.quote-style='single'".to_string()));
-    assert!(args.contains(&"target-version='py311'".to_string()));
-
-    let lint_args = build_ruff_inline_lint_config_args(&cfg);
-    assert!(lint_args.contains(&"lint.select=['E','F']".to_string()));
-    assert!(!lint_args.iter().any(|a| a.starts_with("lint.ignore=")));
-
-    let cfg_with_ignore = RuffConfig {
-      lint: RuffLintConfig {
-        select: vec!["E".to_string()],
-        ignore: vec!["E501".to_string(), "F401".to_string()],
-      },
-      ..cfg
-    };
-    let lint_args_with_ignore =
-      build_ruff_inline_lint_config_args(&cfg_with_ignore);
-    assert!(
-      lint_args_with_ignore
-        .contains(&"lint.ignore=['E501','F401']".to_string())
-    );
-  }
-
-  #[test]
-  fn ruff_config_from_context_ignore_rules() {
-    let mut lang_cfg = config::ResolvedLangConfig::new("python");
-    lang_cfg.python = Some(config::options::PythonOptions {
-      quote_style: Some("double".to_string()),
-      target_version: Some("py311".to_string()),
-      ignore_rules: Some(vec!["E501".to_string(), "SIM101".to_string()]),
-    });
-    let ctx = surfaces::test_ctx(path::Path::new("."), lang_cfg);
-    let cfg = RuffConfig::from_context(&ctx);
-    assert_eq!(cfg.lint.ignore, vec!["E501", "SIM101"]);
-
-    let ctx_default = surfaces::test_ctx(
-      path::Path::new("."),
-      config::ResolvedLangConfig::new("python"),
-    );
-    let cfg_default = RuffConfig::from_context(&ctx_default);
-    assert!(cfg_default.lint.ignore.is_empty());
-  }
-
-  #[test]
   fn python_format_and_lint_do_not_write_ruff_toml() {
     // Fixes #151 [pre-recreation]: `fml fmt`/`fml lint` must not write `ruff.toml` as a side
     // effect; only `fml sync` should materialize the native config file.
@@ -933,21 +822,6 @@ mod tests {
 
     assert!(!temp.path().join("ruff.toml").exists());
     assert!(!temp.path().join(".ruff.toml").exists());
-  }
-
-  #[test]
-  fn ruff_config_line_ending_cr_fallback() {
-    let global = config::ResolvedGlobalConfig {
-      end_of_line: "cr".to_string(),
-      ..Default::default()
-    };
-    let mut ctx = surfaces::test_ctx(
-      path::Path::new("."),
-      config::ResolvedLangConfig::new("python"),
-    );
-    ctx.global_config = std::sync::Arc::new(global);
-    let cfg = RuffConfig::from_context(&ctx);
-    assert_eq!(cfg.format.line_ending, "lf");
   }
 
   #[test]
