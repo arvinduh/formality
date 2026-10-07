@@ -78,9 +78,10 @@ Extracted from what all 12 language surfaces do consistently — see
 - **Surface struct**: `<Lang>Surface`, a unit struct
   (`#[derive(Debug, Default)] pub struct RustSurface;`). One per file, with its
   `impl LanguageSurface` and `impl DeclaresFacets` in that same file.
-- **Native config struct**: `<Tool>Config` (e.g. `RustfmtConfig`), implementing
-  `NativeConfig` with `const FILE_NAME: &'static str` set to the real file name
-  the tool reads (e.g. `.rustfmt.toml`). One struct per managed file.
+- **Native config**: `<tool>_config(ctx) -> native::ToolConfig` (e.g.
+  `rustfmt_config`), one function per managed file, naming the real file the
+  tool reads (e.g. `.rustfmt.toml`). `fml sync` and the inline arguments both
+  render from it.
 - **Test functions**: `<behavior_under_test>`, with no `test_` prefix (the
   `tests` module already says it), describing the behavior, not just the
   function (`get_surface_by_name_canonical_and_aliases`, not `get_surface`).

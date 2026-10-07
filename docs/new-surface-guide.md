@@ -304,15 +304,19 @@ and appends it to the registry.
 If the tool reads a persisted configuration file (`.foorc`, `foo.toml`,
 `biome.json`, `.golangci.yml`, `checkstyle.xml`, …), implement `sync_config()`:
 
-1. Render the canonical globals + resolved `FooOptions` into the target file
-   format.
-2. Prefix generated content with `AUTO_GENERATED_HEADER`
-   (`src/surfaces/sync/native.rs`) so `fml sync` detects drift and preserves
-   user-managed files without overwriting (`[MANUAL]` diagnostic).
-3. Use
-   `sync_file_helper(&target_path, file_name, &rendered_content, check, start, "foo")`
-   from `src/surfaces/sync.rs` to handle file creation, update, and drift check
-   cleanly.
+1. Write one `fn foo_config(ctx) -> native::ToolConfig` that sets each key from
+   the canonical globals and the resolved `FooOptions`, using the tool's own key
+   names (`.set("formatter.indentWidth", ...)`).
+2. `sync_config()` is `foo_config(ctx).sync(ctx, check, start, self.name())`.
+   `ToolConfig::render` picks toml, yaml or json from the file name and adds
+   `AUTO_GENERATED_HEADER`, so `fml sync` detects drift and leaves user-managed
+   files alone (`[MANUAL]` diagnostic).
+3. `format()`/`lint()` pass the same `ToolConfig` inline in the tool's own
+   argument shape, rather than writing the file: `pairs` (`k=v`), `flagged`
+   (`--config k=v` per key), `flags` (`--flag=value`), `flow` (`{K: v}`), or
+   `yaml` (a whole document). A file format no settings map expresses, like
+   `checkstyle.xml`, renders its own content and syncs it with
+   `native::sync_file`.
 
 If the tool has no native config file (driven entirely by CLI flags or
 `.editorconfig`), `sync_config()` can return `SurfaceStatus::Passed` or

@@ -84,9 +84,10 @@ The `LanguageSurface` trait (`surfaces.rs`) and everything the surfaces share:
   results.
 - `glob.rs`: candidate-file discovery and exclude-pattern matching.
 - `sync.rs` + `sync/`: native config synchronization for `fml sync` —
-  `native.rs` (the `NativeConfig` trait for a tool's own dotfile config),
-  `prettier.rs` (the shared `.prettierrc.json`), and `editorconfig.rs`
-  (`.editorconfig` generation, per issue `#120 [pre-recreation]`).
+  `native.rs` (`ToolConfig`, one tool's settings rendered either as its native
+  file or as inline arguments), `prettier.rs` (the shared `.prettierrc.json`),
+  and `editorconfig.rs` (`.editorconfig` generation, per issue
+  `#120 [pre-recreation]`).
 
 `tooling`, `glob` and `registry` live here rather than in `engine` because the
 language implementations call them; `engine` depends on `surfaces`, never the
