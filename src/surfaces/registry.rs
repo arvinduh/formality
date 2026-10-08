@@ -42,10 +42,10 @@ impl Default for SurfaceRegistry {
     reg.register_surface::<surfaces::lang::cpp::CppSurface>();
     reg.register_surface::<surfaces::lang::java::JavaSurface>();
     reg.register_surface::<surfaces::lang::go::GoSurface>();
-    reg.register_surface::<surfaces::lang::markdown::MarkdownSurface>();
     reg.register_surface::<surfaces::lang::yaml::YamlSurface>();
     reg.register_surface::<surfaces::lang::json::JsonSurface>();
     reg.register_surface::<surfaces::lang::toml::TomlSurface>();
+    reg.register_surface::<surfaces::lang::markdown::MarkdownSurface>();
     reg.register_surface::<surfaces::lang::typst::TypstSurface>();
     reg.register_surface::<surfaces::lang::javascript::JavaScriptSurface>();
     reg.register_surface::<surfaces::lang::kotlin::KotlinSurface>();
@@ -219,8 +219,6 @@ pub fn get_surface_by_name(
 
 #[cfg(test)]
 mod tests {
-  use std::collections;
-
   use super::*;
 
   /// The trait's default declares no keys, which makes every
@@ -602,44 +600,5 @@ mod tests {
         surface.name()
       );
     }
-  }
-
-  #[test]
-  fn canonical_fleet_order_covers_all_surfaces() {
-    let reg = SurfaceRegistry::default();
-    let registered_names: collections::HashSet<&str> =
-      reg.surfaces().iter().map(|s| s.name()).collect();
-
-    let fleet_order = surfaces::sync::editorconfig::CANONICAL_FLEET_ORDER;
-    let fleet_set: collections::HashSet<&str> =
-      fleet_order.iter().copied().collect();
-
-    assert_eq!(
-      fleet_order.len(),
-      fleet_set.len(),
-      "CANONICAL_FLEET_ORDER contains duplicate surface names"
-    );
-
-    for &name in &registered_names {
-      assert!(
-        fleet_set.contains(name),
-        "Surface '{name}' from SurfaceRegistry::default() is missing from CANONICAL_FLEET_ORDER"
-      );
-    }
-
-    for &name in fleet_order {
-      assert!(
-        registered_names.contains(name),
-        "CANONICAL_FLEET_ORDER contains '{name}' which is not in SurfaceRegistry::default()"
-      );
-    }
-
-    assert_eq!(
-      fleet_order.len(),
-      reg.surfaces().len(),
-      "CANONICAL_FLEET_ORDER length ({}) does not match SurfaceRegistry::default() count ({})",
-      fleet_order.len(),
-      reg.surfaces().len()
-    );
   }
 }

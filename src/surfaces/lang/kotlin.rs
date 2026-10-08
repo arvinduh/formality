@@ -153,7 +153,6 @@ impl LanguageSurface for KotlinSurface {
     vec![surfaces::ToolInfo {
       binary: "ktlint",
       description: "Kotlin linter and formatter (Smart Format: style + import organization in one pass)",
-      install_hint: None,
       is_required_for_fmt: true,
       is_required_for_lint: true,
     }]
@@ -165,25 +164,19 @@ impl LanguageSurface for KotlinSurface {
   ) -> surfaces::SurfaceResult {
     let start = time::Instant::now();
 
-    if let Some(res) =
-      tooling::tool_missing_guard(self.name(), "ktlint", start, None)
-    {
-      return res;
-    }
-
-    let files = ctx.matched_files(KOTLIN_EXTENSIONS);
-    if let Some(res) = surfaces::passed_if_empty(&files, self.name(), start) {
-      return res;
-    }
+    let files =
+      match ctx.files_for(self.name(), "ktlint", KOTLIN_EXTENSIONS, start) {
+        Ok(files) => files,
+        Err(res) => return res,
+      };
 
     if ctx.check_only {
       return sync::diff_check_via_tempcopy_classified(
         &files,
         |scratch| {
-          let mut cmd = tooling::create_tool_command("ktlint");
+          let mut cmd = ctx.command("ktlint");
           cmd.arg("-F").arg(scratch);
           cmd.args(ctx.lang_config.tool_args("ktlint"));
-          cmd.current_dir(ctx.root.as_path());
           cmd.output()
         },
         self.name(),
@@ -214,12 +207,11 @@ impl LanguageSurface for KotlinSurface {
 
     let files_to_pass = ctx.files_to_pass(files);
 
-    let mut cmd = tooling::create_tool_command("ktlint");
+    let mut cmd = ctx.command("ktlint");
     cmd.args(build_ktlint_format_args(
       &files_to_pass,
       ctx.lang_config.tool_args("ktlint"),
     ));
-    cmd.current_dir(ctx.root.as_path());
 
     tooling::run_tool_command_classified(
       self.name(),
@@ -235,26 +227,20 @@ impl LanguageSurface for KotlinSurface {
   ) -> surfaces::SurfaceResult {
     let start = time::Instant::now();
 
-    if let Some(res) =
-      tooling::tool_missing_guard(self.name(), "ktlint", start, None)
-    {
-      return res;
-    }
-
-    let files = ctx.matched_files(KOTLIN_EXTENSIONS);
-    if let Some(res) = surfaces::passed_if_empty(&files, self.name(), start) {
-      return res;
-    }
+    let files =
+      match ctx.files_for(self.name(), "ktlint", KOTLIN_EXTENSIONS, start) {
+        Ok(files) => files,
+        Err(res) => return res,
+      };
 
     let files_to_pass = ctx.files_to_pass(files);
 
-    let mut cmd = tooling::create_tool_command("ktlint");
+    let mut cmd = ctx.command("ktlint");
     cmd.args(build_ktlint_lint_args(
       &files_to_pass,
       fix,
       ctx.lang_config.tool_args("ktlint"),
     ));
-    cmd.current_dir(ctx.root.as_path());
 
     tooling::run_tool_command(self.name(), &mut cmd)
   }

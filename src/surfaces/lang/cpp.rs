@@ -112,7 +112,8 @@ impl DeclaresFacets for CppSurface {
 }
 
 /// Standard file extensions recognized for C/C++ source and header files.
-const CPP_EXTENSIONS: &[&str] = &["c", "cpp", "cc", "cxx", "h", "hpp", "hxx"];
+const CPP_EXTENSIONS: &[&str] =
+  &["c", "cc", "cpp", "cxx", "h", "hh", "hpp", "hxx"];
 
 /// Returns `true` if `ext` is a C++ source or header file extension.
 #[must_use]
@@ -317,14 +318,12 @@ impl LanguageSurface for CppSurface {
       surfaces::ToolInfo {
         binary: "clang-format",
         description: "C/C++ code formatter",
-        install_hint: None,
         is_required_for_fmt: true,
         is_required_for_lint: false,
       },
       surfaces::ToolInfo {
         binary: "clang-tidy",
         description: "C/C++ linter and static analyzer",
-        install_hint: None,
         is_required_for_fmt: false,
         is_required_for_lint: true,
       },
@@ -337,16 +336,11 @@ impl LanguageSurface for CppSurface {
   ) -> surfaces::SurfaceResult {
     let start = time::Instant::now();
 
-    if let Some(res) =
-      tooling::tool_missing_guard(self.name(), "clang-format", start, None)
-    {
-      return res;
-    }
-
-    let files = ctx.matched_files(CPP_EXTENSIONS);
-    if let Some(res) = surfaces::passed_if_empty(&files, self.name(), start) {
-      return res;
-    }
+    let files =
+      match ctx.files_for(self.name(), "clang-format", CPP_EXTENSIONS, start) {
+        Ok(files) => files,
+        Err(res) => return res,
+      };
 
     // Inline `-style='{...}'` instead of writing `.clang-format` to disk —
     // see `clang_format_config` (Fixes #157 [pre-recreation]). `fml sync` remains
@@ -357,11 +351,10 @@ impl LanguageSurface for CppSurface {
       return sync::diff_check_via_tempcopy_classified(
         &files,
         |scratch| {
-          let mut cmd = tooling::create_tool_command("clang-format");
+          let mut cmd = ctx.command("clang-format");
           cmd.arg(format!("-style={inline_style}"));
           cmd.arg("-i").arg(scratch);
           cmd.args(ctx.lang_config.tool_args("clang-format"));
-          cmd.current_dir(ctx.root.as_path());
           cmd.output()
         },
         self.name(),
@@ -378,7 +371,7 @@ impl LanguageSurface for CppSurface {
       );
     }
 
-    let mut cmd = tooling::create_tool_command("clang-format");
+    let mut cmd = ctx.command("clang-format");
     cmd.arg(format!("-style={inline_style}"));
     cmd.arg("-i");
 
@@ -387,7 +380,6 @@ impl LanguageSurface for CppSurface {
     }
 
     cmd.args(ctx.lang_config.tool_args("clang-format"));
-    cmd.current_dir(ctx.root.as_path());
 
     tooling::run_tool_command_classified(
       self.name(),
@@ -407,16 +399,11 @@ impl LanguageSurface for CppSurface {
   ) -> surfaces::SurfaceResult {
     let start = time::Instant::now();
 
-    if let Some(res) =
-      tooling::tool_missing_guard(self.name(), "clang-tidy", start, None)
-    {
-      return res;
-    }
-
-    let files = ctx.matched_files(CPP_EXTENSIONS);
-    if let Some(res) = surfaces::passed_if_empty(&files, self.name(), start) {
-      return res;
-    }
+    let files =
+      match ctx.files_for(self.name(), "clang-tidy", CPP_EXTENSIONS, start) {
+        Ok(files) => files,
+        Err(res) => return res,
+      };
 
     let cpp_opts = ctx.lang_config.cpp.as_ref();
     let custom_std = cpp_opts.and_then(|c| c.standard.as_deref());
@@ -468,7 +455,7 @@ impl LanguageSurface for CppSurface {
     let mut failed_outputs = Vec::new();
 
     for (flist, std_flag) in groups {
-      let mut cmd = tooling::create_tool_command("clang-tidy");
+      let mut cmd = ctx.command("clang-tidy");
       cmd.arg(format!("--config={inline_config}"));
       let args = build_clang_tidy_args(
         &flist,
@@ -477,7 +464,6 @@ impl LanguageSurface for CppSurface {
         ctx.lang_config.tool_args("clang-tidy"),
       );
       cmd.args(&args);
-      cmd.current_dir(ctx.root.as_path());
 
       match cmd.output() {
         Ok(output) => {
@@ -486,23 +472,21 @@ impl LanguageSurface for CppSurface {
           }
         }
         Err(e) => {
-          return surfaces::SurfaceResult {
-            surface_name: self.name(),
-            status: surfaces::SurfaceStatus::ExecutionError {
-              message: format!("Failed to execute clang-tidy: {e}"),
-            },
-            duration: start.elapsed(),
-          };
+          return surfaces::SurfaceResult::error(
+            self.name(),
+            start,
+            format!("Failed to execute clang-tidy: {e}"),
+          );
         }
       }
     }
 
     if failed_outputs.is_empty() {
-      surfaces::SurfaceResult {
-        surface_name: self.name(),
-        status: surfaces::SurfaceStatus::Passed,
-        duration: start.elapsed(),
-      }
+      surfaces::SurfaceResult::new(
+        self.name(),
+        start,
+        surfaces::SurfaceStatus::Passed,
+      )
     } else {
       let mut msgs = Vec::new();
       for output in failed_outputs {
@@ -523,14 +507,14 @@ impl LanguageSurface for CppSurface {
         msgs.join("\n")
       };
 
-      surfaces::SurfaceResult {
-        surface_name: self.name(),
-        status: surfaces::SurfaceStatus::ViolationsFound {
+      surfaces::SurfaceResult::new(
+        self.name(),
+        start,
+        surfaces::SurfaceStatus::ViolationsFound {
           message: final_msg,
           diff: None,
         },
-        duration: start.elapsed(),
-      }
+      )
     }
   }
 

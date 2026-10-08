@@ -53,11 +53,11 @@ fn sync_file_helper(
   };
 
   if current_content.trim() == expected_content.trim() {
-    return surfaces::SurfaceResult {
+    return surfaces::SurfaceResult::new(
       surface_name,
-      status: surfaces::SurfaceStatus::Passed,
-      duration: start.elapsed(),
-    };
+      start,
+      surfaces::SurfaceStatus::Passed,
+    );
   }
 
   // File exists but was not written by fml — protect it from silent overwrite.
@@ -92,14 +92,14 @@ fn sync_file_helper(
        {expected_content}\n\
        ---"
     );
-    return surfaces::SurfaceResult {
+    return surfaces::SurfaceResult::new(
       surface_name,
-      status: surfaces::SurfaceStatus::ManualConfig {
+      start,
+      surfaces::SurfaceStatus::ManualConfig {
         file: file_name.to_string(),
         suggestion,
       },
-      duration: start.elapsed(),
-    };
+    );
   }
 
   if check {
@@ -109,33 +109,31 @@ fn sync_file_helper(
       if exists { file_name } else { "(missing)" },
       &format!("{file_name} (expected)"),
     );
-    surfaces::SurfaceResult {
+    surfaces::SurfaceResult::new(
       surface_name,
-      status: surfaces::SurfaceStatus::ConfigDrifted {
+      start,
+      surfaces::SurfaceStatus::ConfigDrifted {
         file: file_name.to_string(),
         diff,
       },
-      duration: start.elapsed(),
-    }
+    )
   } else {
     if let Some(parent) = file_path.parent() {
       let _ = std::fs::create_dir_all(parent);
     }
     match std::fs::write(file_path, expected_content) {
-      Ok(()) => surfaces::SurfaceResult {
+      Ok(()) => surfaces::SurfaceResult::new(
         surface_name,
-        status: surfaces::SurfaceStatus::ConfigSynced {
+        start,
+        surfaces::SurfaceStatus::ConfigSynced {
           files: vec![surfaces::SyncedConfigFile::new(file_name, !exists)],
         },
-        duration: start.elapsed(),
-      },
-      Err(e) => surfaces::SurfaceResult {
+      ),
+      Err(e) => surfaces::SurfaceResult::error(
         surface_name,
-        status: surfaces::SurfaceStatus::ExecutionError {
-          message: format!("Failed to write {file_name}: {e}"),
-        },
-        duration: start.elapsed(),
-      },
+        start,
+        format!("Failed to write {file_name}: {e}"),
+      ),
     }
   }
 }
@@ -262,11 +260,11 @@ fn diff_check_classified_impl(
   local: bool,
 ) -> surfaces::SurfaceResult {
   if files.is_empty() {
-    return surfaces::SurfaceResult {
+    return surfaces::SurfaceResult::new(
       surface_name,
-      status: surfaces::SurfaceStatus::Passed,
-      duration: start.elapsed(),
-    };
+      start,
+      surfaces::SurfaceStatus::Passed,
+    );
   }
 
   let global_temp = if local {
@@ -278,13 +276,11 @@ fn diff_check_classified_impl(
     {
       Ok(dir) => Some(dir),
       Err(e) => {
-        return surfaces::SurfaceResult {
+        return surfaces::SurfaceResult::error(
           surface_name,
-          status: surfaces::SurfaceStatus::ExecutionError {
-            message: format!("Failed to create temporary directory: {e}"),
-          },
-          duration: start.elapsed(),
-        };
+          start,
+          format!("Failed to create temporary directory: {e}"),
+        );
       }
     }
   };
@@ -402,11 +398,7 @@ fn diff_check_classified_impl(
   for result in results {
     match result {
       PerFileCheckResult::ExecutionError(message) => {
-        return surfaces::SurfaceResult {
-          surface_name,
-          status: surfaces::SurfaceStatus::ExecutionError { message },
-          duration: start.elapsed(),
-        };
+        return surfaces::SurfaceResult::error(surface_name, start, message);
       }
       PerFileCheckResult::FormatterError { message, code } => {
         let status = match classify(code) {
@@ -420,11 +412,7 @@ fn diff_check_classified_impl(
             surfaces::SurfaceStatus::ExecutionError { message }
           }
         };
-        return surfaces::SurfaceResult {
-          surface_name,
-          status,
-          duration: start.elapsed(),
-        };
+        return surfaces::SurfaceResult::new(surface_name, start, status);
       }
       PerFileCheckResult::Diff(diff) => {
         if !combined_diff.is_empty() {
@@ -437,20 +425,20 @@ fn diff_check_classified_impl(
   }
 
   if combined_diff.is_empty() {
-    surfaces::SurfaceResult {
+    surfaces::SurfaceResult::new(
       surface_name,
-      status: surfaces::SurfaceStatus::Passed,
-      duration: start.elapsed(),
-    }
+      start,
+      surfaces::SurfaceStatus::Passed,
+    )
   } else {
-    surfaces::SurfaceResult {
+    surfaces::SurfaceResult::new(
       surface_name,
-      status: surfaces::SurfaceStatus::ViolationsFound {
+      start,
+      surfaces::SurfaceStatus::ViolationsFound {
         message: String::new(),
         diff: Some(combined_diff),
       },
-      duration: start.elapsed(),
-    }
+    )
   }
 }
 

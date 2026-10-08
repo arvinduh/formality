@@ -299,7 +299,6 @@ impl surfaces::LanguageSurface for PythonSurface {
     vec![surfaces::ToolInfo {
       binary: "ruff",
       description: "Fast Python linter and code formatter",
-      install_hint: None,
       is_required_for_fmt: true,
       is_required_for_lint: true,
     }]
@@ -316,16 +315,11 @@ impl surfaces::LanguageSurface for PythonSurface {
   ) -> surfaces::SurfaceResult {
     let start = time::Instant::now();
 
-    if let Some(res) =
-      tooling::tool_missing_guard(self.name(), "ruff", start, None)
-    {
-      return res;
-    }
-
-    let files = ctx.matched_files(PYTHON_EXTENSIONS);
-    if let Some(res) = surfaces::passed_if_empty(&files, self.name(), start) {
-      return res;
-    }
+    let files =
+      match ctx.files_for(self.name(), "ruff", PYTHON_EXTENSIONS, start) {
+        Ok(files) => files,
+        Err(res) => return res,
+      };
 
     // Inline `--config key=value` instead of writing `ruff.toml` to disk —
     // see `RUFF_FORMAT_INLINE_KEYS` (Fixes #151 [pre-recreation]). `fml sync` remains
@@ -416,9 +410,10 @@ impl surfaces::LanguageSurface for PythonSurface {
             check_args,
           );
 
-          return surfaces::SurfaceResult {
-            surface_name: self.name(),
-            status: if is_violation {
+          return surfaces::SurfaceResult::new(
+            self.name(),
+            start,
+            if is_violation {
               surfaces::SurfaceStatus::ViolationsFound {
                 message: msg,
                 diff: None,
@@ -426,28 +421,24 @@ impl surfaces::LanguageSurface for PythonSurface {
             } else {
               surfaces::SurfaceStatus::ExecutionError { message: msg }
             },
-            duration: start.elapsed(),
-          };
+          );
         }
       }
       Err(e) => {
-        return surfaces::SurfaceResult {
-          surface_name: self.name(),
-          status: surfaces::SurfaceStatus::ExecutionError {
-            message: format!("Failed to execute ruff import sorting: {e}"),
-          },
-          duration: start.elapsed(),
-        };
+        return surfaces::SurfaceResult::error(
+          self.name(),
+          start,
+          format!("Failed to execute ruff import sorting: {e}"),
+        );
       }
     }
 
-    let mut cmd = tooling::create_tool_command("ruff");
+    let mut cmd = ctx.command("ruff");
     cmd.args(build_ruff_format_args(
       &inline_config,
       &files_to_pass,
       &ctx.lang_config,
     ));
-    cmd.current_dir(ctx.root.as_path());
 
     // `ruff format` (no `--check`) exits 0 formatted-or-not and only exits 2
     // on a parse/IO/config error, so every non-zero exit here is operational
@@ -466,25 +457,19 @@ impl surfaces::LanguageSurface for PythonSurface {
   ) -> surfaces::SurfaceResult {
     let start = time::Instant::now();
 
-    if let Some(res) =
-      tooling::tool_missing_guard(self.name(), "ruff", start, None)
-    {
-      return res;
-    }
-
-    let files = ctx.matched_files(PYTHON_EXTENSIONS);
-    if let Some(res) = surfaces::passed_if_empty(&files, self.name(), start) {
-      return res;
-    }
+    let files =
+      match ctx.files_for(self.name(), "ruff", PYTHON_EXTENSIONS, start) {
+        Ok(files) => files,
+        Err(res) => return res,
+      };
 
     let files_to_pass = ctx.files_to_pass(files);
 
     let lint_config = ruff_lint_args(&ruff_config(ctx));
 
-    let mut cmd = tooling::create_tool_command("ruff");
+    let mut cmd = ctx.command("ruff");
     cmd.args(build_ruff_check_args(&files_to_pass, fix, &ctx.lang_config));
     cmd.args(&lint_config);
-    cmd.current_dir(ctx.root.as_path());
 
     tooling::run_tool_command(self.name(), &mut cmd)
   }

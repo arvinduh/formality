@@ -124,11 +124,11 @@ pub fn sync_shared_prettier_config(
   let (_, expected) = claims.first()?;
 
   if let Some(message) = describe_prettier_conflict(&claims) {
-    return Some(surfaces::SurfaceResult {
-      surface_name: PRETTIER_PASS_NAME,
-      status: surfaces::SurfaceStatus::ExecutionError { message },
-      duration: start.elapsed(),
-    });
+    return Some(surfaces::SurfaceResult::error(
+      PRETTIER_PASS_NAME,
+      start,
+      message,
+    ));
   }
 
   Some(super::sync_file_helper(

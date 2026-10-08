@@ -19,8 +19,8 @@ repository:
 - [ ] **1. Surface implementation**: `src/surfaces/lang/<lang>.rs` implementing
       `LanguageSurface` + `DeclaresFacets`, exposed via `pub mod <lang>;` in
       `src/surfaces/lang.rs`.
-- [ ] **2. Tooling installer chains**: `src/surfaces/tooling.rs`
-      (`InstallMethod` constant slice and match arm in `install_chain_for()`).
+- [ ] **2. Tool registration**: one `Tool` row per binary in `TOOLS`
+      (`src/surfaces/tooling.rs`).
 - [ ] **3. Per-language configuration**:
   - `src/config/options.rs`: Typed `FooOptions` struct (`merge()`,
     `is_empty()`).
@@ -36,8 +36,6 @@ repository:
     `every_surface_except_json_has_a_structured_parser()` fails if a newly
     registered surface has no arm. A format-only surface with no linter at all
     (`json`) is the one sanctioned exception, named explicitly in that test.
-  - `src/surfaces/sync/editorconfig.rs`: `glob_for_surface()` match arm and
-    `CANONICAL_FLEET_ORDER` entry.
   - Prose surface counts in doc comments and documentation.
 - [ ] **6. Test coverage** (see
       [Style Guide §1](style-guide.md#1-modulefile-hierarchy) for the
@@ -152,37 +150,29 @@ Key implementation notes drawn from the existing fleet of surfaces:
 
 ---
 
-## 2. Tooling & Installer Chains (`src/surfaces/tooling.rs`)
+## 2. Tool Registration (`src/surfaces/tooling.rs`)
 
-`fml doctor --install` and `ToolInfo::get_auto_install_cmd()` discover how to
-install missing CLI tools via preference chains defined in
-`src/surfaces/tooling.rs`.
-
-Add an ordered slice of [`InstallMethod`](../src/surfaces/tooling.rs) variants
-(preferring prebuilt binary managers first, falling back to source compilation
-or package managers) and register it in `install_chain_for`:
+Every binary a surface declares in `tool_info()` has exactly one `Tool` row in
+`TOOLS`: its installer chain, install hint override, pinned and minimum
+versions, and version probe. `fml doctor`, `fml doctor --install` and the
+missing-tool hint all read that row, and the tooling tests fail for a declared
+binary with no row or a row no surface declares.
 
 ```rust
 const FOOFMT_CHAIN: &[InstallMethod] = &[
-  InstallMethod::CargoBinstall("foofmt"),
+  InstallMethod::CargoBinstall("foofmt@1.2.3"),
   InstallMethod::Brew("foofmt"),
-  InstallMethod::Scoop("foofmt"),
-  InstallMethod::WingetName("Foo.foofmt"),
-  InstallMethod::Cargo {
-    package: "foofmt",
-    locked: true,
-  },
 ];
 
-pub(super) fn install_chain_for(
-  binary: &str,
-) -> Option<&'static [InstallMethod]> {
-  match binary {
-    // ...existing tools...
-    "foofmt" => Some(FOOFMT_CHAIN),
-    _ => None,
-  }
-}
+// in TOOLS:
+Tool {
+  binary: "foofmt",
+  chain: FOOFMT_CHAIN,
+  install_hint: None,
+  expected_binary_version: Some(version::Version::new(1, 2, 3)),
+  min_version: Some(version::Version::new(1, 0, 0)),
+  probe: mstv::DEFAULT_VERSION_PROBE,
+},
 ```
 
 ---
@@ -338,14 +328,8 @@ nothing for that file. See "Shared config files" in
 
 ## 6. Soft / Optional Integrations
 
-- **EditorConfig Generation (`src/surfaces/sync/editorconfig.rs`)**:
-  - Add section glob to `glob_for_surface()`:
-
-    ```rust
-    "foo" => "[*.foo]".to_string(),
-    ```
-
-  - Add `"foo"` to `CANONICAL_FLEET_ORDER`.
+- **EditorConfig Generation**: nothing to add. `.editorconfig` sections are
+  derived from `file_extensions()` and ordered by the registry.
 
 - **Prose surface counts**: Update doc comments and prose mentioning the fleet
   count (e.g. `cli.rs`, `README.md`).

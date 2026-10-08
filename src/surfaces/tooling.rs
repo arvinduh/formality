@@ -11,6 +11,7 @@ use std::time;
 use log;
 
 use crate::engine::version;
+use crate::engine::version::mstv;
 use crate::surfaces;
 
 /// A package-manager-level way to install a CLI tool: knows how to detect
@@ -312,22 +313,17 @@ impl InstallMethod {
   }
 }
 
-/// Renders `binary`'s registered `ALL_CHAINS` install-preference chain as a
-/// single human-readable hint string, in the chain's own order — the one
-/// place install guidance is composed from the chain data instead of being
-/// restated by hand per call site (Fixes #264). A tool with no chain row
-/// (one that ships inside a toolchain rather than through a package
-/// manager, e.g. `cargo` or `gofmt`) has no generic advice to give here;
-/// callers for those tools pass their own override instead of relying on
-/// this fallback (see [`crate::surfaces::ToolInfo::install_hint`]).
+/// Renders `binary`'s install guidance: its [`TOOLS`] override when it has
+/// one, otherwise its install-preference chain in order -- the one place
+/// install guidance is composed (Fixes #264).
 #[must_use]
 pub fn install_hint_for(binary: &str) -> String {
-  let Some(chain) = install_chain_for(binary) else {
-    return format!(
-      "No known install method for '{binary}' -- check its own documentation."
-    );
-  };
-  let Some((first, rest)) = chain.split_first() else {
+  if let Some(hint) = tool(binary).and_then(|tool| tool.install_hint) {
+    return hint.to_string();
+  }
+  let Some((first, rest)) =
+    install_chain_for(binary).and_then(<[InstallMethod]>::split_first)
+  else {
     return format!(
       "No known install method for '{binary}' -- check its own documentation."
     );
@@ -391,8 +387,8 @@ pub fn install_hint_for(binary: &str) -> String {
 // A binstall entry ahead of a real prebuilt package is only a win when the
 // prebuilt actually exists; here it inverted the whole point of the chain
 // ordering. The npm-family entries resolve a genuinely prebuilt binary
-// (reporting 0.9.0 -- see ToolChain's doc on why this row's
-// `expected_binary_version` is None -- comfortably above MSTV_TAPLO), and
+// (reporting 0.9.0 -- see Tool's doc on why this row's
+// `expected_binary_version` is None -- comfortably above its floor), and
 // binstall/cargo remain as the fallback for a machine with no Node
 // toolchain at all.
 const TAPLO_CHAIN: &[InstallMethod] = &[
@@ -595,10 +591,26 @@ fn npm_ktlint_jar(binary: &str, shim: &path::Path) -> Option<path::PathBuf> {
   jar.is_file().then_some(jar)
 }
 
-/// One row of the tool-chain registry: the canonical binary name, its
-/// ordered installer preference chain, and (if known) the exact version
-/// `<binary> --version` is expected to report once installed via that
-/// chain's pin.
+/// Install guidance for `cargo`, which ships with the Rust toolchain rather
+/// than through a package manager.
+const CARGO_INSTALL_HINT: &str = "Install Rust via rustup: https://rustup.rs";
+
+/// Install guidance for `gofmt`, which ships with the Go toolchain rather
+/// than through a package manager.
+const GOFMT_INSTALL_HINT: &str =
+  "Ships with the Go toolchain: install Go from https://go.dev/dl/";
+
+/// Install guidance for `google-java-format`: its chain has no Windows entry
+/// and cannot express the jar-download fallback.
+const GOOGLE_JAVA_FORMAT_INSTALL_HINT: &str = "Install via: brew install google-java-format (or npm install -g google-java-format); with neither available, download the all-deps jar from https://github.com/google/google-java-format/releases and place a 'google-java-format' wrapper on PATH";
+
+/// Install guidance for `checkstyle`: its chain has no Windows entry and
+/// cannot express the jar-download fallback.
+const CHECKSTYLE_INSTALL_HINT: &str = "Install via: brew install checkstyle (or apt-get install checkstyle); with neither available, download the jar from https://checkstyle.org and place a 'checkstyle' wrapper on PATH";
+
+/// One fleet tool, declared once: its installer preference chain, install
+/// guidance, the version its pin is expected to report, its minimum
+/// supported version (MSTV), and how to probe its version.
 ///
 /// `expected_binary_version` is intentionally *not* derived automatically
 /// from the chain's package-spec pins — a package-manager's own version
@@ -614,19 +626,26 @@ fn npm_ktlint_jar(binary: &str, shim: &path::Path) -> Option<path::PathBuf> {
 /// pre-`[STALE]` behavior (presence/executability + the MSTV floor, no
 /// pin-mismatch comparison) rather than risking a false `[STALE]` verdict
 /// that would make `fml doctor --install` reinstall an already-correct tool forever.
-struct ToolChain {
-  /// Canonical binary name (see [`install_chain_for`]'s alias resolution).
-  binary: &'static str,
-  /// Ordered installer preference chain.
+pub struct Tool {
+  /// Canonical binary name (see [`canonical_binary`] for aliases).
+  pub binary: &'static str,
+  /// Ordered installer preference chain; empty for a tool that ships inside
+  /// a toolchain.
   chain: &'static [InstallMethod],
+  /// Install guidance replacing the chain-derived text, for a tool with no
+  /// chain or with a gap its chain cannot express.
+  install_hint: Option<&'static str>,
   /// The version `<binary> --version` should report once installed via
   /// this chain's pin, when confirmed to track it 1:1. See the struct doc
   /// above for why this is a hand-confirmed fact, not a derived value.
   expected_binary_version: Option<version::Version>,
+  /// The oldest version fml supports, when a floor is enforced.
+  pub min_version: Option<version::Version>,
+  /// How this tool's version string is obtained.
+  pub probe: mstv::VersionProbe,
 }
 
-/// The tool-chain side-table every tool in the fleet is registered in
-/// exactly once. This is what [`install_chain_for`] and
+/// Every tool in the fleet, registered exactly once. This is what [`install_chain_for`] and
 /// [`pinned_version_for`] below look up, and what both
 /// `tool_info_auto_install_cmd_coverage` and
 /// `registry_resolved_install_methods_are_version_pinned` iterate —
@@ -670,132 +689,244 @@ struct ToolChain {
 ///   chain resolve against uncontrolled system versions regardless. Flip to
 ///   `Some(version::Version::new(22, 1, 8))` once confirmed against a real pip
 ///   install.
-const ALL_CHAINS: &[ToolChain] = &[
-  ToolChain {
+pub const TOOLS: &[Tool] = &[
+  Tool {
     binary: "taplo",
     chain: TAPLO_CHAIN,
+    install_hint: None,
     expected_binary_version: None,
+    min_version: Some(version::Version::new(0, 8, 0)),
+    probe: mstv::DEFAULT_VERSION_PROBE,
   },
-  ToolChain {
+  Tool {
     binary: "typstyle",
     chain: TYPSTYLE_CHAIN,
+    install_hint: None,
     expected_binary_version: Some(version::Version::new(0, 15, 1)),
+    min_version: Some(version::Version::new(0, 11, 0)),
+    probe: mstv::DEFAULT_VERSION_PROBE,
   },
-  ToolChain {
+  Tool {
     binary: "ruff",
     chain: RUFF_CHAIN,
+    install_hint: None,
     expected_binary_version: Some(version::Version::new(0, 16, 4)),
+    min_version: Some(version::Version::new(0, 1, 0)),
+    probe: mstv::DEFAULT_VERSION_PROBE,
   },
-  ToolChain {
+  Tool {
     binary: "prettier",
     chain: PRETTIER_CHAIN,
+    install_hint: None,
     expected_binary_version: Some(version::Version::new(3, 9, 6)),
+    min_version: Some(version::Version::new(2, 0, 0)),
+    probe: mstv::DEFAULT_VERSION_PROBE,
   },
-  ToolChain {
+  Tool {
     binary: "biome",
     chain: BIOME_CHAIN,
+    install_hint: None,
     expected_binary_version: Some(version::Version::new(2, 5, 10)),
+    min_version: Some(version::Version::new(1, 5, 0)),
+    probe: mstv::DEFAULT_VERSION_PROBE,
   },
-  ToolChain {
+  Tool {
     binary: "markdownlint-cli2",
     chain: MARKDOWNLINT_CHAIN,
+    install_hint: None,
     expected_binary_version: Some(version::Version::new(0, 23, 2)),
+    min_version: Some(version::Version::new(0, 4, 0)),
+    probe: mstv::DEFAULT_VERSION_PROBE,
   },
-  ToolChain {
+  Tool {
     binary: "yamllint",
     chain: YAMLLINT_CHAIN,
+    install_hint: None,
     expected_binary_version: Some(version::Version::new(1, 38, 0)),
+    min_version: Some(version::Version::new(1, 20, 0)),
+    probe: mstv::DEFAULT_VERSION_PROBE,
   },
-  ToolChain {
+  Tool {
     binary: "clang-format",
     chain: CLANG_FORMAT_CHAIN,
+    install_hint: None,
     expected_binary_version: None,
+    min_version: Some(version::Version::new(14, 0, 0)),
+    probe: mstv::DEFAULT_VERSION_PROBE,
   },
-  ToolChain {
+  Tool {
     binary: "clang-tidy",
     chain: CLANG_TIDY_CHAIN,
+    install_hint: None,
     expected_binary_version: None,
+    min_version: Some(version::Version::new(14, 0, 0)),
+    probe: mstv::DEFAULT_VERSION_PROBE,
   },
-  ToolChain {
+  Tool {
     binary: "google-java-format",
     chain: GOOGLE_JAVA_FORMAT_CHAIN,
+    install_hint: Some(GOOGLE_JAVA_FORMAT_INSTALL_HINT),
     expected_binary_version: None,
+    min_version: None,
+    probe: mstv::DEFAULT_VERSION_PROBE,
   },
-  ToolChain {
+  Tool {
     binary: "checkstyle",
     chain: CHECKSTYLE_CHAIN,
+    install_hint: Some(CHECKSTYLE_INSTALL_HINT),
     expected_binary_version: None,
+    min_version: Some(version::Version::new(10, 0, 0)),
+    probe: mstv::DEFAULT_VERSION_PROBE,
   },
-  ToolChain {
+  Tool {
+    // To upgrade an already-installed toolchain component past this floor,
+    // `rustup update` — not a fresh `rustup component add` — is the real
+    // move; the install chain (`chain`, `src/surfaces/tooling.rs`)
+    // doesn't express that distinction.
     binary: "rustfmt",
     chain: RUSTFMT_CHAIN,
+    install_hint: None,
     expected_binary_version: None,
+    min_version: Some(version::Version::new(1, 4, 0)),
+    probe: mstv::DEFAULT_VERSION_PROBE,
   },
-  ToolChain {
+  Tool {
+    // Rustup ships no `clippy` binary: the component is reachable as the
+    // `clippy-driver` shim, or through `cargo clippy`. Try both, in that
+    // order.
+    //
+    // As with rustfmt above, `rustup update` — not a fresh `rustup
+    // component add` — is how an existing install is actually upgraded
+    // past this floor.
     binary: "clippy-driver",
     chain: CLIPPY_CHAIN,
+    install_hint: None,
     expected_binary_version: None,
+    min_version: Some(version::Version::new(1, 65, 0)),
+    probe: mstv::VersionProbe::FirstOf(&[
+      mstv::VersionProbe::ViaBinary {
+        bin: "clippy-driver",
+        args: &[mstv::ProbeArg::Literal("--version")],
+        extractor: mstv::ProbeExtractor::FirstVersionishLine,
+      },
+      mstv::VersionProbe::ViaBinary {
+        bin: "cargo",
+        args: &[
+          mstv::ProbeArg::Literal("clippy"),
+          mstv::ProbeArg::Literal("--version"),
+        ],
+        extractor: mstv::ProbeExtractor::FirstVersionishLine,
+      },
+    ]),
   },
-  ToolChain {
+  Tool {
+    // `goimports` has no version flag; its module version is reported by
+    // `go version -m <path>` from the `mod` line (Fixes #178).
+    // Note: the version reported is the golang.org/x/tools module version
+    // that goimports was built from, not goimports' own release version.
+    // No MSTV floor is enforced against it today.
     binary: "goimports",
     chain: GOIMPORTS_CHAIN,
+    install_hint: None,
     expected_binary_version: None,
+    min_version: None,
+    probe: mstv::VersionProbe::ViaBinary {
+      bin: "go",
+      args: &[
+        mstv::ProbeArg::Literal("version"),
+        mstv::ProbeArg::Literal("-m"),
+        mstv::ProbeArg::ToolPath,
+      ],
+      extractor: mstv::ProbeExtractor::GoModuleVersion,
+    },
   },
-  ToolChain {
+  Tool {
+    // A bare `version` subcommand, not a flag: `golangci-lint --version` is
+    // not recognised. This is the whole probe — no `-v` behind it, because
+    // the entry is what runs.
+    //
+    // Release notes for upgrading an existing install: https://golangci-lint.run
     binary: "golangci-lint",
     chain: GOLANGCI_LINT_CHAIN,
+    install_hint: None,
     expected_binary_version: Some(version::Version::new(2, 13, 2)),
+    min_version: Some(version::Version::new(1, 50, 0)),
+    probe: mstv::VersionProbe::OwnFlags(&["version"]),
   },
-  ToolChain {
+  Tool {
     binary: "ktlint",
     chain: KTLINT_CHAIN,
+    install_hint: None,
     expected_binary_version: None,
+    min_version: Some(version::Version::new(1, 0, 0)),
+    probe: mstv::DEFAULT_VERSION_PROBE,
+  },
+  Tool {
+    binary: "cargo",
+    chain: &[],
+    install_hint: Some(CARGO_INSTALL_HINT),
+    expected_binary_version: None,
+    min_version: None,
+    probe: mstv::DEFAULT_VERSION_PROBE,
+  },
+  Tool {
+    // `gofmt` has no version flag; it ships with the Go toolchain and
+    // carries that toolchain's version, which only `go version` reports
+    // (Fixes #114). With `go` absent the probe yields nothing and the tool
+    // reports `(version unprobeable)` — never scraped `gofmt` usage text.
+    //
+    // `gofmt` ships inside the Go toolchain rather than through a package
+    // manager of its own, so it has no `chain` row: upgrading it means
+    // updating the Go toolchain itself, via https://go.dev/dl/.
+    binary: "gofmt",
+    chain: &[],
+    install_hint: Some(GOFMT_INSTALL_HINT),
+    expected_binary_version: None,
+    min_version: Some(version::Version::new(1, 18, 0)),
+    probe: mstv::VersionProbe::ViaBinary {
+      bin: "go",
+      args: &[mstv::ProbeArg::Literal("version")],
+      extractor: mstv::ProbeExtractor::FirstVersionishLine,
+    },
   },
 ];
 
-/// Resolves `markdownlint`/`clippy` legacy binary-name aliases to their
-/// canonical `ALL_CHAINS` row name (`markdownlint-cli2`/`clippy-driver`).
-/// Shared by [`install_chain_for`] and [`pinned_version_for`] so alias
-/// resolution lives in exactly one place; config validation also uses it to
-/// suggest the right `extra_args` key.
+/// Resolves an alternate binary name (`markdownlint`, `clippy`,
+/// `cargo-clippy`) to its canonical [`TOOLS`] name; config validation also
+/// uses it to suggest the right `extra_args` key.
 #[must_use]
-pub fn canonical_chain_binary(binary: &str) -> &str {
+pub fn canonical_binary(binary: &str) -> &str {
   match binary {
     "markdownlint" => "markdownlint-cli2",
-    "clippy" => "clippy-driver",
+    "clippy" | "cargo-clippy" => "clippy-driver",
     other => other,
   }
 }
 
-/// Looks up the ordered installer preference chain for a tool binary name,
-/// via `ALL_CHAINS` above.
+/// Returns `binary`'s [`TOOLS`] entry, resolving alternate names.
+#[must_use]
+pub fn tool(binary: &str) -> Option<&'static Tool> {
+  let canonical = canonical_binary(binary);
+  TOOLS.iter().find(|tool| tool.binary == canonical)
+}
+
+/// Looks up the ordered installer preference chain for a tool binary name;
+/// `None` for an unknown tool or one that ships inside a toolchain.
 #[must_use]
 pub fn install_chain_for(binary: &str) -> Option<&'static [InstallMethod]> {
-  let canonical = canonical_chain_binary(binary);
-  ALL_CHAINS
-    .iter()
-    .find(|entry| entry.binary == canonical)
-    .map(|entry| entry.chain)
+  tool(binary)
+    .map(|tool| tool.chain)
+    .filter(|chain| !chain.is_empty())
 }
 
 /// The version `<binary> --version` is expected to report when it's
-/// installed to the pin `fml doctor --install` currently uses, per `ALL_CHAINS`'s
-/// `expected_binary_version` field. Returns `None` — a "no known pin to
-/// compare against" result, not an error — when the tool has no registered
-/// chain row, or (deliberately, for most rows — see the doc comment above
-/// `ALL_CHAINS`) when the binary's own version output isn't confirmed to
-/// track the package-manager pin 1:1. Callers (`fml doctor`'s `[STALE]`
-/// check) must treat `None` as "skip the pin comparison", never crash on
-/// it, and never treat it as "definitely up to date" either — it means
-/// "unknown", not "yes".
+/// installed to the pin `fml doctor --install` currently uses. Returns
+/// `None` -- "unknown", never "up to date" -- when the tool is unregistered
+/// or its version output isn't confirmed to track the pin 1:1 (see
+/// [`Tool`]).
 #[must_use]
 pub fn pinned_version_for(binary: &str) -> Option<version::Version> {
-  let canonical = canonical_chain_binary(binary);
-  ALL_CHAINS
-    .iter()
-    .find(|entry| entry.binary == canonical)?
-    .expected_binary_version
-    .clone()
+  tool(binary)?.expected_binary_version.clone()
 }
 
 /// Returns the first available installer in `binary`'s preference chain,
@@ -919,11 +1050,8 @@ pub fn check_binary_exists(binary: &str) -> bool {
   resolve_binary_path(binary).is_some()
 }
 
-/// Builds the `surfaces::SurfaceResult` every surface returns from `format`/`lint` when
-/// a required tool binary is not on `PATH`. Every call site previously
-/// repeated this same `surfaces::SurfaceResult { .. status: surfaces::SurfaceStatus::ToolMissing
-/// { .. } .. }` struct literal by hand (~23 instances across the 12 language
-/// surfaces) — this is the single place that shape lives now.
+/// The result a surface returns from `format`/`lint` when a required tool
+/// binary is not on `PATH`.
 #[must_use]
 pub fn tool_missing_result(
   surface_name: &'static str,
@@ -931,37 +1059,35 @@ pub fn tool_missing_result(
   binary: &str,
   install_hint: &str,
 ) -> surfaces::SurfaceResult {
-  surfaces::SurfaceResult {
+  surfaces::SurfaceResult::new(
     surface_name,
-    status: surfaces::SurfaceStatus::ToolMissing {
+    start,
+    surfaces::SurfaceStatus::ToolMissing {
       binary: binary.to_string(),
       install_hint: install_hint.to_string(),
     },
-    duration: start.elapsed(),
-  }
+  )
 }
 
 /// Returns `Some(surfaces::SurfaceResult)` with `surfaces::SurfaceStatus::ToolMissing` if `binary`
 /// is not found on `PATH`, or `None` if it is available.
 ///
-/// `hint` is an optional override; `None` falls back to
-/// [`install_hint_for`], the same derivation [`surfaces::ToolInfo::effective_install_hint`]
-/// uses, so a caller that doesn't need a bespoke message (nearly all of
-/// them) never has to restate the chain's install prose by hand.
-///
-/// [`surfaces::ToolInfo::effective_install_hint`]: crate::surfaces::ToolInfo::effective_install_hint
+/// The hint comes from [`install_hint_for`], as everywhere else.
 #[must_use]
 pub fn tool_missing_guard(
   name: &'static str,
   binary: &str,
   start: time::Instant,
-  hint: Option<&'static str>,
 ) -> Option<surfaces::SurfaceResult> {
   if check_binary_exists(binary) {
     None
   } else {
-    let hint = hint.map_or_else(|| install_hint_for(binary), str::to_string);
-    Some(tool_missing_result(name, start, binary, &hint))
+    Some(tool_missing_result(
+      name,
+      start,
+      binary,
+      &install_hint_for(binary),
+    ))
   }
 }
 
@@ -1032,13 +1158,13 @@ pub fn lint_fix_unsupported(
   name: &'static str,
   start: time::Instant,
 ) -> surfaces::SurfaceResult {
-  surfaces::SurfaceResult {
-    surface_name: name,
-    status: surfaces::SurfaceStatus::Skipped {
+  surfaces::SurfaceResult::new(
+    name,
+    start,
+    surfaces::SurfaceStatus::Skipped {
       reason: "Tool does not support autofix; run fml fmt instead".to_string(),
     },
-    duration: start.elapsed(),
-  }
+  )
 }
 
 /// Builds the `surfaces::SurfaceResult` a surface's `sync_config` returns when it has
@@ -1190,7 +1316,7 @@ pub fn ensure_cargo_binstall() -> bool {
 /// Kept pure (chain + pin + currently-selected method in, `bool` out) so it's
 /// testable without touching `PATH`. `expected` is only ever `Some` for a row
 /// whose `expected_binary_version` is a hand-confirmed 1:1 match with its
-/// chain pins (see [`ToolChain`]), so a `Brew`-style unpinned entry losing to
+/// chain pins (see [`Tool`]), so a `Brew`-style unpinned entry losing to
 /// `CargoBinstall` here can't regress a tool whose binary version legitimately
 /// differs from its package-manager pin.
 fn binstall_bootstrap_would_fix_pin_lag(
@@ -2411,7 +2537,7 @@ mod tests {
   #[test]
   fn pinned_version_none_for_unpinned_system_managers() {
     // apt/brew/scoop/winget/rustup never carry an inline version -- see the
-    // "Pinned tool versions" note above ALL_CHAINS.
+    // "Pinned tool versions" note above TOOLS.
     assert_eq!(InstallMethod::Apt("prettier").pinned_version(), None);
     assert_eq!(InstallMethod::Brew("prettier").pinned_version(), None);
     assert_eq!(InstallMethod::Scoop("prettier").pinned_version(), None);
@@ -2448,7 +2574,7 @@ mod tests {
     // a chain is actually available on this test machine, resolving the pin
     // must never panic -- it's allowed to return None (no installer
     // available / available one is unpinned), just not crash `fml doctor`.
-    for entry in ALL_CHAINS {
+    for entry in TOOLS {
       let _ = pinned_version_for(entry.binary);
     }
   }
@@ -2487,11 +2613,11 @@ mod tests {
     // same mechanism if a future audit finds another dead chain entry that
     // can't be fixed immediately.
     //
-    // Iterates ALL_CHAINS itself (the same side-table `install_chain_for`
+    // Iterates TOOLS itself (the same side-table `install_chain_for`
     // and the coverage test below use) rather than a separately maintained
     // binary list, so a new chain constant automatically gets checked here
-    // too the moment it's added to ALL_CHAINS.
-    for entry in ALL_CHAINS {
+    // too the moment it's added to TOOLS.
+    for entry in TOOLS {
       let binary = entry.binary;
       for method in entry.chain {
         let is_registry_resolved = matches!(
@@ -2540,7 +2666,7 @@ mod tests {
     // must fail loudly instead of quietly producing false `[STALE]`
     // verdicts again. A row with `expected_binary_version: None` is making
     // no such claim.
-    for entry in ALL_CHAINS {
+    for entry in TOOLS {
       let Some(expected) = &entry.expected_binary_version else {
         continue;
       };
@@ -2561,11 +2687,10 @@ mod tests {
 
   #[test]
   fn tool_info_auto_install_cmd_coverage() {
-    for entry in ALL_CHAINS {
+    for entry in TOOLS {
       let info = surfaces::ToolInfo {
         binary: entry.binary,
         description: "test tool",
-        install_hint: None,
         is_required_for_fmt: true,
         is_required_for_lint: true,
       };
@@ -2584,7 +2709,6 @@ mod tests {
     let info = surfaces::ToolInfo {
       binary: "not-a-real-tool",
       description: "test tool",
-      install_hint: None,
       is_required_for_fmt: false,
       is_required_for_lint: false,
     };
@@ -3659,7 +3783,7 @@ mod tests {
 
   #[test]
   fn resolve_via_known_install_dir_skips_unregistered_binaries() {
-    // A binary with no ALL_CHAINS row at all (install_chain_for returns
+    // A binary with no TOOLS row at all (install_chain_for returns
     // None) must take the same short-circuit as a registered-but-non-Go
     // chain, not panic on the `Option` unwrap.
     let found =
@@ -4134,7 +4258,7 @@ mod tests {
     // `for_method` matches `WingetName("LLVM.LLVM")` by literal; this pins
     // that both clang chains still spell it that way, on every OS, and that
     // no other tool probes `%ProgramFiles%\LLVM\bin` (#489).
-    for entry in ALL_CHAINS {
+    for entry in TOOLS {
       let reaches = entry
         .chain
         .iter()
@@ -4315,16 +4439,13 @@ mod tests {
   }
 
   #[test]
-  fn test_tool_missing_guard() {
-    let start = time::Instant::now();
+  fn tool_missing_guard_falls_back_to_the_generic_hint() {
     let res = tool_missing_guard(
       "test",
       "non_existent_tool_xyz_123",
-      start,
-      Some("install it"),
-    );
-    assert!(res.is_some());
-    let res = res.unwrap();
+      time::Instant::now(),
+    )
+    .expect("the binary is missing");
     assert_eq!(res.surface_name, "test");
     match res.status {
       surfaces::SurfaceStatus::ToolMissing {
@@ -4332,25 +4453,6 @@ mod tests {
         install_hint,
       } => {
         assert_eq!(binary, "non_existent_tool_xyz_123");
-        assert_eq!(install_hint, "install it");
-      }
-      other => panic!("Expected ToolMissing, got {other:?}"),
-    }
-
-    // No override hint and no registered ALL_CHAINS row for this made-up
-    // binary: falls back to `install_hint_for`'s "no known install method"
-    // message rather than an empty string (Fixes #264 -- a guard given no
-    // explicit hint must never silently print nothing).
-    let res_none =
-      tool_missing_guard("test", "non_existent_tool_xyz_123", start, None);
-    assert!(res_none.is_some());
-    match res_none.unwrap().status {
-      surfaces::SurfaceStatus::ToolMissing {
-        binary,
-        install_hint,
-      } => {
-        assert_eq!(binary, "non_existent_tool_xyz_123");
-        assert_eq!(install_hint, install_hint_for("non_existent_tool_xyz_123"));
         assert!(install_hint.contains("non_existent_tool_xyz_123"));
       }
       other => panic!("Expected ToolMissing, got {other:?}"),
@@ -4606,11 +4708,11 @@ mod tests {
     }
   }
 
-  // --- install_hint_for / surfaces::ToolInfo::effective_install_hint (#264) --------
+  // --- install_hint_for (#264) ---
   //
   // These are the regression guards for the bug #264 actually filed: printed
   // install hints used to be hand-written prose restated 2-4 times per tool,
-  // and drifted away from `ALL_CHAINS` -- most visibly, every printed taplo
+  // and drifted away from `TOOLS` -- most visibly, every printed taplo
   // hint kept leading with `cargo binstall` after `TAPLO_CHAIN` was
   // deliberately reordered npm-first. `install_hint_for` derives the text
   // from the chain directly, so this class of drift can no longer occur:
@@ -4664,36 +4766,25 @@ mod tests {
   }
 
   #[test]
-  fn every_surface_tool_info_binary_resolves_to_all_chains_or_overrides() {
-    // Acceptance criterion from #264: a new tool cannot ship "hintless". A
-    // `surfaces::ToolInfo` either resolves to a real `ALL_CHAINS` row (and so gets a
-    // derived hint automatically), or it deliberately overrides
-    // `install_hint` itself (the only legitimate reason: it has no
-    // install-chain at all, e.g. `cargo`/`gofmt` ship with a toolchain).
+  fn every_surface_tool_is_registered() {
+    // A tool outside `TOOLS` has no install chain, floor or probe, and
+    // prints the generic "no known install method" hint (#264).
     for surface in surfaces::registry::all_surfaces() {
       let resolved = config::ResolvedLangConfig::new(surface.name());
       for tool in surface.tool_info(&resolved) {
-        let has_chain = install_chain_for(tool.binary).is_some();
         assert!(
-          has_chain || tool.install_hint.is_some(),
-          "{}'s tool '{}' has no ALL_CHAINS row and no install_hint \
-           override -- it would print install_hint_for's generic \
-           \"no known install method\" fallback. Register it in \
-           ALL_CHAINS, or give it an explicit override if it \
-           genuinely has none.",
+          super::tool(tool.binary).is_some(),
+          "{}'s tool '{}' has no TOOLS row",
           surface.name(),
           tool.binary,
         );
-        // And the reverse never silently drifts either: whichever one
-        // applies must actually render non-empty text.
-        assert!(!tool.effective_install_hint().is_empty());
       }
     }
   }
 
   #[test]
-  fn every_all_chains_row_names_a_surface_binary() {
-    // Issue #295: `tinymist` sat in ALL_CHAINS with no surface. Paired by
+  fn every_tool_is_declared_by_a_surface() {
+    // Issue #295: `tinymist` sat in TOOLS with no surface. Paired by
     // name, after alias canonicalisation, so a row that reuses another
     // tool's chain constant is still an orphan.
     let declared: Vec<&str> = surfaces::registry::all_surfaces()
@@ -4705,44 +4796,25 @@ mod tests {
           .into_iter()
           .map(|tool| tool.binary)
       })
-      .map(canonical_chain_binary)
+      .map(canonical_binary)
       .collect();
-    let orphans: Vec<&str> = ALL_CHAINS
+    let orphans: Vec<&str> = TOOLS
       .iter()
       .map(|row| row.binary)
       .filter(|binary| !declared.contains(binary))
       .collect();
     assert!(
       orphans.is_empty(),
-      "ALL_CHAINS rows no surface's tool_info declares: {orphans:?} \
+      "TOOLS rows no surface's tool_info declares: {orphans:?} \
        (wire the tool into a surface, or delete the row)"
     );
   }
 
   #[test]
   fn no_surface_hardcodes_a_chain_derived_install_command() {
-    // QA follow-up on #264: `surfaces::ToolInfo.install_hint: None` and
-    // `tool_missing_guard`'s `None` made the *common* call sites derive
-    // automatically, but nothing stopped a bespoke call site --
-    // `tool_missing_result`, or a fresh `tool_missing_guard` call written
-    // without reaching for the derived hint -- from smuggling a
-    // hand-copied package-manager command straight back in. That is
-    // exactly what happened: `rust.rs`'s combined "cargo / rustfmt"
-    // missing-tool message still spelled out `"Run: rustup component add
-    // rustfmt"` by hand after `rustfmt`'s own `surfaces::ToolInfo.install_hint` had
-    // already switched to `None`, and `cargo`'s/`gofmt`'s legitimate
-    // no-chain overrides existed as two textually-drifting copies each
-    // rather than one source. The coverage test above only walks
-    // `surfaces::ToolInfo` rows, so it never saw either.
-    //
-    // This scans every surface source file's non-comment lines for the
-    // literal shell-command phrases `InstallMethod::describe()` renders.
-    // Any such phrase appearing outside this file (`tooling.rs`, where
-    // they're the source of truth) or outside a named override `const`'s
-    // own declaration means either a hand copy has reappeared, or a new
-    // override was added as a second copy of a string instead of one
-    // named `const` -- both are the #264 drift shape, and both should
-    // fail this test.
+    // #264: install guidance lives only in `TOOLS`. A package-manager
+    // command spelled out in a surface file is a hand copy that will drift
+    // from the chain it restates.
     const CHAIN_COMMAND_PHRASES: &[&str] = &[
       "npm install -g",
       "pnpm add -g",
@@ -4762,23 +4834,6 @@ mod tests {
       "go install",
     ];
 
-    // Tools with no ALL_CHAINS row at all (`cargo`, `gofmt`) get a plain
-    // manual-bootstrap override; tools whose row exists but can't express
-    // a real fallback the chain has no way to carry (no Windows entry at
-    // all, or a docs/manual-download URL) get one too -- see
-    // `GOOGLE_JAVA_FORMAT_INSTALL_HINT`'s and `CHECKSTYLE_INSTALL_HINT`'s
-    // doc comments in java.rs. Either way, each is exactly one named
-    // `const`, referenced from every call site for that tool, so it can't
-    // re-drift into two disagreeing copies. Declaration lines for these
-    // are exempted below; any *other* occurrence of a chain-command phrase
-    // still fails the test.
-    const ALLOWED_OVERRIDE_CONSTANTS: &[&str] = &[
-      "CARGO_INSTALL_HINT",
-      "GOFMT_INSTALL_HINT",
-      "GOOGLE_JAVA_FORMAT_INSTALL_HINT",
-      "CHECKSTYLE_INSTALL_HINT",
-    ];
-
     let surface_sources: &[(&str, &str)] = &[
       ("cpp.rs", include_str!("lang/cpp.rs")),
       ("go.rs", include_str!("lang/go.rs")),
@@ -4795,46 +4850,18 @@ mod tests {
     ];
 
     for (file, source) in surface_sources {
-      // Exempt an allowed override const's own declaration (which may
-      // wrap across multiple lines once rustfmt reflows a long string
-      // literal) from the phrase scan below entirely: track "inside a
-      // `const <ALLOWED_NAME>: ... = ...;` declaration" as a span, not a
-      // single line, so a wrapped literal's continuation lines are
-      // exempted too, not just the line the `const` keyword appears on.
-      let mut in_allowed_decl = false;
       for (lineno, line) in source.lines().enumerate() {
         let trimmed = line.trim_start();
-        if !in_allowed_decl
-          && ALLOWED_OVERRIDE_CONSTANTS
-            .iter()
-            .any(|name| trimmed.starts_with(&format!("const {name}:")))
-        {
-          in_allowed_decl = true;
-        }
-        if in_allowed_decl {
-          if trimmed.contains(';') {
-            in_allowed_decl = false;
-          }
-          continue;
-        }
-        // Full-line (doc) comments legitimately quote command text for
-        // human readers explaining *why* a constant exists (e.g. this
-        // file's own `CARGO_INSTALL_HINT` doc comment).
+        // Comments may quote command text for human readers.
         if trimmed.starts_with("//") {
           continue;
         }
         for phrase in CHAIN_COMMAND_PHRASES {
           assert!(
             !trimmed.contains(phrase),
-            "{file}:{} hardcodes a chain-derived install command \
-             ({phrase:?}) outside `install_hint_for` and outside an \
-             allowed override const -- this is the #264 drift bug \
-             reappearing. A binary with a real ALL_CHAINS row and no \
-             documented fallback gap must derive its hint (pass `None`); \
-             a legitimate override must be exactly one named `const`, \
-             added to ALLOWED_OVERRIDE_CONSTANTS above, referenced from \
-             every call site, not a repeated string literal. Line: \
-             {trimmed:?}",
+            "{file}:{} hardcodes the install command {phrase:?}; derive \
+             it with `install_hint_for` or set the tool's `install_hint` \
+             in TOOLS. Line: {trimmed:?}",
             lineno + 1,
           );
         }

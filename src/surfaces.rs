@@ -89,6 +89,38 @@ impl ExecutionContext {
     }
   }
 
+  /// Returns the surface's files, or the result to return early: `binary`
+  /// is not installed, or no file matches `extensions`.
+  ///
+  /// # Errors
+  ///
+  /// Returns the `ToolMissing` or `Passed` result the surface reports as-is.
+  pub fn files_for(
+    &self,
+    surface_name: &'static str,
+    binary: &str,
+    extensions: &[&str],
+    start: time::Instant,
+  ) -> Result<Vec<path::PathBuf>, SurfaceResult> {
+    if let Some(res) = tooling::tool_missing_guard(surface_name, binary, start)
+    {
+      return Err(res);
+    }
+    let files = self.matched_files(extensions);
+    match passed_if_empty(&files, surface_name, start) {
+      Some(res) => Err(res),
+      None => Ok(files),
+    }
+  }
+
+  /// Returns a command for `binary` that runs from the workspace root.
+  #[must_use]
+  pub fn command(&self, binary: &str) -> std::process::Command {
+    let mut cmd = tooling::create_tool_command(binary);
+    cmd.current_dir(self.root.as_path());
+    cmd
+  }
+
   /// Returns the files to pass to a directory-walking CLI tool.
   /// If paths, `lang_config` files, or `lang_config` excludes are specified,
   /// returns the filtered files; otherwise returns an empty Vec so the tool
@@ -115,11 +147,7 @@ fn passed_if_empty(
   start: time::Instant,
 ) -> Option<SurfaceResult> {
   if files.is_empty() {
-    Some(SurfaceResult {
-      surface_name: name,
-      status: SurfaceStatus::Passed,
-      duration: start.elapsed(),
-    })
+    Some(SurfaceResult::new(name, start, SurfaceStatus::Passed))
   } else {
     None
   }
@@ -179,25 +207,6 @@ pub struct ToolInfo {
   pub binary: &'static str,
   /// Human-readable tool description.
   pub description: &'static str,
-  /// Installation instructions override. `None` (the common case, and the
-  /// default for every tool with a real install-preference chain) derives
-  /// the hint from `binary`'s registered chain via
-  /// [`Self::effective_install_hint`], so the printed text can never drift
-  /// out of sync with the chain the way hand-written prose did (Fixes
-  /// #264). `Some(..)` is reserved for two narrow cases, both of which
-  /// must be exactly one named `const` referenced from every call site for
-  /// that tool (never a repeated string literal — that is the exact #264
-  /// drift shape, just moved one level up):
-  /// - `binary` has no install chain at all (it ships inside a toolchain
-  ///   rather than through a package manager — e.g. `cargo`, `gofmt`).
-  /// - `binary` has a chain, but the chain has a real coverage gap a
-  ///   package-manager command can't express (no entry at all for some
-  ///   platform, or a manual-download fallback) — e.g.
-  ///   `google-java-format`/`checkstyle`, whose chains have no Windows
-  ///   entry. Reach for this only when the gap is real; a chain that
-  ///   already covers every platform (e.g. `ktlint`'s) should stay `None`
-  ///   even if its old hand-written hint said something extra.
-  pub install_hint: Option<&'static str>,
   /// Whether this tool is required for formatting.
   pub is_required_for_fmt: bool,
   /// Whether this tool is required for linting.
@@ -211,17 +220,10 @@ impl ToolInfo {
     tooling::selected_install_method_for(self.binary)
   }
 
-  /// The install hint to actually print: `install_hint` when this tool
-  /// declared an override, or the chain-derived text from
-  /// [`tooling::install_hint_for`] otherwise. This is the one place that
-  /// picks between the two, so every call site (`tool_missing_guard`'s
-  /// `None` sites, `fml doctor`'s printed tables) reads the exact same
-  /// text for the exact same tool.
+  /// The install hint to print for this tool.
   #[must_use]
-  pub fn effective_install_hint(&self) -> String {
-    self
-      .install_hint
-      .map_or_else(|| tooling::install_hint_for(self.binary), str::to_string)
+  pub fn install_hint(&self) -> String {
+    tooling::install_hint_for(self.binary)
   }
 
   /// Returns the (program, args) for the first available installer in this
@@ -400,6 +402,36 @@ pub struct SurfaceResult {
 }
 
 impl SurfaceResult {
+  /// A result for `surface_name` with `status`, timed from `start`.
+  #[must_use]
+  pub fn new(
+    surface_name: &'static str,
+    start: time::Instant,
+    status: SurfaceStatus,
+  ) -> Self {
+    Self {
+      surface_name,
+      status,
+      duration: start.elapsed(),
+    }
+  }
+
+  /// A [`SurfaceStatus::ExecutionError`] result carrying `message`.
+  #[must_use]
+  pub fn error(
+    surface_name: &'static str,
+    start: time::Instant,
+    message: impl Into<String>,
+  ) -> Self {
+    Self::new(
+      surface_name,
+      start,
+      SurfaceStatus::ExecutionError {
+        message: message.into(),
+      },
+    )
+  }
+
   /// Returns `true` if the status is a skip or a clean pass.
   #[must_use]
   pub fn is_success(&self) -> bool {

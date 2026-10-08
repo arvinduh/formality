@@ -242,7 +242,6 @@ impl LanguageSurface for JavaScriptSurface {
     vec![surfaces::ToolInfo {
       binary: "biome",
       description: "Fast formatter and linter for JavaScript, TypeScript, JSX and TSX",
-      install_hint: None,
       is_required_for_fmt: true,
       is_required_for_lint: true,
     }]
@@ -271,17 +270,14 @@ impl LanguageSurface for JavaScriptSurface {
       BIOME_LINTER_ENABLED_FLAG,
       ctx.lang_config.tool_args("biome"),
     ) {
-      return surfaces::SurfaceResult {
-        surface_name: self.name(),
-        status: surfaces::SurfaceStatus::ExecutionError {
-          message: linter_enabled_override_message(&offending),
-        },
-        duration: start.elapsed(),
-      };
+      return surfaces::SurfaceResult::error(
+        self.name(),
+        start,
+        linter_enabled_override_message(&offending),
+      );
     }
 
-    if let Some(res) =
-      tooling::tool_missing_guard(self.name(), "biome", start, None)
+    if let Some(res) = tooling::tool_missing_guard(self.name(), "biome", start)
     {
       return res;
     }
@@ -295,13 +291,12 @@ impl LanguageSurface for JavaScriptSurface {
       return sync::diff_check_via_tempcopy_classified(
         &files,
         |scratch| {
-          let mut cmd = tooling::create_tool_command("biome");
+          let mut cmd = ctx.command("biome");
           cmd.args(build_biome_format_args(
             &[scratch.to_path_buf()],
             ctx.lang_config.tool_args("biome"),
           ));
           cmd.args(&inline_config);
-          cmd.current_dir(ctx.root.as_path());
           cmd.output()
         },
         self.name(),
@@ -322,13 +317,12 @@ impl LanguageSurface for JavaScriptSurface {
 
     let files_to_pass = ctx.files_to_pass(files);
 
-    let mut cmd = tooling::create_tool_command("biome");
+    let mut cmd = ctx.command("biome");
     cmd.args(build_biome_format_args(
       &files_to_pass,
       ctx.lang_config.tool_args("biome"),
     ));
     cmd.args(&inline_config);
-    cmd.current_dir(ctx.root.as_path());
 
     tooling::run_tool_command_classified(
       self.name(),
@@ -344,26 +338,20 @@ impl LanguageSurface for JavaScriptSurface {
   ) -> surfaces::SurfaceResult {
     let start = time::Instant::now();
 
-    if let Some(res) =
-      tooling::tool_missing_guard(self.name(), "biome", start, None)
-    {
-      return res;
-    }
-
-    let files = ctx.matched_files(JS_TS_EXTENSIONS);
-    if let Some(res) = surfaces::passed_if_empty(&files, self.name(), start) {
-      return res;
-    }
+    let files =
+      match ctx.files_for(self.name(), "biome", JS_TS_EXTENSIONS, start) {
+        Ok(files) => files,
+        Err(res) => return res,
+      };
 
     let files_to_pass = ctx.files_to_pass(files);
 
-    let mut cmd = tooling::create_tool_command("biome");
+    let mut cmd = ctx.command("biome");
     cmd.args(build_biome_lint_args(
       &files_to_pass,
       fix,
       ctx.lang_config.tool_args("biome"),
     ));
-    cmd.current_dir(ctx.root.as_path());
 
     tooling::run_tool_command(self.name(), &mut cmd)
   }

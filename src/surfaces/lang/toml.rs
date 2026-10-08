@@ -169,7 +169,6 @@ impl surfaces::LanguageSurface for TomlSurface {
     vec![surfaces::ToolInfo {
       binary: "taplo",
       description: "TOML toolkit, formatter and linter",
-      install_hint: None,
       is_required_for_fmt: true,
       is_required_for_lint: true,
     }]
@@ -181,16 +180,11 @@ impl surfaces::LanguageSurface for TomlSurface {
   ) -> surfaces::SurfaceResult {
     let start = time::Instant::now();
 
-    if let Some(res) =
-      tooling::tool_missing_guard(self.name(), "taplo", start, None)
-    {
-      return res;
-    }
-
-    let files = ctx.matched_files(TOML_EXTENSIONS);
-    if let Some(res) = surfaces::passed_if_empty(&files, self.name(), start) {
-      return res;
-    }
+    let files =
+      match ctx.files_for(self.name(), "taplo", TOML_EXTENSIONS, start) {
+        Ok(files) => files,
+        Err(res) => return res,
+      };
 
     // Inline `-o key=value` instead of writing `taplo.toml` to disk — see
     // `taplo_format_args` (Fixes #151 [pre-recreation]). `fml sync` remains the
@@ -201,13 +195,12 @@ impl surfaces::LanguageSurface for TomlSurface {
       return sync::diff_check_via_tempcopy(
         &files,
         |scratch| {
-          let mut cmd = tooling::create_tool_command("taplo");
+          let mut cmd = ctx.command("taplo");
           cmd
             .arg("format")
             .args(&inline_config)
             .arg(taplo_path_arg(&scratch.to_string_lossy(), cfg!(windows)));
           cmd.args(ctx.lang_config.tool_args("taplo"));
-          cmd.current_dir(ctx.root.as_path());
           cmd.output()
         },
         self.name(),
@@ -215,7 +208,7 @@ impl surfaces::LanguageSurface for TomlSurface {
       );
     }
 
-    let mut cmd = tooling::create_tool_command("taplo");
+    let mut cmd = ctx.command("taplo");
     cmd.arg("format");
     cmd.args(&inline_config);
 
@@ -224,7 +217,6 @@ impl surfaces::LanguageSurface for TomlSurface {
     }
 
     cmd.args(ctx.lang_config.tool_args("taplo"));
-    cmd.current_dir(ctx.root.as_path());
 
     tooling::run_tool_command(self.name(), &mut cmd)
   }
@@ -240,18 +232,13 @@ impl surfaces::LanguageSurface for TomlSurface {
       return tooling::lint_fix_unsupported(self.name(), start);
     }
 
-    if let Some(res) =
-      tooling::tool_missing_guard(self.name(), "taplo", start, None)
-    {
-      return res;
-    }
+    let files =
+      match ctx.files_for(self.name(), "taplo", TOML_EXTENSIONS, start) {
+        Ok(files) => files,
+        Err(res) => return res,
+      };
 
-    let files = ctx.matched_files(TOML_EXTENSIONS);
-    if let Some(res) = surfaces::passed_if_empty(&files, self.name(), start) {
-      return res;
-    }
-
-    let mut cmd = tooling::create_tool_command("taplo");
+    let mut cmd = ctx.command("taplo");
     cmd.arg("lint");
 
     for f in &files {
@@ -259,7 +246,6 @@ impl surfaces::LanguageSurface for TomlSurface {
     }
 
     cmd.args(ctx.lang_config.tool_args("taplo"));
-    cmd.current_dir(ctx.root.as_path());
 
     tooling::run_tool_command(self.name(), &mut cmd)
   }

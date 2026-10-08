@@ -23,17 +23,19 @@ fn generation_all_surfaces() {
 
   // Surfaces matching [*] baseline are omitted
   assert!(!ec.contains("[*.rs]"));
-  assert!(!ec.contains("[*.py]"));
+  assert!(!ec.contains("[*.{py,pyi}]"));
   assert!(!ec.contains("[*.{c,cc,cpp,cxx,h,hh,hpp,hxx}]"));
   assert!(!ec.contains("[*.{yaml,yml}]"));
   assert!(!ec.contains("[*.toml]"));
-  assert!(!ec.contains("[*.md]"));
+  assert!(!ec.contains("[*.{md,markdown,mdown,mkdn}]"));
   assert!(!ec.contains("[*.typ]"));
 
   // JSON diverges due to unsupported line length
-  assert!(ec.contains("[*.json]\nindent_style = space\nindent_size = 2\n"));
+  assert!(
+    ec.contains("[*.{json,jsonc}]\nindent_style = space\nindent_size = 2\n")
+  );
   assert!(!ec.contains(
-    "[*.json]\nindent_style = space\nindent_size = 2\nmax_line_length"
+    "[*.{json,jsonc}]\nindent_style = space\nindent_size = 2\nmax_line_length"
   ));
 }
 
@@ -73,13 +75,15 @@ trim_trailing_whitespace = false
   ));
 
   // Configurable tabs surfaces match [*] and are omitted
-  assert!(!ec.contains("[*.py]"));
+  assert!(!ec.contains("[*.{py,pyi}]"));
   assert!(!ec.contains("[*.{c,cc,cpp,cxx,h,hh,hpp,hxx}]"));
   assert!(!ec.contains("[*.toml]"));
-  assert!(!ec.contains("[*.md]"));
+  assert!(!ec.contains("[*.{md,markdown,mdown,mkdn}]"));
 
   // JSON is configurable for tabs, but unsupported for max_line_length (diverges from 120)
-  assert!(ec.contains("[*.json]\nindent_style = tab\nindent_size = 4\n"));
+  assert!(
+    ec.contains("[*.{json,jsonc}]\nindent_style = tab\nindent_size = 4\n")
+  );
 }
 
 #[test]
@@ -114,16 +118,18 @@ line_length = 88
     "[*.rs]\nindent_style = space\nindent_size = 4\nmax_line_length = 100"
   ));
   assert!(ec.contains(
-    "[*.py]\nindent_style = tab\nindent_size = 4\nmax_line_length = 88"
+    "[*.{py,pyi}]\nindent_style = tab\nindent_size = 4\nmax_line_length = 88"
   ));
 
   // Surfaces matching [*] baseline are omitted
   assert!(!ec.contains("[*.{c,cc,cpp,cxx,h,hh,hpp,hxx}]"));
   assert!(!ec.contains("[*.{yaml,yml}]"));
   assert!(!ec.contains("[*.toml]"));
-  assert!(!ec.contains("[*.md]"));
+  assert!(!ec.contains("[*.{md,markdown,mdown,mkdn}]"));
   assert!(!ec.contains("[*.typ]"));
 
   // JSON still diverges on unsupported max_line_length
-  assert!(ec.contains("[*.json]\nindent_style = space\nindent_size = 2\n"));
+  assert!(
+    ec.contains("[*.{json,jsonc}]\nindent_style = space\nindent_size = 2\n")
+  );
 }

@@ -70,15 +70,6 @@ impl DeclaresFacets for GoSurface {
 /// Standard file extensions recognized for Go source files.
 const GO_EXTENSIONS: &[&str] = &["go"];
 
-/// Single source for `gofmt`'s manual install hint: it has no `ALL_CHAINS`
-/// row (it ships with the Go toolchain itself, not through any package
-/// manager tracked there), so unlike every other tool here it can't be
-/// derived via `install_hint_for`. Referenced from both `tool_info` and the
-/// `format()` guard so the two copies cannot drift apart the way #264 found
-/// taplo's hand-copied strings had.
-const GOFMT_INSTALL_HINT: &str =
-  "Ships with the Go toolchain: install Go from https://go.dev/dl/";
-
 /// Builds the argument list for `golangci-lint run`. Mirrors the
 /// `build_ruff_check_args` pattern: pass explicit files only when the caller
 /// scoped the run (specific paths, a `files` allowlist, or an `exclude`
@@ -231,24 +222,18 @@ impl LanguageSurface for GoSurface {
       surfaces::ToolInfo {
         binary: "gofmt",
         description: "Go code formatter (simplifies code with -s)",
-        // No ALL_CHAINS row: gofmt ships with the Go toolchain itself
-        // rather than through any package manager, so there is no
-        // install-preference chain to derive advice from.
-        install_hint: Some(GOFMT_INSTALL_HINT),
         is_required_for_fmt: true,
         is_required_for_lint: false,
       },
       surfaces::ToolInfo {
         binary: "goimports",
         description: "Go formatter that also groups and sorts imports",
-        install_hint: None,
         is_required_for_fmt: true,
         is_required_for_lint: false,
       },
       surfaces::ToolInfo {
         binary: "golangci-lint",
         description: "Fast Go linters runner aggregating multiple static analyzers",
-        install_hint: None,
         is_required_for_fmt: false,
         is_required_for_lint: true,
       },
@@ -266,25 +251,16 @@ impl LanguageSurface for GoSurface {
   ) -> surfaces::SurfaceResult {
     let start = time::Instant::now();
 
-    if let Some(res) = tooling::tool_missing_guard(
-      self.name(),
-      "gofmt",
-      start,
-      Some(GOFMT_INSTALL_HINT),
-    ) {
-      return res;
-    }
-
-    if let Some(res) =
-      tooling::tool_missing_guard(self.name(), "goimports", start, None)
+    if let Some(res) = tooling::tool_missing_guard(self.name(), "gofmt", start)
     {
       return res;
     }
 
-    let files = ctx.matched_files(GO_EXTENSIONS);
-    if let Some(res) = surfaces::passed_if_empty(&files, self.name(), start) {
-      return res;
-    }
+    let files =
+      match ctx.files_for(self.name(), "goimports", GO_EXTENSIONS, start) {
+        Ok(files) => files,
+        Err(res) => return res,
+      };
 
     let local_prefix = ctx
       .lang_config
@@ -347,21 +323,15 @@ impl LanguageSurface for GoSurface {
           // parse failure — never to signal reformatting — so this is an
           // operational failure, not a lint result (Fixes #155), matching
           // the `--check` path's `classify_all_nonzero_as_error` above.
-          return surfaces::SurfaceResult {
-            surface_name: self.name(),
-            status: surfaces::SurfaceStatus::ExecutionError { message: msg },
-            duration: start.elapsed(),
-          };
+          return surfaces::SurfaceResult::error(self.name(), start, msg);
         }
       }
       Err(e) => {
-        return surfaces::SurfaceResult {
-          surface_name: self.name(),
-          status: surfaces::SurfaceStatus::ExecutionError {
-            message: format!("Failed to execute gofmt: {e}"),
-          },
-          duration: start.elapsed(),
-        };
+        return surfaces::SurfaceResult::error(
+          self.name(),
+          start,
+          format!("Failed to execute gofmt: {e}"),
+        );
       }
     }
 
@@ -376,11 +346,11 @@ impl LanguageSurface for GoSurface {
     match goimports_cmd.output() {
       Ok(output) => {
         if output.status.success() {
-          surfaces::SurfaceResult {
-            surface_name: self.name(),
-            status: surfaces::SurfaceStatus::Passed,
-            duration: start.elapsed(),
-          }
+          surfaces::SurfaceResult::new(
+            self.name(),
+            start,
+            surfaces::SurfaceStatus::Passed,
+          )
         } else {
           let stderr = String::from_utf8_lossy(&output.stderr).to_string();
           let stdout = String::from_utf8_lossy(&output.stdout).to_string();
@@ -395,20 +365,14 @@ impl LanguageSurface for GoSurface {
           // Same reasoning as the `gofmt` branch above: `goimports -w`
           // rewrites in place and exits non-zero only on a parse failure,
           // never to report reformatting (Fixes #155).
-          surfaces::SurfaceResult {
-            surface_name: self.name(),
-            status: surfaces::SurfaceStatus::ExecutionError { message: msg },
-            duration: start.elapsed(),
-          }
+          surfaces::SurfaceResult::error(self.name(), start, msg)
         }
       }
-      Err(e) => surfaces::SurfaceResult {
-        surface_name: self.name(),
-        status: surfaces::SurfaceStatus::ExecutionError {
-          message: format!("Failed to execute goimports: {e}"),
-        },
-        duration: start.elapsed(),
-      },
+      Err(e) => surfaces::SurfaceResult::error(
+        self.name(),
+        start,
+        format!("Failed to execute goimports: {e}"),
+      ),
     }
   }
 
@@ -431,31 +395,24 @@ impl LanguageSurface for GoSurface {
     // after (unlike the Rust surface, where cargo is always present in a
     // Rust dev environment and so ordering doesn't matter there).
     if !glob::find_manifest_upwards(&ctx.root, "go.mod") {
-      return surfaces::SurfaceResult {
-        surface_name: self.name(),
-        status: surfaces::SurfaceStatus::ExecutionError {
-          message: format!(
-            "No go.mod found in {} (or any parent directory). \
+      return surfaces::SurfaceResult::error(
+        self.name(),
+        start,
+        format!(
+          "No go.mod found in {} (or any parent directory). \
              `golangci-lint` needs a Go module to resolve a package graph \
              against — run `go mod init <module>` here, or point --root at \
              the module root.",
-            ctx.root.display()
-          ),
-        },
-        duration: start.elapsed(),
+          ctx.root.display()
+        ),
+      );
+    }
+
+    let files =
+      match ctx.files_for(self.name(), "golangci-lint", GO_EXTENSIONS, start) {
+        Ok(files) => files,
+        Err(res) => return res,
       };
-    }
-
-    if let Some(res) =
-      tooling::tool_missing_guard(self.name(), "golangci-lint", start, None)
-    {
-      return res;
-    }
-
-    let files = ctx.matched_files(GO_EXTENSIONS);
-    if let Some(res) = surfaces::passed_if_empty(&files, self.name(), start) {
-      return res;
-    }
 
     let files_to_pass = ctx.files_to_pass(files);
 
@@ -463,7 +420,7 @@ impl LanguageSurface for GoSurface {
     // `.golangci.yml` being present on disk — see
     // `golangci_config` (Fixes #157 [pre-recreation]). `fml sync` remains the
     // only path that materializes the file.
-    let mut cmd = tooling::create_tool_command("golangci-lint");
+    let mut cmd = ctx.command("golangci-lint");
     if golangci_lint_supports_enable_only() {
       // `--enable-only` replaces the active linter set outright, so it gives
       // the same diagnostics as a `.golangci.yml` with this `linters.enable`
@@ -480,7 +437,6 @@ impl LanguageSurface for GoSurface {
       fix,
       ctx.lang_config.tool_args("golangci-lint"),
     ));
-    cmd.current_dir(ctx.root.as_path());
 
     // golangci-lint exits `1` for "issues found" and non-`1` for "could not
     // run" (`7` = typecheck/config error, `2`/`3`/`5`/`6` = other internal

@@ -86,6 +86,10 @@ owns all terminal I/O. See `docs/architecture.md`.
   primitives, updates
 - `src/surfaces` — the trait and shared toolkit; `lang/` holds one file per
   language (`docs/new-surface-guide.md` adds one), `sync/` native configs
+  - `tooling::TOOLS` (`src/surfaces/tooling.rs`) is the only home of a tool's
+    install chain, install hint, pinned and minimum version, and version probe
+  - registry order (`src/surfaces/registry.rs`) sets both result output order
+    (an explicit `--lang` list keeps its own) and `.editorconfig` section order
 - `src/cli` — thin per-command orchestration, the LSP server, plain-line `ui`
 - `tests/api`, `tests/cli`, `tests/repo` — library tests, process-only tests
   (exit codes, LSP stdio), and repo hygiene
