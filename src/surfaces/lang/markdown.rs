@@ -2462,4 +2462,36 @@ mod tests {
     };
     assert!(diff.contains("alt=\"badge\" />"), "diff: {diff}");
   }
+
+  #[test]
+  fn format_block_html_honours_prettier_extra_args_and_ignore() {
+    // #253: the HTML pass takes the user's `prettier` extra args, and leaves
+    // a file `.prettierignore` lists as written, like the markdown pass.
+    if !have_markdown_tools() {
+      return;
+    }
+    let badge = "<p align=\"center\">\n<img src=\"a.png\"     alt=\"badge\">\n\
+      </p>\n";
+    let temp = tempfile::TempDir::new().unwrap();
+    std::fs::write(temp.path().join(".prettierignore"), "ignored.md\n")
+      .unwrap();
+    std::fs::write(temp.path().join("a.md"), badge).unwrap();
+    std::fs::write(temp.path().join("ignored.md"), badge).unwrap();
+    let mut lang = config::ResolvedLangConfig::new("markdown");
+    lang.extra_args =
+      [(PRETTIER.to_string(), vec!["--print-width=20".to_string()])].into();
+    let ctx = surfaces::test_ctx(temp.path(), lang);
+
+    let res = MarkdownSurface.format(&ctx);
+    assert!(res.is_success(), "format failed: {:?}", res.status);
+    assert_eq!(
+      std::fs::read_to_string(temp.path().join("a.md")).unwrap(),
+      "<p align=\"center\">\n  <img\n    src=\"a.png\"\n    alt=\"badge\"\n  />\n\
+       </p>\n"
+    );
+    assert_eq!(
+      std::fs::read_to_string(temp.path().join("ignored.md")).unwrap(),
+      badge
+    );
+  }
 }

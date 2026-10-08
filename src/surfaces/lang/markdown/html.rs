@@ -94,13 +94,16 @@ fn tag_end(attrs: &str) -> Option<usize> {
   None
 }
 
-/// Parses `src` with the GFM extensions prettier's markdown parser honours,
-/// so a table or footnote next to HTML parses as prettier sees it.
+/// Parses `src` with the GFM extensions and front matter prettier's markdown
+/// parser honours, so a table or footnote next to HTML parses as prettier
+/// sees it, and HTML inside `---`/`+++` front matter is never a block.
 fn parse(src: &str) -> pulldown_cmark::Parser<'_> {
   let opts = pulldown_cmark::Options::ENABLE_TABLES
     | pulldown_cmark::Options::ENABLE_STRIKETHROUGH
     | pulldown_cmark::Options::ENABLE_FOOTNOTES
-    | pulldown_cmark::Options::ENABLE_TASKLISTS;
+    | pulldown_cmark::Options::ENABLE_TASKLISTS
+    | pulldown_cmark::Options::ENABLE_YAML_STYLE_METADATA_BLOCKS
+    | pulldown_cmark::Options::ENABLE_PLUSES_DELIMITED_METADATA_BLOCKS;
   pulldown_cmark::Parser::new_ext(src, opts)
 }
 
@@ -212,14 +215,19 @@ fn blocks_balanced(src: &str, spans: &[(usize, usize)]) -> bool {
 /// splits `<strong>Bold</strong><em>Italic</em>` onto two lines and the page
 /// renders "Bold Italic". `args` (inline config, then the user's `prettier`
 /// extra args) follow, as in the markdown pass, and it runs from `root` so
-/// prettier resolves plugins the same way.
+/// prettier resolves plugins the same way. `--stdin-filepath` names the
+/// markdown file, so a file `.prettierignore` lists comes back unchanged, as
+/// the markdown pass leaves it.
 fn run_prettier(
   html: &str,
+  file: &path::Path,
   root: &path::Path,
   args: &[String],
 ) -> Option<String> {
   let mut child = tooling::create_tool_command("prettier")
     .args(["--parser", "html", "--html-whitespace-sensitivity=css"])
+    .arg("--stdin-filepath")
+    .arg(file)
     .args(args)
     .current_dir(root)
     .stdin(process::Stdio::piped())
@@ -237,10 +245,14 @@ fn run_prettier(
   String::from_utf8(output.stdout).ok()
 }
 
+/// The start of every [`gap_marker`]; a file already holding it is left as
+/// written, since its own copy could split the batch in the wrong place.
+const GAP_PREFIX: &str = "<!--fml-html-gap-";
+
 /// The marker line [`format_blocks`] puts between the `index`th and next
 /// span of its batch.
 fn gap_marker(index: usize) -> String {
-  format!("<!--fml-html-gap-{index}-->")
+  format!("{GAP_PREFIX}{index}-->")
 }
 
 /// Splits prettier's output for a batch back into one part per span, or
@@ -289,10 +301,19 @@ fn block_structure(src: &str) -> Vec<(bool, pulldown_cmark::TagEnd)> {
 /// back verbatim. Returns `src` unchanged whenever anything is inconclusive:
 /// unbalanced tags, prettier failing, a reflowed marker, or a result that
 /// parses as a different block structure (prettier indenting a nested
-/// wrapper four spaces after a blank line makes it indented code).
-fn format_blocks(src: &str, root: &path::Path, args: &[String]) -> String {
+/// wrapper four spaces after a blank line makes it indented code). `file`
+/// names `src`'s file for prettier's ignore rules.
+fn format_blocks(
+  src: &str,
+  file: &path::Path,
+  root: &path::Path,
+  args: &[String],
+) -> String {
   let spans = block_ranges(src);
-  if spans.is_empty() || !blocks_balanced(src, &spans) {
+  if spans.is_empty()
+    || src.contains(GAP_PREFIX)
+    || !blocks_balanced(src, &spans)
+  {
     return src.to_string();
   }
   let mut batch = String::new();
@@ -305,7 +326,7 @@ fn format_blocks(src: &str, root: &path::Path, args: &[String]) -> String {
       batch.push('\n');
     }
   }
-  let Some(formatted) = run_prettier(&batch, root, args) else {
+  let Some(formatted) = run_prettier(&batch, file, root, args) else {
     return src.to_string();
   };
   let Some(parts) = split_on_gaps(&formatted, spans.len() - 1) else {
@@ -346,7 +367,7 @@ pub fn format_file(
   args: &[String],
 ) -> std::io::Result<()> {
   let content = std::fs::read_to_string(path)?;
-  let updated = format_blocks(&content, root, args);
+  let updated = format_blocks(&content, path, root, args);
   if updated != content {
     std::fs::write(path, updated)?;
   }
@@ -362,7 +383,7 @@ mod tests {
   }
 
   fn fmt(src: &str) -> String {
-    format_blocks(src, path::Path::new("."), &[])
+    format_blocks(src, path::Path::new("a.md"), path::Path::new("."), &[])
   }
 
   /// The text of each span [`block_ranges`] returns for `src`.
@@ -393,6 +414,10 @@ mod tests {
       // depth rule keeps prettier from growing them out of the container.
       "> <p align=\"center\"><img src=\"a.png\"></p>\n",
       "- item\n\n  <img src=\"a.png\"     alt=\"b\">\n",
+      // Front matter is not markdown; its YAML would lose an indent.
+      "---\nd: |\n  <div align=\"center\">\n  <img src=\"a.png\">\n  </div>\n\
+       ---\n\n# T\n",
+      "+++\nd = '''\n  <div>\n  <img src=\"a.png\">\n  </div>\n'''\n+++\n",
     ] {
       assert_eq!(block_ranges(src), vec![], "in: {src}");
     }
@@ -411,6 +436,10 @@ mod tests {
     );
     assert_eq!(
       blocks("<!-- prettier-ignore -->\n\nText.\n\n<p>c</p>\n"),
+      vec!["<p>c</p>\n"]
+    );
+    assert_eq!(
+      blocks("<!-- prettier-ignore -->\n\n---\n\n<p>c</p>\n"),
       vec!["<p>c</p>\n"]
     );
     assert_eq!(
@@ -470,6 +499,11 @@ mod tests {
     assert_eq!(spans.len(), 2, "opener and closer are separate blocks");
     assert!(blocks_balanced(src, &spans));
     assert!(!blocks_balanced(src, &spans[..1]), "opener alone");
+    let svg = "<svg><path d=\"x\"/></svg>\n";
+    assert!(
+      blocks_balanced(svg, &block_ranges(svg)),
+      "self-closing path"
+    );
   }
 
   #[test]
@@ -529,6 +563,16 @@ mod tests {
   }
 
   #[test]
+  fn format_blocks_leaves_unbalanced_opener_untouched() {
+    if !have_prettier() {
+      return;
+    }
+    // Alone, prettier would close the `<details>` before the body.
+    let src = "<details>\n<summary>X</summary>\n\nBody.\n";
+    assert_eq!(fmt(src), src);
+  }
+
+  #[test]
   fn format_blocks_keeps_crlf_line_endings() {
     if !have_prettier() {
       return;
@@ -537,7 +581,7 @@ mod tests {
       </p>\r\n";
     let crlf = ["--end-of-line=crlf".to_string()];
     assert_eq!(
-      format_blocks(src, path::Path::new("."), &crlf),
+      format_blocks(src, path::Path::new("a.md"), path::Path::new("."), &crlf),
       "<p align=\"center\">\r\n  <img src=\"a.png\" alt=\"b\" />\r\n</p>\r\n"
     );
   }
