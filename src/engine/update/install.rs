@@ -1,7 +1,8 @@
 //! Installing a published release over the running `fml` binary.
 //!
-//! Owns `fml update`'s steps: resolving the latest release, then downloading
-//! this build's cargo-dist archive and verifying its published checksum. The background release check and its cache live in the parent
+//! Owns `fml update`'s steps: resolving the latest release, staging beside
+//! the running binary, and downloading this build's cargo-dist archive
+//! verified by its published checksum. The background release check and its cache live in the parent
 //! `update` module; the CLI decides what the user sees.
 
 use std::env;
@@ -11,6 +12,7 @@ use std::path;
 use std::process;
 
 use sha2;
+use tempfile;
 use thiserror;
 
 use crate::engine::update;
@@ -63,6 +65,17 @@ pub enum Error {
   /// The published `.sha256` file holds no sha256 digest.
   #[error("{0}.sha256 holds no sha256 digest")]
   BadChecksumFile(String),
+  /// The binary's directory cannot be written, so it cannot be replaced.
+  #[error(
+    "cannot write to {}: {source}; rerun with permission to write there",
+    dir.display()
+  )]
+  Unwritable {
+    /// The directory holding the running binary.
+    dir: path::PathBuf,
+    /// Why creating a file there failed.
+    source: io::Error,
+  },
   /// Writing the staged files failed.
   #[error(transparent)]
   Io(#[from] io::Error),
@@ -98,6 +111,24 @@ pub fn newer_release(current: &str) -> Result<Option<String>, Error> {
   let tag = update::parse_latest_tag_from_json(&String::from_utf8_lossy(&body))
     .ok_or(Error::NoTag)?;
   Ok(update::is_newer_version(&tag, current).then_some(tag))
+}
+
+/// Creates the staging directory beside `exe`, on the same filesystem, which
+/// also proves the directory writable before anything is downloaded. It is
+/// removed when dropped.
+///
+/// # Errors
+///
+/// [`Error::Unwritable`], naming the directory, when it cannot be written.
+pub fn stage(exe: &path::Path) -> Result<tempfile::TempDir, Error> {
+  let dir = exe.parent().unwrap_or_else(|| path::Path::new("."));
+  tempfile::Builder::new()
+    .prefix(".fml-update-")
+    .tempdir_in(dir)
+    .map_err(|source| Error::Unwritable {
+      dir: dir.to_path_buf(),
+      source,
+    })
 }
 
 /// Downloads this build's archive for `tag` into `dir`, verified against the
@@ -235,6 +266,24 @@ mod tests {
         Err(Error::BadChecksumFile(_))
       ));
     }
+  }
+
+  #[cfg(unix)]
+  #[test]
+  fn stage_names_a_directory_it_cannot_write() {
+    use std::os::unix::fs::PermissionsExt;
+
+    let dir = tempfile::tempdir().unwrap();
+    fs::set_permissions(dir.path(), fs::Permissions::from_mode(0o555)).unwrap();
+    let staged = stage(&dir.path().join("fml"));
+    fs::set_permissions(dir.path(), fs::Permissions::from_mode(0o755)).unwrap();
+    // Root writes through any mode bits, so the check cannot fire there.
+    let Err(err) = staged else { return };
+    assert!(
+      matches!(&err, Error::Unwritable { dir: named, .. } if named == dir.path()),
+      "{err}"
+    );
+    assert!(err.to_string().contains(&dir.path().display().to_string()));
   }
 
   #[test]
