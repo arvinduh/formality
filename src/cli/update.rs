@@ -1,11 +1,10 @@
 //! `fml update`: replace the running binary with the latest release.
 //!
 //! Sequences `engine::update::install`'s steps and prints their progress;
-//! the library owns fetching, verification and the swap.
+//! the library and the release's installer own fetching, verification and
+//! the swap.
 
 use std::env;
-use std::io;
-use std::io::Write;
 
 use fml::engine::runner;
 use fml::engine::update::install;
@@ -13,7 +12,17 @@ use fml::engine::update::install;
 use crate::cli::ui;
 
 /// Runs `fml update`, reporting a failure as an `[ERR]` line.
+///
+/// Must run before this process starts any thread: it sets an environment
+/// variable for the installer.
 pub fn run() -> runner::ExitStatus {
+  // The installer otherwise adds its install directory to PATH in shell rc
+  // files (or the Windows user PATH) when that directory is not on PATH.
+  // Replacing a binary in place must not edit the user's shell setup.
+  // SAFETY: `Cli::run` dispatches `fml update` before spawning the
+  // update-check thread, and nothing earlier in `main` starts a thread, so
+  // no other thread can be reading the environment concurrently.
+  unsafe { env::set_var("FML_NO_MODIFY_PATH", "1") };
   match update() {
     Ok(()) => runner::ExitStatus::Clean,
     Err(err) => {
@@ -26,38 +35,15 @@ pub fn run() -> runner::ExitStatus {
 /// Installs the latest release over this binary, if it is newer.
 fn update() -> Result<(), install::Error> {
   let current = install::current_version();
-  let Some(tag) = install::newer_release(&current)? else {
+  let exe = install::running_exe()?;
+  let mut updater = install::Updater::new(&exe, &current)?;
+  let Some(latest) = updater.newer_version()? else {
     ui::ok(&format!("fml v{current} is already the latest release."));
     return Ok(());
   };
-  println!("⚡ formality v{current} → {tag}");
-  let asset = install::asset_name();
-  if install::runs_under_emulation() {
-    println!("   {}", install::emulation_note(&asset));
-  }
-  // The file behind any symlink. Windows reports the file itself, and its
-  // canonical form is an unreadable `\\?\` path.
-  let exe = if cfg!(windows) {
-    env::current_exe()?
-  } else {
-    env::current_exe()?.canonicalize()?
-  };
-  let staging = install::stage(&exe)?;
-  print!("   Downloading {asset}… ");
-  io::stdout().flush()?;
-  let (archive, bytes) = install::download(&tag, staging.path())?;
-  println!("done ({:.1} MB)", megabytes(bytes));
-  let binary = install::extract(&archive)?;
-  install::install(&exe, &binary, &tag)?;
+  install::check_replaceable(&exe)?;
+  println!("⚡ formality v{current} → v{latest}");
+  updater.install()?;
   println!("   Replaced {}", exe.display());
   Ok(())
-}
-
-/// Converts a byte count to megabytes for display.
-#[expect(
-  clippy::cast_precision_loss,
-  reason = "a release archive is far below 2^52 bytes"
-)]
-fn megabytes(bytes: usize) -> f64 {
-  bytes as f64 / 1_000_000.0
 }

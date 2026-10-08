@@ -491,23 +491,3 @@ fn release_extras_and_release_yml_tag_filters_match() {
      a release that is never created; see issue #165).\n"
   );
 }
-
-/// `fml update` makes the installer's ARM64 Windows choice (issue #166), so it
-/// must print the installer's note word for word: the one the local edit
-/// patches into `fml-installer.ps1`, with the artifact name filled in.
-#[test]
-fn fml_update_prints_the_installer_arm64_note() {
-  let asset = "fml-x86_64-pc-windows-msvc.zip";
-  let workflow = read_workflow();
-  let line = workflow
-    .lines()
-    .find(|line| line.contains("Write-Information \"note: "))
-    .expect("release.yml patches a `Write-Information \"note: ...\"` line");
-  let note = line
-    .trim()
-    .strip_prefix("Write-Information \"")
-    .and_then(|rest| rest.strip_suffix('"'))
-    .expect("the note is one double-quoted string")
-    .replace(r#"$($platforms[$arch]["artifact_name"])"#, asset);
-  assert_eq!(fml::engine::update::install::emulation_note(asset), note);
-}
