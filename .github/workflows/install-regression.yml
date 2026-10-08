@@ -114,6 +114,31 @@ jobs:
       - name: Build fml
         run: cargo build
 
+      - name: PowerShell installer from this tree installs without HOME
+        # Windows does not set HOME. An install-path entry spelled `$HOME/`
+        # made dist read `$env:HOME`, and the installer found no install dir
+        # (#548). This builds fml-installer.ps1 with the pinned dist, feeds
+        # it this build's fml.exe via a file:// download URL (no release
+        # needed) and runs it in a fresh pwsh with HOME removed.
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $ver = (Select-String -Path Cargo.toml '^cargo-dist-version = "(.+)"').Matches[0].Groups[1].Value
+          irm "https://github.com/axodotdev/cargo-dist/releases/download/v$ver/cargo-dist-installer.ps1" | iex
+          dist build --artifacts=global
+          if ($LASTEXITCODE) { exit $LASTEXITCODE }
+          $dl = Join-Path $env:RUNNER_TEMP fml-ps1-download
+          New-Item -ItemType Directory -Force $dl | Out-Null
+          Compress-Archive -Force target/debug/fml.exe "$dl/fml-x86_64-pc-windows-msvc.zip"
+          $env:FML_DOWNLOAD_URL = ([Uri]$dl).AbsoluteUri
+          $env:FML_NO_MODIFY_PATH = '1'
+          Remove-Item Env:HOME -ErrorAction SilentlyContinue
+          pwsh -NoProfile -File target/distrib/fml-installer.ps1
+          if ($LASTEXITCODE) { exit $LASTEXITCODE }
+          & (Join-Path $HOME .local/bin/fml.exe) --version
+          if ($LASTEXITCODE) { exit $LASTEXITCODE }
+
       - name: fml update replaces itself with the published release
         # End to end against the real latest release (#321): a debug build,
         # told by the debug-only FML_TEST_CURRENT_VERSION that it is 0.0.1,
