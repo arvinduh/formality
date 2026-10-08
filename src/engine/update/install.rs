@@ -69,6 +69,20 @@ pub enum Error {
     /// The directory the installer was pointed at.
     dir: path::PathBuf,
   },
+  /// The installer ran and failed. It printed straight to the terminal,
+  /// so `axoupdater` captured none of its output.
+  #[error(
+    "the installer failed ({}) with no captured output; anything it \
+     printed is above",
+    status.map_or_else(
+      || "killed by a signal".to_string(),
+      |code| format!("exit status {code}")
+    )
+  )]
+  InstallerFailed {
+    /// The installer's exit code; `None` when a signal ended it.
+    status: Option<i32>,
+  },
   /// The version to update from is not `SemVer`.
   #[error("invalid current version: {0}")]
   Version(#[from] semver::Error),
@@ -216,14 +230,20 @@ impl Updater {
   ///
   /// # Errors
   ///
-  /// [`Error::Update`] when the installer cannot be fetched or fails, and
+  /// [`Error::Update`] when the installer cannot be fetched or fails,
+  /// [`Error::InstallerFailed`] when it fails without captured output, and
   /// [`Error::Skipped`] when `axoupdater` declines to run it.
   pub fn install(&mut self) -> Result<(), Error> {
-    match self
-      .runtime
-      .block_on(self.session.run())
-      .map_err(Box::new)?
-    {
+    match self.runtime.block_on(self.session.run()).map_err(
+      |err| match err {
+        axoupdater::AxoupdateError::InstallFailed {
+          status,
+          stdout: None,
+          stderr: None,
+        } => Error::InstallerFailed { status },
+        err => Error::Update(Box::new(err)),
+      },
+    )? {
       Some(_) => Ok(()),
       None => Err(Error::Skipped {
         dir: self.dir.clone(),
@@ -274,6 +294,12 @@ mod tests {
       "{err}"
     );
     assert!(err.to_string().contains(&dir.path().display().to_string()));
+  }
+
+  #[test]
+  fn installer_failure_names_its_exit_status() {
+    let err = Error::InstallerFailed { status: Some(3) };
+    assert!(err.to_string().contains("exit status 3"), "{err}");
   }
 
   #[test]
