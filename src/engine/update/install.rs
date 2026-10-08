@@ -8,6 +8,7 @@
 //! decides what the user sees.
 
 use std::env;
+use std::ffi;
 use std::io;
 use std::path;
 
@@ -131,7 +132,15 @@ pub fn running_exe() -> io::Result<path::PathBuf> {
 /// naming the directory, when a file cannot be created there.
 pub fn check_replaceable(exe: &path::Path) -> Result<(), Error> {
   let name = format!("{APP}{}", env::consts::EXE_SUFFIX);
-  if exe.file_name() != Some(name.as_ref()) {
+  // Windows file names are case-insensitive, so `FML.EXE` is the same file.
+  let named =
+    exe
+      .file_name()
+      .and_then(ffi::OsStr::to_str)
+      .is_some_and(|actual| {
+        actual == name || cfg!(windows) && actual.eq_ignore_ascii_case(&name)
+      });
+  if !named {
     return Err(Error::NotNamedFml {
       path: exe.to_path_buf(),
     });
@@ -271,6 +280,14 @@ mod tests {
     let exe = dir.path().join(format!("fml{}", env::consts::EXE_SUFFIX));
     check_replaceable(&exe).unwrap();
     assert_eq!(std::fs::read_dir(dir.path()).unwrap().count(), 0);
+  }
+
+  #[test]
+  fn check_replaceable_ignores_case_only_on_windows() {
+    let dir = tempfile::tempdir().unwrap();
+    let suffix = env::consts::EXE_SUFFIX.to_uppercase();
+    let exe = dir.path().join(format!("FML{suffix}"));
+    assert_eq!(check_replaceable(&exe).is_ok(), cfg!(windows));
   }
 
   #[cfg(unix)]
