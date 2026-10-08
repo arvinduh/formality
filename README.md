@@ -74,9 +74,10 @@ surface? See [docs/new-surface-guide.md](docs/new-surface-guide.md).
 
 Each command downloads the prebuilt binary from the latest
 [GitHub Release](https://github.com/arvinduh/formality/releases/latest) and puts
-`fml` on your `PATH`. No Rust toolchain required. The shell installer also
-verifies the download's checksum; the PowerShell installer does not. Both are
-generated and published by [cargo-dist](https://opensource.axo.dev/cargo-dist/).
+`fml` on your `PATH`. No Rust toolchain required. Both installers verify the
+download's SHA-256 checksum (the PowerShell installer from the release after
+v0.3.0). Both are generated and published by
+[cargo-dist](https://opensource.axo.dev/cargo-dist/).
 
 ### Linux (x64) and macOS (Apple Silicon)
 
@@ -100,14 +101,17 @@ fml update
 ```
 
 `fml update` replaces the running `fml` with the latest release, in place,
-however it was installed. It downloads the archive for its own platform, checks
-it against the release's published SHA-256 checksum, unpacks it with the system
-`tar`, and swaps it in only once the new binary reports the expected version.
-Any failure leaves the current binary untouched. If `fml` is already the latest
-release, it says so and changes nothing. Updating a binary in a directory you
-cannot write, such as a system location, fails with a message naming that
-directory; rerun it with permission to write there. On ARM64 Windows it installs
-the x64 build and says so, as the installer does.
+however it was installed. It runs that release's own installer with the install
+directory set to the one holding the running `fml`, so the download, checksum
+check and platform choice are the installer's, ARM64 Windows note included. It
+never edits your `PATH` or shell profile. If the installer fails, the current
+binary stays as it was. If `fml` is already the latest release, it says so and
+changes nothing.
+
+The binary must be named `fml` (`fml.exe` on Windows), since that is the name
+the installer writes; a renamed copy is refused. Updating a binary in a
+directory you cannot write, such as a system location, fails with a message
+naming that directory; rerun it with permission to write there.
 
 ---
 

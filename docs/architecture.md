@@ -68,8 +68,8 @@ _what_ each surface does, and `src/cli` turns engine results into output.
 - `engine/target.rs`: git path resolution, candidate path resolution, scope
   resolution, and surface filtering.
 - `engine/update.rs` (+ `update/install.rs`): the background release check
-  against GitHub Releases, and the download, checksum verification and in-place
-  swap behind `fml update`.
+  against GitHub Releases, and `fml update`'s pre-checks and its `axoupdater`
+  run of the release installer into the binary's own directory.
 - `engine/version/`: resolves tool versions and enforces minimum tool versions.
 
 ## `src/surfaces`
