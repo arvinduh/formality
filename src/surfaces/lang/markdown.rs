@@ -56,7 +56,11 @@ fn markdownlint_config(
     // `[lang.markdown] no_inline_html = true` opts back in (#120).
     .set(
       "MD033",
-      lang.markdown.as_ref().and_then(|m| m.no_inline_html).unwrap_or(false),
+      lang
+        .markdown
+        .as_ref()
+        .and_then(|m| m.no_inline_html)
+        .unwrap_or(false),
     )
 }
 
