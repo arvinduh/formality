@@ -21,6 +21,7 @@ use std::ffi;
 use std::fmt;
 use std::path;
 use std::str;
+use std::sync;
 use std::time;
 
 use serde;
@@ -30,6 +31,19 @@ use crate::surfaces::tooling;
 
 /// Cache TTL for probed tool versions: 24 hours.
 const TOOL_VERSION_CACHE_TTL_SECS: u64 = 24 * 60 * 60;
+
+/// Serializes access to the tool version cache file, so probes running on
+/// several threads neither read a half-written file nor drop each other's
+/// entries in their read-modify-write.
+static TOOL_VERSION_CACHE_LOCK: sync::Mutex<()> = sync::Mutex::new(());
+
+/// Takes [`TOOL_VERSION_CACHE_LOCK`]; a poisoned lock still guards only a
+/// best-effort cache, so it is recovered rather than propagated.
+fn lock_tool_version_cache() -> sync::MutexGuard<'static, ()> {
+  TOOL_VERSION_CACHE_LOCK
+    .lock()
+    .unwrap_or_else(sync::PoisonError::into_inner)
+}
 
 /// An on-disk cache entry recording the probed version output and metadata for a tool binary.
 #[derive(serde::Serialize, serde::Deserialize, Debug, PartialEq)]
@@ -294,7 +308,10 @@ fn get_raw_tool_version_at(
 
   if std::env::var("FORMALITY_NO_VERSION_CACHE").is_err()
     && let Some((ref bin_path, bin_mtime)) = bin_info
-    && let Some(store) = read_tool_version_cache_at(cache_path)
+    && let Some(store) = {
+      let _guard = lock_tool_version_cache();
+      read_tool_version_cache_at(cache_path)
+    }
     && let Some(entry) = store.tools.get(binary)
   {
     let now = time::SystemTime::now()
@@ -317,6 +334,7 @@ fn get_raw_tool_version_at(
   let raw = probe_raw_tool_version_uncached(binary)?;
 
   if let Some((ref bin_path, bin_mtime)) = bin_info {
+    let _guard = lock_tool_version_cache();
     let mut store = read_tool_version_cache_at(cache_path).unwrap_or_default();
     let now = time::SystemTime::now()
       .duration_since(time::UNIX_EPOCH)
