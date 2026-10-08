@@ -5,6 +5,8 @@
 //! the swap.
 
 use std::env;
+use std::error;
+use std::iter;
 
 use fml::engine::runner;
 use fml::engine::update::install;
@@ -26,7 +28,7 @@ pub fn run() -> runner::ExitStatus {
   match update() {
     Ok(()) => runner::ExitStatus::Clean,
     Err(err) => {
-      ui::error(&err);
+      ui::error(&with_causes(&err));
       runner::ExitStatus::Error
     }
   }
@@ -46,4 +48,59 @@ fn update() -> Result<(), install::Error> {
   updater.install()?;
   println!("   Replaced {}", exe.display());
   Ok(())
+}
+
+/// Renders `err` followed by each cause in its source chain, so a failure
+/// such as `failed to execute installer` names why. A cause whose text the
+/// message already contains is not repeated.
+fn with_causes(err: &dyn error::Error) -> String {
+  let mut message = err.to_string();
+  for cause in iter::successors(err.source(), |cause| cause.source()) {
+    let cause = cause.to_string();
+    if !message.contains(&cause) {
+      message = format!("{message}: {cause}");
+    }
+  }
+  message
+}
+
+#[cfg(test)]
+mod tests {
+  use std::fmt;
+  use std::io;
+
+  use super::*;
+
+  #[derive(Debug)]
+  struct Exec(io::Error);
+
+  impl fmt::Display for Exec {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+      f.write_str("failed to execute installer")
+    }
+  }
+
+  impl error::Error for Exec {
+    fn source(&self) -> Option<&(dyn error::Error + 'static)> {
+      Some(&self.0)
+    }
+  }
+
+  #[test]
+  fn with_causes_appends_each_source() {
+    let err = Exec(io::Error::other("connection reset"));
+    assert_eq!(
+      with_causes(&err),
+      "failed to execute installer: connection reset"
+    );
+  }
+
+  #[test]
+  fn with_causes_skips_a_source_the_message_already_shows() {
+    let err = install::Error::Unwritable {
+      dir: "bin".into(),
+      source: io::Error::other("denied"),
+    };
+    assert_eq!(with_causes(&err), err.to_string());
+  }
 }
