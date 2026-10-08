@@ -173,7 +173,10 @@ carries four hand-applied local edits, each marked with a
 4. **ARM64 note in the PowerShell installer** (issue #166): a step in the
    `build-global-artifacts` job, after `cargo-dist` and before
    `Upload artifacts`, that patches a note into `fml-installer.ps1` saying ARM64
-   Windows gets the x64 build on purpose.
+   Windows gets the x64 build on purpose. `fml update` prints the same note
+   (`engine::update::install::emulation_note`); a test in
+   `tests/repo/release_workflow.rs` fails if the two drift, so change both
+   together.
 
 ### `allow-dirty` makes regeneration a no-op
 
