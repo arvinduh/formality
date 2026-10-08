@@ -14,6 +14,8 @@ use std::collections;
 use std::io;
 use std::path;
 
+use rayon::iter::ParallelIterator;
+
 use crate::config;
 use crate::engine::version;
 use crate::surfaces;
@@ -55,7 +57,8 @@ impl Check {
 ///
 /// # Side Effects
 ///
-/// Spawns each found tool once to probe its version.
+/// Spawns each found tool once to probe its version. Probes run in parallel,
+/// so a cold version cache costs the slowest probe rather than their sum.
 #[must_use]
 pub fn check(
   surfaces: &[Box<dyn surfaces::LanguageSurface>],
@@ -64,23 +67,26 @@ pub fn check(
 ) -> Vec<Check> {
   let global = config.resolve_global();
   let mut seen = collections::HashSet::new();
-  let mut checks = Vec::new();
+  let mut wanted = Vec::new();
   for surface in surfaces {
     let resolved = config.resolve_for_lang_with_global(surface.name(), &global);
     for tool in surface.tool_info(&resolved) {
-      if !filter(&tool) || !seen.insert(tool.binary) {
-        continue;
+      if filter(&tool) && seen.insert(tool.binary) {
+        wanted.push((surface.name(), tool));
       }
+    }
+  }
+  rayon::iter::IntoParallelIterator::into_par_iter(wanted)
+    .map(|(surface, tool)| {
       let (path, status) = probe(tool.binary);
-      checks.push(Check {
-        surface: surface.name(),
+      Check {
+        surface,
         tool,
         path,
         status,
-      });
-    }
-  }
-  checks
+      }
+    })
+    .collect()
 }
 
 /// Whether a subprocess invocation's result indicates the tool actually ran
