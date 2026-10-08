@@ -134,11 +134,14 @@ machine-generated shape.
   around an inline element renders. A `<details>` opener and its `</details>`
   are separate blocks once a blank line splits them, so every block in a file
   goes to one prettier call, joined by marker comments, and the markdown between
-  them is spliced back untouched. Left as written: blocks in a blockquote, list
-  item or footnote, comment-only blocks, and blocks a `prettier-ignore` (or
-  `-start`/`-end`) comment covers. The whole file's HTML is left as written when
-  its tags do not balance, prettier fails, or the result would parse as a
-  different block structure (a nested wrapper indented into a code block).
+  them is spliced back untouched. Left as written: front matter, blocks in a
+  blockquote, list item or footnote, comment-only blocks, blocks a
+  `prettier-ignore` (or `-start`/`-end`) comment covers, and files
+  `.prettierignore` lists. Inline children keep their whitespace, so a long
+  badge link can break mid-tag, with a line starting `><img`; it renders the
+  same. The whole file's HTML is left as written when its tags do not balance,
+  prettier fails, or the result would parse as a different block structure (a
+  nested wrapper indented into a code block).
 - **Lint**: `markdownlint-cli2`.
 - **Managed config**: `.markdownlint.json`, plus the shared `.prettierrc.json`
   (see below). `MD010`/`no-hard-tabs` and `MD029`/`ol-prefix` are off in the
