@@ -210,6 +210,21 @@ When `[workspace.metadata.dist]` or `cargo-dist-version` changes:
    cargo test --test repo release_workflow
    ```
 
+5. Check the installer patches against the new template. PR CI skips
+   `build-global-artifacts`, and the guard test reads only `release.yml`, so a
+   template change that moves an anchor would otherwise first fail at tag time.
+   From the repository root, with the pinned `dist`, run:
+
+   ```sh
+   dist build --artifacts=global
+   ```
+
+   This writes `fml-installer.sh` and `fml-installer.ps1` to `target/distrib/`
+   without building binaries. Then run the `run:` script of each installer step
+   in `build-global-artifacts` (edits 4 to 6) with `bash -e`, from the
+   repository root, with `RUNNER_TEMP` set to a scratch directory. Each step
+   exits non-zero when its anchor is missing; fix that step before tagging.
+
 ### The local-edits guard test
 
 `tests/repo/release_workflow.rs` guards against accidental reversion. It asserts
