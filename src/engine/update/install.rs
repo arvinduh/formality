@@ -149,6 +149,9 @@ impl Updater {
     let dir = install_dir(exe).to_str().ok_or_else(|| {
       io::Error::new(io::ErrorKind::InvalidData, "install path is not UTF-8")
     })?;
+    // Parsed before the session exists: building it builds an HTTP client,
+    // which panics on a system with no readable CA roots.
+    let version = semver::Version::parse(current)?;
     let mut session = axoupdater::AxoUpdater::new_for(APP);
     if let Ok(token) = env::var(TOKEN_VAR) {
       session.set_github_token(&token);
@@ -161,7 +164,7 @@ impl Updater {
         app_name: APP.to_string(),
       })
       .set_install_dir(dir)
-      .set_current_version(semver::Version::parse(current)?)
+      .set_current_version(version)
       .map_err(Box::new)?;
     let runtime = tokio::runtime::Builder::new_current_thread()
       .enable_all()
