@@ -80,8 +80,10 @@ targets = [
 # Path(s) installers place binaries in, tried in order. `~/.local/bin` first:
 # the per-user bin dir most Linux distros already put on PATH, and it needs no
 # Rust toolchain. (dist rejects the `CARGO_HOME` keyword when combined with
-# other paths, so the cargo bin dir is spelled out literally.)
-install-path = ["$HOME/.local/bin", "$HOME/.cargo/bin"]
+# other paths, so the cargo bin dir is spelled out literally.) `~/` is the
+# user's home on every OS; `$HOME/` would be an environment variable, which
+# Windows does not set, so the PowerShell installer found no path (#548).
+install-path = ["~/.local/bin", "~/.cargo/bin"]
 # Whether to install an updater program (kept out of scope - see issue #121)
 install-updater = false
 # Skip checking whether the specified configuration files are up to date
