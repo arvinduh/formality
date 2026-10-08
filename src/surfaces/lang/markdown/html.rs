@@ -499,11 +499,10 @@ mod tests {
     assert_eq!(spans.len(), 2, "opener and closer are separate blocks");
     assert!(blocks_balanced(src, &spans));
     assert!(!blocks_balanced(src, &spans[..1]), "opener alone");
-    let svg = "<svg><path d=\"x\"/></svg>\n";
-    assert!(
-      blocks_balanced(svg, &block_ranges(svg)),
-      "self-closing path"
-    );
+    let svg = "<svg>\n<path d=\"x\"/>\n</svg>\n";
+    let spans = block_ranges(svg);
+    assert_eq!(spans, vec![(0, svg.len())]);
+    assert!(blocks_balanced(svg, &spans), "self-closing path");
   }
 
   #[test]
@@ -569,6 +568,16 @@ mod tests {
     }
     // Alone, prettier would close the `<details>` before the body.
     let src = "<details>\n<summary>X</summary>\n\nBody.\n";
+    assert_eq!(fmt(src), src);
+  }
+
+  #[test]
+  fn format_blocks_leaves_files_holding_a_gap_marker_untouched() {
+    if !have_prettier() {
+      return;
+    }
+    let src = "<div>\n<!--fml-html-gap-0-->\n</div>\n\n<p align=\"center\">\n\
+      <img src=\"a.png\"     alt=\"b\">\n</p>\n";
     assert_eq!(fmt(src), src);
   }
 
