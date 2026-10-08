@@ -93,6 +93,22 @@ powershell -c "irm https://github.com/arvinduh/formality/releases/latest/downloa
 There is no native ARM64 Windows build. On ARM64 Windows the installer installs
 the x64 build, which runs under Windows' built-in x64 emulation.
 
+### Updating
+
+```bash
+fml update
+```
+
+`fml update` replaces the running `fml` with the latest release, in place,
+however it was installed. It downloads the archive for its own platform, checks
+it against the release's published SHA-256 checksum, unpacks it with the system
+`tar`, and swaps it in only once the new binary reports the expected version.
+Any failure leaves the current binary untouched. If `fml` is already the latest
+release, it says so and changes nothing. Updating a binary in a directory you
+cannot write, such as a system location, fails with a message naming that
+directory; rerun it with permission to write there. On ARM64 Windows it installs
+the x64 build and says so, as the installer does.
+
 ---
 
 ## Quickstart
