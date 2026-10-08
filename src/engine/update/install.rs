@@ -58,6 +58,17 @@ pub enum Error {
     /// Why creating a file there failed.
     source: io::Error,
   },
+  /// `axoupdater` ran no installer. With the version already checked, that
+  /// means its own check found the running binary outside `dir`.
+  #[error(
+    "the installer did not run, so nothing was replaced: axoupdater found \
+     the running binary outside {}",
+    dir.display()
+  )]
+  Skipped {
+    /// The directory the installer was pointed at.
+    dir: path::PathBuf,
+  },
   /// The version to update from is not `SemVer`.
   #[error("invalid current version: {0}")]
   Version(#[from] semver::Error),
@@ -136,6 +147,8 @@ pub struct Updater {
   runtime: tokio::runtime::Runtime,
   /// The version being updated from.
   current: String,
+  /// The directory the installer installs into.
+  dir: path::PathBuf,
 }
 
 impl Updater {
@@ -173,6 +186,7 @@ impl Updater {
       session,
       runtime,
       current: current.to_string(),
+      dir: dir.into(),
     })
   }
 
@@ -202,13 +216,19 @@ impl Updater {
   ///
   /// # Errors
   ///
-  /// [`Error::Update`] when the installer cannot be fetched or fails.
+  /// [`Error::Update`] when the installer cannot be fetched or fails, and
+  /// [`Error::Skipped`] when `axoupdater` declines to run it.
   pub fn install(&mut self) -> Result<(), Error> {
-    self
+    match self
       .runtime
       .block_on(self.session.run())
-      .map_err(Box::new)?;
-    Ok(())
+      .map_err(Box::new)?
+    {
+      Some(_) => Ok(()),
+      None => Err(Error::Skipped {
+        dir: self.dir.clone(),
+      }),
+    }
   }
 }
 
