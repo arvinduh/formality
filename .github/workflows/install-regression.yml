@@ -119,6 +119,9 @@ jobs:
         # told by the debug-only FML_TEST_CURRENT_VERSION that it is 0.0.1,
         # must replace itself in place with exactly the binary inside this
         # platform's published archive. On Windows that is a running .exe.
+        # The token lifts the anonymous API limit macOS runners share.
+        env:
+          FML_GITHUB_TOKEN: ${{ github.token }}
         shell: bash
         run: |
           set -euo pipefail
