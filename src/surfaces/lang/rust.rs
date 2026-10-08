@@ -3,6 +3,8 @@
 //! Implements `super::LanguageSurface` for Rust, syncing `.rustfmt.toml`.
 //! Fleet registration is owned by `super::registry`.
 
+use std::collections;
+use std::ffi;
 use std::fs;
 use std::path;
 use std::process;
@@ -108,11 +110,98 @@ pub fn build_clippy_json_args(extra_args: &[String]) -> Vec<String> {
   args
 }
 
+/// Drops the files rustfmt already reaches through another listed file.
+///
+/// rustfmt formats each argument and then every out-of-line `mod name;`
+/// beneath it, so handing it a whole tree formats a file once per listed
+/// ancestor. A file is dropped only when its conventional parent (`mod.rs`,
+/// `lib.rs`, `main.rs` or `<dir>.rs`) is listed and declares it at top level
+/// without a `#[path]`; anything unusual stays listed, which costs only a
+/// repeat.
+fn module_roots(files: &[path::PathBuf]) -> Vec<&path::PathBuf> {
+  let listed: collections::HashSet<&path::Path> =
+    files.iter().map(path::PathBuf::as_path).collect();
+  let mut sources = collections::HashMap::new();
+  files
+    .iter()
+    .filter(|file| !declared_by_listed_parent(file, &listed, &mut sources))
+    .collect()
+}
+
+/// Returns whether a listed parent module of `file` declares it; `sources`
+/// caches each parent's contents across calls.
+fn declared_by_listed_parent(
+  file: &path::Path,
+  listed: &collections::HashSet<&path::Path>,
+  sources: &mut collections::HashMap<path::PathBuf, Option<String>>,
+) -> bool {
+  let Some((name, dir)) = module_name_and_dir(file) else {
+    return false;
+  };
+  let mut parents: Vec<path::PathBuf> = ["mod.rs", "lib.rs", "main.rs"]
+    .iter()
+    .map(|parent| dir.join(parent))
+    .collect();
+  if let (Some(up), Some(dir_name)) = (dir.parent(), dir.file_name()) {
+    let mut sibling = dir_name.to_os_string();
+    sibling.push(".rs");
+    parents.push(up.join(sibling));
+  }
+  parents.into_iter().any(|parent| {
+    listed.contains(parent.as_path())
+      && sources
+        .entry(parent)
+        .or_insert_with_key(|parent| fs::read_to_string(parent).ok())
+        .as_deref()
+        .is_some_and(|source| declares_module(source, name))
+  })
+}
+
+/// The module name `file` holds and the directory whose parent module would
+/// declare it; `None` for crate roots (`lib.rs`, `main.rs`) and odd names.
+fn module_name_and_dir(file: &path::Path) -> Option<(&str, &path::Path)> {
+  let dir = file.parent()?;
+  match file.file_stem().and_then(ffi::OsStr::to_str)? {
+    "lib" | "main" => None,
+    "mod" => Some((dir.file_name()?.to_str()?, dir.parent()?)),
+    stem => Some((stem, dir)),
+  }
+}
+
+/// Returns whether `source` declares `mod name;` at top level, unindented
+/// and not redirected by a `#[path]` attribute just above it.
+fn declares_module(source: &str, name: &str) -> bool {
+  let mut redirected = false;
+  for line in source.lines().map(str::trim_end) {
+    if line.starts_with("#[") {
+      redirected |= line.contains("path");
+      continue;
+    }
+    let decl = line
+      .strip_prefix("pub ")
+      .or_else(|| {
+        line
+          .strip_prefix("pub(")
+          .and_then(|rest| rest.split_once(") ").map(|(_, decl)| decl))
+      })
+      .unwrap_or(line);
+    let declared = decl
+      .strip_prefix("mod ")
+      .and_then(|rest| rest.strip_suffix(';'))
+      .is_some_and(|declared| declared.trim() == name);
+    if declared && !redirected {
+      return true;
+    }
+    redirected = false;
+  }
+  false
+}
+
 fn build_rustfmt_fallback_cmd(
   edition: &str,
   inline_config: &str,
   check_only: bool,
-  files: &[path::PathBuf],
+  files: &[&path::PathBuf],
 ) -> process::Command {
   let mut c = tooling::create_tool_command("rustfmt");
   c.arg("--edition").arg(edition);
@@ -250,7 +339,7 @@ impl surfaces::LanguageSurface for RustSurface {
         || !ctx.lang_config.files.is_empty()
         || !ctx.lang_config.exclude.is_empty()
       {
-        for f in &files {
+        for f in module_roots(&files) {
           c.arg(f);
         }
       }
@@ -260,7 +349,7 @@ impl surfaces::LanguageSurface for RustSurface {
         edition,
         &inline_config,
         ctx.check_only,
-        &files,
+        &module_roots(&files),
       )
     };
 
@@ -571,10 +660,9 @@ mod tests {
 
   #[test]
   fn rustfmt_fallback_command_args() {
-    let files = vec![
-      path::PathBuf::from("src/main.rs"),
-      path::PathBuf::from("src/lib.rs"),
-    ];
+    let main = path::PathBuf::from("src/main.rs");
+    let lib = path::PathBuf::from("src/lib.rs");
+    let files = [&main, &lib];
 
     // check_only = false
     let cmd = build_rustfmt_fallback_cmd("2024", "max_width=80", false, &files);
@@ -707,5 +795,51 @@ mod tests {
     let instant_idx = formatted.find("use std::time::Instant;").unwrap();
     assert!(hashmap_idx < path_idx);
     assert!(path_idx < instant_idx);
+  }
+
+  #[test]
+  fn declares_module_matches_top_level_declarations_only() {
+    let source = "mod a;\npub mod b;\npub(crate) mod c;\n\
+      #[path = \"x.rs\"]\nmod d;\n#[cfg(test)]\nmod e;\n\
+      mod f {\n  mod g;\n}\n// mod h;\nmod i; // note\n";
+    for name in ["a", "b", "c", "e"] {
+      assert!(declares_module(source, name), "{name} is declared");
+    }
+    for name in ["d", "g", "h", "i", "z"] {
+      assert!(!declares_module(source, name), "{name} is not reached");
+    }
+  }
+
+  #[test]
+  fn module_roots_drops_files_a_listed_parent_declares() {
+    let temp = tempfile::TempDir::new().unwrap();
+    let src = temp.path().join("src");
+    fs::create_dir_all(src.join("engine/doctor")).unwrap();
+    let write = |rel: &str, body: &str| {
+      let file = src.join(rel);
+      fs::write(&file, body).unwrap();
+      file
+    };
+    let lib = write("lib.rs", "pub mod engine;\npub mod util;\n");
+    let engine = write("engine.rs", "pub mod doctor;\n");
+    let doctor = write("engine/doctor/mod.rs", "mod venv;\n");
+    let venv = write("engine/doctor/venv.rs", "");
+    let util = write("util.rs", "");
+    let orphan = write("orphan.rs", "");
+    let unlisted_parent = write("engine/other.rs", "");
+
+    let files = vec![
+      lib.clone(),
+      engine,
+      doctor,
+      venv,
+      util,
+      orphan.clone(),
+      unlisted_parent.clone(),
+    ];
+    assert_eq!(module_roots(&files), [&lib, &orphan, &unlisted_parent]);
+
+    let partial = vec![files[2].clone(), files[3].clone()];
+    assert_eq!(module_roots(&partial), [&partial[0]]);
   }
 }
