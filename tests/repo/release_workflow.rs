@@ -127,6 +127,22 @@ const EDITS: &[LocalEdit] = &[
       before: Some("Upload artifacts"),
     },
   },
+  LocalEdit {
+    name: "archive sha256 check patched into fml-installer.ps1",
+    required: &[
+      "installer=target/distrib/fml-installer.ps1",
+      "Get-FileHash -Algorithm SHA256",
+    ],
+    forbidden: &[],
+    consequence: "dist's PowerShell installer unpacks and installs the release archive \
+       without checking its checksum, so the Windows installer and `fml update` \
+       would install a corrupted or tampered download (issue #321).",
+    site: Site::Step {
+      job: "build-global-artifacts",
+      after: Some("cargo-dist"),
+      before: Some("Upload artifacts"),
+    },
+  },
 ];
 
 /// Returns the workflow's lines with whole-line YAML comments removed, so
