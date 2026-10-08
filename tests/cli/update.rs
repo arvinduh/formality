@@ -236,7 +236,10 @@ fn installer_failure_leaves_the_binary_untouched() {
   let output = fixture.update(&base, Some(OLD));
   let printed = printed(&output);
   assert_eq!(output.status.code(), Some(2), "{printed}");
-  assert!(printed.contains("installation failed"), "{printed}");
+  assert!(
+    printed.contains("the installer failed (exit status 1)"),
+    "{printed}"
+  );
   fixture.assert_untouched();
 }
 
