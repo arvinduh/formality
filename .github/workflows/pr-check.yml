@@ -4,13 +4,11 @@ name: PR Check
 # so a failure in one surface doesn't block feedback from the others:
 #
 #   1. Library Tests - clippy (all targets) + the full test suite
-#      (cargo test --verbose covers unit tests, tests/version_lockstep.rs,
-#      and the integration tests in tests/integration_tests.rs /
-#      tests/fix_command.rs). Both exercise every surface (toml,
-#      javascript, markdown, ...) via the real external tool binaries
-#      (taplo, biome, markdownlint-cli2, ...) - integration_tests.rs by
-#      spawning the built fml binary directly (CARGO_BIN_EXE_fml),
-#      fix_command.rs by calling fml::run_with_args(...) in-process - so
+#      (cargo test --verbose covers unit tests and the tests/api,
+#      tests/cli and tests/repo crates). tests/api exercises every surface
+#      (toml, javascript, markdown, ...) via the real external tool
+#      binaries (taplo, biome, markdownlint-cli2, ...) through the same
+#      library passes fml runs, so
 #      this job already behaviorally validates that fmt/lint/sync produce
 #      correct output. That's also why this job builds fml and runs
 #      `fml doctor --install` before the test suite: this job's runner
@@ -81,12 +79,12 @@ jobs:
         run: cargo build
 
       - name: Install tool dependencies via fml
-        # tests/integration_tests.rs and tests/fix_command.rs spawn the
-        # real built fml binary against synthetic TempDir project layouts
+        # tests/api runs the
+        # real fmt/lint/fix passes against synthetic TempDir project layouts
         # covering every surface, so the external tool binaries they shell
         # out to (taplo, biome, markdownlint-cli2, yamllint, ...) must be
         # on PATH before `cargo test --verbose` runs, mirroring Job 2 and
-        # the old ci.yml. Without this, e.g. fix_command.rs's TOML-surface
+        # the old ci.yml. Without this, e.g. tests/api/fix.rs's TOML-surface
         # tests fail on a clean runner with no taplo installed.
         run: ./target/debug/fml doctor --install
 
@@ -128,7 +126,7 @@ jobs:
 
       - name: Check schema drift
         # Regenerate schema/formality.schema.json from the freshly built
-        # binary and assert it matches what's checked in. tests/schema_drift.rs
+        # binary and assert it matches what's checked in. tests/repo/schema_drift.rs
         # (Job 1) already asserts this in-process via generate_schema(); this
         # step is a CI-visible surface for the same invariant against this
         # repo's own committed artifact, exercising the real `fml schema` CLI

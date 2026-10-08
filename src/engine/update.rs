@@ -6,9 +6,10 @@
 use std::path;
 use std::time;
 
-use colored::Colorize;
+use log;
 use serde;
 
+use crate::engine;
 use crate::engine::version;
 
 const UPDATE_CHECK_INTERVAL_SECS: u64 = 24 * 60 * 60; // 24 hours
@@ -80,9 +81,6 @@ fn read_cached_tag_at(path: &path::Path, now: u64) -> Option<Option<String>> {
 /// itself) so tests can point it at a temp file instead of the real
 /// per-user cache directory.
 fn write_cached_tag_at(path: &path::Path, tag: Option<&str>) {
-  if let Some(parent) = path.parent() {
-    let _ = std::fs::create_dir_all(parent);
-  }
   let now = time::SystemTime::now()
     .duration_since(time::UNIX_EPOCH)
     .map_or(0, |d| d.as_secs());
@@ -91,9 +89,7 @@ fn write_cached_tag_at(path: &path::Path, tag: Option<&str>) {
     latest_tag: tag.map(ToString::to_string),
     failed: false,
   };
-  if let Ok(json) = serde_json::to_string(&cache) {
-    let _ = std::fs::write(path, json);
-  }
+  engine::write_cache(path, &cache);
 }
 
 /// Writes the update-check cache to record a curl-level failure (no response
@@ -101,9 +97,7 @@ fn write_cached_tag_at(path: &path::Path, tag: Option<&str>) {
 /// invocation retries after [`UPDATE_CHECK_FAILURE_BACKOFF_SECS`] instead of
 /// re-spawning curl immediately.
 fn write_failed_check_at(path: &path::Path) {
-  if let Some(parent) = path.parent() {
-    let _ = std::fs::create_dir_all(parent);
-  }
+  log::debug!("update check failed; retrying after the backoff");
   let now = time::SystemTime::now()
     .duration_since(time::UNIX_EPOCH)
     .map_or(0, |d| d.as_secs());
@@ -112,9 +106,7 @@ fn write_failed_check_at(path: &path::Path) {
     latest_tag: None,
     failed: true,
   };
-  if let Ok(json) = serde_json::to_string(&cache) {
-    let _ = std::fs::write(path, json);
-  }
+  engine::write_cache(path, &cache);
 }
 
 /// Processes a `GitHub` releases API response body: parses the latest release
@@ -136,7 +128,7 @@ fn process_release_response_at(
 
 /// Safely parse the `tag_name` field from `GitHub` release JSON response.
 #[must_use]
-pub fn parse_latest_tag_from_json(body: &str) -> Option<String> {
+fn parse_latest_tag_from_json(body: &str) -> Option<String> {
   let value: serde_json::Value = serde_json::from_str(body).ok()?;
   let tag = value.get("tag_name")?.as_str()?;
   Some(tag.to_string())
@@ -149,7 +141,7 @@ pub fn parse_latest_tag_from_json(body: &str) -> Option<String> {
 /// banner is `semver`-backed via [`version::Version`]'s `Ord`. An unparseable tag can
 /// never trip the banner: it yields `false`, not a spurious "update available".
 #[must_use]
-pub fn is_newer_version(latest_tag: &str, current_version: &str) -> bool {
+fn is_newer_version(latest_tag: &str, current_version: &str) -> bool {
   match (
     version::Version::parse(latest_tag),
     version::Version::parse(current_version),
@@ -166,8 +158,8 @@ pub struct UpdateNotifier {
 }
 
 /// Spawns a background update check or uses cached result.
-/// Returns an `UpdateNotifier` which should be passed to `print_update_notice()`
-/// at the end of the CLI session to avoid interleaving output.
+/// Returns an `UpdateNotifier` whose [`UpdateNotifier::latest_tag`] the CLI
+/// reads at the end of the session, so the notice never interleaves output.
 #[must_use]
 pub fn spawn_update_check() -> Option<UpdateNotifier> {
   // Suppress update checks in CI/CD environments or when explicitly disabled
@@ -230,31 +222,18 @@ pub fn spawn_update_check() -> Option<UpdateNotifier> {
   })
 }
 
-/// Prints update banner if an update is available.
-/// Should be called after all CLI command outputs (tables, diagnostics) are done.
-pub fn print_update_notice(notifier: Option<UpdateNotifier>) {
-  let Some(notifier) = notifier else {
-    return;
-  };
-
-  let current_version = env!("CARGO_PKG_VERSION");
-
-  let latest_tag = if let Some(tag) = notifier.cached_tag {
-    Some(tag)
-  } else if let Some(handle) = notifier.handle {
-    handle.join().ok().flatten()
-  } else {
-    None
-  };
-
-  if let Some(tag) = latest_tag {
-    eprintln!(
-      "\n{} A new version of formality is available: {} (current: {})\n   Update via: {}",
-      "⚡".yellow().bold(),
-      tag.green().bold(),
-      format!("v{current_version}").dimmed(),
-      update_command(cfg!(windows)).cyan()
-    );
+impl UpdateNotifier {
+  /// Returns the newer release tag, if any, joining the background check.
+  ///
+  /// Blocks until the check thread finishes, so the CLI calls this only after
+  /// all command output is written.
+  #[must_use]
+  pub fn latest_tag(self) -> Option<String> {
+    match (self.cached_tag, self.handle) {
+      (Some(tag), _) => Some(tag),
+      (None, Some(handle)) => handle.join().ok().flatten(),
+      (None, None) => None,
+    }
   }
 }
 
@@ -287,7 +266,7 @@ mod tests {
   use super::*;
 
   #[test]
-  fn test_parse_latest_tag_minified() {
+  fn parse_latest_tag_minified() {
     let minified_json = r#"{"url":"https://api.github.com/repos/arvinduh/formality/releases/1","tag_name":"v0.2.0","name":"v0.2.0"}"#;
     assert_eq!(
       parse_latest_tag_from_json(minified_json),
@@ -296,7 +275,7 @@ mod tests {
   }
 
   #[test]
-  fn test_parse_latest_tag_multiline() {
+  fn parse_latest_tag_multiline() {
     let multiline_json = r#"{
       "url": "https://api.github.com/repos/arvinduh/formality/releases/1",
       "tag_name": "v0.1.5",
@@ -309,7 +288,7 @@ mod tests {
   }
 
   #[test]
-  fn test_is_newer_version_comparison() {
+  fn is_newer_version_comparison() {
     assert!(is_newer_version("v0.2.0", "0.1.0"));
     assert!(is_newer_version("0.1.1", "0.1.0"));
     assert!(is_newer_version("v1.0.0", "0.9.9"));
@@ -320,7 +299,7 @@ mod tests {
   }
 
   #[test]
-  fn test_is_newer_version_prerelease_transitions() {
+  fn is_newer_version_prerelease_transitions() {
     // The semver-backed ordering the doc-comment now relies on: a final
     // release supersedes its own prereleases; a prerelease never supersedes
     // the matching final release; prereleases order among themselves.
@@ -334,7 +313,7 @@ mod tests {
   }
 
   #[test]
-  fn test_is_newer_version_inverted_prerelease_conventions() {
+  fn is_newer_version_inverted_prerelease_conventions() {
     // #171: Suffixes outside the packaging blocklist (-m1, -M1, -next,
     // -devel, etc.) classify as genuine prereleases, fixing the fail-unsafe
     // direction where prereleases would be advertised as stable or a local
@@ -368,7 +347,7 @@ mod tests {
   }
 
   #[test]
-  fn test_process_release_response_caches_timestamp_on_malformed_json() {
+  fn process_release_response_caches_timestamp_on_malformed_json() {
     let temp = tempfile::TempDir::new().unwrap();
     let cache_path = temp.path().join("update_check.json");
 
@@ -397,7 +376,7 @@ mod tests {
   }
 
   #[test]
-  fn test_process_release_response_caches_timestamp_on_missing_tag_name() {
+  fn process_release_response_caches_timestamp_on_missing_tag_name() {
     let temp = tempfile::TempDir::new().unwrap();
     let cache_path = temp.path().join("update_check.json");
 
@@ -416,7 +395,7 @@ mod tests {
   }
 
   #[test]
-  fn test_process_release_response_caches_and_returns_newer_tag() {
+  fn process_release_response_caches_and_returns_newer_tag() {
     let temp = tempfile::TempDir::new().unwrap();
     let cache_path = temp.path().join("update_check.json");
 
@@ -430,7 +409,7 @@ mod tests {
   }
 
   #[test]
-  fn test_write_failed_check_stamps_cache_with_short_backoff_marker() {
+  fn write_failed_check_stamps_cache_with_short_backoff_marker() {
     let temp = tempfile::TempDir::new().unwrap();
     let cache_path = temp.path().join("update_check.json");
 
@@ -457,7 +436,7 @@ mod tests {
   }
 
   #[test]
-  fn test_recent_failed_check_suppresses_recheck_without_full_day_ttl() {
+  fn recent_failed_check_suppresses_recheck_without_full_day_ttl() {
     let temp = tempfile::TempDir::new().unwrap();
     let cache_path = temp.path().join("update_check.json");
 
@@ -509,7 +488,7 @@ mod tests {
   }
 
   #[test]
-  fn test_update_command_non_windows_is_the_shell_installer_one_liner() {
+  fn update_command_non_windows_is_the_shell_installer_one_liner() {
     // Exact-string assertion on purpose: a future edit that reintroduces a
     // broken command (e.g. the old `cargo install --git` that errors on this
     // multi-binary repo, or a mistyped URL) must fail here loudly. This is
@@ -521,7 +500,7 @@ mod tests {
   }
 
   #[test]
-  fn test_update_command_windows_is_the_powershell_installer_one_liner() {
+  fn update_command_windows_is_the_powershell_installer_one_liner() {
     assert_eq!(
       update_command(true),
       "powershell -c \"irm https://github.com/arvinduh/formality/releases/latest/download/fml-installer.ps1 | iex\""
@@ -529,7 +508,7 @@ mod tests {
   }
 
   #[test]
-  fn test_update_command_points_at_the_dist_installer_release_asset() {
+  fn update_command_points_at_the_dist_installer_release_asset() {
     // The notice must point at the cargo-dist installer assets attached to
     // the latest release, never a versioned URL that would pin the upgrade
     // to a stale release.
@@ -544,7 +523,7 @@ mod tests {
   }
 
   #[test]
-  fn test_update_command_recommends_no_cargo_toolchain_path() {
+  fn update_command_recommends_no_cargo_toolchain_path() {
     // Neither variant may fall back to `cargo`/`rustc`: the dist installer
     // assets the notice points at never need a Rust toolchain.
     for cmd in [update_command(true), update_command(false)] {
@@ -556,7 +535,7 @@ mod tests {
   }
 
   #[test]
-  fn test_is_newer_version_multi_digit_components() {
+  fn is_newer_version_multi_digit_components() {
     // Guards against a naive lexicographic/string comparison, which would
     // incorrectly rank "0.9.0" above "0.10.0" and "0.15.2".
     assert!(is_newer_version("v0.10.0", "0.9.0"));

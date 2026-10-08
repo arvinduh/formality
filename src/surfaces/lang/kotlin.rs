@@ -1,0 +1,785 @@
+//! Kotlin language surface: formats and lints via `ktlint`.
+//!
+//! Implements `surfaces::LanguageSurface` for Kotlin. `.editorconfig`
+//! aggregation is owned by `surfaces::sync::editorconfig`.
+
+use std::path;
+use std::time;
+
+use crate::config;
+use crate::config::facets;
+use crate::config::facets::DeclaresFacets;
+use crate::surfaces;
+use crate::surfaces::LanguageSurface;
+use crate::surfaces::sync;
+use crate::surfaces::tooling;
+
+/// Kotlin language surface implementation.
+#[derive(Debug, Default)]
+pub struct KotlinSurface;
+
+impl DeclaresFacets for KotlinSurface {
+  fn facet_support(&self, facet: facets::Facet) -> facets::FacetSupport {
+    match facet {
+      // ktlint's default (official) code style enforces 4-space indentation
+      // and does not offer a tab-based mode.
+      facets::Facet::IndentTabs => facets::FacetSupport::Fixed("spaces"),
+      // ktlint's standard ruleset enforces double-quoted strings.
+      facets::Facet::QuoteStyle => facets::FacetSupport::Fixed("double"),
+      // "Smart Format": `ktlint -F` organizes/sorts imports as part of the
+      // same pass that reformats code, so this always runs together with
+      // format().
+      facets::Facet::IndentWidth
+      | facets::Facet::LineLength
+      | facets::Facet::TrailingComma
+      | facets::Facet::ImportSort => facets::FacetSupport::Configurable,
+      facets::Facet::ProseWrap
+      | facets::Facet::Edition
+      | facets::Facet::Standard => facets::FacetSupport::Unsupported,
+    }
+  }
+}
+
+/// Standard file extensions recognized for Kotlin source files.
+const KOTLIN_EXTENSIONS: &[&str] = &["kt", "kts"];
+
+/// Builds the argument list for an in-place ktlint format ("Smart Format")
+/// invocation: `-F` fixes both style violations and import order in one pass.
+#[must_use]
+fn build_ktlint_format_args(
+  files: &[path::PathBuf],
+  extra_args: &[String],
+) -> Vec<String> {
+  let mut args = vec!["-F".to_string()];
+  if files.is_empty() {
+    args.push("**/*.kt".to_string());
+    args.push("**/*.kts".to_string());
+  } else {
+    for f in files {
+      args.push(f.to_string_lossy().to_string());
+    }
+  }
+  args.extend(extra_args.iter().cloned());
+  args
+}
+
+/// Builds the argument list for a ktlint lint invocation. When `fix` is set
+/// this is equivalent to the "Smart Format" pass (`-F`), since ktlint has no
+/// separate autofix mode distinct from formatting.
+#[must_use]
+fn build_ktlint_lint_args(
+  files: &[path::PathBuf],
+  fix: bool,
+  extra_args: &[String],
+) -> Vec<String> {
+  let mut args = Vec::new();
+  if fix {
+    args.push("-F".to_string());
+  }
+  if files.is_empty() {
+    args.push("**/*.kt".to_string());
+    args.push("**/*.kts".to_string());
+  } else {
+    for f in files {
+      args.push(f.to_string_lossy().to_string());
+    }
+  }
+  args.extend(extra_args.iter().cloned());
+  args
+}
+
+/// Builds argument vector for a machine-readable `ktlint` invocation, used
+/// by the LSP server (`fml lsp`, Fixes #159 [pre-recreation], #165 [pre-recreation]) to
+/// violations into per-file `Diagnostic`s instead of one generic warning.
+/// Mirrors [`build_ktlint_lint_args`] but requests `--reporter=json` output
+/// instead of `-F` (this is a read-only diagnostics pass, never a fix).
+/// Verified against a real ktlint 1.8.0 run — its JSON reporter writes to
+/// stdout, but ktlint's own SLF4J logger can also print a `WARN ...`
+/// banner line to stdout *before* the JSON array when violations are
+/// autocorrectable (observed; not documented behavior), so the parser must
+/// locate the JSON array's start rather than assume stdout is JSON from
+/// byte zero.
+#[must_use]
+pub fn build_ktlint_json_args(
+  files: &[path::PathBuf],
+  extra_args: &[String],
+) -> Vec<String> {
+  let mut args = vec!["--reporter=json".to_string()];
+  if files.is_empty() {
+    args.push("**/*.kt".to_string());
+    args.push("**/*.kts".to_string());
+  } else {
+    for f in files {
+      args.push(f.to_string_lossy().to_string());
+    }
+  }
+  args.extend(extra_args.iter().cloned());
+  args
+}
+
+impl LanguageSurface for KotlinSurface {
+  fn name(&self) -> &'static str {
+    "kotlin"
+  }
+
+  fn extra_args_tools(&self) -> &'static [&'static str] {
+    &["ktlint"]
+  }
+
+  fn aliases(&self) -> &[&'static str] {
+    &["kt"]
+  }
+
+  fn file_extensions(&self) -> &[&'static str] {
+    KOTLIN_EXTENSIONS
+  }
+
+  fn clone_box(&self) -> Box<dyn LanguageSurface> {
+    Box::new(Self)
+  }
+
+  fn marker_files(&self) -> &[&'static str] {
+    &["build.gradle.kts", "settings.gradle.kts"]
+  }
+
+  fn supports_lint_fix(&self) -> bool {
+    true
+  }
+
+  fn tool_info(
+    &self,
+    _config: &config::ResolvedLangConfig,
+  ) -> Vec<surfaces::ToolInfo> {
+    vec![surfaces::ToolInfo {
+      binary: "ktlint",
+      description: "Kotlin linter and formatter (Smart Format: style + import organization in one pass)",
+      install_hint: None,
+      is_required_for_fmt: true,
+      is_required_for_lint: true,
+    }]
+  }
+
+  fn format(
+    &self,
+    ctx: &surfaces::ExecutionContext,
+  ) -> surfaces::SurfaceResult {
+    let start = time::Instant::now();
+
+    if let Some(res) =
+      tooling::tool_missing_guard(self.name(), "ktlint", start, None)
+    {
+      return res;
+    }
+
+    let files = ctx.matched_files(KOTLIN_EXTENSIONS);
+    if let Some(res) = surfaces::passed_if_empty(&files, self.name(), start) {
+      return res;
+    }
+
+    if ctx.check_only {
+      return sync::diff_check_via_tempcopy_classified(
+        &files,
+        |scratch| {
+          let mut cmd = tooling::create_tool_command("ktlint");
+          cmd.arg("-F").arg(scratch);
+          cmd.args(ctx.lang_config.tool_args("ktlint"));
+          cmd.current_dir(ctx.root.as_path());
+          cmd.output()
+        },
+        self.name(),
+        start,
+        // ktlint is the one prettier-adjacent formatter here whose fix mode
+        // (`-F`) *does* have a non-zero exit that is not purely operational:
+        // it exits `1` both when it auto-corrected some issues but others
+        // remain (e.g. a non-autofixable rule like `enum-entry-name-case`)
+        // *and* on a genuine failure (a `KotlinParseException`, a bad rule
+        // config, a JVM error) — there is no distinct exit `2` to tell them
+        // apart. So `classify_all_nonzero_as_error` would be wrong here: it
+        // would relabel a run that merely found an unfixable style nit as an
+        // `[ERR] Execution error`, and it would diverge from the unclassified
+        // write path, which still renders ktlint's exit `1` as `[FAIL]
+        // Violations found`. `classify_exit_one_as_violation` keeps that exit
+        // `1` behaviour identical to today while still routing any *other*
+        // non-zero exit (a signal kill, or a future ktlint that adopts a
+        // dedicated operational-error code) to `ExecutionError` (Fixes #151).
+        // The write branch below applies the identical classifier for the
+        // identical reason (Fixes #155): it is already the "unclassified
+        // write path" this comment refers to, made explicit rather than
+        // relying on `run_tool_command`'s default all-nonzero-is-violation
+        // behavior, which happened to agree on exit 1 but silently mapped
+        // any other non-zero exit to `ViolationsFound` too.
+        tooling::classify_exit_one_as_violation,
+      );
+    }
+
+    let files_to_pass = ctx.files_to_pass(files);
+
+    let mut cmd = tooling::create_tool_command("ktlint");
+    cmd.args(build_ktlint_format_args(
+      &files_to_pass,
+      ctx.lang_config.tool_args("ktlint"),
+    ));
+    cmd.current_dir(ctx.root.as_path());
+
+    tooling::run_tool_command_classified(
+      self.name(),
+      &mut cmd,
+      tooling::classify_exit_one_as_violation,
+    )
+  }
+
+  fn lint(
+    &self,
+    ctx: &surfaces::ExecutionContext,
+    fix: bool,
+  ) -> surfaces::SurfaceResult {
+    let start = time::Instant::now();
+
+    if let Some(res) =
+      tooling::tool_missing_guard(self.name(), "ktlint", start, None)
+    {
+      return res;
+    }
+
+    let files = ctx.matched_files(KOTLIN_EXTENSIONS);
+    if let Some(res) = surfaces::passed_if_empty(&files, self.name(), start) {
+      return res;
+    }
+
+    let files_to_pass = ctx.files_to_pass(files);
+
+    let mut cmd = tooling::create_tool_command("ktlint");
+    cmd.args(build_ktlint_lint_args(
+      &files_to_pass,
+      fix,
+      ctx.lang_config.tool_args("ktlint"),
+    ));
+    cmd.current_dir(ctx.root.as_path());
+
+    tooling::run_tool_command(self.name(), &mut cmd)
+  }
+
+  fn sync_config(
+    &self,
+    _ctx: &surfaces::ExecutionContext,
+    _check: bool,
+  ) -> surfaces::SurfaceResult {
+    // ktlint reads its layout configuration (indent size, max line length,
+    // code style, disabled rules, ...) exclusively from `.editorconfig`,
+    // which formality already synthesizes centrally for every surface (see
+    // `crate::surfaces::sync::editorconfig::sync_editorconfig`). There is no separate
+    // native ktlint config file to generate, so this is a no-op.
+    tooling::no_native_config(
+      self.name(),
+      "No config of its own (reads layout from .editorconfig)",
+    )
+  }
+}
+
+#[cfg(test)]
+mod tests {
+  use super::*;
+  use crate::config;
+  use crate::surfaces;
+  use std::path;
+  use std::sync;
+
+  static KTLINT_TEST_GUARD: sync::Mutex<()> = sync::Mutex::new(());
+
+  fn ktlint_test_lock() -> sync::MutexGuard<'static, ()> {
+    KTLINT_TEST_GUARD
+      .lock()
+      .unwrap_or_else(sync::PoisonError::into_inner)
+  }
+
+  fn with_ktlint_stub<F>(exit_code: i32, test: F)
+  where
+    F: FnOnce(&path::Path),
+  {
+    struct Cleanup {
+      orig_path: Option<std::ffi::OsString>,
+    }
+    impl Drop for Cleanup {
+      fn drop(&mut self) {
+        if let Some(ref p) = self.orig_path {
+          // SAFETY: serialized by `KTLINT_TEST_GUARD`.
+          unsafe {
+            std::env::set_var("PATH", p);
+          }
+        } else {
+          // SAFETY: serialized by `KTLINT_TEST_GUARD`.
+          unsafe {
+            std::env::remove_var("PATH");
+          }
+        }
+        tooling::forget_binary("ktlint");
+      }
+    }
+
+    let _guard = ktlint_test_lock();
+
+    let temp = tempfile::TempDir::new().unwrap();
+    let stub_dir = temp.path().join("bin");
+    std::fs::create_dir(&stub_dir).unwrap();
+
+    #[cfg(windows)]
+    {
+      let batch_path = stub_dir.join("ktlint.cmd");
+      std::fs::write(
+        &batch_path,
+        format!(
+          "@echo off\r\necho stub ktlint exit {exit_code} 1>&2\r\nexit /b {exit_code}\r\n"
+        ),
+      )
+      .unwrap();
+    }
+
+    #[cfg(not(windows))]
+    {
+      use std::os::unix::fs::PermissionsExt;
+      let sh_path = stub_dir.join("ktlint");
+      std::fs::write(
+        &sh_path,
+        format!(
+          "#!/bin/sh\necho \"stub ktlint exit {exit_code}\" >&2\nexit {exit_code}\n"
+        ),
+      )
+      .unwrap();
+      let perms = std::fs::Permissions::from_mode(0o755);
+      std::fs::set_permissions(&sh_path, perms).unwrap();
+    }
+
+    let orig_path = std::env::var_os("PATH");
+    let mut new_path = stub_dir.into_os_string();
+    if let Some(ref p) = orig_path {
+      new_path.push(if cfg!(windows) { ";" } else { ":" });
+      new_path.push(p);
+    }
+
+    tooling::forget_binary("ktlint");
+    // SAFETY: serialized by `KTLINT_TEST_GUARD`; no other thread runs ktlint
+    // concurrently in this test harness.
+    unsafe {
+      std::env::set_var("PATH", &new_path);
+    }
+
+    let _cleanup = Cleanup { orig_path };
+
+    let project_dir = temp.path().join("project");
+    std::fs::create_dir(&project_dir).unwrap();
+    std::fs::write(project_dir.join("Main.kt"), "fun main() {}\n").unwrap();
+
+    test(&project_dir);
+  }
+
+  #[test]
+  fn kotlin_surface_facets() {
+    let surface = KotlinSurface;
+    assert_eq!(
+      surface.facet_support(facets::Facet::IndentTabs),
+      facets::FacetSupport::Fixed("spaces")
+    );
+    assert_eq!(
+      surface.facet_support(facets::Facet::IndentWidth),
+      facets::FacetSupport::Configurable
+    );
+    assert_eq!(
+      surface.facet_support(facets::Facet::LineLength),
+      facets::FacetSupport::Configurable
+    );
+    assert_eq!(
+      surface.facet_support(facets::Facet::QuoteStyle),
+      facets::FacetSupport::Fixed("double")
+    );
+    assert_eq!(
+      surface.facet_support(facets::Facet::ImportSort),
+      facets::FacetSupport::Configurable
+    );
+    assert_eq!(
+      surface.facet_support(facets::Facet::ProseWrap),
+      facets::FacetSupport::Unsupported
+    );
+  }
+
+  #[test]
+  fn kotlin_surface_name_aliases_and_extensions() {
+    let surface = KotlinSurface;
+    assert_eq!(surface.name(), "kotlin");
+    assert_eq!(surface.aliases(), &["kt"]);
+    assert_eq!(surface.file_extensions(), &["kt", "kts"]);
+    assert!(surface.supports_lint_fix());
+  }
+
+  #[test]
+  fn kotlin_surface_tool_info() {
+    let surface = KotlinSurface;
+    let cfg = config::ResolvedLangConfig::new("kotlin");
+    let tools = surface.tool_info(&cfg);
+    assert_eq!(tools.len(), 1);
+    assert_eq!(tools[0].binary, "ktlint");
+    assert!(tools[0].is_required_for_fmt);
+    assert!(tools[0].is_required_for_lint);
+  }
+
+  #[test]
+  fn kotlin_surface_detect() {
+    let surface = KotlinSurface;
+    let temp = tempfile::TempDir::new().unwrap();
+    assert!(!surfaces::detect_in(&surface, temp.path()));
+
+    let kt_file = temp.path().join("Main.kt");
+    std::fs::write(&kt_file, "fun main() {}\n").unwrap();
+    assert!(surfaces::detect_in(&surface, temp.path()));
+  }
+
+  #[test]
+  fn kotlin_surface_detect_gradle_kts() {
+    let surface = KotlinSurface;
+    let temp = tempfile::TempDir::new().unwrap();
+    std::fs::write(temp.path().join("build.gradle.kts"), "").unwrap();
+    assert!(surfaces::detect_in(&surface, temp.path()));
+  }
+
+  #[test]
+  fn test_build_ktlint_format_args() {
+    let no_files = build_ktlint_format_args(&[], &[]);
+    assert_eq!(
+      no_files,
+      vec![
+        "-F".to_string(),
+        "**/*.kt".to_string(),
+        "**/*.kts".to_string()
+      ]
+    );
+
+    let files = vec![
+      path::PathBuf::from("Main.kt"),
+      path::PathBuf::from("Util.kt"),
+    ];
+    let extra = vec!["--relative".to_string()];
+    let with_files = build_ktlint_format_args(&files, &extra);
+    assert_eq!(
+      with_files,
+      vec![
+        "-F".to_string(),
+        "Main.kt".to_string(),
+        "Util.kt".to_string(),
+        "--relative".to_string(),
+      ]
+    );
+  }
+
+  #[test]
+  fn build_ktlint_lint_args_with_and_without_fix() {
+    let no_fix = build_ktlint_lint_args(&[], false, &[]);
+    assert_eq!(no_fix, vec!["**/*.kt".to_string(), "**/*.kts".to_string()]);
+
+    let files = vec![path::PathBuf::from("Main.kt")];
+    let with_fix = build_ktlint_lint_args(&files, true, &[]);
+    assert_eq!(with_fix, vec!["-F".to_string(), "Main.kt".to_string()]);
+  }
+
+  #[test]
+  fn test_build_ktlint_json_args() {
+    let no_files = build_ktlint_json_args(&[], &[]);
+    assert_eq!(
+      no_files,
+      vec![
+        "--reporter=json".to_string(),
+        "**/*.kt".to_string(),
+        "**/*.kts".to_string(),
+      ]
+    );
+
+    let files = vec![path::PathBuf::from("Main.kt")];
+    let extra = vec!["--relative".to_string()];
+    let with_files = build_ktlint_json_args(&files, &extra);
+    assert_eq!(
+      with_files,
+      vec![
+        "--reporter=json".to_string(),
+        "Main.kt".to_string(),
+        "--relative".to_string(),
+      ]
+    );
+  }
+
+  #[test]
+  fn kotlin_format_and_lint_empty_project_passes() {
+    let _guard = ktlint_test_lock();
+    // An empty project has no Kotlin files to act on, but ktlint's binary
+    // presence is still checked first (matching every other surface's
+    // convention, e.g. Python/ruff) — so this only asserts Passed when the
+    // tool is actually installed; otherwise it should report ToolMissing.
+    let temp = tempfile::TempDir::new().unwrap();
+    let surface = KotlinSurface;
+    let ctx = surfaces::test_ctx(
+      temp.path(),
+      config::ResolvedLangConfig::new("kotlin"),
+    );
+
+    let fmt_res = surface.format(&ctx);
+    let lint_res = surface.lint(&ctx, false);
+    if tooling::check_binary_exists("ktlint") {
+      assert!(matches!(fmt_res.status, surfaces::SurfaceStatus::Passed));
+      assert!(matches!(lint_res.status, surfaces::SurfaceStatus::Passed));
+    } else {
+      assert!(matches!(
+        fmt_res.status,
+        surfaces::SurfaceStatus::ToolMissing { .. }
+      ));
+      assert!(matches!(
+        lint_res.status,
+        surfaces::SurfaceStatus::ToolMissing { .. }
+      ));
+    }
+  }
+
+  #[test]
+  fn kotlin_sync_config_is_noop() {
+    let temp = tempfile::TempDir::new().unwrap();
+    let surface = KotlinSurface;
+    let ctx = surfaces::test_ctx(
+      temp.path(),
+      config::ResolvedLangConfig::new("kotlin"),
+    );
+
+    let res = surface.sync_config(&ctx, false);
+    // No native config file of its own (ktlint reads layout from
+    // .editorconfig), so this reports Skipped like every other surface
+    // with nothing to sync — not Passed (Fixes #271).
+    assert!(matches!(
+      res.status,
+      surfaces::SurfaceStatus::Skipped { .. }
+    ));
+  }
+
+  #[test]
+  fn kotlin_format_with_real_ktlint() {
+    let _guard = ktlint_test_lock();
+    if !tooling::check_binary_exists("ktlint")
+      || !tooling::create_tool_command("ktlint")
+        .arg("--version")
+        .output()
+        .is_ok_and(|o| o.status.success())
+    {
+      return;
+    }
+    let temp = tempfile::TempDir::new().unwrap();
+    let file = temp.path().join("Main.kt");
+    let unformatted = "import kotlin.math.min\nimport kotlin.math.max\n\nfun main() {\nval x=1\nprintln(x)\n}\n";
+    std::fs::write(&file, unformatted).unwrap();
+
+    let surface = KotlinSurface;
+    let mut ctx_check = surfaces::test_ctx(
+      temp.path(),
+      config::ResolvedLangConfig::new("kotlin"),
+    );
+    ctx_check.check_only = true;
+    let check_res = surface.format(&ctx_check);
+    assert!(matches!(
+      check_res.status,
+      surfaces::SurfaceStatus::ViolationsFound { .. }
+    ));
+
+    let ctx_fix = surfaces::test_ctx(
+      temp.path(),
+      config::ResolvedLangConfig::new("kotlin"),
+    );
+    let fix_res = surface.format(&ctx_fix);
+    assert!(matches!(fix_res.status, surfaces::SurfaceStatus::Passed));
+
+    let lint_res = surface.lint(&ctx_check, false);
+    assert!(matches!(lint_res.status, surfaces::SurfaceStatus::Passed));
+  }
+
+  #[test]
+  fn kotlin_check_exit_one_stays_violation_not_execution_error() {
+    let _guard = ktlint_test_lock();
+    // Issue #151: unlike the other prettier-adjacent surfaces, ktlint `-F`
+    // has no operational-failure exit code distinct from "found an unfixable
+    // violation" — both are exit `1`. This surface is therefore wired to
+    // `classify_exit_one_as_violation`, NOT `classify_all_nonzero_as_error`:
+    // a ktlint exit `1` on `fml fmt --check` must stay `ViolationsFound`
+    // (`[FAIL]`), matching the unclassified write path, and only a non-`1`
+    // non-zero exit (signal kill, or a hypothetical future operational code)
+    // becomes `ExecutionError`. An unparseable file drives ktlint to exit
+    // `1`, so it must not flip to `[ERR]`.
+    if !tooling::check_binary_exists("ktlint") {
+      return;
+    }
+    let temp = tempfile::TempDir::new().unwrap();
+    std::fs::write(temp.path().join("Broken.kt"), "fun main( { val x = }\n")
+      .unwrap();
+
+    let surface = KotlinSurface;
+    let mut ctx = surfaces::test_ctx(
+      temp.path(),
+      config::ResolvedLangConfig::new("kotlin"),
+    );
+    ctx.check_only = true;
+
+    let res = surface.format(&ctx);
+    assert!(
+      !matches!(res.status, surfaces::SurfaceStatus::ExecutionError { .. }),
+      "ktlint exit 1 must not be reclassified as ExecutionError, got: {:?}",
+      res.status
+    );
+    assert!(matches!(
+      res.status,
+      surfaces::SurfaceStatus::ViolationsFound { .. }
+    ));
+  }
+
+  #[test]
+  fn kotlin_write_exit_one_stays_violation_not_execution_error() {
+    // Fixes #155, #174: pin the exit-1 half of `classify_exit_one_as_violation`
+    // on the write path: ktlint exit 1 signals formatting/lint violations,
+    // which must classify as `ViolationsFound`, not flip to `ExecutionError`.
+    with_ktlint_stub(1, |project_dir| {
+      let surface = KotlinSurface;
+      let ctx = surfaces::test_ctx(
+        project_dir,
+        config::ResolvedLangConfig::new("kotlin"),
+      );
+
+      let res = surface.format(&ctx);
+      assert!(
+        !matches!(res.status, surfaces::SurfaceStatus::ExecutionError { .. }),
+        "ktlint exit 1 on the write path must not be reclassified as ExecutionError, got: {:?}",
+        res.status
+      );
+      assert!(
+        matches!(res.status, surfaces::SurfaceStatus::ViolationsFound { .. }),
+        "ktlint exit 1 on the write path must be ViolationsFound, got: {:?}",
+        res.status
+      );
+    });
+  }
+
+  #[test]
+  fn kotlin_write_non_one_exit_reports_execution_error() {
+    // Fixes #174: pin the non-1 non-zero half of `classify_exit_one_as_violation`
+    // on the write path: an exit code other than 1 (such as exit 2 from a tool
+    // crash or abnormal exit) must classify as `ExecutionError`, NOT
+    // `ViolationsFound`.
+    //
+    // Prior to #155, the unclassified write path used `run_tool_command`,
+    // which unconditionally treated *all* non-zero exits as `ViolationsFound`.
+    // Reverting `run_tool_command_classified` back to `run_tool_command`
+    // fails this test.
+    with_ktlint_stub(2, |project_dir| {
+      let surface = KotlinSurface;
+      let ctx = surfaces::test_ctx(
+        project_dir,
+        config::ResolvedLangConfig::new("kotlin"),
+      );
+
+      let res = surface.format(&ctx);
+      assert!(
+        matches!(res.status, surfaces::SurfaceStatus::ExecutionError { .. }),
+        "ktlint non-1 exit on the write path must be ExecutionError, got: {:?}",
+        res.status
+      );
+      assert!(!res.is_success());
+    });
+  }
+
+  #[test]
+  fn ktlint_call_sites_never_bypass_create_tool_command() {
+    // Fixes #103: on Windows, npm's `ktlint.cmd` shim cannot be spawned by
+    // a bare `Command::new("ktlint")` -- CreateProcess does not perform the
+    // PATHEXT-style `.cmd`/`.bat` resolution that `cmd.exe` does, so the
+    // process fails to start at all ("The system cannot find the path
+    // specified."). `create_tool_command` (`surfaces::tooling`) resolves
+    // the binary's real extension and spawns any `.cmd`/`.bat` result by
+    // its resolved path, which `std` runs through `cmd.exe`. Every ktlint
+    // invocation site must go through that helper -- a bare
+    // `Command::new("ktlint")` creeping back in anywhere would silently
+    // reintroduce the Windows failure this issue reports, so pin it here
+    // rather than relying on catching it by eye in review.
+    //
+    // Scans every `.rs` file under `src/`, not a hardcoded list of the two
+    // files known to call ktlint today -- a call site added in a new file
+    // would otherwise go unguarded. Reuses the same `ignore::WalkBuilder`
+    // walk `no_stray_test_files_outside_sanctioned_pattern`
+    // (tests/repo/source_rules.rs)
+    // already establishes for this kind of whole-tree source-textual check.
+    let manifest_dir = path::PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+    let src_dir = manifest_dir.join("src");
+    for entry in ignore::WalkBuilder::new(&src_dir)
+      .standard_filters(false)
+      .build()
+      .filter_map(Result::ok)
+      .filter(|e| e.file_type().is_some_and(|ft| ft.is_file()))
+    {
+      let path = entry.path();
+      // A `tests.rs` file is test code throughout.
+      if path.extension().and_then(|e| e.to_str()) != Some("rs")
+        || path.file_name().is_some_and(|n| n == "tests.rs")
+      {
+        continue;
+      }
+      let content = std::fs::read_to_string(path).unwrap();
+      let prod_code = production_code_before_test_module(&content);
+      assert!(
+        !contains_bare_ktlint_spawn(prod_code),
+        "{} must spawn ktlint via create_tool_command, not a bare \
+         Command::new(\"ktlint\"...) -- see #103",
+        path.display()
+      );
+    }
+  }
+
+  /// Whether `code` spawns `ktlint` directly rather than through
+  /// `create_tool_command`, matching the literal binary name
+  /// `Command::new` would actually be given -- `"ktlint"` itself, or a
+  /// `.cmd`/`.bat`/`.exe`/etc. variant with an explicit extension (someone
+  /// "fixing" the Windows case by hardcoding the shim's extension instead
+  /// of going through the shared resolver would still hit the exact bug
+  /// this guards against).
+  ///
+  /// This is a textual scan, not a real Rust parser -- it does not follow
+  /// a variable binding (`let bin = "ktlint"; Command::new(bin)`). Closing
+  /// that gap would need actual syntax analysis (e.g. a `syn` dependency),
+  /// which is disproportionate for a regression guard on an already-fixed
+  /// bug; every call site as of #103 uses the binary name as a literal, so
+  /// literal matching is what is worth guarding today.
+  fn contains_bare_ktlint_spawn(code: &str) -> bool {
+    const PREFIX: &str = "Command::new(\"ktlint";
+    let mut rest = code;
+    while let Some(idx) = rest.find(PREFIX) {
+      let after_prefix = &rest[idx + PREFIX.len()..];
+      // The literal is exactly "ktlint" (the next byte closes the string)
+      // or continues with an extension separator like "ktlint.cmd" -- both
+      // name the real ktlint binary. Anything else (a longer, unrelated
+      // identifier that merely starts with "ktlint") is not a match, so
+      // advance past this occurrence and keep scanning instead of
+      // returning early.
+      if after_prefix.starts_with('"') || after_prefix.starts_with('.') {
+        return true;
+      }
+      rest = after_prefix;
+    }
+    false
+  }
+
+  /// Strips the inline `#[cfg(test)] mod tests { ... }` block this codebase
+  /// puts at the end of every module (Fixes #113 [pre-recreation]'s
+  /// convention, `no_stray_test_files_outside_sanctioned_pattern`),
+  /// leaving only production code -- so a source-textual guard test doesn't
+  /// trip on a test helper (e.g. `with_ktlint_stub`) that intentionally
+  /// spawns a plain shell command to fake out a real binary.
+  ///
+  /// Anchors on the `mod tests` declaration itself, not on the `#[cfg(test)]`
+  /// attribute text: splitting on the *first* `#[cfg(test)]` string is wrong
+  /// the moment a file has one earlier (e.g. on a single `#[cfg(test)]`-gated
+  /// helper function above the test module) -- that would truncate the scan
+  /// there and silently stop guarding everything below it. `mod tests` is
+  /// unambiguous and always marks the real module boundary.
+  fn production_code_before_test_module(content: &str) -> &str {
+    content
+      .find("mod tests")
+      .map_or(content, |idx| &content[..idx])
+  }
+}

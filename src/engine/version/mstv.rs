@@ -7,40 +7,38 @@ use crate::engine::version;
 
 /// Minimum Supported Tool Version declarations for tools in the Formality fleet.
 /// MSTV for rustfmt.
-pub const MSTV_RUSTFMT: version::Version = version::Version::new(1, 4, 0);
+const MSTV_RUSTFMT: version::Version = version::Version::new(1, 4, 0);
 /// MSTV for clippy.
-pub const MSTV_CLIPPY: version::Version = version::Version::new(1, 65, 0);
+const MSTV_CLIPPY: version::Version = version::Version::new(1, 65, 0);
 /// MSTV for ruff.
-pub const MSTV_RUFF: version::Version = version::Version::new(0, 1, 0);
+const MSTV_RUFF: version::Version = version::Version::new(0, 1, 0);
 /// MSTV for clang-format.
-pub const MSTV_CLANG_FORMAT: version::Version = version::Version::new(14, 0, 0);
+const MSTV_CLANG_FORMAT: version::Version = version::Version::new(14, 0, 0);
 /// MSTV for clang-tidy.
-pub const MSTV_CLANG_TIDY: version::Version = version::Version::new(14, 0, 0);
+const MSTV_CLANG_TIDY: version::Version = version::Version::new(14, 0, 0);
 /// MSTV for prettier.
-pub const MSTV_PRETTIER: version::Version = version::Version::new(2, 0, 0);
+const MSTV_PRETTIER: version::Version = version::Version::new(2, 0, 0);
 /// MSTV for taplo.
-pub const MSTV_TAPLO: version::Version = version::Version::new(0, 8, 0);
+const MSTV_TAPLO: version::Version = version::Version::new(0, 8, 0);
 /// MSTV for markdownlint-cli2.
-pub const MSTV_MARKDOWNLINT_CLI2: version::Version =
-  version::Version::new(0, 4, 0);
+const MSTV_MARKDOWNLINT_CLI2: version::Version = version::Version::new(0, 4, 0);
 /// MSTV for typstyle.
-pub const MSTV_TYPSTYLE: version::Version = version::Version::new(0, 11, 0);
+const MSTV_TYPSTYLE: version::Version = version::Version::new(0, 11, 0);
 /// MSTV for yamllint.
-pub const MSTV_YAMLLINT: version::Version = version::Version::new(1, 20, 0);
+const MSTV_YAMLLINT: version::Version = version::Version::new(1, 20, 0);
 /// MSTV for biome.
-pub const MSTV_BIOME: version::Version = version::Version::new(1, 5, 0);
+const MSTV_BIOME: version::Version = version::Version::new(1, 5, 0);
 /// MSTV for checkstyle.
-pub const MSTV_CHECKSTYLE: version::Version = version::Version::new(10, 0, 0);
+const MSTV_CHECKSTYLE: version::Version = version::Version::new(10, 0, 0);
 /// MSTV for ktlint.
-pub const MSTV_KTLINT: version::Version = version::Version::new(1, 0, 0);
+const MSTV_KTLINT: version::Version = version::Version::new(1, 0, 0);
 /// MSTV for gofmt.
-pub const MSTV_GOFMT: version::Version = version::Version::new(1, 18, 0);
+const MSTV_GOFMT: version::Version = version::Version::new(1, 18, 0);
 /// MSTV for golangci-lint.
-pub const MSTV_GOLANGCI_LINT: version::Version =
-  version::Version::new(1, 50, 0);
+const MSTV_GOLANGCI_LINT: version::Version = version::Version::new(1, 50, 0);
 
 /// How an argument to a [`VersionProbe::ViaBinary`] command is supplied.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, PartialEq)]
 pub enum ProbeArg {
   /// Literal string argument passed directly.
   Literal(&'static str),
@@ -49,7 +47,7 @@ pub enum ProbeArg {
 }
 
 /// How the raw version string is extracted from the probe command's output.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq)]
 pub enum ProbeExtractor {
   /// First line carrying a plausibly version-shaped token.
   FirstVersionishLine,
@@ -61,12 +59,11 @@ pub enum ProbeExtractor {
 ///
 /// This is registry *data*, not a special case inside the probing function: a
 /// tool whose version does not come from its own `--version` declares that
-/// here, and [`probe_raw_tool_version_uncached`] executes whatever it finds
+/// here, and `probe_raw_tool_version_uncached` executes whatever it finds
 /// without knowing which tool it is looking at. Adding a tool in the same
 /// situation is a registry entry, not another branch.
 ///
-/// [`probe_raw_tool_version_uncached`]: super::probe_raw_tool_version_uncached
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq)]
 pub enum VersionProbe {
   /// Run the tool itself with exactly these flags — nothing more. A tool that
   /// also needs a second attempt declares it with [`VersionProbe::FirstOf`],
@@ -107,7 +104,7 @@ pub const DEFAULT_VERSION_PROBE: VersionProbe = VersionProbe::FirstOf(&[
 
 /// Minimum Supported Tool Version entry with metadata and version-probing
 /// strategy.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug)]
 pub struct ToolMstvEntry {
   /// Name of the binary executable.
   pub binary: &'static str,

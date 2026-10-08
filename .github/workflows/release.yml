@@ -46,7 +46,7 @@ on:
       # binary-release tags trigger cargo-dist.
       # dist's default is the prefix-less `**[0-9]+.[0-9]+.[0-9]+*`.
       # Must match .github/workflows/release-extras.yml (issue #165); guarded by
-      # tests/release_workflow_local_edits.rs.
+      # tests/repo/release_workflow.rs.
       - 'v[0-9]+.[0-9]+.[0-9]+*'
 
 jobs:
@@ -220,7 +220,7 @@ jobs:
       # dist upgrade moves the line, instead of shipping a silent installer.
       # After a dist bump: follow "Regeneration procedure" in docs/release.md
       # (with allow-dirty set, `dist generate` leaves this file untouched)
-      # and re-add this step; tests/release_workflow_local_edits.rs fails
+      # and re-add this step; tests/repo/release_workflow.rs fails
       # until you do.
       - name: Explain the x64 fallback on ARM64 in the PowerShell installer
         shell: bash
@@ -326,7 +326,7 @@ jobs:
         # docs/release.md (with allow-dirty set, `dist generate` leaves this
         # file untouched) and re-apply this step plus the tag-glob and
         # fetch-depth edits.
-        # tests/release_workflow_local_edits.rs asserts those
+        # tests/repo/release_workflow.rs asserts those
         # edits survive, and runs in the `Library Tests` job (issue #164), so
         # a regeneration that drops one fails the PR, not the next release.
         run: |

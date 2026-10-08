@@ -13,9 +13,7 @@ on:
     paths:
       - "src/surfaces/**"
       - "src/engine/**"
-      - "src/commands/doctor/**"
-      - "src/errors.rs"
-      - "src/ui/**"
+      - "src/cli/doctor.rs"
       - "Cargo.toml"
       - "Cargo.lock"
       - "rust-toolchain.toml"

@@ -43,13 +43,12 @@ macro_rules! impl_options_methods {
 /// Typed formatting and linting options for Rust.
 #[derive(
   Debug,
-  Clone,
-  Default,
-  PartialEq,
-  Eq,
   serde::Serialize,
   serde::Deserialize,
   schemars::JsonSchema,
+  Clone,
+  PartialEq,
+  Default,
 )]
 #[serde(deny_unknown_fields)]
 pub struct RustOptions {
@@ -63,13 +62,12 @@ impl_options_methods!(RustOptions, edition);
 /// Typed formatting and linting options for Python.
 #[derive(
   Debug,
-  Clone,
-  Default,
-  PartialEq,
-  Eq,
   serde::Serialize,
   serde::Deserialize,
   schemars::JsonSchema,
+  Clone,
+  PartialEq,
+  Default,
 )]
 #[serde(deny_unknown_fields)]
 pub struct PythonOptions {
@@ -89,13 +87,12 @@ impl_options_methods!(PythonOptions, quote_style, target_version, ignore_rules);
 /// Typed formatting and linting options for C/C++.
 #[derive(
   Debug,
-  Clone,
-  Default,
-  PartialEq,
-  Eq,
   serde::Serialize,
   serde::Deserialize,
   schemars::JsonSchema,
+  Clone,
+  PartialEq,
+  Default,
 )]
 #[serde(deny_unknown_fields)]
 pub struct CppOptions {
@@ -156,13 +153,12 @@ impl_options_methods!(
 /// Typed formatting and linting options for Java.
 #[derive(
   Debug,
-  Clone,
-  Default,
-  PartialEq,
-  Eq,
   serde::Serialize,
   serde::Deserialize,
   schemars::JsonSchema,
+  Clone,
+  Default,
+  PartialEq,
 )]
 #[serde(deny_unknown_fields)]
 pub struct JavaOptions {
@@ -177,13 +173,12 @@ impl_options_methods!(JavaOptions, style);
 /// Typed formatting and linting options for JavaScript/TypeScript (Biome).
 #[derive(
   Debug,
-  Clone,
-  Default,
-  PartialEq,
-  Eq,
   serde::Serialize,
   serde::Deserialize,
   schemars::JsonSchema,
+  Clone,
+  Default,
+  PartialEq,
 )]
 #[serde(deny_unknown_fields)]
 pub struct JavaScriptOptions {
@@ -212,13 +207,12 @@ impl_options_methods!(
 /// Typed formatting and linting options for Go.
 #[derive(
   Debug,
-  Clone,
-  Default,
-  PartialEq,
-  Eq,
   serde::Serialize,
   serde::Deserialize,
   schemars::JsonSchema,
+  Clone,
+  Default,
+  PartialEq,
 )]
 #[serde(deny_unknown_fields)]
 pub struct GoOptions {
@@ -237,13 +231,12 @@ impl_options_methods!(GoOptions, local_prefixes, linters);
 /// Typed formatting and linting options for Markdown.
 #[derive(
   Debug,
-  Clone,
-  Default,
-  PartialEq,
-  Eq,
   serde::Serialize,
   serde::Deserialize,
   schemars::JsonSchema,
+  Clone,
+  PartialEq,
+  Default,
 )]
 #[serde(deny_unknown_fields)]
 pub struct MarkdownOptions {
@@ -264,13 +257,12 @@ impl_options_methods!(MarkdownOptions, prose_wrap, no_inline_html);
 /// Typed formatting and linting options for YAML.
 #[derive(
   Debug,
-  Clone,
-  Default,
-  PartialEq,
-  Eq,
   serde::Serialize,
   serde::Deserialize,
   schemars::JsonSchema,
+  Clone,
+  PartialEq,
+  Default,
 )]
 #[serde(deny_unknown_fields)]
 pub struct YamlOptions {
@@ -290,13 +282,12 @@ impl_options_methods!(YamlOptions, indent_sequence, document_start, truthy);
 /// Typed formatting and linting options for JSON.
 #[derive(
   Debug,
-  Clone,
-  Default,
-  PartialEq,
-  Eq,
   serde::Serialize,
   serde::Deserialize,
   schemars::JsonSchema,
+  Clone,
+  PartialEq,
+  Default,
 )]
 #[serde(deny_unknown_fields)]
 pub struct JsonOptions {}
@@ -306,13 +297,12 @@ impl_options_methods!(JsonOptions);
 /// Typed formatting and linting options for TOML.
 #[derive(
   Debug,
-  Clone,
-  Default,
-  PartialEq,
-  Eq,
   serde::Serialize,
   serde::Deserialize,
   schemars::JsonSchema,
+  Clone,
+  PartialEq,
+  Default,
 )]
 #[serde(deny_unknown_fields)]
 pub struct TomlOptions {
@@ -337,13 +327,12 @@ impl_options_methods!(
 /// Typed formatting and linting options for Typst.
 #[derive(
   Debug,
-  Clone,
-  Default,
-  PartialEq,
-  Eq,
   serde::Serialize,
   serde::Deserialize,
   schemars::JsonSchema,
+  Clone,
+  PartialEq,
+  Default,
 )]
 #[serde(deny_unknown_fields)]
 pub struct TypstOptions {}
@@ -359,13 +348,12 @@ impl_options_methods!(TypstOptions);
 /// wiring and as a home for future knobs (e.g. `ktlint_code_style`).
 #[derive(
   Debug,
-  Clone,
-  Default,
-  PartialEq,
-  Eq,
   serde::Serialize,
   serde::Deserialize,
   schemars::JsonSchema,
+  Clone,
+  PartialEq,
+  Default,
 )]
 #[serde(deny_unknown_fields)]
 pub struct KotlinOptions {}
@@ -381,7 +369,7 @@ mod tests {
     reason = "exhaustive test covering merge and is_empty across all option types"
   )]
   #[test]
-  fn test_options_merge_and_is_empty() {
+  fn options_merge_and_is_empty() {
     // 0 fields (JsonOptions, TypstOptions, KotlinOptions)
     let mut json = JsonOptions::default();
     assert!(json.is_empty());

@@ -18,9 +18,6 @@ re-derive is already written down.
   Read this before touching an existing surface's behavior.
 - **[new-surface-guide.md](new-surface-guide.md)** — How do I add a 13th
   language surface? Read this before implementing a new `LanguageSurface`.
-- **[table-spec.md](table-spec.md)** — What's the JSON schema `fml::ui::table`
-  consumes, and what styling rules (`src/ui/table`) does it apply? Read this
-  before generating table JSON from a script, or touching table rendering.
 - **[style-guide.md](style-guide.md)** — Where does `fml` deviate from the
   global `rust-guide`, and what does this codebase itself require (test layout,
   naming, schema doc comments, `ExecutionContext` Arc-sharing, error handling)?

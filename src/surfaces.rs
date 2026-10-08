@@ -1,93 +1,25 @@
 //! Language surfaces interface and shared fleet infrastructure.
 //!
 //! Defines the `LanguageSurface` trait and shared registry/lookup machinery.
-//! Concrete language implementations live in sibling submodules, while execution
+//! Concrete language implementations live in `lang`, while execution
 //! orchestration is owned by `crate::engine`.
 
-/// C/C++ language surface implementation.
-pub mod cpp;
-/// .editorconfig generation and synchronization.
-pub mod editorconfig;
-/// Glob matching and file path resolution helpers.
+/// File discovery and path filtering shared by surfaces and the engine.
 pub mod glob;
-/// Go language surface implementation.
-pub mod go;
-/// Java language surface implementation.
-pub mod java;
-/// JavaScript/TypeScript language surface implementation.
-pub mod javascript;
-/// JSON language surface implementation.
-pub mod json;
-/// Kotlin language surface implementation.
-pub mod kotlin;
-/// Markdown language surface implementation.
-pub mod markdown;
-/// Native configuration generator and serializer.
-pub mod native;
-/// Prettier configuration generator and inline argument helpers.
-pub mod prettier;
-/// Python language surface implementation.
-pub mod python;
+/// Language surface drivers for all supported ecosystems.
+pub(crate) mod lang;
 /// Surface registry and auto-detection engine.
 pub mod registry;
-/// Rust language surface implementation.
-pub mod rust;
 /// Config file sync helpers.
 pub mod sync;
-/// TOML language surface implementation.
-pub mod toml;
-/// Tool execution and command creation utilities.
+/// Tool lookup, process spawning, and installer chains.
 pub mod tooling;
-/// Typst language surface implementation.
-pub mod typst;
-/// YAML language surface implementation.
-pub mod yaml;
 
-pub use native::{
-  AUTO_GENERATED_HEADER, AUTO_GENERATED_JSON_COMMENT, EDITORCONFIG_FILE_NAME,
-  NativeConfig, generate_editorconfig_from_config, render_native_config,
-  serialize_json_pretty, serialize_toml_with_header,
-  serialize_yaml_with_header, sync_editorconfig, sync_native_config,
-};
-pub use prettier::{
-  PRETTIER_PASS_NAME, PrettierConfig, build_prettier_inline_args,
-  sync_shared_prettier_config,
-};
-
-pub use crate::config::facets::{DeclaresFacets, Facet, FacetSupport};
 use std::path;
 use std::sync as std_sync;
 use std::time;
 
 use crate::config;
-
-pub use glob::{
-  STANDARD_IGNORED_DIRS, build_repo_gitignore, filter_candidates_with_ext,
-  find_files_with_ext, find_manifest_upwards, is_standard_ignored,
-  is_temp_file, matches_pattern, simple_glob_match, walk_candidate_files,
-};
-pub(crate) use registry::matches_name_or_alias;
-pub use registry::{
-  SurfaceRegistry, all_surfaces, default_registry, detect_surfaces_smart,
-  get_surface_by_name,
-};
-pub use sync::{
-  diff_check_via_local_tempcopy_classified, diff_check_via_tempcopy,
-  diff_check_via_tempcopy_classified, is_auto_generated, merge_sync_results,
-  sync_file_helper,
-};
-pub use tooling::{
-  ExitClass, InstallMethod, chain_wants_cargo_binstall, check_binary_exists,
-  classify_all_nonzero_as_error, classify_exit_one_as_violation,
-  create_tool_command, ensure_cargo_binstall, extra_args_set_flag,
-  forget_binary, has_cargo_binstall, install_chain_for, install_hint_for,
-  lint_fix_unsupported, merge_tool_streams, pinned_installer_for,
-  pinned_version_for, refresh_path_after_install,
-  refresh_windows_path_from_registry, resolve_binary_path, run_tool_command,
-  run_tool_command_classified, selected_install_method_for,
-  selected_pinned_version_for, set_binary_path_for_test, tool_missing_guard,
-  tool_missing_result, tool_would_benefit_from_cargo_binstall_bootstrap,
-};
 
 /// Execution context shared with every [`trait@LanguageSurface`] invocation for a
 /// single `fml` command.
@@ -134,15 +66,15 @@ impl ExecutionContext {
         .iter()
         .map(|p| p.to_string_lossy().into_owned())
         .collect();
-      filter_candidates_with_ext(
+      glob::filter_candidates_with_ext(
         &self.candidate_files,
         extensions,
         &includes,
         &self.lang_config.exclude,
       )
     } else {
-      // Explicit paths, already expanded: what `find_files_with_ext` would
-      // select from them, without walking a directory argument again.
+      // Explicit paths, already expanded: select from them without walking
+      // a directory argument again.
       let filter = glob::FileFilter::new(
         self.root.as_path(),
         extensions,
@@ -157,31 +89,12 @@ impl ExecutionContext {
     }
   }
 
-  /// Returns `Some(SurfaceResult)` with `SurfaceStatus::Passed` if `files` is empty, or `None` otherwise.
-  #[must_use]
-  pub fn early_out_if_empty(
-    &self,
-    files: &[path::PathBuf],
-    name: &'static str,
-    start: time::Instant,
-  ) -> Option<SurfaceResult> {
-    if files.is_empty() {
-      Some(SurfaceResult {
-        surface_name: name,
-        status: SurfaceStatus::Passed,
-        duration: start.elapsed(),
-      })
-    } else {
-      None
-    }
-  }
-
   /// Returns the files to pass to a directory-walking CLI tool.
   /// If paths, `lang_config` files, or `lang_config` excludes are specified,
   /// returns the filtered files; otherwise returns an empty Vec so the tool
   /// can scan the whole directory.
   #[must_use]
-  pub fn files_to_pass(&self, files: Vec<path::PathBuf>) -> Vec<path::PathBuf> {
+  fn files_to_pass(&self, files: Vec<path::PathBuf>) -> Vec<path::PathBuf> {
     if !self.paths.is_empty()
       || !self.lang_config.files.is_empty()
       || !self.lang_config.exclude.is_empty()
@@ -190,6 +103,25 @@ impl ExecutionContext {
     } else {
       Vec::new()
     }
+  }
+}
+
+/// Returns a `Passed` result for surface `name` when `files` is empty, so a
+/// surface with nothing to act on skips spawning its tool.
+#[must_use]
+fn passed_if_empty(
+  files: &[path::PathBuf],
+  name: &'static str,
+  start: time::Instant,
+) -> Option<SurfaceResult> {
+  if files.is_empty() {
+    Some(SurfaceResult {
+      surface_name: name,
+      status: SurfaceStatus::Passed,
+      duration: start.elapsed(),
+    })
+  } else {
+    None
   }
 }
 
@@ -202,7 +134,7 @@ fn detect_in(surface: &dyn LanguageSurface, root: &path::Path) -> bool {
 /// Builds a minimal `ExecutionContext` for testing language surfaces.
 #[cfg(test)]
 #[must_use]
-pub fn test_ctx(
+fn test_ctx(
   root: impl AsRef<path::Path>,
   lang_config: config::ResolvedLangConfig,
 ) -> ExecutionContext {
@@ -213,7 +145,10 @@ pub fn test_ctx(
     global_config: std_sync::Arc::new(config::ResolvedGlobalConfig::default()),
     lang_config,
     check_only: false,
-    candidate_files: std_sync::Arc::new(walk_candidate_files(root_ref, &[])),
+    candidate_files: std_sync::Arc::new(glob::walk_candidate_files(
+      root_ref,
+      &[],
+    )),
   }
 }
 
@@ -238,7 +173,7 @@ pub fn test_ctx_with_paths(
 }
 
 /// Metadata describing a binary executable tool required by a surface.
-#[derive(Debug, Clone)]
+#[derive(Debug)]
 pub struct ToolInfo {
   /// Executable binary name.
   pub binary: &'static str,
@@ -272,8 +207,8 @@ pub struct ToolInfo {
 impl ToolInfo {
   /// Returns the first available installer in this tool's preference chain.
   #[must_use]
-  pub fn selected_install_method(&self) -> Option<InstallMethod> {
-    selected_install_method_for(self.binary)
+  fn selected_install_method(&self) -> Option<tooling::InstallMethod> {
+    tooling::selected_install_method_for(self.binary)
   }
 
   /// The install hint to actually print: `install_hint` when this tool
@@ -286,7 +221,7 @@ impl ToolInfo {
   pub fn effective_install_hint(&self) -> String {
     self
       .install_hint
-      .map_or_else(|| install_hint_for(self.binary), str::to_string)
+      .map_or_else(|| tooling::install_hint_for(self.binary), str::to_string)
   }
 
   /// Returns the (program, args) for the first available installer in this
@@ -302,7 +237,7 @@ impl ToolInfo {
 }
 
 /// One native config file written by a surface's `fml sync` pass.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone)]
 pub struct SyncedConfigFile {
   /// Name of the config file, relative to the workspace root.
   pub file: String,
@@ -359,7 +294,7 @@ pub enum SurfaceStatus {
   /// `.clang-format` as well as `.clang-tidy`) used to discard all but the
   /// final result, so a file could appear on disk having never been named in
   /// the output — #130. Fold per-file results together with
-  /// [`merge_sync_results`].
+  /// [`sync::merge_sync_results`].
   ConfigSynced {
     /// Every native config file this surface created or updated, in the
     /// order it wrote them. Never empty.
@@ -422,7 +357,7 @@ impl SurfaceStatus {
   /// Every config file named by a [`SurfaceStatus::ConfigSynced`], in write
   /// order; empty for every other status.
   #[must_use]
-  pub fn synced_files(&self) -> &[SyncedConfigFile] {
+  fn synced_files(&self) -> &[SyncedConfigFile] {
     match self {
       Self::ConfigSynced { files } => files,
       _ => &[],
@@ -432,7 +367,7 @@ impl SurfaceStatus {
   /// The names of the config files this status reports as *newly created*.
   #[cfg(test)]
   #[must_use]
-  pub fn created_file_names(&self) -> Vec<&str> {
+  fn created_file_names(&self) -> Vec<&str> {
     self
       .synced_files()
       .iter()
@@ -444,7 +379,7 @@ impl SurfaceStatus {
   /// The names of every config file this status reports, created or updated.
   #[cfg(test)]
   #[must_use]
-  pub fn synced_file_names(&self) -> Vec<&str> {
+  fn synced_file_names(&self) -> Vec<&str> {
     self
       .synced_files()
       .iter()
@@ -454,7 +389,7 @@ impl SurfaceStatus {
 }
 
 /// Result returned from a surface action (format, lint, sync).
-#[derive(Debug, Clone)]
+#[derive(Debug)]
 pub struct SurfaceResult {
   /// Name of the language surface.
   pub surface_name: &'static str,
@@ -473,7 +408,9 @@ impl SurfaceResult {
 }
 
 /// Core abstraction for language surface tools and configuration sync.
-pub trait LanguageSurface: DeclaresFacets + Send + Sync {
+pub trait LanguageSurface:
+  config::facets::DeclaresFacets + Send + Sync
+{
   /// Canonical surface identifier name (e.g. `"rust"`, `"python"`).
   fn name(&self) -> &'static str;
   /// Alternative alias names recognized for this surface.
@@ -525,7 +462,7 @@ pub trait LanguageSurface: DeclaresFacets + Send + Sync {
   ///
   /// A surface must **not** sync `.prettierrc.json` here even if it formats
   /// via prettier — that file is shared by several surfaces and is written
-  /// once by [`prettier::sync_shared_prettier_config`], outside the runner's
+  /// once by `sync::prettier::sync_shared_prettier_config`, outside the runner's
   /// parallel fan-out. Declare [`LanguageSurface::uses_prettier`] instead.
   fn sync_config(&self, ctx: &ExecutionContext, check: bool) -> SurfaceResult;
   /// Whether this surface formats via `prettier` and therefore shares the
@@ -550,13 +487,8 @@ impl Clone for Box<dyn LanguageSurface> {
 }
 
 /// Errors related to language surfaces or native configuration rendering.
-#[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
+#[derive(Debug, thiserror::Error)]
 pub enum Error {
-  /// Surface requested by name was not recognized in the registry.
-  #[error(
-    "Unknown language surface: '{0}'. Run 'fml doctor' to see supported languages."
-  )]
-  UnknownSurface(String),
   /// Serialization of native surface configuration failed.
   #[error("Failed to serialize {surface} config: {message}")]
   SerializationFailed {
@@ -567,32 +499,29 @@ pub enum Error {
   },
 }
 
-/// Legacy alias for [`Error`].
-pub type SurfaceError = Error;
-
 #[cfg(test)]
 mod tests {
   use super::*;
 
   #[test]
-  fn test_surface_supports_lint_fix() {
-    assert!(rust::RustSurface.supports_lint_fix());
-    assert!(python::PythonSurface.supports_lint_fix());
-    assert!(cpp::CppSurface.supports_lint_fix());
-    assert!(!java::JavaSurface.supports_lint_fix());
-    assert!(go::GoSurface.supports_lint_fix());
-    assert!(!yaml::YamlSurface.supports_lint_fix());
-    assert!(!toml::TomlSurface.supports_lint_fix());
-    assert!(markdown::MarkdownSurface.supports_lint_fix());
-    assert!(!json::JsonSurface.supports_lint_fix());
-    assert!(!typst::TypstSurface.supports_lint_fix());
-    assert!(javascript::JavaScriptSurface.supports_lint_fix());
-    assert!(kotlin::KotlinSurface.supports_lint_fix());
+  fn surface_supports_lint_fix() {
+    assert!(lang::rust::RustSurface.supports_lint_fix());
+    assert!(lang::python::PythonSurface.supports_lint_fix());
+    assert!(lang::cpp::CppSurface.supports_lint_fix());
+    assert!(!lang::java::JavaSurface.supports_lint_fix());
+    assert!(lang::go::GoSurface.supports_lint_fix());
+    assert!(!lang::yaml::YamlSurface.supports_lint_fix());
+    assert!(!lang::toml::TomlSurface.supports_lint_fix());
+    assert!(lang::markdown::MarkdownSurface.supports_lint_fix());
+    assert!(!lang::json::JsonSurface.supports_lint_fix());
+    assert!(!lang::typst::TypstSurface.supports_lint_fix());
+    assert!(lang::javascript::JavaScriptSurface.supports_lint_fix());
+    assert!(lang::kotlin::KotlinSurface.supports_lint_fix());
   }
 
   #[test]
-  fn test_default_detect_markers_are_root_regular_files_only() {
-    let surface = rust::RustSurface;
+  fn default_detect_markers_are_root_regular_files_only() {
+    let surface = lang::rust::RustSurface;
     let dir_marker = tempfile::TempDir::new().unwrap();
     std::fs::create_dir(dir_marker.path().join("Cargo.toml")).unwrap();
     assert!(!detect_in(&surface, dir_marker.path()));
@@ -608,8 +537,8 @@ mod tests {
   }
 
   #[test]
-  fn test_default_detect_finds_nested_extension_outside_ignored_dirs() {
-    let surface = typst::TypstSurface;
+  fn default_detect_finds_nested_extension_outside_ignored_dirs() {
+    let surface = lang::typst::TypstSurface;
     let temp = tempfile::TempDir::new().unwrap();
     std::fs::create_dir_all(temp.path().join("target/a")).unwrap();
     std::fs::write(temp.path().join("target/a/doc.typ"), "").unwrap();
@@ -621,7 +550,7 @@ mod tests {
   }
 
   #[test]
-  fn test_is_success_holds_for_skips_and_clean_passes_only() {
+  fn is_success_holds_for_skips_and_clean_passes_only() {
     fn result_for(status: SurfaceStatus) -> SurfaceResult {
       SurfaceResult {
         surface_name: "test",
@@ -674,11 +603,11 @@ mod tests {
   }
 
   #[test]
-  fn test_box_dyn_language_surface_clone_preserves_identity() {
+  fn box_dyn_language_surface_clone_preserves_identity() {
     let originals: Vec<Box<dyn LanguageSurface>> = vec![
-      Box::new(rust::RustSurface),
-      Box::new(python::PythonSurface),
-      Box::new(kotlin::KotlinSurface),
+      Box::new(lang::rust::RustSurface),
+      Box::new(lang::python::PythonSurface),
+      Box::new(lang::kotlin::KotlinSurface),
     ];
 
     for original in &originals {
@@ -689,18 +618,18 @@ mod tests {
   }
 
   #[test]
-  fn test_unsupported_lint_fix_returns_skipped() {
+  fn unsupported_lint_fix_returns_skipped() {
     let dummy_ctx = test_ctx(
       path::Path::new("."),
       config::ResolvedLangConfig::new("dummy"),
     );
 
     let unsupported_surfaces: Vec<Box<dyn LanguageSurface>> = vec![
-      Box::new(yaml::YamlSurface),
-      Box::new(toml::TomlSurface),
-      Box::new(json::JsonSurface),
-      Box::new(typst::TypstSurface),
-      Box::new(java::JavaSurface),
+      Box::new(lang::yaml::YamlSurface),
+      Box::new(lang::toml::TomlSurface),
+      Box::new(lang::json::JsonSurface),
+      Box::new(lang::typst::TypstSurface),
+      Box::new(lang::java::JavaSurface),
     ];
 
     for surface in unsupported_surfaces {

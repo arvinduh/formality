@@ -9,13 +9,12 @@ use serde;
 /// Common layout facets configuring formatting layout across tools.
 #[derive(
   Debug,
-  Clone,
-  Default,
-  PartialEq,
-  Eq,
   serde::Serialize,
   serde::Deserialize,
   schemars::JsonSchema,
+  Clone,
+  PartialEq,
+  Default,
 )]
 #[serde(deny_unknown_fields)]
 pub struct LayoutFacet {
@@ -52,7 +51,7 @@ impl LayoutFacet {
 }
 
 /// Canonical vocabulary of formatting & linting facets across all language surfaces.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, PartialEq, Clone, Copy)]
 pub enum Facet {
   /// Indentation using tab characters instead of spaces.
   IndentTabs,
@@ -75,7 +74,7 @@ pub enum Facet {
 }
 
 /// Level of support a surface provides for a given facet.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, PartialEq)]
 pub enum FacetSupport {
   /// The user can freely configure this facet for the surface.
   Configurable,
@@ -110,8 +109,8 @@ mod tests {
     reason = "exhaustive golden-vector table for all 12 surfaces across 9 facets"
   )]
   #[test]
-  fn test_surface_facet_declarations() {
-    let surfaces = surfaces::all_surfaces();
+  fn surface_facet_declarations() {
+    let surfaces = surfaces::registry::all_surfaces();
     let get = |name: &str| {
       surfaces
         .iter()
