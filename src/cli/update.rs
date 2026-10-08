@@ -35,7 +35,13 @@ fn update() -> Result<(), install::Error> {
   if install::runs_under_emulation() {
     println!("   {}", install::emulation_note(&asset));
   }
-  let exe = env::current_exe()?.canonicalize()?;
+  // The file behind any symlink. Windows reports the file itself, and its
+  // canonical form is an unreadable `\\?\` path.
+  let exe = if cfg!(windows) {
+    env::current_exe()?
+  } else {
+    env::current_exe()?.canonicalize()?
+  };
   let staging = install::stage(&exe)?;
   print!("   Downloading {asset}… ");
   io::stdout().flush()?;
