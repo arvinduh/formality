@@ -1,7 +1,11 @@
 //! Background self-update check for newer releases.
 //!
-//! Probes GitHub releases asynchronously for updates. Toolchain version
+//! Probes GitHub releases asynchronously for updates. Installing a release
+//! over the running binary is `install`'s. Toolchain version
 //! compatibility checks for installed linters/formatters are owned by `super::version`.
+
+/// Downloading, verifying and installing a release over the running binary.
+pub mod install;
 
 use std::path;
 use std::time;
