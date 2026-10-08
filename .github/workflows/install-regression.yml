@@ -15,7 +15,6 @@ on:
       - "src/engine/**"
       - "src/cli/doctor.rs"
       - "src/cli/update.rs"
-      - "build.rs"
       - "Cargo.toml"
       - "Cargo.lock"
       - "rust-toolchain.toml"
