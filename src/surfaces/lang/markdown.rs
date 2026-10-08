@@ -2,6 +2,9 @@
 //!
 //! Implements `super::LanguageSurface` for Markdown, syncing `.markdownlint.json`
 //! and `.prettierrc.json`. Fleet registration is owned by `super::registry`.
+//! The child `html` module formats block-level HTML embedded in markdown.
+
+mod html;
 
 use crate::config;
 use crate::config::facets;
@@ -883,6 +886,13 @@ impl LanguageSurface for MarkdownSurface {
     // `.prettierrc.json` to disk — see `prettier::prettier_args` (Fixes
     // #151 [pre-recreation]). `fml sync` remains the only path that materializes the file.
     let inline_config = prettier::prettier_args(ctx);
+    // The block HTML pass takes the markdown pass's prettier settings, the
+    // user's `prettier` extra args last.
+    let html_args = [
+      inline_config.as_slice(),
+      ctx.lang_config.tool_args(PRETTIER),
+    ]
+    .concat();
 
     // markdownlint-cli2's own `--fix` pass has no per-flag inline config
     // (it only accepts `--config <path>`), so the resolved settings are
@@ -965,11 +975,14 @@ impl LanguageSurface for MarkdownSurface {
               &ctx.lang_config,
             ));
           let output = cmd.output()?;
+          if !output.status.success() {
+            return Ok(output);
+          }
+          // #253: the same block HTML pass as the write branch below.
+          html::format_file(scratch, ctx.root.as_path(), &html_args)?;
           // #314: the same post-prettier step as the write branch below, so
           // `--check` reports exactly the diff a real `fml fmt` writes.
-          if output.status.success()
-            && let (Some(bin), Some(cfg)) = (md_binary, hash_cfg_path)
-          {
+          if let (Some(bin), Some(cfg)) = (md_binary, hash_cfg_path) {
             escape_continuation_hashes(bin, cfg, scratch, ctx.root.as_path())?;
           }
           Ok(output)
@@ -1042,6 +1055,19 @@ impl LanguageSurface for MarkdownSurface {
       return res;
     }
 
+    // #253: prettier's markdown parser leaves block HTML as written. It runs
+    // after that pass, so markdown nested in a wrapper is already final.
+    if let Err(e) = files
+      .par_iter()
+      .try_for_each(|f| html::format_file(f, ctx.root.as_path(), &html_args))
+    {
+      return surfaces::SurfaceResult::error(
+        self.name(),
+        start,
+        format!("Failed to format embedded HTML: {e}"),
+      );
+    }
+
     // #314: prettier's wrap can leave a `#` at a line start, which the next
     // `markdownlint --fix` would turn into a heading.
     if let (Some(bin), Some(cfg)) = (md_binary, hash_cfg_path)
@@ -1049,7 +1075,11 @@ impl LanguageSurface for MarkdownSurface {
     {
       return escape_failed(self.name(), start, &e);
     }
-    res
+    // `res` timed prettier alone; report the whole pipeline.
+    surfaces::SurfaceResult {
+      duration: start.elapsed(),
+      ..res
+    }
   }
 
   fn lint(
@@ -2369,5 +2399,99 @@ mod tests {
       "the failure must be markdownlint's, not prettier's, got: {message}"
     );
     assert!(!res.is_success());
+  }
+
+  /// A badge block and a `<details>` section around an inline span, each
+  /// messy where only the block HTML pass would tidy it.
+  const MESSY_HTML: &str = "# Project\n\n<p align=\"center\">\n  \
+    <img src=\"a.png\"     alt=\"badge\">\n</p>\n\n\
+    Some <strong>inline</strong> prose.\n\n<details>\n\
+    <summary   class=\"x\">More info</summary>\n\nExtra detail text.\n\n\
+    </details>\n";
+
+  #[test]
+  fn format_tidies_block_html_and_is_idempotent() {
+    // #253: a real write pass tidies the block HTML, keeps the inline span,
+    // and a second run changes nothing.
+    if !have_markdown_tools() {
+      return;
+    }
+    let temp = tempfile::TempDir::new().unwrap();
+    let readme = temp.path().join("README.md");
+    std::fs::write(&readme, MESSY_HTML).unwrap();
+    let ctx = surfaces::test_ctx(
+      temp.path(),
+      config::ResolvedLangConfig::new("markdown"),
+    );
+
+    let res = MarkdownSurface.format(&ctx);
+    assert!(res.is_success(), "format failed: {:?}", res.status);
+    let once = std::fs::read_to_string(&readme).unwrap();
+    assert_eq!(
+      once,
+      "# Project\n\n<p align=\"center\">\n  \
+       <img src=\"a.png\" alt=\"badge\" />\n</p>\n\n\
+       Some <strong>inline</strong> prose.\n\n<details>\n  \
+       <summary class=\"x\">More info</summary>\n\nExtra detail text.\n\n\
+       </details>\n"
+    );
+    assert!(MarkdownSurface.format(&ctx).is_success());
+    assert_eq!(std::fs::read_to_string(&readme).unwrap(), once);
+  }
+
+  #[test]
+  fn format_check_reports_block_html_drift() {
+    // #253: `--check` runs the same pass, so it reports what a write fixes.
+    if !have_markdown_tools() {
+      return;
+    }
+    let temp = tempfile::TempDir::new().unwrap();
+    std::fs::write(temp.path().join("README.md"), MESSY_HTML).unwrap();
+    let mut ctx = surfaces::test_ctx(
+      temp.path(),
+      config::ResolvedLangConfig::new("markdown"),
+    );
+    ctx.check_only = true;
+
+    let res = MarkdownSurface.format(&ctx);
+    let surfaces::SurfaceStatus::ViolationsFound {
+      diff: Some(diff), ..
+    } = res.status
+    else {
+      panic!("expected a diff, got: {:?}", res.status);
+    };
+    assert!(diff.contains("alt=\"badge\" />"), "diff: {diff}");
+  }
+
+  #[test]
+  fn format_block_html_honours_prettier_extra_args_and_ignore() {
+    // #253: the HTML pass takes the user's `prettier` extra args, and leaves
+    // a file `.prettierignore` lists as written, like the markdown pass.
+    if !have_markdown_tools() {
+      return;
+    }
+    let badge = "<p align=\"center\">\n<img src=\"a.png\"     alt=\"badge\">\n\
+      </p>\n";
+    let temp = tempfile::TempDir::new().unwrap();
+    std::fs::write(temp.path().join(".prettierignore"), "ignored.md\n")
+      .unwrap();
+    std::fs::write(temp.path().join("a.md"), badge).unwrap();
+    std::fs::write(temp.path().join("ignored.md"), badge).unwrap();
+    let mut lang = config::ResolvedLangConfig::new("markdown");
+    lang.extra_args =
+      [(PRETTIER.to_string(), vec!["--print-width=20".to_string()])].into();
+    let ctx = surfaces::test_ctx(temp.path(), lang);
+
+    let res = MarkdownSurface.format(&ctx);
+    assert!(res.is_success(), "format failed: {:?}", res.status);
+    assert_eq!(
+      std::fs::read_to_string(temp.path().join("a.md")).unwrap(),
+      "<p align=\"center\">\n  <img\n    src=\"a.png\"\n    alt=\"badge\"\n  />\n\
+       </p>\n"
+    );
+    assert_eq!(
+      std::fs::read_to_string(temp.path().join("ignored.md")).unwrap(),
+      badge
+    );
   }
 }
