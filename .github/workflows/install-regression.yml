@@ -115,6 +115,40 @@ jobs:
       - name: Build fml
         run: cargo build
 
+      - name: fml update replaces itself with the published release
+        # End to end against the real latest release (#321): a debug build,
+        # told by the debug-only FML_TEST_CURRENT_VERSION that it is 0.0.1,
+        # must replace itself in place with exactly the binary inside this
+        # platform's published archive. On Windows that is a running .exe.
+        shell: bash
+        run: |
+          set -euo pipefail
+          dir="$RUNNER_TEMP/fml-update-e2e"
+          mkdir -p "$dir/bin" "$dir/release"
+          exe=fml
+          tar=tar
+          if [ "$RUNNER_OS" = Windows ]; then
+            exe=fml.exe
+            # bsdtar reads .zip; Git Bash's GNU tar does not.
+            tar=/c/Windows/System32/tar.exe
+          fi
+          cp "target/debug/$exe" "$dir/bin/$exe"
+          FML_TEST_CURRENT_VERSION=0.0.1 "$dir/bin/$exe" update
+          "$dir/bin/$exe" --version
+          triple=$(rustc -vV | sed -n 's/^host: //p')
+          case "$RUNNER_OS" in
+            Windows) asset="fml-$triple.zip" ;;
+            *) asset="fml-$triple.tar.xz" ;;
+          esac
+          curl -fsSL -o "$dir/$asset" \
+            "https://github.com/arvinduh/formality/releases/latest/download/$asset"
+          (cd "$dir/release" && "$tar" -xf "../$asset")
+          sha() { if command -v sha256sum >/dev/null; then sha256sum "$1"; else shasum -a 256 "$1"; fi | cut -d' ' -f1; }
+          want=$(sha "$(find "$dir/release" -name "$exe" -type f)")
+          got=$(sha "$dir/bin/$exe")
+          echo "installed $got, published $want"
+          [ -n "$want" ] && [ "$got" = "$want" ]
+
       - name: Scaffold a synthetic project covering every registered surface
         # One file per surface in surfaces::registry::default_registry() (12
         # total, kept in sync by hand -- see the Rust unit test in this repo
