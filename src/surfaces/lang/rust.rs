@@ -3,6 +3,7 @@
 //! Implements `super::LanguageSurface` for Rust, syncing `.rustfmt.toml`.
 //! Fleet registration is owned by `super::registry`.
 
+use std::fs;
 use std::path;
 use std::process;
 use std::time;
@@ -206,24 +207,23 @@ impl surfaces::LanguageSurface for RustSurface {
       return res;
     }
 
-    let edition = if let Ok(manifest) =
-      std::fs::read_to_string(ctx.root.join("Cargo.toml"))
-    {
-      if manifest.contains("edition = \"2024\"") {
-        "2024"
-      } else if manifest.contains("edition = \"2018\"") {
-        "2018"
+    let edition =
+      if let Ok(manifest) = fs::read_to_string(ctx.root.join("Cargo.toml")) {
+        if manifest.contains("edition = \"2024\"") {
+          "2024"
+        } else if manifest.contains("edition = \"2018\"") {
+          "2018"
+        } else {
+          "2021"
+        }
       } else {
-        "2021"
-      }
-    } else {
-      ctx
-        .lang_config
-        .rust
-        .as_ref()
-        .and_then(|r| r.edition.as_deref())
-        .unwrap_or("2021")
-    };
+        ctx
+          .lang_config
+          .rust
+          .as_ref()
+          .and_then(|r| r.edition.as_deref())
+          .unwrap_or("2021")
+      };
 
     // Inline `--config key=val,...` instead of writing `.rustfmt.toml` to
     // disk — see `RUSTFMT_INLINE_KEYS` (Fixes #151 [pre-recreation]). `fml sync`
@@ -367,16 +367,16 @@ mod tests {
       return;
     }
     let temp = tempfile::TempDir::new().unwrap();
-    std::fs::write(
+    fs::write(
       temp.path().join("Cargo.toml"),
       "[package]\nname = \"testcrate\"\nversion = \"0.1.0\"\nedition = \"2021\"\n",
     )
     .unwrap();
     let nested = temp.path().join("src").join("deep");
-    std::fs::create_dir_all(&nested).unwrap();
-    std::fs::write(temp.path().join("src").join("lib.rs"), "pub mod deep;\n")
+    fs::create_dir_all(&nested).unwrap();
+    fs::write(temp.path().join("src").join("lib.rs"), "pub mod deep;\n")
       .unwrap();
-    std::fs::write(nested.join("mod.rs"), "pub fn f() {}\n").unwrap();
+    fs::write(nested.join("mod.rs"), "pub fn f() {}\n").unwrap();
 
     let surface = RustSurface;
     let ctx =
@@ -397,7 +397,7 @@ mod tests {
     // `.is_file()`, not `.exists()` (Fixes #185): a directory that happens
     // to be named `Cargo.toml` must not be mistaken for the manifest.
     let temp = tempfile::TempDir::new().unwrap();
-    std::fs::create_dir(temp.path().join("Cargo.toml")).unwrap();
+    fs::create_dir(temp.path().join("Cargo.toml")).unwrap();
 
     let surface = RustSurface;
     let ctx =
@@ -426,11 +426,11 @@ mod tests {
       return;
     }
     let temp = tempfile::TempDir::new().unwrap();
-    std::fs::create_dir(temp.path().join("Cargo.toml")).unwrap();
+    fs::create_dir(temp.path().join("Cargo.toml")).unwrap();
     let src = temp.path().join("src");
-    std::fs::create_dir_all(&src).unwrap();
+    fs::create_dir_all(&src).unwrap();
     let file = src.join("main.rs");
-    std::fs::write(&file, "fn main() {}\n").unwrap();
+    fs::write(&file, "fn main() {}\n").unwrap();
 
     let surface = RustSurface;
     let ctx =
@@ -453,15 +453,15 @@ mod tests {
       return;
     }
     let temp = tempfile::TempDir::new().unwrap();
-    std::fs::write(
+    fs::write(
       temp.path().join("Cargo.toml"),
       "[package]\nname = \"test_format_ancestor_crate\"\nversion = \"0.1.0\"\nedition = \"2021\"\n",
     )
     .unwrap();
     let nested = temp.path().join("src").join("deep");
-    std::fs::create_dir_all(&nested).unwrap();
+    fs::create_dir_all(&nested).unwrap();
     let file = nested.join("lib.rs");
-    std::fs::write(&file, "pub fn foo() {}\n").unwrap();
+    fs::write(&file, "pub fn foo() {}\n").unwrap();
 
     let surface = RustSurface;
     let ctx =
@@ -521,7 +521,7 @@ mod tests {
     let config_path = temp.path().join(".rustfmt.toml");
     assert!(config_path.is_file());
 
-    let content = std::fs::read_to_string(&config_path).unwrap();
+    let content = fs::read_to_string(&config_path).unwrap();
     assert!(content.contains("edition = \"2024\""));
     assert!(content.contains("tab_spaces = 2"));
     assert!(content.contains("max_width = 80"));
@@ -638,8 +638,8 @@ mod tests {
     }
     let temp = tempfile::TempDir::new().unwrap();
     let src = temp.path().join("src");
-    std::fs::create_dir_all(&src).unwrap();
-    std::fs::write(src.join("main.rs"), "fn main(){let x=1;}\n").unwrap();
+    fs::create_dir_all(&src).unwrap();
+    fs::write(src.join("main.rs"), "fn main(){let x=1;}\n").unwrap();
 
     let surface = RustSurface;
     let ctx =
@@ -690,10 +690,10 @@ mod tests {
     }
     let temp = tempfile::TempDir::new().unwrap();
     let src = temp.path().join("src");
-    std::fs::create_dir_all(&src).unwrap();
+    fs::create_dir_all(&src).unwrap();
     let file = src.join("main.rs");
     let unformatted = "use std::time::Instant;\nuse std::collections::HashMap;\nuse std::path::Path;\n\nfn main() { let _ = (HashMap::<u32, u32>::new(), Path::new(\"/\"), Instant::now()); }\n";
-    std::fs::write(&file, unformatted).unwrap();
+    fs::write(&file, unformatted).unwrap();
 
     let surface = RustSurface;
     let ctx_fix =
@@ -701,7 +701,7 @@ mod tests {
     let fix_res = surface.format(&ctx_fix);
     assert!(matches!(fix_res.status, surfaces::SurfaceStatus::Passed));
 
-    let formatted = std::fs::read_to_string(&file).unwrap();
+    let formatted = fs::read_to_string(&file).unwrap();
     let hashmap_idx = formatted.find("use std::collections::HashMap;").unwrap();
     let path_idx = formatted.find("use std::path::Path;").unwrap();
     let instant_idx = formatted.find("use std::time::Instant;").unwrap();
