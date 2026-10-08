@@ -11,5 +11,4 @@ mod editorconfig;
 mod fix;
 mod fmt;
 mod registry;
-mod registry_agreement;
 mod sync;

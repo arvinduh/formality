@@ -601,7 +601,7 @@ fn format_unknown_tool(
   line: usize,
   tools: &[&str],
 ) -> String {
-  let canonical = tooling::canonical_chain_binary(tool);
+  let canonical = tooling::canonical_binary(tool);
   let suggestion = match tools.iter().find(|key| **key == canonical) {
     Some(key) => format!(" Did you mean `{key}`?"),
     None => String::new(),

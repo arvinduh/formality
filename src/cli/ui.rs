@@ -123,7 +123,7 @@ pub fn check(check: &doctor::Check) {
   let (tag, detail) = match &check.status {
     version::ToolStatus::NotFound => (
       "[MISS] ".yellow().bold(),
-      format!("install: {}", check.tool.effective_install_hint()),
+      format!("install: {}", check.tool.install_hint()),
     ),
     version::ToolStatus::Compatible { current, .. } => {
       ("[OK]   ".green().bold(), format!("v{current}"))

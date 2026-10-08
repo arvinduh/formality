@@ -169,7 +169,6 @@ impl surfaces::LanguageSurface for TomlSurface {
     vec![surfaces::ToolInfo {
       binary: "taplo",
       description: "TOML toolkit, formatter and linter",
-      install_hint: None,
       is_required_for_fmt: true,
       is_required_for_lint: true,
     }]

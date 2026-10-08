@@ -119,14 +119,12 @@ impl surfaces::LanguageSurface for YamlSurface {
       surfaces::ToolInfo {
         binary: "prettier",
         description: "YAML formatter",
-        install_hint: None,
         is_required_for_fmt: true,
         is_required_for_lint: false,
       },
       surfaces::ToolInfo {
         binary: "yamllint",
         description: "YAML linter",
-        install_hint: None,
         is_required_for_fmt: false,
         is_required_for_lint: true,
       },

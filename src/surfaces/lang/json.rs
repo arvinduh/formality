@@ -66,7 +66,6 @@ impl LanguageSurface for JsonSurface {
     vec![surfaces::ToolInfo {
       binary: "prettier",
       description: "JSON formatter",
-      install_hint: None,
       is_required_for_fmt: true,
       is_required_for_lint: false,
     }]
@@ -79,7 +78,7 @@ impl LanguageSurface for JsonSurface {
     let start = time::Instant::now();
 
     if let Some(res) =
-      tooling::tool_missing_guard(self.name(), "prettier", start, None)
+      tooling::tool_missing_guard(self.name(), "prettier", start)
     {
       return res;
     }

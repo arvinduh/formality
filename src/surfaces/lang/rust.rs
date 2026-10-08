@@ -14,17 +14,6 @@ use crate::surfaces::glob;
 use crate::surfaces::sync::native;
 use crate::surfaces::tooling;
 
-/// Single source for `cargo`'s manual install hint: it has no `ALL_CHAINS`
-/// row (it ships with the Rust toolchain itself, via rustup, not through
-/// any package manager tracked there), so unlike `rustfmt`/`clippy-driver`
-/// below it can't be derived via `install_hint_for`. Referenced from both
-/// `tool_info` and the `lint()` guard so the two copies cannot drift apart
-/// the way #264 found taplo's hand-copied strings had -- which is exactly
-/// what had already happened here (`"Install Rust via rustup: ..."` vs
-/// `"Install Rust via ..."`, no `rustup` mention) before this constant
-/// existed.
-const CARGO_INSTALL_HINT: &str = "Install Rust via rustup: https://rustup.rs";
-
 /// The `.rustfmt.toml` settings `ctx` resolves to.
 fn rustfmt_config(ctx: &surfaces::ExecutionContext) -> native::ToolConfig {
   let eol = &ctx.global_config.end_of_line;
@@ -176,23 +165,18 @@ impl surfaces::LanguageSurface for RustSurface {
       surfaces::ToolInfo {
         binary: "cargo",
         description: "Rust package manager & build tool",
-        // No ALL_CHAINS row: cargo ships with the Rust toolchain itself
-        // (via rustup) rather than through any package manager here.
-        install_hint: Some(CARGO_INSTALL_HINT),
         is_required_for_fmt: true,
         is_required_for_lint: true,
       },
       surfaces::ToolInfo {
         binary: "rustfmt",
         description: "Rust code formatter",
-        install_hint: None,
         is_required_for_fmt: true,
         is_required_for_lint: false,
       },
       surfaces::ToolInfo {
         binary: "clippy-driver",
         description: "Rust linter (cargo clippy)",
-        install_hint: None,
         is_required_for_fmt: false,
         is_required_for_lint: true,
       },
@@ -293,12 +277,8 @@ impl surfaces::LanguageSurface for RustSurface {
   ) -> surfaces::SurfaceResult {
     let start = time::Instant::now();
 
-    if let Some(res) = tooling::tool_missing_guard(
-      self.name(),
-      "cargo",
-      start,
-      Some(CARGO_INSTALL_HINT),
-    ) {
+    if let Some(res) = tooling::tool_missing_guard(self.name(), "cargo", start)
+    {
       return res;
     }
 

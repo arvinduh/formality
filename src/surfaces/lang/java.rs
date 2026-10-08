@@ -177,23 +177,6 @@ impl DeclaresFacets for JavaSurface {
 /// Standard file extensions recognized for Java source files.
 const JAVA_EXTENSIONS: &[&str] = &["java"];
 
-/// Manual-fallback override for `google-java-format`. Unlike `cargo`/`gofmt`
-/// elsewhere, this tool *does* have a real `ALL_CHAINS` row
-/// (`GOOGLE_JAVA_FORMAT_CHAIN`: brew, then a pinned npm wrapper) -- but that
-/// chain has no Windows entry and no way to express "no package manager at
-/// all? download the jar yourself", which the old hand-written hint used to
-/// say and the derived, chain-only text can't. Kept as a named override
-/// (referenced from both `tool_info` and the `format()` guard, so it can't
-/// re-drift into two copies the way #264 found taplo's had) rather than
-/// letting that fallback information disappear outright.
-const GOOGLE_JAVA_FORMAT_INSTALL_HINT: &str = "Install via: brew install google-java-format (or npm install -g google-java-format); with neither available, download the all-deps jar from https://github.com/google/google-java-format/releases and place a 'google-java-format' wrapper on PATH";
-
-/// Manual-fallback override for `checkstyle`, for the same reason as
-/// [`GOOGLE_JAVA_FORMAT_INSTALL_HINT`] above: `CHECKSTYLE_CHAIN` (brew, apt)
-/// has no Windows entry and no way to express the jar-download fallback the
-/// old hand-written hint carried.
-const CHECKSTYLE_INSTALL_HINT: &str = "Install via: brew install checkstyle (or apt-get install checkstyle); with neither available, download the jar from https://checkstyle.org and place a 'checkstyle' wrapper on PATH";
-
 /// Builds argument vector for a `checkstyle -f plain` invocation whose
 /// output is safe to parse for the LSP server (`fml lsp`, Fixes #159 [pre-recreation],
 /// #165 [pre-recreation]). Checkstyle has both an `-f xml` and `-f plain` machine-readable
@@ -269,14 +252,12 @@ impl LanguageSurface for JavaSurface {
       surfaces::ToolInfo {
         binary: "google-java-format",
         description: "Java code formatter with built-in import organizing",
-        install_hint: Some(GOOGLE_JAVA_FORMAT_INSTALL_HINT),
         is_required_for_fmt: true,
         is_required_for_lint: false,
       },
       surfaces::ToolInfo {
         binary: "checkstyle",
         description: "Java static analysis / style linter",
-        install_hint: Some(CHECKSTYLE_INSTALL_HINT),
         is_required_for_fmt: false,
         is_required_for_lint: true,
       },
@@ -289,12 +270,9 @@ impl LanguageSurface for JavaSurface {
   ) -> surfaces::SurfaceResult {
     let start = time::Instant::now();
 
-    if let Some(res) = tooling::tool_missing_guard(
-      self.name(),
-      "google-java-format",
-      start,
-      Some(GOOGLE_JAVA_FORMAT_INSTALL_HINT),
-    ) {
+    if let Some(res) =
+      tooling::tool_missing_guard(self.name(), "google-java-format", start)
+    {
       return res;
     }
 
@@ -374,12 +352,9 @@ impl LanguageSurface for JavaSurface {
       return tooling::lint_fix_unsupported(self.name(), start);
     }
 
-    if let Some(res) = tooling::tool_missing_guard(
-      self.name(),
-      "checkstyle",
-      start,
-      Some(CHECKSTYLE_INSTALL_HINT),
-    ) {
+    if let Some(res) =
+      tooling::tool_missing_guard(self.name(), "checkstyle", start)
+    {
       return res;
     }
 

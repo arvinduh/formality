@@ -70,15 +70,6 @@ impl DeclaresFacets for GoSurface {
 /// Standard file extensions recognized for Go source files.
 const GO_EXTENSIONS: &[&str] = &["go"];
 
-/// Single source for `gofmt`'s manual install hint: it has no `ALL_CHAINS`
-/// row (it ships with the Go toolchain itself, not through any package
-/// manager tracked there), so unlike every other tool here it can't be
-/// derived via `install_hint_for`. Referenced from both `tool_info` and the
-/// `format()` guard so the two copies cannot drift apart the way #264 found
-/// taplo's hand-copied strings had.
-const GOFMT_INSTALL_HINT: &str =
-  "Ships with the Go toolchain: install Go from https://go.dev/dl/";
-
 /// Builds the argument list for `golangci-lint run`. Mirrors the
 /// `build_ruff_check_args` pattern: pass explicit files only when the caller
 /// scoped the run (specific paths, a `files` allowlist, or an `exclude`
@@ -231,24 +222,18 @@ impl LanguageSurface for GoSurface {
       surfaces::ToolInfo {
         binary: "gofmt",
         description: "Go code formatter (simplifies code with -s)",
-        // No ALL_CHAINS row: gofmt ships with the Go toolchain itself
-        // rather than through any package manager, so there is no
-        // install-preference chain to derive advice from.
-        install_hint: Some(GOFMT_INSTALL_HINT),
         is_required_for_fmt: true,
         is_required_for_lint: false,
       },
       surfaces::ToolInfo {
         binary: "goimports",
         description: "Go formatter that also groups and sorts imports",
-        install_hint: None,
         is_required_for_fmt: true,
         is_required_for_lint: false,
       },
       surfaces::ToolInfo {
         binary: "golangci-lint",
         description: "Fast Go linters runner aggregating multiple static analyzers",
-        install_hint: None,
         is_required_for_fmt: false,
         is_required_for_lint: true,
       },
@@ -266,12 +251,8 @@ impl LanguageSurface for GoSurface {
   ) -> surfaces::SurfaceResult {
     let start = time::Instant::now();
 
-    if let Some(res) = tooling::tool_missing_guard(
-      self.name(),
-      "gofmt",
-      start,
-      Some(GOFMT_INSTALL_HINT),
-    ) {
+    if let Some(res) = tooling::tool_missing_guard(self.name(), "gofmt", start)
+    {
       return res;
     }
 

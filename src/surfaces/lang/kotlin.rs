@@ -153,7 +153,6 @@ impl LanguageSurface for KotlinSurface {
     vec![surfaces::ToolInfo {
       binary: "ktlint",
       description: "Kotlin linter and formatter (Smart Format: style + import organization in one pass)",
-      install_hint: None,
       is_required_for_fmt: true,
       is_required_for_lint: true,
     }]

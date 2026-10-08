@@ -299,7 +299,6 @@ impl surfaces::LanguageSurface for PythonSurface {
     vec![surfaces::ToolInfo {
       binary: "ruff",
       description: "Fast Python linter and code formatter",
-      install_hint: None,
       is_required_for_fmt: true,
       is_required_for_lint: true,
     }]

@@ -92,7 +92,6 @@ impl surfaces::LanguageSurface for TypstSurface {
     vec![surfaces::ToolInfo {
       binary: "typstyle",
       description: "Beautiful and reliable code formatter for Typst",
-      install_hint: None,
       is_required_for_fmt: true,
       is_required_for_lint: true,
     }]

@@ -242,7 +242,6 @@ impl LanguageSurface for JavaScriptSurface {
     vec![surfaces::ToolInfo {
       binary: "biome",
       description: "Fast formatter and linter for JavaScript, TypeScript, JSX and TSX",
-      install_hint: None,
       is_required_for_fmt: true,
       is_required_for_lint: true,
     }]
@@ -278,8 +277,7 @@ impl LanguageSurface for JavaScriptSurface {
       );
     }
 
-    if let Some(res) =
-      tooling::tool_missing_guard(self.name(), "biome", start, None)
+    if let Some(res) = tooling::tool_missing_guard(self.name(), "biome", start)
     {
       return res;
     }

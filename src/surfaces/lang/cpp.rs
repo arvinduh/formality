@@ -318,14 +318,12 @@ impl LanguageSurface for CppSurface {
       surfaces::ToolInfo {
         binary: "clang-format",
         description: "C/C++ code formatter",
-        install_hint: None,
         is_required_for_fmt: true,
         is_required_for_lint: false,
       },
       surfaces::ToolInfo {
         binary: "clang-tidy",
         description: "C/C++ linter and static analyzer",
-        install_hint: None,
         is_required_for_fmt: false,
         is_required_for_lint: true,
       },

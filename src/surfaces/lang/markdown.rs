@@ -838,14 +838,12 @@ impl LanguageSurface for MarkdownSurface {
       surfaces::ToolInfo {
         binary: "prettier",
         description: "Opinionated code/markdown formatter",
-        install_hint: None,
         is_required_for_fmt: true,
         is_required_for_lint: false,
       },
       surfaces::ToolInfo {
         binary: "markdownlint-cli2",
         description: "Fast markdown linter",
-        install_hint: None,
         is_required_for_fmt: false,
         is_required_for_lint: true,
       },

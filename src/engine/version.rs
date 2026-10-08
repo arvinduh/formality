@@ -124,8 +124,7 @@ fn line_carries_version_token(line: &str) -> bool {
 /// [`mstv::DEFAULT_VERSION_PROBE`] for a binary with no registry entry.
 #[must_use]
 fn version_probe_for(binary: &str) -> mstv::VersionProbe {
-  mstv::get_tool_mstv_entry(binary)
-    .map_or(mstv::DEFAULT_VERSION_PROBE, |entry| entry.probe)
+  tooling::tool(binary).map_or(mstv::DEFAULT_VERSION_PROBE, |tool| tool.probe)
 }
 
 /// Picks the version line out of a finished probe command's streams.
@@ -661,7 +660,7 @@ impl str::FromStr for Version {
 /// Returns the Minimum Supported Tool Version (MSTV) for a given tool binary, if defined.
 #[must_use]
 pub fn minimum_supported_tool_version(binary: &str) -> Option<Version> {
-  mstv::get_tool_mstv_entry(binary).and_then(|e| e.min_version.clone())
+  tooling::tool(binary).and_then(|tool| tool.min_version.clone())
 }
 
 /// Normalize a raw version output string probed from a tool into a semver [`Version`],
@@ -1224,8 +1223,6 @@ mod tests {
       Some(Version::new(1, 50, 0))
     );
     assert_eq!(minimum_supported_tool_version("unknown-tool"), None);
-
-    assert!(mstv::TOOL_MSTV_REGISTRY.len() >= 16);
   }
 
   /// The MSTV floor outranks the pin, the floor itself is inclusive, a
@@ -1309,22 +1306,11 @@ mod tests {
   }
 
   #[test]
-  fn get_tool_mstv_entry_clippy_aliases_resolve_to_same_entry() {
-    // clippy-driver / cargo-clippy are alternate binary names for the same
-    // logical "clippy" tool; mstv::get_tool_mstv_entry must alias them to the
-    // single `clippy` registry entry rather than treating them as unknown.
-    let canonical =
-      mstv::get_tool_mstv_entry("clippy").expect("clippy registered");
-    let via_driver = mstv::get_tool_mstv_entry("clippy-driver")
-      .expect("clippy-driver aliases");
-    let via_cargo =
-      mstv::get_tool_mstv_entry("cargo-clippy").expect("cargo-clippy aliases");
-
-    assert_eq!(canonical.binary, "clippy");
-    assert_eq!(via_driver.binary, "clippy");
-    assert_eq!(via_cargo.binary, "clippy");
-    assert_eq!(canonical.min_version, via_driver.min_version);
-    assert_eq!(canonical.min_version, via_cargo.min_version);
+  fn clippy_aliases_resolve_to_one_tool() {
+    for alias in ["clippy", "clippy-driver", "cargo-clippy"] {
+      let tool = tooling::tool(alias).expect("clippy is registered");
+      assert_eq!(tool.binary, "clippy-driver", "{alias}");
+    }
   }
 
   #[test]
@@ -1681,8 +1667,8 @@ mod tests {
   #[test]
   fn registry_probe_strategies_match_what_each_tool_supports() {
     let probe_of = |binary: &str| {
-      mstv::get_tool_mstv_entry(binary)
-        .unwrap_or_else(|| panic!("{binary} should be in the MSTV registry"))
+      tooling::tool(binary)
+        .unwrap_or_else(|| panic!("{binary} should be in TOOLS"))
         .probe
     };
 
@@ -1738,10 +1724,10 @@ mod tests {
       ])
     );
 
-    for entry in mstv::TOOL_MSTV_REGISTRY {
+    for entry in tooling::TOOLS {
       if matches!(
         entry.binary,
-        "gofmt" | "goimports" | "golangci-lint" | "clippy"
+        "gofmt" | "goimports" | "golangci-lint" | "clippy-driver"
       ) {
         continue;
       }
@@ -1798,8 +1784,16 @@ mod tests {
       }
     }
 
-    for entry in mstv::TOOL_MSTV_REGISTRY {
-      check(entry.binary, &entry.probe);
+    for entry in tooling::TOOLS {
+      // clippy is also probed as `clippy` or `cargo-clippy`, where OwnFlags
+      // would run a binary rustup never ships; naming `clippy-driver` keeps
+      // the probe right under every alias.
+      let name = if entry.binary == "clippy-driver" {
+        "clippy"
+      } else {
+        entry.binary
+      };
+      check(name, &entry.probe);
     }
     check("<default>", &mstv::DEFAULT_VERSION_PROBE);
   }
@@ -2000,7 +1994,7 @@ mod tests {
   /// that is not a declaration bug.
   #[test]
   fn no_installed_registry_tool_prints_a_version_the_probe_discards() {
-    for entry in mstv::TOOL_MSTV_REGISTRY {
+    for entry in tooling::TOOLS {
       let leaves = probe_leaf_commands(entry.binary, &entry.probe);
       if !leaves.iter().any(|(bin, _)| which::which(bin).is_ok()) {
         continue;
