@@ -1,12 +1,16 @@
 //! Installing a published release over the running `fml` binary.
 //!
-//! Owns `fml update`'s steps: resolving the latest release and naming this
-//! build's cargo-dist archive. The background release check and its cache live in the parent
+//! Owns `fml update`'s steps: resolving the latest release, then downloading
+//! this build's cargo-dist archive and verifying its published checksum. The background release check and its cache live in the parent
 //! `update` module; the CLI decides what the user sees.
 
 use std::env;
+use std::fs;
+use std::io;
+use std::path;
 use std::process;
 
+use sha2;
 use thiserror;
 
 use crate::engine::update;
@@ -17,6 +21,10 @@ const TARGET: &str = env!("FML_TARGET");
 /// The GitHub API endpoint naming the latest release.
 const LATEST_RELEASE_API: &str =
   "https://api.github.com/repos/arvinduh/formality/releases/latest";
+
+/// Where release assets download from, as `<base>/<tag>/<asset>`.
+const DOWNLOAD_BASE: &str =
+  "https://github.com/arvinduh/formality/releases/download";
 
 /// Test-only base URL standing in for the GitHub releases (`<base>/latest`
 /// for the API response, `<base>/download/<tag>/<asset>` for assets). Only
@@ -42,6 +50,22 @@ pub enum Error {
   /// The latest-release response names no tag.
   #[error("the latest-release response names no tag")]
   NoTag,
+  /// The downloaded archive does not match its published sha256.
+  #[error("{asset} has sha256 {actual}, but {asset}.sha256 says {expected}")]
+  ChecksumMismatch {
+    /// The archive's file name.
+    asset: String,
+    /// The digest the release publishes.
+    expected: String,
+    /// The digest of the bytes downloaded.
+    actual: String,
+  },
+  /// The published `.sha256` file holds no sha256 digest.
+  #[error("{0}.sha256 holds no sha256 digest")]
+  BadChecksumFile(String),
+  /// Writing the staged files failed.
+  #[error(transparent)]
+  Io(#[from] io::Error),
 }
 
 /// Reads the test-only variable `name`. Release builds (every published
@@ -74,6 +98,63 @@ pub fn newer_release(current: &str) -> Result<Option<String>, Error> {
   let tag = update::parse_latest_tag_from_json(&String::from_utf8_lossy(&body))
     .ok_or(Error::NoTag)?;
   Ok(update::is_newer_version(&tag, current).then_some(tag))
+}
+
+/// Downloads this build's archive for `tag` into `dir`, verified against the
+/// release's published `.sha256` before it is written, and returns its path
+/// and size in bytes.
+///
+/// # Errors
+///
+/// [`Error::Command`] when either file cannot be fetched (a missing
+/// `.sha256` included), a checksum error when the archive does not match,
+/// and [`Error::Io`] when it cannot be written.
+pub fn download(
+  tag: &str,
+  dir: &path::Path,
+) -> Result<(path::PathBuf, usize), Error> {
+  let asset = asset_name();
+  let base = test_override(RELEASES_URL_VAR)
+    .map_or_else(|| DOWNLOAD_BASE.to_string(), |base| base + "/download");
+  let url = format!("{base}/{tag}/{asset}");
+  let sums = curl(&format!("{url}.sha256"))?;
+  let bytes = curl(&url)?;
+  verify_sha256(&asset, &bytes, &String::from_utf8_lossy(&sums))?;
+  let archive = dir.join(&asset);
+  fs::write(&archive, &bytes)?;
+  Ok((archive, bytes.len()))
+}
+
+/// Lowercase hex digits, indexed by nibble.
+const HEX: &[u8; 16] = b"0123456789abcdef";
+
+/// Checks `bytes` against `sums`, the contents of the asset's published
+/// `.sha256` file (`<hex digest> *<file name>`).
+///
+/// # Errors
+///
+/// [`Error::BadChecksumFile`] when `sums` does not start with a sha256 hex
+/// digest; [`Error::ChecksumMismatch`] when the digest differs.
+fn verify_sha256(asset: &str, bytes: &[u8], sums: &str) -> Result<(), Error> {
+  let expected = sums
+    .split_whitespace()
+    .next()
+    .filter(|hex| hex.len() == 64 && hex.bytes().all(|b| b.is_ascii_hexdigit()))
+    .ok_or_else(|| Error::BadChecksumFile(asset.to_string()))?;
+  let actual = <sha2::Sha256 as sha2::Digest>::digest(bytes)
+    .iter()
+    .flat_map(|byte| [HEX[usize::from(byte >> 4)], HEX[usize::from(byte & 15)]])
+    .map(char::from)
+    .collect::<String>();
+  if actual.eq_ignore_ascii_case(expected) {
+    Ok(())
+  } else {
+    Err(Error::ChecksumMismatch {
+      asset: asset.to_string(),
+      expected: expected.to_string(),
+      actual,
+    })
+  }
 }
 
 /// Fetches `url` and returns the response body, failing on an HTTP error.
@@ -125,6 +206,36 @@ pub fn asset_name() -> String {
 #[cfg(test)]
 mod tests {
   use super::*;
+
+  /// sha256 of the three bytes `abc` (FIPS 180-2 test vector).
+  const ABC: &str =
+    "ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad";
+
+  #[test]
+  fn verify_sha256_accepts_the_published_digest_line() {
+    let sums = format!("{ABC} *fml-x.tar.xz\n");
+    assert!(verify_sha256("fml-x.tar.xz", b"abc", &sums).is_ok());
+  }
+
+  #[test]
+  fn verify_sha256_rejects_a_mismatch() {
+    let sums = format!("{ABC} *fml-x.tar.xz\n");
+    let err = verify_sha256("fml-x.tar.xz", b"abd", &sums).unwrap_err();
+    assert!(
+      matches!(&err, Error::ChecksumMismatch { expected, .. } if expected == ABC),
+      "{err}"
+    );
+  }
+
+  #[test]
+  fn verify_sha256_rejects_a_file_with_no_digest() {
+    for sums in ["", "Not Found", "abc *fml-x.tar.xz"] {
+      assert!(matches!(
+        verify_sha256("fml-x.tar.xz", b"abc", sums),
+        Err(Error::BadChecksumFile(_))
+      ));
+    }
+  }
 
   #[test]
   fn run_names_the_command_that_could_not_start() {
