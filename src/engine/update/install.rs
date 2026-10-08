@@ -2,7 +2,8 @@
 //!
 //! Owns `fml update`'s steps: resolving the latest release, staging beside
 //! the running binary, downloading this build's cargo-dist archive verified
-//! by its published checksum, and unpacking it. The background release check and its cache live in the parent
+//! by its published checksum, unpacking it, and swapping it in once it
+//! reports the expected version. The background release check and its cache live in the parent
 //! `update` module; the CLI decides what the user sees.
 
 use std::env;
@@ -11,11 +12,14 @@ use std::io;
 use std::path;
 use std::process;
 
+#[cfg(windows)]
+use self_replace;
 use sha2;
 use tempfile;
 use thiserror;
 
 use crate::engine::update;
+use crate::engine::version;
 
 /// The target triple this binary was compiled for (set by `build.rs`).
 const TARGET: &str = env!("FML_TARGET");
@@ -79,6 +83,14 @@ pub enum Error {
   /// The extracted archive holds no `fml` binary.
   #[error("the archive holds no {0}")]
   MissingBinary(String),
+  /// The extracted binary does not report the release's version.
+  #[error("the downloaded binary reports `{reported}`, not {expected}")]
+  VersionMismatch {
+    /// The release tag being installed.
+    expected: String,
+    /// What the binary's `--version` printed.
+    reported: String,
+  },
   /// Writing the staged files failed.
   #[error(transparent)]
   Io(#[from] io::Error),
@@ -206,6 +218,69 @@ fn find_binary(dir: &path::Path) -> Result<path::PathBuf, Error> {
     }
   }
   Err(Error::MissingBinary(name))
+}
+
+/// Replaces the executable at `exe` with `binary`, once `binary --version`
+/// reports `tag`'s version. `binary` must sit in `exe`'s directory (see
+/// [`stage`]) so the swap is a rename, never a partial copy.
+///
+/// # Errors
+///
+/// [`Error::Command`] when `binary` cannot run, [`Error::VersionMismatch`]
+/// when it reports another version, and [`Error::Io`] when the swap fails,
+/// in which case `exe` is left as it was.
+pub fn install(
+  exe: &path::Path,
+  binary: &path::Path,
+  tag: &str,
+) -> Result<(), Error> {
+  let stdout = run(process::Command::new(binary).arg("--version"))?;
+  let reported = String::from_utf8_lossy(&stdout).trim().to_string();
+  if !reports_version(&reported, tag) {
+    return Err(Error::VersionMismatch {
+      expected: tag.to_string(),
+      reported,
+    });
+  }
+  swap(exe, binary)?;
+  Ok(())
+}
+
+/// Renames `binary` over `exe`, which atomically replaces the file even while
+/// it runs.
+#[cfg(not(windows))]
+fn swap(exe: &path::Path, binary: &path::Path) -> io::Result<()> {
+  fs::rename(binary, exe)
+}
+
+/// Moves the running `exe` aside (Windows allows renaming a running image,
+/// not overwriting it), renames `binary` into its place, and has the old
+/// image deleted once this process exits. A failed rename moves the old
+/// binary back.
+#[cfg(windows)]
+fn swap(exe: &path::Path, binary: &path::Path) -> io::Result<()> {
+  // Per-process name: an older `fml` (an editor's `fml lsp`) may still be
+  // running from the previous update's leftover.
+  let mut old = exe.as_os_str().to_os_string();
+  old.push(format!(".{}.old", process::id()));
+  let old = path::PathBuf::from(old);
+  fs::rename(exe, &old)?;
+  if let Err(err) = fs::rename(binary, exe) {
+    fs::rename(&old, exe)?;
+    return Err(err);
+  }
+  self_replace::self_delete_at(&old)
+}
+
+/// Whether a `--version` banner names the same version as `tag`.
+fn reports_version(banner: &str, tag: &str) -> bool {
+  match (
+    version::Version::parse(banner),
+    version::Version::parse(tag),
+  ) {
+    (Some(reported), Some(expected)) => reported == expected,
+    _ => false,
+  }
 }
 
 /// Lowercase hex digits, indexed by nibble.
@@ -365,6 +440,24 @@ mod tests {
     let archive = dir.path().join(asset_name());
     fs::write(&archive, "not an archive").unwrap();
     assert!(matches!(extract(&archive), Err(Error::Command { .. })));
+  }
+
+  #[test]
+  fn reports_version_matches_the_tag_and_nothing_else() {
+    assert!(reports_version("formality 0.3.0", "v0.3.0"));
+    assert!(!reports_version("formality 0.2.1", "v0.3.0"));
+    assert!(!reports_version("formality 0.3.0-rc.1", "v0.3.0"));
+    assert!(!reports_version("", "v0.3.0"));
+  }
+
+  #[test]
+  fn swap_failure_leaves_the_old_binary_in_place() {
+    let dir = tempfile::tempdir().unwrap();
+    let exe = dir.path().join(format!("fml{}", env::consts::EXE_SUFFIX));
+    fs::write(&exe, "old").unwrap();
+    assert!(swap(&exe, &dir.path().join("missing")).is_err());
+    assert_eq!(fs::read_to_string(&exe).unwrap(), "old");
+    assert_eq!(fs::read_dir(dir.path()).unwrap().count(), 1);
   }
 
   #[test]
