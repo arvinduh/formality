@@ -143,7 +143,7 @@ jobs:
           curl -fsSL -o "$dir/$asset" \
             "https://github.com/arvinduh/formality/releases/latest/download/$asset"
           (cd "$dir/release" && "$tar" -xf "../$asset")
-          sha() { if command -v sha256sum >/dev/null; then sha256sum "$1"; else shasum -a 256 "$1"; fi | cut -d' ' -f1; }
+          sha() { if command -v sha256sum >/dev/null; then sha256sum "$1"; else shasum -a 256 "$1"; fi | cut -d' ' -f1 | tr -d '\\'; }
           want=$(sha "$(find "$dir/release" -name "$exe" -type f)")
           got=$(sha "$dir/bin/$exe")
           echo "installed $got, published $want"
