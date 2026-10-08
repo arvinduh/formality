@@ -239,9 +239,13 @@ mod tests {
     let mode = |bits| std::fs::Permissions::from_mode(bits);
     std::fs::set_permissions(dir.path(), mode(0o555)).unwrap();
     let checked = check_replaceable(&dir.path().join("fml"));
-    std::fs::set_permissions(dir.path(), mode(0o755)).unwrap();
     // Root writes through any mode bits, so the check cannot fire there.
-    let Err(err) = checked else { return };
+    let writable = std::fs::File::create(dir.path().join("probe")).is_ok();
+    std::fs::set_permissions(dir.path(), mode(0o755)).unwrap();
+    if writable {
+      return;
+    }
+    let err = checked.unwrap_err();
     assert!(
       matches!(&err, Error::Unwritable { dir: named, .. } if named == dir.path()),
       "{err}"
