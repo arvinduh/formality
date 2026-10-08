@@ -40,6 +40,10 @@ env_logger = { version = "0.11.11", default-features = false, features = [
 
 [target.'cfg(windows)'.dependencies]
 self-replace = "1.5.0"
+windows-sys = { version = "0.61.2", features = [
+  "Win32_System_SystemInformation",
+  "Win32_System_Threading",
+] }
 
 [dev-dependencies]
 futures = { version = "0.3", default-features = false }

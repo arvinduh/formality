@@ -3,8 +3,8 @@
 //! Owns `fml update`'s steps: resolving the latest release, staging beside
 //! the running binary, downloading this build's cargo-dist archive verified
 //! by its published checksum, unpacking it, and swapping it in once it
-//! reports the expected version. The background release check and its cache live in the parent
-//! `update` module; the CLI decides what the user sees.
+//! reports the expected version. The background release check and its cache
+//! live in the parent `update` module; the CLI decides what the user sees.
 
 use std::env;
 use std::fs;
@@ -126,6 +126,46 @@ pub fn newer_release(current: &str) -> Result<Option<String>, Error> {
   let tag = update::parse_latest_tag_from_json(&String::from_utf8_lossy(&body))
     .ok_or(Error::NoTag)?;
   Ok(update::is_newer_version(&tag, current).then_some(tag))
+}
+
+/// Whether this build runs under x64 emulation on ARM64 Windows. cargo-dist
+/// publishes no ARM64 Windows build, so there, as in `fml-installer.ps1`
+/// (issue #166), the x64 build is the one installed.
+#[cfg(windows)]
+#[must_use]
+pub fn runs_under_emulation() -> bool {
+  let mut process = 0;
+  let mut native = 0;
+  // SAFETY: `GetCurrentProcess` returns a pseudo-handle that is always
+  // valid, and both out-pointers reference live locals of the expected type.
+  let ok = unsafe {
+    windows_sys::Win32::System::Threading::IsWow64Process2(
+      windows_sys::Win32::System::Threading::GetCurrentProcess(),
+      &raw mut process,
+      &raw mut native,
+    )
+  };
+  ok != 0
+    && native
+      == windows_sys::Win32::System::SystemInformation::IMAGE_FILE_MACHINE_ARM64
+}
+
+/// Whether this build runs under emulation; only ARM64 Windows hosts one.
+#[cfg(not(windows))]
+#[must_use]
+pub fn runs_under_emulation() -> bool {
+  false
+}
+
+/// The explanation `fml-installer.ps1` prints when it installs `asset`, the
+/// x64 build, on ARM64 Windows (issue #166), so `fml update` says the same.
+#[must_use]
+pub fn emulation_note(asset: &str) -> String {
+  format!(
+    "note: fml has no native ARM64 Windows build, so this installs the x64 \
+     build ({asset}), which runs under Windows' built-in x64 emulation. This \
+     is deliberate, not a detection error."
+  )
 }
 
 /// Creates the staging directory beside `exe`, on the same filesystem, which
