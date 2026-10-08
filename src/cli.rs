@@ -12,6 +12,7 @@ mod pass;
 mod schema;
 mod sync;
 mod ui;
+mod update;
 
 use std::env;
 use std::path;
@@ -23,7 +24,6 @@ use log;
 
 use fml::config;
 use fml::engine::runner;
-use fml::engine::update;
 use fml::surfaces;
 
 /// Cargo-style help colors; clap drops them for non-terminals and `NO_COLOR`.
@@ -81,6 +81,8 @@ enum Command {
   Schema(schema::Args),
   /// Serve formatting and diagnostics over LSP (stdio)
   Lsp,
+  /// Replace this fml with the latest release
+  Update,
 }
 
 /// What every config-reading command runs against.
@@ -110,8 +112,12 @@ impl Cli {
 
   /// Runs the parsed command, then prints the update notice if one is due.
   pub fn run(self) -> runner::ExitStatus {
+    // Needs no project, and is itself the answer to the update notice.
+    if matches!(self.command, Command::Update) {
+      return update::run();
+    }
     let root = absolute_root(self.root);
-    let update = update::spawn_update_check();
+    let notifier = fml::engine::update::spawn_update_check();
     let status = match self.command {
       Command::Lsp => lsp::run(&root),
       command => match load_config(&root, self.config) {
@@ -122,8 +128,13 @@ impl Cli {
         }
       },
     };
-    if let Some(tag) = update.and_then(update::UpdateNotifier::latest_tag) {
-      ui::update_available(&tag, update::update_command(cfg!(windows)));
+    if let Some(tag) =
+      notifier.and_then(fml::engine::update::UpdateNotifier::latest_tag)
+    {
+      ui::update_available(
+        &tag,
+        fml::engine::update::update_command(cfg!(windows)),
+      );
     }
     status
   }
@@ -140,6 +151,7 @@ impl Command {
       Self::Init(args) => args.run(ctx),
       Self::Schema(args) => args.run(),
       Self::Lsp => lsp::run(&ctx.root),
+      Self::Update => update::run(),
     }
   }
 }
