@@ -22,6 +22,10 @@ use crate::engine::update;
 /// The cargo-dist app name: it names the binary and the installer assets.
 const APP: &str = "fml";
 
+/// A GitHub token sent with release requests, lifting the anonymous API rate
+/// limit. The release installers read the same variable.
+const TOKEN_VAR: &str = "FML_GITHUB_TOKEN";
+
 /// Test-only stand-in for this binary's own version, so a test can run
 /// `fml update` as if an older release were installed. Only debug builds
 /// read it; see [`current_version`].
@@ -146,6 +150,9 @@ impl Updater {
       io::Error::new(io::ErrorKind::InvalidData, "install path is not UTF-8")
     })?;
     let mut session = axoupdater::AxoUpdater::new_for(APP);
+    if let Ok(token) = env::var(TOKEN_VAR) {
+      session.set_github_token(&token);
+    }
     session
       .set_release_source(axoupdater::ReleaseSource {
         release_type: axoupdater::ReleaseSourceType::GitHub,

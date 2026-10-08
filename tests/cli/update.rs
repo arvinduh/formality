@@ -52,9 +52,14 @@ fn installer_failing() -> String {
 }
 
 /// Serves `tag` as the latest release, with `installer` as its installer
-/// asset, on a local port; returns the base URL. The server thread lives
-/// until the test process exits.
-fn serve_release(tag: &str, installer: String) -> String {
+/// asset, on a local port; returns the base URL. With a `token`, API requests
+/// that do not carry it get a 401. The server thread lives until the test
+/// process exits.
+fn serve_release(
+  tag: &str,
+  installer: String,
+  token: Option<&'static str>,
+) -> String {
   let listener = net::TcpListener::bind("127.0.0.1:0").unwrap();
   let base =
     format!("http://127.0.0.1:{}", listener.local_addr().unwrap().port());
@@ -73,7 +78,7 @@ fn serve_release(tag: &str, installer: String) -> String {
   thread::spawn(move || {
     for stream in listener.incoming() {
       let Ok(mut stream) = stream else { continue };
-      let _ = respond(&mut stream, &release, &installer);
+      let _ = respond(&mut stream, &release, &installer, token);
     }
   });
   base
@@ -84,6 +89,7 @@ fn respond(
   stream: &mut net::TcpStream,
   release: &str,
   installer: &str,
+  token: Option<&str>,
 ) -> io::Result<()> {
   let mut request = Vec::new();
   let mut buf = [0; 1024];
@@ -96,7 +102,13 @@ fn respond(
   }
   let request = String::from_utf8_lossy(&request);
   let path = request.split_whitespace().nth(1).unwrap_or("");
+  let authorized = token.is_none_or(|token| {
+    request
+      .to_ascii_lowercase()
+      .contains(&format!("authorization: bearer {token}"))
+  });
   let (status, body) = match path {
+    _ if path.starts_with("/api/") && !authorized => ("401 Unauthorized", ""),
     "/api/v3/repos/arvinduh/formality/releases/latest" => ("200 OK", release),
     "/installer" => ("200 OK", installer),
     _ => ("404 Not Found", ""),
@@ -133,14 +145,29 @@ impl Fixture {
   /// Runs `fml update` against `base`, as if version `current` were
   /// installed when given.
   fn update(&self, base: &str, current: Option<&str>) -> process::Output {
+    self.update_with_token(base, current, None)
+  }
+
+  /// Like [`Self::update`], with `FML_GITHUB_TOKEN` set to `token` when
+  /// given and unset otherwise.
+  fn update_with_token(
+    &self,
+    base: &str,
+    current: Option<&str>,
+    token: Option<&str>,
+  ) -> process::Output {
     let mut command = process::Command::new(self.bin());
     command
       .arg("update")
       .env("FML_INSTALLER_GHE_BASE_URL", base)
       .env_remove("FML_INSTALLER_GITHUB_BASE_URL")
+      .env_remove("FML_GITHUB_TOKEN")
       .env("NO_COLOR", "1");
     if let Some(current) = current {
       command.env("FML_TEST_CURRENT_VERSION", current);
+    }
+    if let Some(token) = token {
+      command.env("FML_GITHUB_TOKEN", token);
     }
     // Another test thread forking while this one held the fresh copy open
     // for writing leaves it briefly "text file busy" on Linux; retry that.
@@ -188,7 +215,7 @@ fn printed(output: &process::Output) -> String {
 
 #[test]
 fn update_runs_the_installer_into_the_binarys_own_directory() {
-  let base = serve_release(&this_tag(), installer_ok());
+  let base = serve_release(&this_tag(), installer_ok(), None);
   let fixture = Fixture::new(&exe());
   let output = fixture.update(&base, Some(OLD));
   let printed = printed(&output);
@@ -204,7 +231,7 @@ fn update_runs_the_installer_into_the_binarys_own_directory() {
 
 #[test]
 fn installer_failure_leaves_the_binary_untouched() {
-  let base = serve_release(&this_tag(), installer_failing());
+  let base = serve_release(&this_tag(), installer_failing(), None);
   let fixture = Fixture::new(&exe());
   let output = fixture.update(&base, Some(OLD));
   let printed = printed(&output);
@@ -215,7 +242,7 @@ fn installer_failure_leaves_the_binary_untouched() {
 
 #[test]
 fn already_latest_exits_zero_and_changes_nothing() {
-  let base = serve_release(&this_tag(), installer_ok());
+  let base = serve_release(&this_tag(), installer_ok(), None);
   let fixture = Fixture::new(&exe());
   let output = fixture.update(&base, None);
   let printed = printed(&output);
@@ -226,11 +253,23 @@ fn already_latest_exits_zero_and_changes_nothing() {
 
 #[test]
 fn renamed_binary_is_refused_before_the_installer_runs() {
-  let base = serve_release(&this_tag(), installer_ok());
+  let base = serve_release(&this_tag(), installer_ok(), None);
   let fixture = Fixture::new(&format!("fml-dev{}", env::consts::EXE_SUFFIX));
   let output = fixture.update(&base, Some(OLD));
   let printed = printed(&output);
   assert_eq!(output.status.code(), Some(2), "{printed}");
   assert!(printed.contains("is not named fml"), "{printed}");
   fixture.assert_untouched();
+}
+
+#[test]
+fn fml_github_token_authenticates_the_release_lookup() {
+  let base = serve_release(&this_tag(), installer_ok(), Some("t0ken"));
+  let fixture = Fixture::new(&exe());
+  let anonymous = fixture.update(&base, Some(OLD));
+  assert_eq!(anonymous.status.code(), Some(2), "{}", printed(&anonymous));
+  fixture.assert_untouched();
+  let output = fixture.update_with_token(&base, Some(OLD), Some("t0ken"));
+  assert_eq!(output.status.code(), Some(0), "{}", printed(&output));
+  assert_eq!(fs::read_to_string(fixture.bin()).unwrap(), NEW_BINARY);
 }

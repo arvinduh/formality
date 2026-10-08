@@ -113,6 +113,9 @@ the installer writes; a renamed copy is refused. Updating a binary in a
 directory you cannot write, such as a system location, fails with a message
 naming that directory; rerun it with permission to write there.
 
+Set `FML_GITHUB_TOKEN` to a GitHub token to lift GitHub's anonymous API rate
+limit, for example on shared CI runners; the installer reads it too.
+
 ---
 
 ## Quickstart
