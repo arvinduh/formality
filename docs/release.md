@@ -158,7 +158,7 @@ no such file exists today, so the notes use GitHub's default grouping.
 
 The release workflow (`.github/workflows/release.yml`) is generated from
 `[workspace.metadata.dist]` in `Cargo.toml` by `dist generate --mode=ci`. It
-carries four hand-applied local edits, each marked with a
+carries six hand-applied local edits, each marked with a
 `# LOCAL EDIT (issue #N)` comment that explains it:
 
 1. **Tag glob constrained to a leading `v`** (`- 'v[0-9]+.[0-9]+.[0-9]+*'`,
@@ -173,10 +173,17 @@ carries four hand-applied local edits, each marked with a
 4. **ARM64 note in the PowerShell installer** (issue #166): a step in the
    `build-global-artifacts` job, after `cargo-dist` and before
    `Upload artifacts`, that patches a note into `fml-installer.ps1` saying ARM64
-   Windows gets the x64 build on purpose. `fml update` prints the same note
-   (`engine::update::install::emulation_note`); a test in
-   `tests/repo/release_workflow.rs` fails if the two drift, so change both
-   together.
+   Windows gets the x64 build on purpose.
+5. **Archive checksum check in the PowerShell installer** (issue #321): a step
+   in `build-global-artifacts`, after `cargo-dist` and before
+   `Upload artifacts`, that patches `fml-installer.ps1` to download the
+   archive's `.sha256`, compare it with `Get-FileHash`, and fail before
+   installing on a mismatch or a missing checksum. cargo-dist's PowerShell
+   installer verifies nothing, and `fml update` runs that installer.
+6. **No silent checksum skip in the shell installer** (issue #321): a step in
+   the same place that makes `fml-installer.sh` fall back to `shasum -a 256`
+   when `sha256sum` is missing and fail when neither exists, instead of skipping
+   the check.
 
 ### `allow-dirty` makes regeneration a no-op
 
@@ -193,10 +200,10 @@ When `[workspace.metadata.dist]` or `cargo-dist-version` changes:
 2. Comment out `allow-dirty = ["ci"]` in `Cargo.toml`, then run
    `dist generate --mode=ci`. This writes the pristine template, without any
    local edit.
-3. Diff the pristine output against the saved copy. Every hunk outside the four
+3. Diff the pristine output against the saved copy. Every hunk outside the six
    `# LOCAL EDIT` sites is a real template change; Dependabot's `actions/*`
    version bumps also show up here and are kept.
-4. Re-apply all four local edits in their places, restore `allow-dirty`, and run
+4. Re-apply all six local edits in their places, restore `allow-dirty`, and run
    the guard test:
 
    ```sh
@@ -230,5 +237,5 @@ a local edit fails PR checks rather than surfacing at release time.
 If a future cargo-dist version makes an edit unnecessary, delete the edit and
 its `# LOCAL EDIT` comment from `release.yml`, drop its corresponding entry from
 `EDITS` in `tests/repo/release_workflow.rs`, and remove it from the list of
-local edits at the top of this section, lowering each "four" that counts them,
+local edits at the top of this section, lowering each "six" that counts them,
 all in one commit.
