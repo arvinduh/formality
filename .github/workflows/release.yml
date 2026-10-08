@@ -242,6 +242,77 @@ jobs:
             "$note" "$installer" > "$installer.new"
           mv "$installer.new" "$installer"
           grep -qF "runs under Windows' built-in x64 emulation" "$installer"
+      # LOCAL EDIT (issue #321) - kept deliberately. dist's generated
+      # fml-installer.ps1 downloads the release archive and unpacks it
+      # without checking any checksum, and `fml update` runs this installer.
+      # This step inserts, right after the download, a fetch of the
+      # archive's published `.sha256` and a Get-FileHash comparison that
+      # throws on a mismatch or a missing digest, before anything is
+      # unpacked or installed. The anchor check fails the release if a dist
+      # upgrade moves the download line. After a dist bump: follow
+      # "Regeneration procedure" in docs/release.md and re-add this step;
+      # tests/repo/release_workflow.rs fails until you do.
+      - name: Verify the archive checksum in the PowerShell installer
+        shell: bash
+        run: |
+          installer=target/distrib/fml-installer.ps1
+          anchor='  Invoke-DownloadFile -client $wc -url $url -path $dir_path'
+          if [ "$(grep -cxF -- "$anchor" "$installer")" != 1 ]; then
+            echo "::error::download line not found exactly once in $installer; re-apply the issue #321 checksum edit against the new dist template"
+            exit 1
+          fi
+          check="$RUNNER_TEMP/checksum.ps1"
+          cat > "$check" <<'PS1'
+            Invoke-DownloadFile -client $wc -url "$url.sha256" -path "$dir_path.sha256"
+            $expected = ((Get-Content -Raw -LiteralPath "$dir_path.sha256").Trim() -split '\s+')[0]
+            $actual = (Get-FileHash -Algorithm SHA256 -LiteralPath $dir_path).Hash
+            if ($expected -notmatch '^[0-9a-fA-F]{64}$' -or $actual -ne $expected) {
+              throw "ERROR: $artifact_name failed checksum verification: its sha256 is $actual, but $artifact_name.sha256 says '$expected'"
+            }
+            Write-Information "verified $artifact_name (sha256 $actual)"
+          PS1
+          awk -v anchor="$anchor" \
+            'NR == FNR { check = check $0 "\n"; next } { print } $0 == anchor { printf "%s", check }' \
+            "$check" "$installer" > "$installer.new"
+          mv "$installer.new" "$installer"
+          grep -qF 'Get-FileHash -Algorithm SHA256' "$installer"
+      # LOCAL EDIT (issue #321) - kept deliberately. dist's generated
+      # fml-installer.sh verifies the archive's sha256 only when
+      # `sha256sum` exists and otherwise prints "skipping sha256 checksum
+      # verification" and installs anyway. This step makes it fall back to
+      # `shasum -a 256` and fail when neither exists, so `fml update` and
+      # the installer never install an unverified archive. The block check
+      # fails the release if a dist upgrade changes the replaced lines.
+      # After a dist bump: follow "Regeneration procedure" in
+      # docs/release.md and re-add this step; tests/repo/release_workflow.rs
+      # fails until you do.
+      - name: Require a checksum tool in the shell installer
+        shell: bash
+        run: |
+          installer=target/distrib/fml-installer.sh
+          python3 - "$installer" <<'PY'
+          import sys
+          path = sys.argv[1]
+          text = open(path).read()
+          old = """            if ! check_cmd sha256sum; then
+                          say "skipping sha256 checksum verification (it requires the 'sha256sum' command)"
+                          return 0
+                      fi
+                      _calculated_checksum="$(sha256sum -b "$_file" | awk '{printf $1}')"
+          """
+          new = """            if check_cmd sha256sum; then
+                          _calculated_checksum="$(sha256sum -b "$_file" | awk '{printf $1}')"
+                      elif check_cmd shasum; then
+                          _calculated_checksum="$(shasum -a 256 -b "$_file" | awk '{printf $1}')"
+                      else
+                          err "cannot verify the download's sha256 checksum: install sha256sum or shasum"
+                      fi
+          """
+          if text.count(old) != 1:
+              sys.exit(f"::error::sha256 block not found exactly once in {path}; re-apply the issue #321 checksum edit against the new dist template")
+          open(path, "w").write(text.replace(old, new))
+          PY
+          grep -qF 'install sha256sum or shasum' "$installer"
       - name: "Upload artifacts"
         uses: actions/upload-artifact@v7
         with:

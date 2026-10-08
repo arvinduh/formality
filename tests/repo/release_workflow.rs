@@ -127,6 +127,38 @@ const EDITS: &[LocalEdit] = &[
       before: Some("Upload artifacts"),
     },
   },
+  LocalEdit {
+    name: "archive sha256 check patched into fml-installer.ps1",
+    required: &[
+      "installer=target/distrib/fml-installer.ps1",
+      "Get-FileHash -Algorithm SHA256",
+    ],
+    forbidden: &[],
+    consequence: "dist's PowerShell installer unpacks and installs the release archive \
+       without checking its checksum, so the Windows installer and `fml update` \
+       would install a corrupted or tampered download (issue #321).",
+    site: Site::Step {
+      job: "build-global-artifacts",
+      after: Some("cargo-dist"),
+      before: Some("Upload artifacts"),
+    },
+  },
+  LocalEdit {
+    name: "shasum fallback, else failure, in fml-installer.sh's sha256 check",
+    required: &[
+      "installer=target/distrib/fml-installer.sh",
+      "install sha256sum or shasum",
+    ],
+    forbidden: &[],
+    consequence: "dist's shell installer skips checksum verification and installs anyway \
+       wherever `sha256sum` is missing, so `fml update` and the installer would \
+       install an unverified archive there (issue #321).",
+    site: Site::Step {
+      job: "build-global-artifacts",
+      after: Some("cargo-dist"),
+      before: Some("Upload artifacts"),
+    },
+  },
 ];
 
 /// Returns the workflow's lines with whole-line YAML comments removed, so

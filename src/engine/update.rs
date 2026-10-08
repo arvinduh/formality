@@ -1,7 +1,11 @@
 //! Background self-update check for newer releases.
 //!
-//! Probes GitHub releases asynchronously for updates. Toolchain version
+//! Probes GitHub releases asynchronously for updates. Installing a release
+//! over the running binary is `install`'s. Toolchain version
 //! compatibility checks for installed linters/formatters are owned by `super::version`.
+
+/// Downloading, verifying and installing a release over the running binary.
+pub mod install;
 
 use std::path;
 use std::time;
@@ -237,30 +241,6 @@ impl UpdateNotifier {
   }
 }
 
-/// The OS-appropriate one-liner that re-runs the official installer in place.
-///
-/// Points at the canonical cargo-dist installer **release assets**
-/// (`releases/latest/download/fml-installer.{sh,ps1}`): the dist installer
-/// resolves OS/arch, fetches the matching prebuilt archive from the latest
-/// release, and drops the binary on `PATH` with no Rust toolchain involved.
-/// The shell installer (Linux & macOS) also verifies the download's checksum;
-/// the `PowerShell` installer (Windows) does not. Re-running it is a working
-/// in-place upgrade.
-///
-/// Selected at **compile time** by the caller via `cfg!(windows)`: the binary
-/// is built per target, so the host OS is already known and can't be wrong at
-/// runtime. Taking `is_windows` as a parameter (rather than reading `cfg!`
-/// here) keeps the function pure so tests can assert both exact strings
-/// regardless of the host they run on.
-#[must_use]
-pub fn update_command(is_windows: bool) -> &'static str {
-  if is_windows {
-    "powershell -c \"irm https://github.com/arvinduh/formality/releases/latest/download/fml-installer.ps1 | iex\""
-  } else {
-    "curl --proto '=https' --tlsv1.2 -LsSf https://github.com/arvinduh/formality/releases/latest/download/fml-installer.sh | sh"
-  }
-}
-
 #[cfg(test)]
 mod tests {
   use super::*;
@@ -485,53 +465,6 @@ mod tests {
       "a failure older than the short backoff window must expire well \
        before the 24h success TTL would"
     );
-  }
-
-  #[test]
-  fn update_command_non_windows_is_the_shell_installer_one_liner() {
-    // Exact-string assertion on purpose: a future edit that reintroduces a
-    // broken command (e.g. the old `cargo install --git` that errors on this
-    // multi-binary repo, or a mistyped URL) must fail here loudly. This is
-    // the canonical cargo-dist installer release asset (issue #134).
-    assert_eq!(
-      update_command(false),
-      "curl --proto '=https' --tlsv1.2 -LsSf https://github.com/arvinduh/formality/releases/latest/download/fml-installer.sh | sh"
-    );
-  }
-
-  #[test]
-  fn update_command_windows_is_the_powershell_installer_one_liner() {
-    assert_eq!(
-      update_command(true),
-      "powershell -c \"irm https://github.com/arvinduh/formality/releases/latest/download/fml-installer.ps1 | iex\""
-    );
-  }
-
-  #[test]
-  fn update_command_points_at_the_dist_installer_release_asset() {
-    // The notice must point at the cargo-dist installer assets attached to
-    // the latest release, never a versioned URL that would pin the upgrade
-    // to a stale release.
-    for cmd in [update_command(true), update_command(false)] {
-      assert!(
-        cmd.contains(
-          "github.com/arvinduh/formality/releases/latest/download/fml-installer."
-        ),
-        "update command must fetch the latest dist installer asset: {cmd}"
-      );
-    }
-  }
-
-  #[test]
-  fn update_command_recommends_no_cargo_toolchain_path() {
-    // Neither variant may fall back to `cargo`/`rustc`: the dist installer
-    // assets the notice points at never need a Rust toolchain.
-    for cmd in [update_command(true), update_command(false)] {
-      assert!(
-        !cmd.contains("cargo") && !cmd.contains("rustc"),
-        "update command must not require a Rust toolchain: {cmd}"
-      );
-    }
   }
 
   #[test]

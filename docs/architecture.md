@@ -67,7 +67,9 @@ _what_ each surface does, and `src/cli` turns engine results into output.
   `ExecutionContext` `Arc`-sharing and the three-stage fix pipeline.
 - `engine/target.rs`: git path resolution, candidate path resolution, scope
   resolution, and surface filtering.
-- `engine/update.rs`: the background self-update check against GitHub Releases.
+- `engine/update.rs` (+ `update/install.rs`): the background release check
+  against GitHub Releases, and `fml update`'s pre-checks and its `axoupdater`
+  run of the release installer into the binary's own directory.
 - `engine/version/`: resolves tool versions and enforces minimum tool versions.
 
 ## `src/surfaces`

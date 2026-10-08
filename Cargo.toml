@@ -9,6 +9,9 @@ readme = "README.md"
 repository = "https://github.com/arvinduh/formality"
 
 [dependencies]
+axoupdater = { version = "0.10.2", default-features = false, features = [
+  "github_releases",
+] }
 clap = { version = "4.6.6", features = [
   "derive",
   "color",
