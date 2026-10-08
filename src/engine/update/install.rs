@@ -1,8 +1,8 @@
 //! Installing a published release over the running `fml` binary.
 //!
 //! Owns `fml update`'s steps: resolving the latest release, staging beside
-//! the running binary, and downloading this build's cargo-dist archive
-//! verified by its published checksum. The background release check and its cache live in the parent
+//! the running binary, downloading this build's cargo-dist archive verified
+//! by its published checksum, and unpacking it. The background release check and its cache live in the parent
 //! `update` module; the CLI decides what the user sees.
 
 use std::env;
@@ -76,6 +76,9 @@ pub enum Error {
     /// Why creating a file there failed.
     source: io::Error,
   },
+  /// The extracted archive holds no `fml` binary.
+  #[error("the archive holds no {0}")]
+  MissingBinary(String),
   /// Writing the staged files failed.
   #[error(transparent)]
   Io(#[from] io::Error),
@@ -154,6 +157,55 @@ pub fn download(
   let archive = dir.join(&asset);
   fs::write(&archive, &bytes)?;
   Ok((archive, bytes.len()))
+}
+
+/// Unpacks `archive` with the system `tar` into a new directory beside it and
+/// returns the `fml` binary inside.
+///
+/// # Errors
+///
+/// [`Error::Command`] when `tar` is missing or rejects the archive;
+/// [`Error::MissingBinary`] when it holds no `fml` binary.
+pub fn extract(archive: &path::Path) -> Result<path::PathBuf, Error> {
+  let dir = archive.with_extension("unpacked");
+  fs::create_dir(&dir)?;
+  run(
+    process::Command::new(tar_program())
+      .arg("-xf")
+      .arg(archive)
+      .arg("-C")
+      .arg(&dir),
+  )?;
+  find_binary(&dir)
+}
+
+/// The `tar` that can read this target's archive. On Windows that is the
+/// bsdtar in `System32`, which reads `.zip`; a GNU tar earlier on `PATH`
+/// (Git for Windows ships one) cannot.
+fn tar_program() -> path::PathBuf {
+  match env::var_os("SystemRoot") {
+    Some(root) if cfg!(windows) => {
+      path::Path::new(&root).join("System32").join("tar.exe")
+    }
+    _ => path::PathBuf::from("tar"),
+  }
+}
+
+/// Finds the `fml` binary in `dir`: at its root (cargo-dist's `.zip`) or one
+/// directory down (its `.tar.xz`).
+fn find_binary(dir: &path::Path) -> Result<path::PathBuf, Error> {
+  let name = format!("fml{}", env::consts::EXE_SUFFIX);
+  let top = dir.join(&name);
+  if top.is_file() {
+    return Ok(top);
+  }
+  for entry in fs::read_dir(dir)? {
+    let candidate = entry?.path().join(&name);
+    if candidate.is_file() {
+      return Ok(candidate);
+    }
+  }
+  Err(Error::MissingBinary(name))
 }
 
 /// Lowercase hex digits, indexed by nibble.
@@ -284,6 +336,35 @@ mod tests {
       "{err}"
     );
     assert!(err.to_string().contains(&dir.path().display().to_string()));
+  }
+
+  #[test]
+  fn find_binary_reads_both_cargo_dist_layouts() {
+    let name = format!("fml{}", env::consts::EXE_SUFFIX);
+    let zip = tempfile::tempdir().unwrap();
+    fs::write(zip.path().join(&name), "").unwrap();
+    assert_eq!(find_binary(zip.path()).unwrap(), zip.path().join(&name));
+
+    let tar = tempfile::tempdir().unwrap();
+    let nested = tar.path().join("fml-x86_64-unknown-linux-gnu");
+    fs::create_dir(&nested).unwrap();
+    fs::write(nested.join("README.md"), "").unwrap();
+    fs::write(nested.join(&name), "").unwrap();
+    assert_eq!(find_binary(tar.path()).unwrap(), nested.join(&name));
+
+    let empty = tempfile::tempdir().unwrap();
+    assert!(matches!(
+      find_binary(empty.path()),
+      Err(Error::MissingBinary(_))
+    ));
+  }
+
+  #[test]
+  fn extract_rejects_an_archive_tar_cannot_read() {
+    let dir = tempfile::tempdir().unwrap();
+    let archive = dir.path().join(asset_name());
+    fs::write(&archive, "not an archive").unwrap();
+    assert!(matches!(extract(&archive), Err(Error::Command { .. })));
   }
 
   #[test]
