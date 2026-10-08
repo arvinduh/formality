@@ -2,6 +2,9 @@
 //!
 //! Implements `super::LanguageSurface` for Markdown, syncing `.markdownlint.json`
 //! and `.prettierrc.json`. Fleet registration is owned by `super::registry`.
+//! The child `html` module formats block-level HTML embedded in markdown.
+
+mod html;
 
 use crate::config;
 use crate::config::facets;
