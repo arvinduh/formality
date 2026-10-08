@@ -131,10 +131,7 @@ impl Cli {
     if let Some(tag) =
       notifier.and_then(fml::engine::update::UpdateNotifier::latest_tag)
     {
-      ui::update_available(
-        &tag,
-        fml::engine::update::update_command(cfg!(windows)),
-      );
+      ui::update_available(&tag);
     }
     status
   }

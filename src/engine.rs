@@ -14,7 +14,7 @@ pub mod lsp;
 pub mod runner;
 /// Target resolution for paths, scopes, and language surfaces.
 pub mod target;
-/// Asynchronous self-update checker and release notice renderer.
+/// The background release check and `fml update`'s install steps.
 pub mod update;
 /// Tool version probing, semver parsing, and compatibility policy evaluation.
 pub mod version;

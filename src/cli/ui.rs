@@ -174,13 +174,27 @@ pub fn install(binary: &str, outcome: &doctor::Install) {
   }
 }
 
-/// Prints the self-update notice to stderr.
-pub fn update_available(tag: &str, command: &str) {
-  eprintln!(
-    "\n{} formality {} is available (current v{})\n  update: {}",
-    "[UPDATE]".cyan().bold(),
-    tag.green().bold(),
-    env!("CARGO_PKG_VERSION"),
-    command.cyan()
-  );
+/// Prints the new-release notice to stderr.
+pub fn update_available(tag: &str) {
+  eprintln!("\n{}", update_notice(tag, env!("CARGO_PKG_VERSION")));
+}
+
+/// The new-release notice: one instruction, `fml update`, on every platform.
+fn update_notice(tag: &str, current: &str) -> String {
+  format!(
+    "⚡ A new version of formality is available: {tag} (current: v{current})\n   Update via: fml update"
+  )
+}
+
+#[cfg(test)]
+mod tests {
+  use super::*;
+
+  #[test]
+  fn update_notice_points_at_fml_update() {
+    assert_eq!(
+      update_notice("v0.3.0", "0.2.1"),
+      "⚡ A new version of formality is available: v0.3.0 (current: v0.2.1)\n   Update via: fml update"
+    );
+  }
 }
