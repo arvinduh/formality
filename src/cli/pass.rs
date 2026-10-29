@@ -113,7 +113,9 @@ impl Selection {
       Ok(None) => {
         let under = if scoped { " under the given paths" } else { "" };
         let which = changes.map(|c| c.to_string()).unwrap_or_default();
-        println!("No {which} files{under}.");
+        if !ctx.quiet {
+          println!("No {which} files{under}.");
+        }
         return runner::ExitStatus::Clean;
       }
       Err(err) => {
@@ -126,7 +128,12 @@ impl Selection {
       (formats && tool.is_required_for_fmt)
         || (lints && tool.is_required_for_lint)
     };
-    for check in doctor::check(&target.surfaces, &ctx.config, needed) {
+    let checks = if ctx.quiet {
+      Vec::new()
+    } else {
+      doctor::check(&target.surfaces, &ctx.config, needed)
+    };
+    for check in checks {
       if let version::ToolStatus::Stale { current, pinned } = check.status {
         ui::warn(&format!(
           "{} is v{current}, pinned v{pinned}; run 'fml doctor --install'",
@@ -143,7 +150,11 @@ impl Selection {
       plan,
       &ctx.config,
     );
-    ui::results(&results, start.elapsed());
+    if ctx.quiet {
+      ui::problems(&results);
+    } else {
+      ui::results(&results, start.elapsed());
+    }
     runner::compute_exit_status(&results, plan.allow_missing)
   }
 }

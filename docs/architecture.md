@@ -101,9 +101,9 @@ wraps and [new-surface-guide.md](new-surface-guide.md) for how to add a 13th.
 The binary's thin orchestration layer: each command composes library calls and
 prints their results.
 
-- `cli.rs`: the parser (`Cli` with its global `--root`, `--config` and `-v`
-  flags, and the `Command` enum), cargo-style help colors, config loading, and
-  the update notice.
+- `cli.rs`: the parser (`Cli` with its global `--root`, `--config`, `-v` and
+  `-q` flags, and the `Command` enum), cargo-style help colors, config loading,
+  and the update notice.
 - `cli/pass.rs`: `fmt`, `lint` and `fix`, which share their file selection and
   pipeline and differ only in the `runner::Plan`.
   `cli/{sync,doctor,init, schema}.rs` hold one command each, as

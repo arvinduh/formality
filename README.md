@@ -179,6 +179,9 @@ fml fix
 
 # In CI: would `fml fix` change anything? Writes nothing, exits 1 if so
 fml fix --check
+
+# In hooks: print nothing when clean, only the problems otherwise
+fml lint --quiet --changed
 ```
 
 ### The command surface

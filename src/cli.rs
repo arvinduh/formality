@@ -58,6 +58,10 @@ pub struct Cli {
   #[arg(short = 'v', long, global = true, action = clap::ArgAction::Count)]
   verbose: u8,
 
+  /// Print nothing on success, and only the problems on failure
+  #[arg(short = 'q', long, global = true, conflicts_with = "verbose")]
+  quiet: bool,
+
   #[command(subcommand)]
   command: Command,
 }
@@ -91,6 +95,8 @@ struct Context {
   root: path::PathBuf,
   /// The layered config, with any `--config` file merged over it.
   config: config::FormalityConfig,
+  /// Whether `--quiet` asked for problems only.
+  quiet: bool,
 }
 
 impl Cli {
@@ -117,11 +123,19 @@ impl Cli {
       return update::run();
     }
     let root = absolute_root(self.root);
-    let notifier = fml::engine::update::spawn_update_check();
+    let notifier = if self.quiet {
+      None
+    } else {
+      fml::engine::update::spawn_update_check()
+    };
     let status = match self.command {
       Command::Lsp => lsp::run(&root),
       command => match load_config(&root, self.config) {
-        Ok(config) => command.run(&Context { root, config }),
+        Ok(config) => command.run(&Context {
+          root,
+          config,
+          quiet: self.quiet,
+        }),
         Err(err) => {
           ui::error(&err);
           runner::ExitStatus::Error
