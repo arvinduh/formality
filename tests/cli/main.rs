@@ -6,4 +6,5 @@
 mod common;
 mod exit_codes;
 mod lsp;
+mod quiet;
 mod update;
