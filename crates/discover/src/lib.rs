@@ -6,6 +6,7 @@
 
 #![deny(clippy::print_stdout, clippy::print_stderr)]
 
+use std::collections;
 use std::path;
 
 use ignore;
@@ -26,11 +27,52 @@ pub const DEFAULT_IGNORES: &[&str] = &[
   "build",
 ];
 
+/// Finds every file under `paths` and groups it by lowercase extension.
+///
+/// `paths` are resolved against `root`; when `paths` is empty, `root` itself
+/// is walked. A file matching a pattern in `ignores` is skipped and a matching
+/// directory is not entered, but a path named in `paths` is always walked.
+/// Files with no extension, or a non-UTF-8 one, are left out. Each list is
+/// sorted and free of duplicates, so overlapping `paths` are harmless.
+///
+/// # Errors
+///
+/// Returns an error when a pattern is not valid gitignore syntax, or when a
+/// path cannot be read, including a named path that does not exist.
+pub fn discover(
+  root: &path::Path,
+  paths: &[path::PathBuf],
+  ignores: &[&str],
+) -> Result<collections::HashMap<String, Vec<path::PathBuf>>, ignore::Error> {
+  let mut files = collections::HashMap::<String, Vec<path::PathBuf>>::new();
+  for entry in walk(root, paths, ignores)? {
+    let entry = entry?;
+    if !entry.file_type().is_some_and(|kind| kind.is_file()) {
+      continue;
+    }
+    let path = entry.into_path();
+    let Some(ext) = path.extension().and_then(|ext| ext.to_str()) else {
+      continue;
+    };
+    // Reuse the key when it exists, so most files allocate no new `String`.
+    if let Some(list) = files.get_mut(ext) {
+      list.push(path);
+    } else {
+      let key = ext.to_ascii_lowercase();
+      files.entry(key).or_default().push(path);
+    }
+  }
+  for list in files.values_mut() {
+    list.sort_unstable();
+    list.dedup();
+  }
+  Ok(files)
+}
+
 /// Builds a walk over `paths`, resolved against `root`, that skips whatever
 /// the gitignore patterns in `ignores` match, anchored at `root`.
 ///
 /// Hidden files are walked like any other, and no ignore file is read.
-#[expect(dead_code, reason = "`discover` calls it in the next commit")]
 fn walk(
   root: &path::Path,
   paths: &[path::PathBuf],
