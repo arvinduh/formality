@@ -1,0 +1,13 @@
+[package]
+name = "fml-discover"
+description = "Finds the files fml acts on and groups them by extension"
+edition.workspace = true
+authors.workspace = true
+license.workspace = true
+repository.workspace = true
+
+[dependencies]
+ignore = "0.4.33"
+
+[lints]
+workspace = true
