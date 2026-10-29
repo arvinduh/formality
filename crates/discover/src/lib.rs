@@ -148,4 +148,28 @@ mod tests {
     assert_eq!(names(&files, "rs", dir.path()), [".d.rs", "src/a.rs"]);
     assert!(!files.contains_key("js"), "node_modules pruned: {files:?}");
   }
+
+  #[test]
+  fn walks_a_named_path_even_when_a_pattern_matches_it() {
+    let dir = tree(&["target/a.rs", "src/b.rs"]);
+    let paths = ["target".into()];
+    let files =
+      discover(dir.path(), &paths, DEFAULT_IGNORES).expect("discover");
+    assert_eq!(names(&files, "rs", dir.path()), ["target/a.rs"]);
+  }
+
+  #[test]
+  fn overlapping_paths_yield_each_file_once() {
+    let dir = tree(&["src/a.rs"]);
+    let paths = ["src".into(), "src/a.rs".into()];
+    let files = discover(dir.path(), &paths, &[]).expect("discover");
+    assert_eq!(names(&files, "rs", dir.path()), ["src/a.rs"]);
+  }
+
+  #[test]
+  fn a_missing_named_path_is_an_error() {
+    let dir = tree(&[]);
+    let paths = ["missing".into()];
+    assert!(discover(dir.path(), &paths, &[]).is_err(), "missing path");
+  }
 }
