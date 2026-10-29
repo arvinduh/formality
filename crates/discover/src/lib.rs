@@ -96,3 +96,56 @@ fn walk(
   });
   Ok(walk.build())
 }
+
+#[cfg(test)]
+mod tests {
+  use std::fs;
+
+  use tempfile;
+
+  use super::*;
+
+  /// Creates each of `files`, a `/`-separated path, empty in a new temp dir.
+  fn tree(files: &[&str]) -> tempfile::TempDir {
+    let dir = tempfile::tempdir().expect("tempdir");
+    for file in files {
+      let path = dir.path().join(file);
+      fs::create_dir_all(path.parent().expect("parent")).expect("mkdir");
+      fs::write(&path, "").expect("write");
+    }
+    dir
+  }
+
+  /// Lists the files discovered under `ext`, relative to `root`, with `/`
+  /// separators on every OS.
+  fn names(
+    files: &collections::HashMap<String, Vec<path::PathBuf>>,
+    ext: &str,
+    root: &path::Path,
+  ) -> Vec<String> {
+    let relative = |path: &path::PathBuf| {
+      let path = path.strip_prefix(root).expect("under root");
+      path.to_string_lossy().replace('\\', "/")
+    };
+    files
+      .get(ext)
+      .map_or_else(Vec::new, |list| list.iter().map(relative).collect())
+  }
+
+  #[test]
+  fn groups_by_lowercase_extension_and_skips_bare_names() {
+    let dir = tree(&["a.rs", "B.RS", "c.py", "Makefile"]);
+    let files = discover(dir.path(), &[], &[]).expect("discover");
+    assert_eq!(names(&files, "rs", dir.path()), ["B.RS", "a.rs"]);
+    assert_eq!(names(&files, "py", dir.path()), ["c.py"]);
+    assert_eq!(files.len(), 2, "only rs and py: {files:?}");
+  }
+
+  #[test]
+  fn prunes_ignored_directories_but_walks_hidden_files() {
+    let dir = tree(&["src/a.rs", "target/b.rs", "node_modules/c.js", ".d.rs"]);
+    let files = discover(dir.path(), &[], DEFAULT_IGNORES).expect("discover");
+    assert_eq!(names(&files, "rs", dir.path()), [".d.rs", "src/a.rs"]);
+    assert!(!files.contains_key("js"), "node_modules pruned: {files:?}");
+  }
+}
