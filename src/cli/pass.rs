@@ -150,7 +150,11 @@ impl Selection {
       plan,
       &ctx.config,
     );
-    ui::results(&results, start.elapsed());
+    if ctx.quiet {
+      ui::problems(&results);
+    } else {
+      ui::results(&results, start.elapsed());
+    }
     runner::compute_exit_status(&results, plan.allow_missing)
   }
 }

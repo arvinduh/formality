@@ -66,6 +66,30 @@ pub fn results(results: &[surfaces::SurfaceResult], elapsed: time::Duration) {
   );
 }
 
+/// Prints only what needs attention, for `--quiet`: violation details on
+/// stdout, missing tools and tool failures on stderr, nothing when all pass.
+pub fn problems(results: &[surfaces::SurfaceResult]) {
+  for result in results {
+    match &result.status {
+      surfaces::SurfaceStatus::ViolationsFound { message, diff } => {
+        for text in [Some(message), diff.as_ref()].into_iter().flatten() {
+          if !text.trim().is_empty() {
+            println!("{}", text.trim_end());
+          }
+        }
+      }
+      surfaces::SurfaceStatus::ToolMissing {
+        binary,
+        install_hint,
+      } => error(&format!("{binary} not found; {install_hint}")),
+      surfaces::SurfaceStatus::ExecutionError { message } => {
+        error(&format!("{}: {}", result.surface_name, message.trim_end()));
+      }
+      _ => {}
+    }
+  }
+}
+
 /// Returns a status's colored tag, one-line summary, and any detail block.
 fn describe(
   status: &surfaces::SurfaceStatus,
