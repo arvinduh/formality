@@ -6,8 +6,10 @@
 //! clean, 1 violations, 2 an operational failure.
 
 mod report;
+mod select;
 mod workspace;
 
+use std::collections;
 use std::env;
 use std::io;
 use std::path;
@@ -74,6 +76,12 @@ enum Command {
 /// The files a command acts on.
 #[derive(clap::Args)]
 struct Select {
+  /// Only files in the git index.
+  #[arg(long, conflicts_with = "changed")]
+  staged: bool,
+  /// Only files that differ from `HEAD`, plus untracked files.
+  #[arg(long)]
+  changed: bool,
   /// Files, or directories to walk; the workspace root when none.
   paths: Vec<path::PathBuf>,
 }
@@ -104,6 +112,12 @@ enum Error {
   /// The files could not be walked, or a named path does not exist.
   #[error(transparent)]
   Discover(#[from] ignore::Error),
+  /// git could not list the files.
+  #[error("git failed: {message}")]
+  Git {
+    /// What git said.
+    message: String,
+  },
   /// The current directory is unavailable.
   #[error("cannot read the current directory: {0}")]
   Cwd(io::Error),
@@ -158,9 +172,24 @@ fn run(args: &Args) -> Result<report::Status, Error> {
   workspace.config.sections::<config::Global>(&["global"])?;
   let paths: Vec<path::PathBuf> =
     select.paths.iter().map(|path| cwd.join(path)).collect();
+  let git = match (select.staged, select.changed) {
+    (true, _) => Some(select::Git::Staged),
+    (_, true) => Some(select::Git::Changed),
+    _ => None,
+  };
   let mut ignores: Vec<&str> = discover::DEFAULT_IGNORES.to_vec();
   ignores.extend(workspace.ignores.iter().map(String::as_str));
-  let files = discover::discover(&workspace.root, &paths, &ignores)?;
+  let files = match git {
+    Some(which) => {
+      let files = select::files(&workspace.root, which, &paths)?;
+      if files.is_empty() {
+        collections::HashMap::new()
+      } else {
+        discover::discover(&workspace.root, &files, &ignores)?
+      }
+    }
+    None => discover::discover(&workspace.root, &paths, &ignores)?,
+  };
   let ctx = surface::Context {
     root: &workspace.root,
     config: &workspace.config,
