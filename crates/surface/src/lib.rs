@@ -7,6 +7,8 @@
 
 #![deny(clippy::print_stdout, clippy::print_stderr)]
 
+pub mod json;
+mod prettier;
 pub mod python;
 pub mod rust;
 
