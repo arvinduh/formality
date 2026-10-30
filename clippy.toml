@@ -1,4 +1,11 @@
 # Clippy configuration
 # https://rust-lang.github.io/rust-clippy/master/index.html
+# A repo config replaces the global one, so the global rules fml relies on are
+# repeated here for CI.
 
 warn-on-all-wildcard-imports = true
+
+# Google Rust guide: never call `catch_unwind` in first-party code.
+disallowed-methods = [
+  { path = "std::panic::catch_unwind", reason = "panics abort; never catch" },
+]
