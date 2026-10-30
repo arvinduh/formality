@@ -173,3 +173,63 @@ pub enum EndOfLine {
   /// `\r\n`.
   Crlf,
 }
+
+#[cfg(test)]
+mod tests {
+  use super::*;
+
+  /// Builds a config from `(path, text)` layers, lowest priority first.
+  fn config(layers: &[(&str, &str)]) -> Result<Config, Error> {
+    let layers = layers
+      .iter()
+      .map(|(path, text)| (path::PathBuf::from(path), (*text).to_owned()))
+      .collect();
+    Config::new(layers)
+  }
+
+  #[test]
+  fn a_missing_section_takes_the_defaults() {
+    let config = config(&[("formality.toml", "")]).expect("config");
+    let global: Global = config.section("global").expect("global");
+    assert_eq!(global.indent_size, 2, "default indent");
+    assert_eq!(global.line_length, 80, "default width");
+    assert!(
+      matches!(global.quote_style, Quote::Double),
+      "default quotes"
+    );
+  }
+
+  #[test]
+  fn later_layers_replace_earlier_keys() {
+    let config = config(&[
+      (
+        "user.toml",
+        "[global]\nindent_size = 4\nline_length = 100\n",
+      ),
+      ("formality.toml", "[global]\nindent_size = 3\n"),
+    ])
+    .expect("config");
+    let global: Global = config.section("global").expect("global");
+    assert_eq!(global.indent_size, 3, "project layer wins");
+    assert_eq!(global.line_length, 100, "user layer still applies");
+  }
+
+  #[test]
+  fn an_unknown_key_names_its_file_and_line() {
+    let text = "[global]\nindent_size = 2\ntab_width = 4\n";
+    let config = config(&[("formality.toml", text)]).expect("config");
+    let err = config.section::<Global>("global").err().expect("rejected");
+    let message = err.to_string();
+    assert!(message.starts_with("formality.toml: "), "{message}");
+    assert!(message.contains("line 3"), "{message}");
+    assert!(message.contains("tab_width"), "{message}");
+  }
+
+  #[test]
+  fn invalid_toml_fails_when_loaded() {
+    assert!(
+      config(&[("formality.toml", "[global\n")]).is_err(),
+      "bad toml"
+    );
+  }
+}
