@@ -12,6 +12,7 @@ pub mod markdown;
 mod prettier;
 pub mod python;
 pub mod rust;
+pub mod shell;
 pub mod taplo;
 #[cfg(test)]
 mod testing;
