@@ -8,6 +8,7 @@
 #![deny(clippy::print_stdout, clippy::print_stderr)]
 
 pub mod python;
+pub mod rust;
 
 use std::path;
 
