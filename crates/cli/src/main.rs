@@ -7,6 +7,7 @@
 
 mod report;
 mod select;
+mod update;
 mod workspace;
 
 use std::collections;
@@ -71,6 +72,8 @@ enum Command {
     #[command(flatten)]
     select: Select,
   },
+  /// Replace this binary with the latest release.
+  Update,
 }
 
 /// The files a command acts on.
@@ -121,9 +124,16 @@ enum Error {
   /// The current directory is unavailable.
   #[error("cannot read the current directory: {0}")]
   Cwd(io::Error),
+  /// `fml update` failed.
+  #[error(transparent)]
+  Update(#[from] update::Error),
 }
 
 fn main() -> process::ExitCode {
+  // The installer otherwise adds its directory to PATH in shell rc files
+  // when it is not on PATH; replacing a binary in place must not.
+  // SAFETY: no other thread exists yet to read the environment.
+  unsafe { env::set_var("FML_NO_MODIFY_PATH", "1") };
   let args = Args::parse();
   let level = match args.verbose {
     0 => log::LevelFilter::Warn,
@@ -155,12 +165,13 @@ fn main() -> process::ExitCode {
 /// # Errors
 ///
 /// Returns an error when the workspace, its config or its files cannot be
-/// read.
+/// read, or `fml update` fails.
 fn run(args: &Args) -> Result<report::Status, Error> {
   let (command, check, select) = match &args.command {
     Command::Fmt { check, select } => (engine::Command::Format, *check, select),
     Command::Lint { select } => (engine::Command::Lint, false, select),
     Command::Fix { check, select } => (engine::Command::Fix, *check, select),
+    Command::Update => return updated(args.quiet),
   };
   let cwd = env::current_dir().map_err(Error::Cwd)?;
   let workspace = workspace::load(&cwd, args.config.as_deref())?;
@@ -203,4 +214,23 @@ fn run(args: &Args) -> Result<report::Status, Error> {
     quiet: args.quiet,
   };
   Ok(report::print(&run, &outcomes, &cwd))
+}
+
+/// Runs `fml update` and prints what it did.
+///
+/// # Errors
+///
+/// Returns an error when the update fails.
+#[expect(clippy::print_stdout, reason = "fml's output")]
+fn updated(quiet: bool) -> Result<report::Status, Error> {
+  match update::run()? {
+    update::Outcome::Latest(version) if !quiet => {
+      println!("fml {version} is the latest release");
+    }
+    update::Outcome::Updated(old, new) if !quiet => {
+      println!("updated fml from {old} to {new}");
+    }
+    _ => {}
+  }
+  Ok(report::Status::Clean)
 }
