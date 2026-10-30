@@ -541,6 +541,7 @@ version = "0.0.0"
 dependencies = [
  "fml-config",
  "fml-tool",
+ "pulldown-cmark",
  "tempfile",
  "thiserror",
  "toml",

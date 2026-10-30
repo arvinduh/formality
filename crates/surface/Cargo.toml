@@ -8,6 +8,7 @@ repository.workspace = true
 
 [dependencies]
 config.workspace = true
+pulldown-cmark = { version = "0.13.5", default-features = false }
 tempfile = "3.27.0"
 thiserror = "2"
 tool.workspace = true
