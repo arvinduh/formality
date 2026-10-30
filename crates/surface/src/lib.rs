@@ -7,6 +7,8 @@
 
 #![deny(clippy::print_stdout, clippy::print_stderr)]
 
+pub mod python;
+
 use std::path;
 
 use thiserror;
@@ -121,4 +123,30 @@ impl Context<'_> {
     }
     Ok((!native).then(config::Global::default))
   }
+}
+
+/// Reads the `path:line:column: message` lines most linters print, resolving
+/// relative paths against `cwd` and skipping lines of any other shape.
+fn problems(output: &str, cwd: &path::Path) -> Vec<Problem> {
+  output
+    .lines()
+    .filter_map(|line| problem(line, cwd))
+    .collect()
+}
+
+/// Reads one `path:line:column: message` line. The numbers are found by
+/// position, so a Windows drive letter's colon stays part of the path.
+fn problem(line: &str, cwd: &path::Path) -> Option<Problem> {
+  line.match_indices(':').find_map(|(at, _)| {
+    let mut parts = line[at + 1..].splitn(3, ':');
+    let row = parts.next()?.parse().ok()?;
+    let column = parts.next()?.parse().ok()?;
+    let message = parts.next()?.trim().to_owned();
+    Some(Problem {
+      path: cwd.join(&line[..at]),
+      line: row,
+      column,
+      message,
+    })
+  })
 }
