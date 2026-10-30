@@ -103,3 +103,50 @@ pub fn nearest_config(
       .find(|path| path.is_file())
   })
 }
+
+#[cfg(test)]
+mod tests {
+  use std::fs;
+
+  use tempfile;
+
+  use super::*;
+
+  #[test]
+  fn a_missing_binary_names_its_install_command() {
+    let tool = Tool {
+      binary: "fml-test-no-such-tool",
+      install: "cargo install it",
+    };
+    let err = tool.run(&[], path::Path::new(".")).err().expect("missing");
+    assert_eq!(
+      err.to_string(),
+      "fml-test-no-such-tool not found; install it with: cargo install it"
+    );
+  }
+
+  #[test]
+  fn run_captures_exit_code_and_stdout() {
+    let tool = Tool {
+      binary: "rustc",
+      install: "rustup",
+    };
+    let args = [ffi::OsStr::new("--version")];
+    let output = tool.run(&args, path::Path::new(".")).expect("rustc runs");
+    assert_eq!(output.code, Some(0), "{}", output.stderr);
+    assert!(output.stdout.starts_with("rustc "), "{}", output.stdout);
+  }
+
+  #[test]
+  fn nearest_config_walks_up_and_tries_names_in_order() {
+    let dir = tempfile::tempdir().expect("tempdir");
+    let nested = dir.path().join("a/b");
+    fs::create_dir_all(&nested).expect("mkdir");
+    fs::write(dir.path().join("ruff.toml"), "").expect("write");
+    fs::write(dir.path().join(".ruff.toml"), "").expect("write");
+
+    let found = nearest_config(&nested, &[".ruff.toml", "ruff.toml"]);
+    assert_eq!(found, Some(dir.path().join(".ruff.toml")));
+    assert_eq!(nearest_config(&nested, &["biome.json"]), None);
+  }
+}
