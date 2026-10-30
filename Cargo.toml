@@ -19,6 +19,7 @@ tool = { package = "fml-tool", path = "crates/tool" }
 [package]
 name = "fml"
 version = "0.4.1"
+default-run = "fml"
 edition = "2024"
 authors = ["Arvin Duh"]
 description = "One CLI to format, lint, and sync configs across all languages"
