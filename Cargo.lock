@@ -560,6 +560,7 @@ version = "0.0.0"
 dependencies = [
  "fml-config",
  "fml-surface",
+ "log",
  "rayon",
  "tempfile",
 ]
@@ -580,6 +581,7 @@ dependencies = [
 name = "fml-tool"
 version = "0.0.0"
 dependencies = [
+ "log",
  "tempfile",
  "thiserror",
  "which",

@@ -9,7 +9,9 @@
 use std::collections;
 use std::hash;
 use std::path;
+use std::time;
 
+use log;
 use rayon::iter::IntoParallelIterator;
 use rayon::iter::ParallelIterator;
 use surface;
@@ -63,9 +65,15 @@ pub fn run<S: hash::BuildHasher>(
       .collect();
   batches
     .into_par_iter()
-    .map(|(language, batch)| Outcome {
-      language: language.name(),
-      result: apply(language, ctx, &batch, command, check),
+    .map(|(language, batch)| {
+      let start = time::Instant::now();
+      let result = apply(language, ctx, &batch, command, check);
+      let (name, files) = (language.name(), batch.len());
+      log::info!("{name}: {files} files in {:?}", start.elapsed());
+      Outcome {
+        language: name,
+        result,
+      }
     })
     .collect()
 }

@@ -13,6 +13,7 @@ use std::path;
 use std::process;
 use std::thread;
 
+use log;
 use thiserror;
 use which;
 
@@ -96,6 +97,11 @@ impl Tool {
       binary: self.binary,
       install: self.install,
     })?;
+    log::debug!(
+      "running {} {args:?} in {}",
+      program.display(),
+      cwd.display()
+    );
     let spawn_error = |source| Error::Spawn {
       binary: self.binary,
       source,
