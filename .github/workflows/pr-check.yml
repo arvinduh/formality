@@ -47,7 +47,7 @@ jobs:
 
       - name: Set up Go
         # shfmt installs with `go install`; macOS runners have no Go.
-        uses: actions/setup-go@v6
+        uses: actions/setup-go@v7
         with:
           go-version: stable
           cache: false
@@ -84,7 +84,7 @@ jobs:
 
       - name: Set up Go
         # shfmt installs with `go install`; macOS runners have no Go.
-        uses: actions/setup-go@v6
+        uses: actions/setup-go@v7
         with:
           go-version: stable
           cache: false
