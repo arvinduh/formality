@@ -157,3 +157,67 @@ fn ruff(
     }),
   }
 }
+
+#[cfg(test)]
+mod tests {
+  use tempfile;
+
+  use super::*;
+
+  /// Writes `files` (name and text) into a new temp dir and returns it.
+  fn workspace(files: &[(&str, &str)]) -> tempfile::TempDir {
+    let dir = tempfile::tempdir().expect("tempdir");
+    for (name, text) in files {
+      fs::write(dir.path().join(name), text).expect("write");
+    }
+    dir
+  }
+
+  /// Runs `pass` against a context rooted at `root` with no fml config.
+  fn with_context<T>(root: &path::Path, pass: impl Fn(&Context) -> T) -> T {
+    let config = config::Config::new(Vec::new()).expect("config");
+    pass(&Context {
+      root,
+      config: &config,
+      project: false,
+      user_config: None,
+    })
+  }
+
+  #[test]
+  fn format_check_reports_without_writing_and_format_writes() {
+    let dir = workspace(&[("a.py", "import sys\nimport os\nx=1\n")]);
+    let file = dir.path().join("a.py");
+    let files = [file.clone()];
+    let check = with_context(dir.path(), |ctx| {
+      Python.format(ctx, &files, true).expect("check")
+    });
+    assert_eq!(check.changed, files);
+    assert!(fs::read_to_string(&file).expect("read").contains("x=1"));
+
+    with_context(dir.path(), |ctx| Python.format(ctx, &files, false))
+      .expect("format");
+    let text = fs::read_to_string(&file).expect("read");
+    assert_eq!(text, "import os\nimport sys\n\nx = 1\n");
+  }
+
+  #[test]
+  fn lint_uses_fml_rules_only_without_a_ruff_config() {
+    let source = ("a.py", "import os\n");
+    let dir = workspace(&[source]);
+    let files = [dir.path().join("a.py")];
+    let report = with_context(dir.path(), |ctx| {
+      Python.lint(ctx, &files, false).expect("lint")
+    });
+    assert_eq!(report.problems.len(), 1, "F401 under fml's rules");
+    assert_eq!(report.problems[0].line, 1);
+    assert!(report.problems[0].message.starts_with("F401"));
+
+    let dir = workspace(&[source, ("ruff.toml", "lint.select = [\"E\"]\n")]);
+    let files = [dir.path().join("a.py")];
+    let report = with_context(dir.path(), |ctx| {
+      Python.lint(ctx, &files, false).expect("lint")
+    });
+    assert!(report.problems.is_empty(), "the ruff.toml selects only E");
+  }
+}
