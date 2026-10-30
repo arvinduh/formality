@@ -56,8 +56,10 @@ impl Config {
     Ok(Self { layers })
   }
 
-  /// Reads section `name` as `T`, a later layer's key replacing an earlier
-  /// one's. With no layer setting the section, it is `T::default()`.
+  /// Reads sections `names` as one `T`: every layer's first section, then
+  /// every layer's next, each key replacing the one before. So a later name
+  /// wins over an earlier one in any layer, as `[python]` wins over
+  /// `[global]`. With no layer setting any of them, it is `T::default()`.
   ///
   /// `T` sees each layer's section on its own first, so an unknown key or a
   /// wrong type is reported in the file and on the line that holds it.
@@ -66,13 +68,16 @@ impl Config {
   ///
   /// Returns an error when a layer's section has a key `T` rejects or a value
   /// of the wrong type.
-  pub fn section<T: serde::de::DeserializeOwned + Default>(
+  pub fn sections<T: serde::de::DeserializeOwned + Default>(
     &self,
-    name: &str,
+    names: &[&str],
   ) -> Result<T, Error> {
     let mut merged = toml::Table::new();
     let mut last = None;
-    for layer in &self.layers {
+    for (name, layer) in names
+      .iter()
+      .flat_map(|name| self.layers.iter().map(move |layer| (*name, layer)))
+    {
       let Some(section) = layer.table()?.remove(name) else {
         continue;
       };
@@ -190,7 +195,7 @@ mod tests {
   #[test]
   fn a_missing_section_takes_the_defaults() {
     let config = config(&[("formality.toml", "")]).expect("config");
-    let global: Global = config.section("global").expect("global");
+    let global: Global = config.sections(&["global"]).expect("global");
     assert_eq!(global.indent_size, 2, "default indent");
     assert_eq!(global.line_length, 80, "default width");
     assert!(
@@ -209,16 +214,35 @@ mod tests {
       ("formality.toml", "[global]\nindent_size = 3\n"),
     ])
     .expect("config");
-    let global: Global = config.section("global").expect("global");
+    let global: Global = config.sections(&["global"]).expect("global");
     assert_eq!(global.indent_size, 3, "project layer wins");
     assert_eq!(global.line_length, 100, "user layer still applies");
+  }
+
+  #[test]
+  fn a_later_section_wins_in_any_layer() {
+    let config = config(&[
+      ("user.toml", "[python]\nline_length = 100\n"),
+      (
+        "formality.toml",
+        "[global]\nindent_size = 4\nline_length = 90\n",
+      ),
+    ])
+    .expect("config");
+    let global: Global =
+      config.sections(&["global", "python"]).expect("python");
+    assert_eq!(global.indent_size, 4, "from [global]");
+    assert_eq!(global.line_length, 100, "[python] wins over [global]");
   }
 
   #[test]
   fn an_unknown_key_names_its_file_and_line() {
     let text = "[global]\nindent_size = 2\ntab_width = 4\n";
     let config = config(&[("formality.toml", text)]).expect("config");
-    let err = config.section::<Global>("global").err().expect("rejected");
+    let err = config
+      .sections::<Global>(&["global"])
+      .err()
+      .expect("rejected");
     let message = err.to_string();
     assert!(message.starts_with("formality.toml: "), "{message}");
     assert!(message.contains("line 3"), "{message}");

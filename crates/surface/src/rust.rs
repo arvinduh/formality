@@ -50,7 +50,7 @@ impl Surface for Rust {
     check: bool,
   ) -> Result<Report, Error> {
     let mut args = vec!["--edition".to_owned(), edition(ctx.root)];
-    if let Some(settings) = ctx.settings(native(ctx))? {
+    if let Some(settings) = ctx.settings(self.name(), native(ctx))? {
       args.extend(["--config".to_owned(), settings_arg(&settings)]);
     }
     let mut check_args = args.clone();
@@ -154,20 +154,7 @@ fn rustfmt(
   args: &[String],
   files: &[path::PathBuf],
 ) -> Result<String, Error> {
-  let args: Vec<&ffi::OsStr> = args
-    .iter()
-    .map(ffi::OsStr::new)
-    .chain(files.iter().map(|file| file.as_os_str()))
-    .collect();
-  let output = RUSTFMT.run(&args, ctx.root)?;
-  match output.code {
-    Some(0 | 1) => Ok(output.stdout),
-    code => Err(Error::Failed {
-      binary: RUSTFMT.binary,
-      code,
-      stderr: output.stderr,
-    }),
-  }
+  Ok(crate::run(&RUSTFMT, args, files, ctx.root, &[0, 1])?.stdout)
 }
 
 #[cfg(test)]

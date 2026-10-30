@@ -3,7 +3,6 @@
 //! Owns ruff's arguments and output. Import sorting runs as part of
 //! formatting, since it is layout, not a finding.
 
-use std::ffi;
 use std::fs;
 use std::path;
 
@@ -42,7 +41,7 @@ impl Surface for Python {
     files: &[path::PathBuf],
     check: bool,
   ) -> Result<Report, Error> {
-    let settings = settings(ctx.settings(native(ctx))?.as_ref());
+    let settings = settings(ctx.settings(self.name(), native(ctx))?.as_ref());
     let imports = ruff(ctx, &["check", "--select", "I"], &settings, files)?;
     let layout = ruff(ctx, &["format", "--check"], &settings, files)?;
     let mut changed: Vec<path::PathBuf> = crate::problems(&imports, ctx.root)
@@ -81,7 +80,7 @@ impl Surface for Python {
     if fix {
       args.push("--fix");
     }
-    let settings = settings(ctx.settings(native)?.as_ref());
+    let settings = settings(ctx.settings(self.name(), native)?.as_ref());
     let output = ruff(ctx, &args, &settings, files)?;
     Ok(Report {
       changed: Vec::new(),
@@ -140,22 +139,14 @@ fn ruff(
   settings: &[String],
   files: &[path::PathBuf],
 ) -> Result<String, Error> {
-  let args: Vec<&ffi::OsStr> = args
+  let args: Vec<String> = args
     .iter()
-    .map(ffi::OsStr::new)
-    .chain([ffi::OsStr::new("--output-format=concise")])
-    .chain(settings.iter().map(ffi::OsStr::new))
-    .chain(files.iter().map(|file| file.as_os_str()))
+    .copied()
+    .chain(["--output-format=concise"])
+    .map(str::to_owned)
+    .chain(settings.iter().cloned())
     .collect();
-  let output = RUFF.run(&args, ctx.root)?;
-  match output.code {
-    Some(0 | 1) => Ok(output.stdout),
-    code => Err(Error::Failed {
-      binary: RUFF.binary,
-      code,
-      stderr: output.stderr,
-    }),
-  }
+  Ok(crate::run(&RUFF, &args, files, ctx.root, &[0, 1])?.stdout)
 }
 
 #[cfg(test)]

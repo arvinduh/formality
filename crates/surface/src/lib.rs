@@ -7,9 +7,21 @@
 
 #![deny(clippy::print_stdout, clippy::print_stderr)]
 
+pub mod cpp;
+pub mod javascript;
+pub mod json;
+pub mod markdown;
+mod prettier;
 pub mod python;
 pub mod rust;
+pub mod shell;
+pub mod taplo;
+#[cfg(test)]
+mod testing;
+pub mod yaml;
 
+use std::ffi;
+use std::io;
 use std::path;
 
 use thiserror;
@@ -93,6 +105,9 @@ pub enum Error {
   /// The config has an unknown key or a wrong value.
   #[error(transparent)]
   Config(#[from] config::Error),
+  /// fml could not write a config it hands a tool.
+  #[error("could not write a tool config: {0}")]
+  Io(#[from] io::Error),
   /// A tool ran but failed instead of reporting.
   #[error("{binary} failed with exit code {code:?}: {stderr}")]
   Failed {
@@ -106,28 +121,32 @@ pub enum Error {
 }
 
 impl Context<'_> {
-  /// The formatting settings fml passes a tool: the workspace's
-  /// `formality.toml` when it has one, else nothing when the tool has its own
-  /// config (`native`), else fml's defaults.
+  /// The formatting settings fml passes `language`'s tools: the workspace's
+  /// `formality.toml` when it has one, its `[language]` table over
+  /// `[global]`, else nothing when the tool has its own config (`native`),
+  /// else fml's defaults.
   ///
   /// `None` means pass no settings, so the tool reads its own config.
   ///
   /// # Errors
   ///
-  /// Returns an error when `[global]` has an unknown key or a wrong value.
+  /// Returns an error when `[global]` or `[language]` has an unknown key or
+  /// a wrong value.
   pub fn settings(
     &self,
+    language: &str,
     native: bool,
   ) -> Result<Option<config::Global>, config::Error> {
     if self.project {
-      return self.config.section("global").map(Some);
+      return self.config.sections(&["global", language]).map(Some);
     }
     Ok((!native).then(config::Global::default))
   }
 }
 
-/// Reads the `path:line:column: message` lines most linters print, resolving
-/// relative paths against `cwd` and skipping lines of any other shape.
+/// Reads the `path:line[:column]: message` lines most linters print,
+/// resolving relative paths against `cwd` and skipping lines of any other
+/// shape. A line with no column is placed at column 1.
 fn problems(output: &str, cwd: &path::Path) -> Vec<Problem> {
   output
     .lines()
@@ -135,19 +154,56 @@ fn problems(output: &str, cwd: &path::Path) -> Vec<Problem> {
     .collect()
 }
 
-/// Reads one `path:line:column: message` line. The numbers are found by
+/// Reads one `path:line[:column]: message` line. The numbers are found by
 /// position, so a Windows drive letter's colon stays part of the path.
 fn problem(line: &str, cwd: &path::Path) -> Option<Problem> {
   line.match_indices(':').find_map(|(at, _)| {
-    let mut parts = line[at + 1..].splitn(3, ':');
-    let row = parts.next()?.parse().ok()?;
-    let column = parts.next()?.parse().ok()?;
-    let message = parts.next()?.trim().to_owned();
+    let (row, rest) = number(&line[at + 1..])?;
+    let (column, rest) =
+      rest.strip_prefix(':').and_then(number).unwrap_or((1, rest));
     Some(Problem {
       path: cwd.join(&line[..at]),
       line: row,
       column,
-      message,
+      message: rest.trim_start_matches(':').trim().to_owned(),
     })
+  })
+}
+
+/// Splits the leading decimal number off `text`, or `None` when `text` does
+/// not start with a digit.
+fn number(text: &str) -> Option<(u32, &str)> {
+  let end = text
+    .find(|c: char| !c.is_ascii_digit())
+    .unwrap_or(text.len());
+  Some((text[..end].parse().ok()?, &text[end..]))
+}
+
+/// Runs `tool` with `args`, then `files`, in `cwd`, and returns its output
+/// when its exit code is one of `ok`.
+///
+/// # Errors
+///
+/// Returns an error when the tool is missing or exits with another code.
+fn run(
+  tool: &tool::Tool,
+  args: &[String],
+  files: &[path::PathBuf],
+  cwd: &path::Path,
+  ok: &[i32],
+) -> Result<tool::Output, Error> {
+  let args: Vec<&ffi::OsStr> = args
+    .iter()
+    .map(ffi::OsStr::new)
+    .chain(files.iter().map(|file| file.as_os_str()))
+    .collect();
+  let output = tool.run(&args, cwd)?;
+  if output.code.is_some_and(|code| ok.contains(&code)) {
+    return Ok(output);
+  }
+  Err(Error::Failed {
+    binary: tool.binary,
+    code: output.code,
+    stderr: output.stderr,
   })
 }

@@ -11,6 +11,7 @@ use std::ffi;
 use std::io;
 use std::path;
 use std::process;
+use std::thread;
 
 use thiserror;
 use which;
@@ -66,24 +67,68 @@ impl Tool {
     args: &[&ffi::OsStr],
     cwd: &path::Path,
   ) -> Result<Output, Error> {
+    self.spawn(args, cwd, None)
+  }
+
+  /// Runs the tool like [`Tool::run`], with `input` on its stdin.
+  ///
+  /// # Errors
+  ///
+  /// Returns [`Error::Missing`] when the binary is not on `PATH`, and
+  /// [`Error::Spawn`] when it cannot be started or fed its input.
+  pub fn pipe(
+    &self,
+    args: &[&ffi::OsStr],
+    cwd: &path::Path,
+    input: &str,
+  ) -> Result<Output, Error> {
+    self.spawn(args, cwd, Some(input))
+  }
+
+  /// Runs the tool, feeding it `input` when there is some.
+  fn spawn(
+    &self,
+    args: &[&ffi::OsStr],
+    cwd: &path::Path,
+    input: Option<&str>,
+  ) -> Result<Output, Error> {
     let program = which::which(self.binary).map_err(|_| Error::Missing {
       binary: self.binary,
       install: self.install,
     })?;
+    let spawn_error = |source| Error::Spawn {
+      binary: self.binary,
+      source,
+    };
     // fml parses what tools print, so it asks them for plain text even when
     // the caller's environment forces color.
-    let output = process::Command::new(program)
+    let mut child = process::Command::new(program)
       .args(args)
       .current_dir(cwd)
       .env_remove("FORCE_COLOR")
       .env_remove("CLICOLOR_FORCE")
       .env("NO_COLOR", "1")
       .env("CARGO_TERM_COLOR", "never")
-      .output()
-      .map_err(|source| Error::Spawn {
-        binary: self.binary,
-        source,
-      })?;
+      .stdin(
+        input.map_or_else(process::Stdio::null, |_| process::Stdio::piped()),
+      )
+      .stdout(process::Stdio::piped())
+      .stderr(process::Stdio::piped())
+      .spawn()
+      .map_err(spawn_error)?;
+    let output = thread::scope(|scope| {
+      // Fed from a thread, so a tool that prints before it has read all of
+      // its input cannot block on a full pipe.
+      let feeder = child.stdin.take().zip(input).map(|(mut stdin, input)| {
+        scope.spawn(move || io::Write::write_all(&mut stdin, input.as_bytes()))
+      });
+      let output = child.wait_with_output();
+      if let Some(feeder) = feeder {
+        feeder.join().unwrap_or(Ok(()))?;
+      }
+      output
+    })
+    .map_err(spawn_error)?;
     Ok(Output {
       code: output.status.code(),
       stdout: String::from_utf8_lossy(&output.stdout).into_owned(),
@@ -154,5 +199,19 @@ mod tests {
     let found = nearest_config(&nested, &[".ruff.toml", "ruff.toml"]);
     assert_eq!(found, Some(dir.path().join(".ruff.toml")));
     assert_eq!(nearest_config(&nested, &["biome.json"]), None);
+  }
+
+  #[test]
+  fn pipe_feeds_stdin() {
+    let tool = Tool {
+      binary: "rustfmt",
+      install: "rustup component add rustfmt",
+    };
+    let args = [ffi::OsStr::new("--emit=stdout")];
+    let output = tool
+      .pipe(&args, path::Path::new("."), "fn  main(){}")
+      .expect("rustfmt runs");
+    assert_eq!(output.code, Some(0), "{}", output.stderr);
+    assert_eq!(output.stdout, "fn main() {}\n");
   }
 }
