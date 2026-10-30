@@ -195,6 +195,9 @@ fn number(text: &str) -> Option<(u32, &str)> {
 /// Runs `tool` with `args`, then `files`, in `cwd`, and returns its output
 /// when its exit code is one of `ok`.
 ///
+/// Files under `cwd` are passed relative to it, so a tool's own ignore
+/// patterns, which are relative to its config, match them.
+///
 /// # Errors
 ///
 /// Returns an error when the tool is missing or exits with another code.
@@ -208,7 +211,7 @@ fn run(
   let args: Vec<&ffi::OsStr> = args
     .iter()
     .map(ffi::OsStr::new)
-    .chain(files.iter().map(|file| file.as_os_str()))
+    .chain(files.iter().map(|file| relative(file, cwd).as_os_str()))
     .collect();
   let output = tool.run(&args, cwd)?;
   if output.code.is_some_and(|code| ok.contains(&code)) {
@@ -219,4 +222,14 @@ fn run(
     code: output.code,
     stderr: output.stderr,
   })
+}
+
+/// `file` relative to `cwd` when it is under it, unless that would read as
+/// a flag.
+fn relative<'a>(file: &'a path::Path, cwd: &path::Path) -> &'a path::Path {
+  file
+    .strip_prefix(cwd)
+    .ok()
+    .filter(|rest| !rest.as_os_str().to_string_lossy().starts_with('-'))
+    .unwrap_or(file)
 }
