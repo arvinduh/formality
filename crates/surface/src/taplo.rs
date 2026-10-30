@@ -88,3 +88,27 @@ fn unformatted(log: &str) -> Vec<path::PathBuf> {
     })
     .collect()
 }
+
+#[cfg(test)]
+mod tests {
+  use std::fs;
+
+  use super::*;
+  use crate::testing;
+
+  #[test]
+  fn format_check_reports_without_writing_and_format_writes() {
+    let dir = testing::workspace(&[("a.toml", "[t]\na=1\n")]);
+    let files = [dir.path().join("a.toml")];
+    let check = testing::with_context(dir.path(), |ctx| {
+      Toml.format(ctx, &files, true).expect("check")
+    });
+    assert_eq!(check.changed, files);
+    assert_eq!(fs::read_to_string(&files[0]).expect("read"), "[t]\na=1\n");
+
+    testing::with_context(dir.path(), |ctx| Toml.format(ctx, &files, false))
+      .expect("format");
+    let text = fs::read_to_string(&files[0]).expect("read");
+    assert_eq!(text, "[t]\na = 1\n");
+  }
+}
