@@ -29,6 +29,19 @@ use thiserror;
 use config;
 use tool;
 
+/// Every language fml knows, in the order it reports them.
+pub const SURFACES: &[&dyn Surface] = &[
+  &cpp::Cpp,
+  &javascript::JavaScript,
+  &json::Json,
+  &markdown::Markdown,
+  &python::Python,
+  &rust::Rust,
+  &shell::Shell,
+  &taplo::Toml,
+  &yaml::Yaml,
+];
+
 /// One language: its files, and how to format and lint them.
 pub trait Surface: Sync {
   /// The language's name, which is also its config section.
