@@ -10,6 +10,7 @@
 pub mod python;
 pub mod rust;
 
+use std::ffi;
 use std::path;
 
 use thiserror;
@@ -149,5 +150,34 @@ fn problem(line: &str, cwd: &path::Path) -> Option<Problem> {
       column,
       message,
     })
+  })
+}
+
+/// Runs `tool` with `args`, then `files`, in `cwd`, and returns its output
+/// when its exit code is one of `ok`.
+///
+/// # Errors
+///
+/// Returns an error when the tool is missing or exits with another code.
+fn run(
+  tool: &tool::Tool,
+  args: &[String],
+  files: &[path::PathBuf],
+  cwd: &path::Path,
+  ok: &[i32],
+) -> Result<tool::Output, Error> {
+  let args: Vec<&ffi::OsStr> = args
+    .iter()
+    .map(ffi::OsStr::new)
+    .chain(files.iter().map(|file| file.as_os_str()))
+    .collect();
+  let output = tool.run(&args, cwd)?;
+  if output.code.is_some_and(|code| ok.contains(&code)) {
+    return Ok(output);
+  }
+  Err(Error::Failed {
+    binary: tool.binary,
+    code: output.code,
+    stderr: output.stderr,
   })
 }
