@@ -78,3 +78,38 @@ impl Surface for Shell {
     })
   }
 }
+
+#[cfg(test)]
+mod tests {
+  use std::fs;
+
+  use super::*;
+  use crate::testing;
+
+  #[test]
+  fn format_indents_two_spaces_and_cases() {
+    let source = "case $1 in\na) echo a ;;\nesac\nif true; then\necho b\nfi\n";
+    let dir = testing::workspace(&[("a.sh", source)]);
+    let files = [dir.path().join("a.sh")];
+    let report = testing::with_context(dir.path(), |ctx| {
+      Shell.format(ctx, &files, false).expect("format")
+    });
+    assert_eq!(report.changed, files);
+    let text = fs::read_to_string(&files[0]).expect("read");
+    let want =
+      "case $1 in\n  a) echo a ;;\nesac\nif true; then\n  echo b\nfi\n";
+    assert_eq!(text, want);
+  }
+
+  #[test]
+  fn lint_reports_shellcheck_findings() {
+    let dir = testing::workspace(&[("a.sh", "#!/bin/sh\necho $1\n")]);
+    let files = [dir.path().join("a.sh")];
+    let report = testing::with_context(dir.path(), |ctx| {
+      Shell.lint(ctx, &files, false).expect("lint")
+    });
+    assert_eq!(report.problems.len(), 1);
+    assert_eq!((report.problems[0].line, report.problems[0].column), (2, 6));
+    assert!(report.problems[0].message.contains("SC2086"));
+  }
+}
