@@ -23,9 +23,17 @@ use thiserror;
 
 pub use report::Status;
 
+/// Cargo-style colors for `--help`; clap drops them for non-TTY output and
+/// under `NO_COLOR`.
+const STYLES: clap::builder::Styles = clap::builder::Styles::styled()
+  .header(clap::builder::styling::AnsiColor::Green.on_default().bold())
+  .usage(clap::builder::styling::AnsiColor::Green.on_default().bold())
+  .literal(clap::builder::styling::AnsiColor::Cyan.on_default().bold())
+  .placeholder(clap::builder::styling::AnsiColor::Cyan.on_default());
+
 /// Format and lint every file in a repo, in your style.
 #[derive(clap::Parser)]
-#[command(name = "fml", version)]
+#[command(name = "fml", version, styles = STYLES)]
 pub struct Args {
   /// Print nothing on success, and only the violations on failure.
   #[arg(short, long, global = true)]
