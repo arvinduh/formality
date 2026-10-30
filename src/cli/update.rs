@@ -14,6 +14,8 @@ use semver;
 use tempfile;
 use thiserror;
 
+use crate::cli;
+
 /// The cargo-dist app name, which names the binary and the installers.
 const APP: &str = "fml";
 
@@ -53,7 +55,7 @@ pub enum Error {
 }
 
 /// What `fml update` did.
-pub enum Outcome {
+enum Outcome {
   /// The running version is the latest.
   Latest(String),
   /// The binary was replaced.
@@ -65,13 +67,33 @@ pub enum Outcome {
   },
 }
 
+/// Installs the latest release when it is newer and prints what it did,
+/// unless `quiet`.
+///
+/// # Errors
+///
+/// Returns an error when the update fails.
+#[expect(clippy::print_stdout, reason = "fml's output")]
+pub fn run(quiet: bool) -> Result<cli::Status, cli::Error> {
+  match install()? {
+    Outcome::Latest(version) if !quiet => {
+      println!("fml {version} is the latest release");
+    }
+    Outcome::Updated { from, to } if !quiet => {
+      println!("updated fml from {from} to {to}");
+    }
+    _ => {}
+  }
+  Ok(cli::Status::Clean)
+}
+
 /// Installs the latest release over the running binary when it is newer.
 ///
 /// # Errors
 ///
 /// Returns an error when the binary cannot be replaced where it is, or the
 /// release cannot be fetched or installed.
-pub fn run() -> Result<Outcome, Error> {
+fn install() -> Result<Outcome, Error> {
   let current = env!("CARGO_PKG_VERSION");
   let exe = running_exe().map_err(Error::Exe)?;
   let dir = exe.parent().unwrap_or_else(|| path::Path::new("."));
