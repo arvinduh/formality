@@ -8,12 +8,10 @@ repository.workspace = true
 
 [dependencies]
 config.workspace = true
+tempfile = "3.27.0"
 thiserror = "2"
 tool.workspace = true
 toml = "1.1.4"
-
-[dev-dependencies]
-tempfile = "3.27.0"
 
 [lints]
 workspace = true

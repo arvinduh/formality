@@ -8,6 +8,7 @@
 #![deny(clippy::print_stdout, clippy::print_stderr)]
 
 pub mod cpp;
+pub mod javascript;
 pub mod json;
 pub mod markdown;
 mod prettier;
@@ -20,6 +21,7 @@ mod testing;
 pub mod yaml;
 
 use std::ffi;
+use std::io;
 use std::path;
 
 use thiserror;
@@ -103,6 +105,9 @@ pub enum Error {
   /// The config has an unknown key or a wrong value.
   #[error(transparent)]
   Config(#[from] config::Error),
+  /// fml could not write a config it hands a tool.
+  #[error("could not write a tool config: {0}")]
+  Io(#[from] io::Error),
   /// A tool ran but failed instead of reporting.
   #[error("{binary} failed with exit code {code:?}: {stderr}")]
   Failed {
