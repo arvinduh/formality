@@ -175,6 +175,7 @@ dependencies = [
  "serde",
  "tempfile",
  "thiserror",
+ "tokio",
  "url",
 ]
 
@@ -519,6 +520,24 @@ dependencies = [
 ]
 
 [[package]]
+name = "fml-cli"
+version = "0.5.0"
+dependencies = [
+ "axoupdater",
+ "clap",
+ "env_logger",
+ "fml-config",
+ "fml-discover",
+ "fml-engine",
+ "fml-surface",
+ "ignore",
+ "log",
+ "semver",
+ "tempfile",
+ "thiserror",
+]
+
+[[package]]
 name = "fml-config"
 version = "0.0.0"
 dependencies = [
@@ -532,6 +551,17 @@ name = "fml-discover"
 version = "0.0.0"
 dependencies = [
  "ignore",
+ "tempfile",
+]
+
+[[package]]
+name = "fml-engine"
+version = "0.0.0"
+dependencies = [
+ "fml-config",
+ "fml-surface",
+ "log",
+ "rayon",
  "tempfile",
 ]
 
@@ -551,6 +581,7 @@ dependencies = [
 name = "fml-tool"
 version = "0.0.0"
 dependencies = [
+ "log",
  "tempfile",
  "thiserror",
  "which",
@@ -1197,6 +1228,16 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "7c87def4c32ab89d880effc9e097653c8da5d6ef28e6b539d313baaacfbafcbe"
 
 [[package]]
+name = "parking_lot"
+version = "0.12.5"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "93857453250e3077bd71ff98b6a65ea6621a19bb0f559a85248955ac12c45a1a"
+dependencies = [
+ "lock_api",
+ "parking_lot_core",
+]
+
+[[package]]
 name = "parking_lot_core"
 version = "0.9.12"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1807,6 +1848,16 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "f8fadd59c855ef2080decdef8ff161eb6661b86933c9d82e5ba29dc602a55aba"
 
 [[package]]
+name = "signal-hook-registry"
+version = "1.4.8"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "c4db69cba1110affc0e9f7bcd48bbf87b3f4fc7c61fc9155afd4c469eb3d6c1b"
+dependencies = [
+ "errno",
+ "libc",
+]
+
+[[package]]
 name = "simd_cesu8"
 version = "1.2.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1971,7 +2022,9 @@ dependencies = [
  "bytes",
  "libc",
  "mio",
+ "parking_lot",
  "pin-project-lite",
+ "signal-hook-registry",
  "socket2",
  "tokio-macros",
  "windows-sys 0.61.2",

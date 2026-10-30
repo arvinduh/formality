@@ -1,0 +1,19 @@
+[package]
+name = "fml-engine"
+description = "Runs fml's languages over a set of files"
+edition.workspace = true
+authors.workspace = true
+license.workspace = true
+repository.workspace = true
+
+[dependencies]
+log = "0.4"
+rayon = "1.12.0"
+surface.workspace = true
+
+[dev-dependencies]
+config.workspace = true
+tempfile = "3.27.0"
+
+[lints]
+workspace = true

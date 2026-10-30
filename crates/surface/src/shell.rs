@@ -47,12 +47,8 @@ impl Surface for Shell {
     let mut args = vec![format!("-i={indent}"), "-ci".into(), "-bn".into()];
     args.push("-l".to_owned());
     let output = crate::run(&SHFMT, &args, files, ctx.root, &[0, 1])?;
-    let changed: Vec<path::PathBuf> = output
-      .stdout
-      .lines()
-      .filter(|line| !line.is_empty())
-      .map(|line| ctx.root.join(line))
-      .collect();
+    let reported = output.stdout.lines().filter(|line| !line.is_empty());
+    let changed = crate::changed(files, ctx.root, reported.map(Into::into));
     if !check && !changed.is_empty() {
       args.pop();
       args.push("-w".to_owned());

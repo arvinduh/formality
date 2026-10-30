@@ -11,11 +11,15 @@ repository = "https://github.com/arvinduh/formality"
 
 [workspace.dependencies]
 config = { package = "fml-config", path = "crates/config" }
+discover = { package = "fml-discover", path = "crates/discover" }
+engine = { package = "fml-engine", path = "crates/engine" }
+surface = { package = "fml-surface", path = "crates/surface" }
 tool = { package = "fml-tool", path = "crates/tool" }
 
 [package]
 name = "fml"
 version = "0.4.1"
+default-run = "fml"
 edition = "2024"
 authors = ["Arvin Duh"]
 description = "One CLI to format, lint, and sync configs across all languages"

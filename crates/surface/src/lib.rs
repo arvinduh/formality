@@ -20,7 +20,9 @@ pub mod taplo;
 mod testing;
 pub mod yaml;
 
+use std::collections;
 use std::ffi;
+use std::fs;
 use std::io;
 use std::path;
 
@@ -28,6 +30,19 @@ use thiserror;
 
 use config;
 use tool;
+
+/// Every language fml knows, in the order it reports them.
+pub const SURFACES: &[&dyn Surface] = &[
+  &cpp::Cpp,
+  &javascript::JavaScript,
+  &json::Json,
+  &markdown::Markdown,
+  &python::Python,
+  &rust::Rust,
+  &shell::Shell,
+  &taplo::Toml,
+  &yaml::Yaml,
+];
 
 /// One language: its files, and how to format and lint them.
 pub trait Surface: Sync {
@@ -108,6 +123,14 @@ pub enum Error {
   /// fml could not write a config it hands a tool.
   #[error("could not write a tool config: {0}")]
   Io(#[from] io::Error),
+  /// fml could not read or write a file it formats itself.
+  #[error("could not access {}: {source}", path.display())]
+  File {
+    /// The file.
+    path: path::PathBuf,
+    /// The operating system's reason.
+    source: io::Error,
+  },
   /// A tool ran but failed instead of reporting.
   #[error("{binary} failed with exit code {code:?}: {stderr}")]
   Failed {
@@ -179,8 +202,36 @@ fn number(text: &str) -> Option<(u32, &str)> {
   Some((text[..end].parse().ok()?, &text[end..]))
 }
 
+/// The `files` a tool reported, in their order. Paths are compared in
+/// canonical form, so a tool that prints one another way, such as with
+/// Windows' `\\?\` prefix or a long name for a short one, still names its
+/// input file.
+fn changed(
+  files: &[path::PathBuf],
+  root: &path::Path,
+  reported: impl IntoIterator<Item = path::PathBuf>,
+) -> Vec<path::PathBuf> {
+  let reported: collections::HashSet<path::PathBuf> = reported
+    .into_iter()
+    .map(|path| canonical(&root.join(path)))
+    .collect();
+  files
+    .iter()
+    .filter(|file| reported.contains(&canonical(file)))
+    .cloned()
+    .collect()
+}
+
+/// `path` with links and short names resolved, or as is when it cannot be.
+fn canonical(path: &path::Path) -> path::PathBuf {
+  fs::canonicalize(path).unwrap_or_else(|_| path.to_owned())
+}
+
 /// Runs `tool` with `args`, then `files`, in `cwd`, and returns its output
 /// when its exit code is one of `ok`.
+///
+/// Files under `cwd` are passed relative to it, so a tool's own ignore
+/// patterns, which are relative to its config, match them.
 ///
 /// # Errors
 ///
@@ -195,7 +246,7 @@ fn run(
   let args: Vec<&ffi::OsStr> = args
     .iter()
     .map(ffi::OsStr::new)
-    .chain(files.iter().map(|file| file.as_os_str()))
+    .chain(files.iter().map(|file| relative(file, cwd).as_os_str()))
     .collect();
   let output = tool.run(&args, cwd)?;
   if output.code.is_some_and(|code| ok.contains(&code)) {
@@ -206,4 +257,14 @@ fn run(
     code: output.code,
     stderr: output.stderr,
   })
+}
+
+/// `file` relative to `cwd` when it is under it, unless that would read as
+/// a flag.
+fn relative<'a>(file: &'a path::Path, cwd: &path::Path) -> &'a path::Path {
+  file
+    .strip_prefix(cwd)
+    .ok()
+    .filter(|rest| !rest.as_os_str().to_string_lossy().starts_with('-'))
+    .unwrap_or(file)
 }

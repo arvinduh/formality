@@ -13,6 +13,7 @@ use std::path;
 use std::process;
 use std::thread;
 
+use log;
 use thiserror;
 use which;
 
@@ -96,6 +97,11 @@ impl Tool {
       binary: self.binary,
       install: self.install,
     })?;
+    log::debug!(
+      "running {} {args:?} in {}",
+      program.display(),
+      cwd.display()
+    );
     let spawn_error = |source| Error::Spawn {
       binary: self.binary,
       source,
@@ -212,6 +218,6 @@ mod tests {
       .pipe(&args, path::Path::new("."), "fn  main(){}")
       .expect("rustfmt runs");
     assert_eq!(output.code, Some(0), "{}", output.stderr);
-    assert_eq!(output.stdout, "fn main() {}\n");
+    assert_eq!(output.stdout.replace("\r\n", "\n"), "fn main() {}\n");
   }
 }

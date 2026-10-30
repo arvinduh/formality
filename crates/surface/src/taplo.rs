@@ -1,5 +1,7 @@
 //! TOML, formatted by taplo. It has no linter.
 
+use std::ffi;
+use std::fs;
 use std::path;
 
 use config;
@@ -38,12 +40,31 @@ impl Surface for Toml {
       tool::nearest_config(ctx.root, &[".taplo.toml", "taplo.toml"]).is_some();
     let mut args = vec!["fmt".to_owned()];
     args.extend(settings(ctx.settings(self.name(), native)?.as_ref()));
-    let mut check_args = args.clone();
-    check_args.push("--check".to_owned());
-    let output = crate::run(&TAPLO, &check_args, files, ctx.root, &[0, 1])?;
-    let changed = unformatted(&output.stderr);
-    if !check && !changed.is_empty() {
-      crate::run(&TAPLO, &args, &changed, ctx.root, &[0])?;
+    // taplo's file globbing finds nothing on Windows, so fml feeds it each
+    // file on stdin and compares.
+    args.push("-".to_owned());
+    let args: Vec<&ffi::OsStr> = args.iter().map(ffi::OsStr::new).collect();
+    let mut changed = Vec::new();
+    for file in files {
+      let error = |source| Error::File {
+        path: file.clone(),
+        source,
+      };
+      let text = fs::read_to_string(file).map_err(error)?;
+      let output = TAPLO.pipe(&args, ctx.root, &text)?;
+      if output.code != Some(0) {
+        return Err(Error::Failed {
+          binary: TAPLO.binary,
+          code: output.code,
+          stderr: output.stderr,
+        });
+      }
+      if output.stdout != text {
+        if !check {
+          fs::write(file, &output.stdout).map_err(error)?;
+        }
+        changed.push(file.clone());
+      }
     }
     Ok(Report {
       changed,
@@ -74,19 +95,6 @@ fn settings(settings: Option<&config::Global>) -> Vec<String> {
     format!("--option=column_width={}", settings.line_length),
     format!("--option=crlf={crlf}"),
   ]
-}
-
-/// The files `taplo fmt --check` reports, from its
-/// `the file is not properly formatted path="..."` log lines.
-fn unformatted(log: &str) -> Vec<path::PathBuf> {
-  log
-    .lines()
-    .filter(|line| line.contains("not properly formatted"))
-    .filter_map(|line| {
-      let (_, path) = line.split_once("path=\"")?;
-      Some(path::PathBuf::from(path.strip_suffix('"')?))
-    })
-    .collect()
 }
 
 #[cfg(test)]
