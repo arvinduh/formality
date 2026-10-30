@@ -1,18 +1,7 @@
-#:schema https://github.com/arvinduh/formality/releases/latest/download/formality.schema.json
-# formality configuration file
-# https://github.com/arvinduh/formality
+# fml's own settings for this repo; see README.md for every key.
 
 [global]
 indent_size = 2
 line_length = 80
+quote_style = "double"
 end_of_line = "lf"
-charset = "utf-8"
-insert_final_newline = true
-trim_trailing_whitespace = true
-exclude = ["tests/fixtures/**", ".github/**", ".pre-commit-hooks.yaml"]
-
-[lang.rust]
-edition = "2024"
-
-[lang.json]
-exclude = ["editors/vscode/**"]

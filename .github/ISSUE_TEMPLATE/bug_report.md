@@ -1,9 +1,9 @@
 ---
 name: Bug Report
 about: Report something formality (fml) gets wrong
-title: 'fix(<scope>): '
-labels: 'bug, triage'
-assignees: ''
+title: "fix(<scope>): "
+labels: "bug, triage"
+assignees: ""
 ---
 
 ## Goal

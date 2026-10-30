@@ -1,65 +1,43 @@
-name: PR Check
+name: CI
 
-# Pre-merge gating for pull requests, split into 3 independent parallel jobs
-# so a failure in one surface doesn't block feedback from the others:
-#
-#   1. Library Tests - clippy (all targets) + the full test suite
-#      (cargo test --verbose covers unit tests and the tests/api,
-#      tests/cli and tests/repo crates). tests/api exercises every surface
-#      (toml, javascript, markdown, ...) via the real external tool
-#      binaries (taplo, biome, markdownlint-cli2, ...) through the same
-#      library passes fml runs, so
-#      this job already behaviorally validates that fmt/lint/sync produce
-#      correct output. That's also why this job builds fml and runs
-#      `fml doctor --install` before the test suite: this job's runner
-#      starts with none of those tools installed, and it's a separate
-#      parallel runner from Job 2, so Job 2 installing its own copies
-#      doesn't help it.
-#   2. Formality Dogfooding - runs fml against THIS repo's own live tree.
-#      Job 1 already proves fmt/lint *work correctly*; this job proves this
-#      repo's checked-in state actually *complies* with them right now -
-#      real formatting/lint violations in tracked files (e.g. an
-#      unformatted Markdown code fence - the concrete failure mode #184 was
-#      filed over). This repo carries no generated native config files
-#      (.rustfmt.toml, .prettierrc, ...) of its own - fmt/lint resolve
-#      formality.toml inline - so there's no `fml sync --check` step here;
-#      config drift isn't a thing this repo's own tree can have (see #184
-#      discussion / design note). This job also asserts the checked-in
-#      schema/formality.schema.json has no drift from
-#      what the freshly built binary generates.
-#   3. Security Audit - cargo audit against the advisory database.
-#
-# "Library Tests" and "Formality Dogfooding" are the required
-# branch-protection status check names - GitHub branch protection matches on
-# job `name`, not job id, so keep those names exactly if either job is ever
-# renamed or restructured, or update branch protection in lockstep.
+# Runs on every pull request and again on main, so a main tip that two
+# separately green PRs produced is still tested as a whole. Branch protection
+# requires the "Library Tests" and "Formality Dogfooding" job names, so keep
+# them exactly or update branch protection with them.
 on:
   pull_request:
     branches: ["main"]
+  push:
+    branches: ["main"]
 
 concurrency:
-  group: pr-${{ github.head_ref || github.run_id }}
+  group: ci-${{ github.head_ref || github.run_id }}
   cancel-in-progress: true
 
 env:
   CARGO_TERM_COLOR: always
-  CLICOLOR_FORCE: "1"
-  FORCE_COLOR: "1"
 
 jobs:
-  test-lib:
-    name: Library Tests
-    runs-on: ubuntu-latest
+  test:
+    name: ${{ matrix.name }}
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - name: Library Tests
+            os: ubuntu-latest
+          - name: macOS Tests
+            os: macos-latest
+          - name: Windows Tests
+            os: windows-latest
     steps:
       - name: Checkout repository
         uses: actions/checkout@v7
 
       - name: Set up Rust toolchain
-        # Pinned to match rust-toolchain.toml; this action does not read
-        # that file itself, so bump both together (see ci.yml). rustfmt is
-        # required (not just clippy) because the integration tests below
-        # spawn the real fml binary, which shells out to rustfmt for the
-        # rust surface.
+        # Pinned to match rust-toolchain.toml, which this action does not
+        # read, so bump both together.
         uses: dtolnay/rust-toolchain@1.98.1
         with:
           components: clippy, rustfmt
@@ -67,39 +45,27 @@ jobs:
       - name: Set up Rust cache
         uses: Swatinem/rust-cache@v2
 
+      - name: Set up Go
+        # shfmt installs with `go install`; macOS runners have no Go.
+        uses: actions/setup-go@v6
+        with:
+          go-version: stable
+          cache: false
+
+      - name: Install tools
+        shell: bash
+        run: .github/install-tools.sh
+
       - name: Run clippy
-        run: cargo clippy --all-targets -- -D warnings
+        run: cargo clippy --workspace --all-targets -- -D warnings
 
       - name: Check documentation
-        run: cargo doc --no-deps
+        run: cargo doc --workspace --no-deps
         env:
           RUSTDOCFLAGS: -D warnings
 
-      - name: Build fml
-        run: cargo build
-
-      - name: Install tool dependencies via fml
-        # tests/api runs the
-        # real fmt/lint/fix passes against synthetic TempDir project layouts
-        # covering every surface, so the external tool binaries they shell
-        # out to (taplo, biome, markdownlint-cli2, yamllint, ...) must be
-        # on PATH before `cargo test --verbose` runs, mirroring Job 2 and
-        # the old ci.yml. Without this, e.g. tests/api/fix.rs's TOML-surface
-        # tests fail on a clean runner with no taplo installed.
-        run: ./target/debug/fml doctor --install
-
-      - name: Install tools the surface crate tests need
-        # doctor installs only the tools for languages this repo has, but
-        # crates/surface tests every language it supports.
-        shell: bash
-        run: |
-          pipx install ruff==0.16.4
-          pipx install shellcheck-py==0.11.0.1
-          go install mvdan.cc/sh/v3/cmd/shfmt@v3.14.1
-          echo "$(go env GOPATH)/bin" >> "$GITHUB_PATH"
-
-      - name: Run full test suite
-        run: cargo test --verbose
+      - name: Run tests
+        run: cargo test --workspace --no-fail-fast
 
   dogfooding:
     name: Formality Dogfooding
@@ -109,58 +75,6 @@ jobs:
         uses: actions/checkout@v7
 
       - name: Set up Rust toolchain
-        # clippy is required (not just rustfmt) because `fml lint` on the
-        # rust surface is `cargo clippy` - without the component, `fml
-        # doctor --install`/`fml doctor` won't catch the gap either: they
-        # probe clippy-driver via `which`, and rustup's shim at
-        # ~/.cargo/bin/clippy-driver exists even when the component isn't
-        # installed, so it false-positives as [READY].
-        uses: dtolnay/rust-toolchain@1.98.1
-        with:
-          components: rustfmt, clippy
-
-      - name: Set up Rust cache
-        uses: Swatinem/rust-cache@v2
-
-      - name: Build fml
-        run: cargo build
-
-      - name: Install tool dependencies via fml
-        run: ./target/debug/fml doctor --install
-
-      - name: Check formatting
-        run: ./target/debug/fml fmt --check
-
-      - name: Lint surfaces
-        run: ./target/debug/fml lint
-
-      - name: Check schema drift
-        # Regenerate schema/formality.schema.json from the freshly built
-        # binary and assert it matches what's checked in. tests/repo/schema_drift.rs
-        # (Job 1) already asserts this in-process via generate_schema(); this
-        # step is a CI-visible surface for the same invariant against this
-        # repo's own committed artifact, exercising the real `fml schema` CLI
-        # path rather than the library function directly (see #185). The raw
-        # CLI output isn't prettier-formatted, so `fml fmt` runs on it first
-        # to match how the committed file is actually produced/formatted.
-        run: |
-          ./target/debug/fml schema --output schema/formality.schema.json
-          ./target/debug/fml fmt schema/formality.schema.json
-          git diff --exit-code schema/formality.schema.json
-
-  test-windows:
-    # Deliberately NOT a required status check (issue #480): it mirrors
-    # Library Tests on windows-latest so #[cfg(windows)] code and tests
-    # (spawn shims, .cmd quoting) actually run somewhere. Making it
-    # required is a branch-protection decision for the owner.
-    name: Windows Tests
-    runs-on: windows-latest
-    steps:
-      - name: Checkout repository
-        uses: actions/checkout@v7
-
-      - name: Set up Rust toolchain
-        # Pinned to match rust-toolchain.toml, same as Library Tests.
         uses: dtolnay/rust-toolchain@1.98.1
         with:
           components: clippy, rustfmt
@@ -168,29 +82,24 @@ jobs:
       - name: Set up Rust cache
         uses: Swatinem/rust-cache@v2
 
-      - name: Run clippy
-        run: cargo clippy --all-targets -- -D warnings
+      - name: Set up Go
+        # shfmt installs with `go install`; macOS runners have no Go.
+        uses: actions/setup-go@v6
+        with:
+          go-version: stable
+          cache: false
+
+      - name: Install tools
+        run: .github/install-tools.sh
 
       - name: Build fml
         run: cargo build
 
-      - name: Install tool dependencies via fml
-        run: ./target/debug/fml doctor --install
+      - name: Check formatting
+        run: ./target/debug/fml fmt --check
 
-      - name: Install tools the surface crate tests need
-        # doctor installs only the tools for languages this repo has, but
-        # crates/surface tests every language it supports.
-        shell: bash
-        run: |
-          pipx install ruff==0.16.4
-          pipx install shellcheck-py==0.11.0.1
-          go install mvdan.cc/sh/v3/cmd/shfmt@v3.14.1
-          echo "$(go env GOPATH)/bin" >> "$GITHUB_PATH"
-
-      - name: Run full test suite
-        # --no-fail-fast: a failing lib test must not hide the integration
-        # tests, which are the ones most likely to differ on Windows.
-        run: cargo test --verbose --no-fail-fast
+      - name: Lint
+        run: ./target/debug/fml lint
 
   security-audit:
     name: Security Audit

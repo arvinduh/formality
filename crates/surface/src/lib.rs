@@ -222,6 +222,20 @@ fn changed(
     .collect()
 }
 
+/// `problems` with each path that names one of `files` replaced by that
+/// file, compared like [`changed`] does, so output shows paths as fml was
+/// given them.
+fn locate(mut problems: Vec<Problem>, files: &[path::PathBuf]) -> Vec<Problem> {
+  let inputs: collections::HashMap<path::PathBuf, &path::PathBuf> =
+    files.iter().map(|file| (canonical(file), file)).collect();
+  for problem in &mut problems {
+    if let Some(file) = inputs.get(&canonical(&problem.path)) {
+      problem.path.clone_from(file);
+    }
+  }
+  problems
+}
+
 /// `path` with links and short names resolved, or as is when it cannot be.
 fn canonical(path: &path::Path) -> path::PathBuf {
   fs::canonicalize(path).unwrap_or_else(|_| path.to_owned())

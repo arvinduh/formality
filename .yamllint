@@ -1,0 +1,8 @@
+# fml's yamllint rules, minus the file cargo-dist generates.
+extends: default
+ignore: |
+  .github/workflows/release.yml
+rules:
+  comments: {min-spaces-from-content: 1}
+  document-start: disable
+  truthy: {check-keys: false}

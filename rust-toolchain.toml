@@ -1,7 +1,6 @@
-# Pins the Rust toolchain for local dev (rustup reads this automatically)
-# and CI (see .github/workflows/ci.yml, which pins the same version
-# explicitly since the dtolnay/rust-toolchain action does not read this
-# file). Bump deliberately, in the same change as the CI pin below.
+# Pins the Rust toolchain for local dev. CI pins the same version in
+# .github/workflows/pr-check.yml, since its toolchain action does not read
+# this file, so bump both together.
 [toolchain]
 channel = "1.98.1"
 components = ["rustfmt", "clippy"]

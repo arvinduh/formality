@@ -20,7 +20,7 @@ fn workspace(files: &[(&str, &str)]) -> tempfile::TempDir {
 
 /// Runs fml with `args` in `cwd`.
 fn fml(cwd: &path::Path, args: &[&str]) -> process::Output {
-  process::Command::new(env!("CARGO_BIN_EXE_fml-cli"))
+  process::Command::new(env!("CARGO_BIN_EXE_fml"))
     .args(args)
     .current_dir(cwd)
     .env("XDG_CONFIG_HOME", cwd.join(".no-user-config"))
@@ -77,7 +77,7 @@ fn paths_print_relative_to_the_current_directory() {
 #[test]
 fn a_missing_tool_exits_2_naming_its_install_command() {
   let dir = workspace(&[("a.sh", "echo a\n")]);
-  let output = process::Command::new(env!("CARGO_BIN_EXE_fml-cli"))
+  let output = process::Command::new(env!("CARGO_BIN_EXE_fml"))
     .args(["-q", "fmt"])
     .current_dir(dir.path())
     .env("PATH", dir.path().join("empty"))

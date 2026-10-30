@@ -1,0 +1,2 @@
+# cargo-dist generates this file; `dist init` rewrites it.
+.github/workflows/release.yml

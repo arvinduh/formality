@@ -1,9 +1,9 @@
 ---
 name: Feature Request
 about: Suggest a new capability for formality (fml)
-title: 'feat(<scope>): '
-labels: 'enhancement, triage'
-assignees: ''
+title: "feat(<scope>): "
+labels: "enhancement, triage"
+assignees: ""
 ---
 
 ## Goal

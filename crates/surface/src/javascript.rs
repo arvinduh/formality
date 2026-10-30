@@ -118,7 +118,7 @@ impl Surface for JavaScript {
     drop(rules);
     Ok(Report {
       changed: Vec::new(),
-      problems: reported(&output.stdout, ctx.root),
+      problems: crate::locate(reported(&output.stdout, ctx.root), files),
     })
   }
 }
@@ -160,7 +160,7 @@ fn reported(output: &str, cwd: &path::Path) -> Vec<Problem> {
           .find_map(|pair| pair.strip_prefix(name)?.strip_prefix('='))
       };
       Some(Problem {
-        path: cwd.join(field("file")?),
+        path: cwd.join(unescape(field("file")?)),
         line: field("line")?.parse().ok()?,
         column: field("col")?.parse().ok()?,
         message: format!("{} {}", field("title")?, message.trim()),
@@ -169,12 +169,31 @@ fn reported(output: &str, cwd: &path::Path) -> Vec<Problem> {
     .collect()
 }
 
+/// Undoes the escaping GitHub workflow commands apply to property values,
+/// such as `%3A` for the colon in a Windows drive letter.
+fn unescape(value: &str) -> String {
+  [
+    ("%3A", ":"),
+    ("%2C", ","),
+    ("%0D", "\r"),
+    ("%0A", "\n"),
+    ("%25", "%"),
+  ]
+  .iter()
+  .fold(value.to_owned(), |text, (from, to)| text.replace(from, to))
+}
+
 #[cfg(test)]
 mod tests {
   use std::fs;
 
   use super::*;
   use crate::testing;
+
+  #[test]
+  fn reported_paths_lose_their_workflow_command_escapes() {
+    assert_eq!(unescape(r"C%3A\a%2Cb%253A.ts"), r"C:\a,b%3A.ts");
+  }
 
   #[test]
   fn format_check_reports_without_writing_and_format_writes() {

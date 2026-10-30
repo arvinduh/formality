@@ -1,17 +1,8 @@
 name: Security Audit
 
-# Standing scheduled audit of main's locked dependency tree against the
-# RustSec advisory database. pr-check.yml and ci.yml already run the same
-# `cargo audit` on every PR and every push to main -- but a new advisory is
-# routinely published against a crate that is *already* in Cargo.lock, and
-# during a quiet stretch with no PR or push traffic nothing would surface it
-# until an unrelated change happened to trip CI days or weeks later. This
-# workflow closes that gap: it runs weekly (Sunday 00:00 UTC) regardless of
-# commit activity, and on demand via workflow_dispatch. It only audits what
-# is already on main, so it is deliberately not wired into branch protection
-# or any required status check -- a failure here is a "go look at main" ping
-# for maintainers, alongside Dependabot's automated bump PRs, not a merge
-# gate.
+# Audits main's Cargo.lock weekly, since a new advisory can land against a
+# dependency while no PR or push runs CI. A failure is a ping to look at
+# main, not a merge gate.
 on:
   schedule:
     - cron: "0 0 * * 0" # Weekly on Sundays at 00:00 UTC

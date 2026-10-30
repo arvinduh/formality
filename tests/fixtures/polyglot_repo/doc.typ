@@ -1,2 +1,0 @@
-= Polyglot
-Typst surface.
