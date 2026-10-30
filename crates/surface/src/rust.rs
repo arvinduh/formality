@@ -169,3 +169,77 @@ fn rustfmt(
     }),
   }
 }
+
+#[cfg(test)]
+mod tests {
+  use tempfile;
+
+  use super::*;
+
+  /// Writes `files` (relative path and text) into a new temp dir.
+  fn workspace(files: &[(&str, &str)]) -> tempfile::TempDir {
+    let dir = tempfile::tempdir().expect("tempdir");
+    for (name, text) in files {
+      let path = dir.path().join(name);
+      fs::create_dir_all(path.parent().expect("parent")).expect("mkdir");
+      fs::write(path, text).expect("write");
+    }
+    dir
+  }
+
+  /// Runs `pass` against a context rooted at `root` with no fml config.
+  fn with_context<T>(root: &path::Path, pass: impl Fn(&Context) -> T) -> T {
+    let config = config::Config::new(Vec::new()).expect("config");
+    pass(&Context {
+      root,
+      config: &config,
+      project: false,
+      user_config: None,
+    })
+  }
+
+  #[test]
+  fn format_uses_two_space_indent_by_default() {
+    let dir = workspace(&[("a.rs", "fn main() {\nlet x = 1;\n}\n")]);
+    let files = [dir.path().join("a.rs")];
+    let check = with_context(dir.path(), |ctx| Rust.format(ctx, &files, true))
+      .expect("check");
+    assert_eq!(check.changed, files);
+
+    with_context(dir.path(), |ctx| Rust.format(ctx, &files, false))
+      .expect("format");
+    let text = fs::read_to_string(&files[0]).expect("read");
+    assert_eq!(text, "fn main() {\n  let x = 1;\n}\n");
+  }
+
+  #[test]
+  fn format_leaves_settings_to_a_rustfmt_toml() {
+    let source = "fn main() {\n    let x = 1;\n}\n";
+    let dir = workspace(&[("a.rs", source), ("rustfmt.toml", "")]);
+    let files = [dir.path().join("a.rs")];
+    let check = with_context(dir.path(), |ctx| Rust.format(ctx, &files, true))
+      .expect("check");
+    assert!(check.changed.is_empty(), "rustfmt's own 4-space default");
+  }
+
+  #[test]
+  fn edition_comes_from_the_workspace_package() {
+    let manifest = "[workspace.package]\nedition = \"2021\"\n";
+    let dir = workspace(&[("Cargo.toml", manifest)]);
+    assert_eq!(edition(dir.path()), "2021");
+  }
+
+  #[test]
+  fn lint_reports_clippy_findings_in_the_given_files() {
+    let manifest = "[package]\nname = \"t\"\nedition = \"2024\"\n";
+    let dir = workspace(&[
+      ("Cargo.toml", manifest),
+      ("src/main.rs", "fn main() {\n  let x = 1;\n}\n"),
+    ]);
+    let files = [dir.path().join("src/main.rs")];
+    let report = with_context(dir.path(), |ctx| Rust.lint(ctx, &files, false))
+      .expect("lint");
+    assert_eq!(report.problems.len(), 1, "the unused variable");
+    assert_eq!(report.problems[0].line, 2);
+  }
+}
