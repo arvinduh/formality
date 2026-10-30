@@ -1,6 +1,7 @@
 //! TOML, formatted by taplo. It has no linter.
 
 use std::path;
+use std::slice;
 
 use config;
 use tool;
@@ -36,14 +37,20 @@ impl Surface for Toml {
   ) -> Result<Report, Error> {
     let native =
       tool::nearest_config(ctx.root, &[".taplo.toml", "taplo.toml"]).is_some();
-    // fml parses taplo's logs, so it asks for them uncolored on every
-    // platform rather than trusting taplo's color detection.
-    let mut args = vec!["fmt".to_owned(), "--colors=never".to_owned()];
+    let mut args = vec!["fmt".to_owned()];
     args.extend(settings(ctx.settings(self.name(), native)?.as_ref()));
     let mut check_args = args.clone();
     check_args.push("--check".to_owned());
-    let output = crate::run(&TAPLO, &check_args, files, ctx.root, &[0, 1])?;
-    let changed = crate::changed(files, ctx.root, unformatted(&output.stderr));
+    // taplo names unformatted files only in its logs, whose shape differs
+    // across platforms, so each file is checked on its own by exit code.
+    let mut changed = Vec::new();
+    for file in files {
+      let file = slice::from_ref(file);
+      let output = crate::run(&TAPLO, &check_args, file, ctx.root, &[0, 1])?;
+      if output.code == Some(1) {
+        changed.extend_from_slice(file);
+      }
+    }
     if !check && !changed.is_empty() {
       crate::run(&TAPLO, &args, &changed, ctx.root, &[0])?;
     }
@@ -78,22 +85,9 @@ fn settings(settings: Option<&config::Global>) -> Vec<String> {
   ]
 }
 
-/// The files `taplo fmt --check` reports, from its
-/// `the file is not properly formatted path="..."` log lines.
-fn unformatted(log: &str) -> Vec<path::PathBuf> {
-  log
-    .lines()
-    .filter(|line| line.contains("not properly formatted"))
-    .filter_map(|line| {
-      let (_, path) = line.split_once("path=\"")?;
-      let path = path.strip_suffix('"')?.replace("\\\\", "\\");
-      Some(path::PathBuf::from(path))
-    })
-    .collect()
-}
-
 #[cfg(test)]
 mod tests {
+  use std::ffi;
   use std::fs;
 
   use super::*;
@@ -106,7 +100,9 @@ mod tests {
     let check = testing::with_context(dir.path(), |ctx| {
       Toml.format(ctx, &files, true).expect("check")
     });
-    assert_eq!(check.changed, files);
+    let args = ["fmt", "--check", "a.toml"].map(ffi::OsStr::new);
+    let raw = TAPLO.run(&args, dir.path()).expect("taplo runs");
+    assert_eq!(check.changed, files, "taplo said: {}", raw.stderr);
     assert_eq!(fs::read_to_string(&files[0]).expect("read"), "[t]\na=1\n");
 
     testing::with_context(dir.path(), |ctx| Toml.format(ctx, &files, false))
