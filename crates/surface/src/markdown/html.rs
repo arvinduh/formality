@@ -11,7 +11,6 @@ use std::path;
 
 use pulldown_cmark;
 
-use crate::Error;
 use crate::prettier;
 
 /// HTML void elements (WHATWG), which never take a closing tag.
@@ -57,7 +56,7 @@ pub fn format(
   file: &path::Path,
   cwd: &path::Path,
   args: &[String],
-) -> Result<String, Error> {
+) -> Result<String, crate::Error> {
   let spans = blocks(src);
   if spans.is_empty() || src.contains(GAP) || !balanced(src, &spans) {
     return Ok(src.to_owned());

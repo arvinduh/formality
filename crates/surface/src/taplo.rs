@@ -7,11 +7,6 @@ use std::path;
 use config;
 use tool;
 
-use crate::Context;
-use crate::Error;
-use crate::Report;
-use crate::Surface;
-
 /// The taplo binary.
 const TAPLO: tool::Tool = tool::Tool {
   binary: "taplo",
@@ -21,7 +16,7 @@ const TAPLO: tool::Tool = tool::Tool {
 /// TOML: `.toml` files.
 pub struct Toml;
 
-impl Surface for Toml {
+impl crate::Surface for Toml {
   fn name(&self) -> &'static str {
     "toml"
   }
@@ -32,10 +27,10 @@ impl Surface for Toml {
 
   fn format(
     &self,
-    ctx: &Context,
+    ctx: &crate::Context,
     files: &[path::PathBuf],
     check: bool,
-  ) -> Result<Report, Error> {
+  ) -> Result<crate::Report, crate::Error> {
     let native =
       tool::nearest_config(ctx.root, &[".taplo.toml", "taplo.toml"]).is_some();
     let mut args = vec!["fmt".to_owned()];
@@ -46,14 +41,14 @@ impl Surface for Toml {
     let args: Vec<&ffi::OsStr> = args.iter().map(ffi::OsStr::new).collect();
     let mut changed = Vec::new();
     for file in files {
-      let error = |source| Error::File {
+      let error = |source| crate::Error::File {
         path: file.clone(),
         source,
       };
       let text = fs::read_to_string(file).map_err(error)?;
       let output = TAPLO.pipe(&args, ctx.root, &text)?;
       if output.code != Some(0) {
-        return Err(Error::Failed {
+        return Err(crate::Error::Failed {
           binary: TAPLO.binary,
           code: output.code,
           stderr: output.stderr,
@@ -66,7 +61,7 @@ impl Surface for Toml {
         changed.push(file.clone());
       }
     }
-    Ok(Report {
+    Ok(crate::Report {
       changed,
       problems: Vec::new(),
     })
@@ -74,11 +69,11 @@ impl Surface for Toml {
 
   fn lint(
     &self,
-    _ctx: &Context,
+    _ctx: &crate::Context,
     _files: &[path::PathBuf],
     _fix: bool,
-  ) -> Result<Report, Error> {
-    Ok(Report::default())
+  ) -> Result<crate::Report, crate::Error> {
+    Ok(crate::Report::default())
   }
 }
 
@@ -102,6 +97,7 @@ mod tests {
   use std::fs;
 
   use super::*;
+  use crate::Surface;
   use crate::testing;
 
   #[test]

@@ -11,8 +11,6 @@ use std::path;
 
 use config;
 
-use crate::Error;
-
 /// The names of a workspace's own config file. Having both is an error.
 const PROJECT: [&str; 2] = ["formality.toml", ".formality.toml"];
 
@@ -41,7 +39,7 @@ pub struct Workspace {
 pub fn load(
   cwd: &path::Path,
   extra: Option<&path::Path>,
-) -> Result<Workspace, Error> {
+) -> Result<Workspace, crate::Error> {
   let root = root(cwd);
   let user_config = user_config();
   let mut layers = Vec::new();
@@ -54,7 +52,7 @@ pub fn load(
     let path = root.join(name);
     if let Some(text) = read_optional(&path)? {
       if project.is_some() {
-        return Err(Error::BothConfigs { root });
+        return Err(crate::Error::BothConfigs { root });
       }
       project = Some((path, text));
     }
@@ -62,10 +60,11 @@ pub fn load(
   let has_project = project.is_some() || extra.is_some();
   layers.extend(project);
   if let Some(path) = extra {
-    let text = fs::read_to_string(path).map_err(|source| Error::Read {
-      path: path.to_path_buf(),
-      source,
-    })?;
+    let text =
+      fs::read_to_string(path).map_err(|source| crate::Error::Read {
+        path: path.to_path_buf(),
+        source,
+      })?;
     layers.push((path.to_path_buf(), text));
   }
   let ignores = read_optional(&root.join(".gitignore"))?
@@ -107,11 +106,11 @@ fn user_config() -> Option<path::PathBuf> {
 }
 
 /// Reads `path`, or `None` when it does not exist.
-fn read_optional(path: &path::Path) -> Result<Option<String>, Error> {
+fn read_optional(path: &path::Path) -> Result<Option<String>, crate::Error> {
   match fs::read_to_string(path) {
     Ok(text) => Ok(Some(text)),
     Err(err) if err.kind() == io::ErrorKind::NotFound => Ok(None),
-    Err(source) => Err(Error::Read {
+    Err(source) => Err(crate::Error::Read {
       path: path.to_path_buf(),
       source,
     }),

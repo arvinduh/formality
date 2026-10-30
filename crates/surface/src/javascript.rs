@@ -10,12 +10,6 @@ use config;
 use tempfile;
 use tool;
 
-use crate::Context;
-use crate::Error;
-use crate::Problem;
-use crate::Report;
-use crate::Surface;
-
 /// The biome binary.
 const BIOME: tool::Tool = tool::Tool {
   binary: "biome",
@@ -62,7 +56,7 @@ const RULES: &str = r#"{
 /// JavaScript and TypeScript, with JSX and the module variants.
 pub struct JavaScript;
 
-impl Surface for JavaScript {
+impl crate::Surface for JavaScript {
   fn name(&self) -> &'static str {
     "javascript"
   }
@@ -73,10 +67,10 @@ impl Surface for JavaScript {
 
   fn format(
     &self,
-    ctx: &Context,
+    ctx: &crate::Context,
     files: &[path::PathBuf],
     check: bool,
-  ) -> Result<Report, Error> {
+  ) -> Result<crate::Report, crate::Error> {
     let native = tool::nearest_config(ctx.root, CONFIGS).is_some();
     let mut args = vec!["format".to_owned(), "--reporter=github".to_owned()];
     args.extend(settings(ctx.settings(self.name(), native)?.as_ref()));
@@ -88,7 +82,7 @@ impl Surface for JavaScript {
       args.push("--write".to_owned());
       crate::run(&BIOME, &args, &changed, ctx.root, &[0])?;
     }
-    Ok(Report {
+    Ok(crate::Report {
       changed,
       problems: Vec::new(),
     })
@@ -96,10 +90,10 @@ impl Surface for JavaScript {
 
   fn lint(
     &self,
-    ctx: &Context,
+    ctx: &crate::Context,
     files: &[path::PathBuf],
     fix: bool,
-  ) -> Result<Report, Error> {
+  ) -> Result<crate::Report, crate::Error> {
     let mut args = vec!["lint".to_owned(), "--reporter=github".to_owned()];
     // Held until biome exits: the directory holding fml's rules, when biome
     // has no config of its own.
@@ -116,7 +110,7 @@ impl Surface for JavaScript {
     }
     let output = crate::run(&BIOME, &args, files, ctx.root, &[0, 1])?;
     drop(rules);
-    Ok(Report {
+    Ok(crate::Report {
       changed: Vec::new(),
       problems: crate::locate(reported(&output.stdout, ctx.root), files),
     })
@@ -148,7 +142,7 @@ fn settings(settings: Option<&config::Global>) -> Vec<String> {
 
 /// Reads biome's GitHub reporter lines,
 /// `::level title=rule,file=path,line=n,...,col=n,...::message`.
-fn reported(output: &str, cwd: &path::Path) -> Vec<Problem> {
+fn reported(output: &str, cwd: &path::Path) -> Vec<crate::Problem> {
   output
     .lines()
     .filter_map(|line| {
@@ -159,7 +153,7 @@ fn reported(output: &str, cwd: &path::Path) -> Vec<Problem> {
           .split(',')
           .find_map(|pair| pair.strip_prefix(name)?.strip_prefix('='))
       };
-      Some(Problem {
+      Some(crate::Problem {
         path: cwd.join(unescape(field("file")?)),
         line: field("line")?.parse().ok()?,
         column: field("col")?.parse().ok()?,
@@ -188,6 +182,7 @@ mod tests {
   use std::fs;
 
   use super::*;
+  use crate::Surface;
   use crate::testing;
 
   #[test]
@@ -225,7 +220,7 @@ mod tests {
     let report = testing::with_context(dir.path(), |ctx| {
       JavaScript.lint(ctx, &files, false).expect("lint")
     });
-    let found = |report: &Report| {
+    let found = |report: &crate::Report| {
       report
         .problems
         .iter()

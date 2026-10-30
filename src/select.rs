@@ -6,8 +6,6 @@
 use std::path;
 use std::process;
 
-use crate::Error;
-
 /// Which of git's files to act on.
 #[derive(Clone, Copy)]
 pub enum Git {
@@ -28,7 +26,7 @@ pub fn files(
   root: &path::Path,
   which: Git,
   paths: &[path::PathBuf],
-) -> Result<Vec<path::PathBuf>, Error> {
+) -> Result<Vec<path::PathBuf>, crate::Error> {
   let mut names = match which {
     Git::Staged => git(root, &["diff", "--name-only", "--cached"])?,
     Git::Changed
@@ -60,7 +58,7 @@ pub fn files(
 
 /// Runs git with `args` in `root`, limited to files under `root`, and
 /// returns the lines it prints, relative to `root`.
-fn git(root: &path::Path, args: &[&str]) -> Result<Vec<String>, Error> {
+fn git(root: &path::Path, args: &[&str]) -> Result<Vec<String>, crate::Error> {
   let mut command = process::Command::new("git");
   // Unquoted, so a non-ASCII name comes back as itself.
   command
@@ -70,11 +68,11 @@ fn git(root: &path::Path, args: &[&str]) -> Result<Vec<String>, Error> {
   if args[0] == "diff" {
     command.args(["--relative", "--diff-filter=d"]);
   }
-  let output = command.output().map_err(|source| Error::Git {
+  let output = command.output().map_err(|source| crate::Error::Git {
     message: source.to_string(),
   })?;
   if !output.status.success() {
-    return Err(Error::Git {
+    return Err(crate::Error::Git {
       message: String::from_utf8_lossy(&output.stderr).trim().to_owned(),
     });
   }

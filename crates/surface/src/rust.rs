@@ -11,11 +11,6 @@ use config;
 use toml;
 use tool;
 
-use crate::Context;
-use crate::Error;
-use crate::Report;
-use crate::Surface;
-
 /// The rustfmt binary.
 const RUSTFMT: tool::Tool = tool::Tool {
   binary: "rustfmt",
@@ -34,7 +29,7 @@ const EDITION: &str = "2024";
 /// Rust: `.rs` files.
 pub struct Rust;
 
-impl Surface for Rust {
+impl crate::Surface for Rust {
   fn name(&self) -> &'static str {
     "rust"
   }
@@ -45,10 +40,10 @@ impl Surface for Rust {
 
   fn format(
     &self,
-    ctx: &Context,
+    ctx: &crate::Context,
     files: &[path::PathBuf],
     check: bool,
-  ) -> Result<Report, Error> {
+  ) -> Result<crate::Report, crate::Error> {
     let mut args = vec!["--edition".to_owned(), edition(ctx.root)];
     if let Some(settings) = ctx.settings(self.name(), native(ctx))? {
       args.extend(["--config".to_owned(), settings_arg(&settings)]);
@@ -61,7 +56,7 @@ impl Surface for Rust {
     if !check && !changed.is_empty() {
       rustfmt(ctx, &args, &changed)?;
     }
-    Ok(Report {
+    Ok(crate::Report {
       changed,
       problems: Vec::new(),
     })
@@ -69,12 +64,12 @@ impl Surface for Rust {
 
   fn lint(
     &self,
-    ctx: &Context,
+    ctx: &crate::Context,
     files: &[path::PathBuf],
     fix: bool,
-  ) -> Result<Report, Error> {
+  ) -> Result<crate::Report, crate::Error> {
     let Some(manifest) = tool::nearest_config(ctx.root, &["Cargo.toml"]) else {
-      return Ok(Report::default());
+      return Ok(crate::Report::default());
     };
     let dir = manifest.parent().unwrap_or(ctx.root);
     let mut args = vec!["clippy", "--quiet", "--message-format=short"];
@@ -90,13 +85,13 @@ impl Surface for Rust {
       .filter(|problem| files.contains(&problem.path))
       .collect();
     if output.code != Some(0) && problems.is_empty() {
-      return Err(Error::Failed {
+      return Err(crate::Error::Failed {
         binary: CARGO.binary,
         code: output.code,
         stderr: output.stderr,
       });
     }
-    Ok(Report {
+    Ok(crate::Report {
       changed: Vec::new(),
       problems,
     })
@@ -106,7 +101,7 @@ impl Surface for Rust {
 /// Whether rustfmt will find a config of its own: a `rustfmt.toml` or
 /// `.rustfmt.toml` at or above the root, or a user-level
 /// `rustfmt/rustfmt.toml`.
-fn native(ctx: &Context) -> bool {
+fn native(ctx: &crate::Context) -> bool {
   let names = ["rustfmt.toml", ".rustfmt.toml"];
   tool::nearest_config(ctx.root, &names).is_some()
     || ctx
@@ -148,10 +143,10 @@ fn edition(root: &path::Path) -> String {
 ///
 /// Exit code 1 under `--check` means some file would change.
 fn rustfmt(
-  ctx: &Context,
+  ctx: &crate::Context,
   args: &[String],
   files: &[path::PathBuf],
-) -> Result<String, Error> {
+) -> Result<String, crate::Error> {
   Ok(crate::run(&RUSTFMT, args, files, ctx.root, &[0, 1])?.stdout)
 }
 
@@ -160,6 +155,7 @@ mod tests {
   use tempfile;
 
   use super::*;
+  use crate::Surface;
 
   /// Writes `files` (relative path and text) into a new temp dir.
   fn workspace(files: &[(&str, &str)]) -> tempfile::TempDir {
@@ -173,9 +169,12 @@ mod tests {
   }
 
   /// Runs `pass` against a context rooted at `root` with no fml config.
-  fn with_context<T>(root: &path::Path, pass: impl Fn(&Context) -> T) -> T {
+  fn with_context<T>(
+    root: &path::Path,
+    pass: impl Fn(&crate::Context) -> T,
+  ) -> T {
     let config = config::Config::new(Vec::new()).expect("config");
-    pass(&Context {
+    pass(&crate::Context {
       root,
       config: &config,
       project: false,

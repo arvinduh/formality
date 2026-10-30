@@ -8,9 +8,6 @@ use std::path;
 use config;
 use tool;
 
-use crate::Context;
-use crate::Error;
-
 /// The prettier binary.
 pub const PRETTIER: tool::Tool = tool::Tool {
   binary: "prettier",
@@ -36,10 +33,10 @@ const CONFIGS: &[&str] = &[
 /// Returns an error when prettier is missing or fails, or the config is wrong.
 pub fn format(
   language: &str,
-  ctx: &Context,
+  ctx: &crate::Context,
   files: &[path::PathBuf],
   check: bool,
-) -> Result<Vec<path::PathBuf>, Error> {
+) -> Result<Vec<path::PathBuf>, crate::Error> {
   let mut args = args(language, ctx)?;
   args.push("--list-different".to_owned());
   let output = crate::run(&PRETTIER, &args, files, ctx.root, &[0, 1])?;
@@ -59,12 +56,15 @@ pub fn format(
 /// # Errors
 ///
 /// Returns an error when the config is wrong.
-pub fn args(language: &str, ctx: &Context) -> Result<Vec<String>, Error> {
+pub fn args(
+  language: &str,
+  ctx: &crate::Context,
+) -> Result<Vec<String>, crate::Error> {
   Ok(settings(ctx.settings(language, native(ctx))?.as_ref()))
 }
 
 /// Whether prettier finds a config of its own above the root.
-pub fn native(ctx: &Context) -> bool {
+pub fn native(ctx: &crate::Context) -> bool {
   tool::nearest_config(ctx.root, CONFIGS).is_some()
 }
 
