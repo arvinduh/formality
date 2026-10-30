@@ -6,6 +6,7 @@
 
 #![deny(clippy::print_stdout, clippy::print_stderr)]
 
+use std::fmt;
 use std::path;
 
 use serde;
@@ -92,6 +93,62 @@ impl Config {
     };
     let merged = toml::Value::Table(merged);
     merged.try_into().map_err(|source| layer.error(source))
+  }
+  /// Checks that every layer's top-level tables are among `known`, so a
+  /// misspelled or retired section fails on its line instead of being
+  /// ignored.
+  ///
+  /// # Errors
+  ///
+  /// Returns an error naming the first unknown section, its file and line.
+  pub fn known(&self, known: &[&str]) -> Result<(), Error> {
+    for layer in &self.layers {
+      let document = toml::de::Deserializer::parse(&layer.text)
+        .map_err(|source| layer.error(source))?;
+      serde::Deserializer::deserialize_map(document, Sections(known))
+        .map_err(|source| layer.error(source))?;
+    }
+    Ok(())
+  }
+}
+
+/// Visits a document's top-level tables, accepting only the names it holds.
+#[derive(Clone, Copy)]
+struct Sections<'a>(&'a [&'a str]);
+
+impl<'de> serde::de::Visitor<'de> for Sections<'_> {
+  type Value = ();
+
+  fn expecting(&self, f: &mut fmt::Formatter) -> fmt::Result {
+    f.write_str("a table of sections")
+  }
+
+  fn visit_map<A: serde::de::MapAccess<'de>>(
+    self,
+    mut map: A,
+  ) -> Result<(), A::Error> {
+    while map.next_key_seed(self)?.is_some() {
+      map.next_value::<serde::de::IgnoredAny>()?;
+    }
+    Ok(())
+  }
+}
+
+impl<'de> serde::de::DeserializeSeed<'de> for Sections<'_> {
+  type Value = ();
+
+  fn deserialize<D: serde::Deserializer<'de>>(
+    self,
+    key: D,
+  ) -> Result<(), D::Error> {
+    let name = <String as serde::Deserialize>::deserialize(key)?;
+    if self.0.contains(&name.as_str()) {
+      return Ok(());
+    }
+    Err(serde::de::Error::custom(format!(
+      "unknown section `{name}`, expected one of {}",
+      self.0.join(", ")
+    )))
   }
 }
 
@@ -255,5 +312,19 @@ mod tests {
       config(&[("formality.toml", "[global\n")]).is_err(),
       "bad toml"
     );
+  }
+
+  #[test]
+  fn an_unknown_section_names_its_file_and_line() {
+    let config = config(&[(
+      "formality.toml",
+      "[global]\nindent_size = 2\n\n[pythn]\nline_length = 9\n",
+    )])
+    .expect("config");
+    assert!(config.known(&["global", "python"]).is_err());
+    let err = config.known(&["global"]).expect_err("rejected").to_string();
+    assert!(err.starts_with("formality.toml: "), "{err}");
+    assert!(err.contains("line 4"), "{err}");
+    assert!(err.contains("unknown section `pythn`"), "{err}");
   }
 }
