@@ -540,6 +540,7 @@ name = "fml-tool"
 version = "0.0.0"
 dependencies = [
  "thiserror",
+ "which",
 ]
 
 [[package]]

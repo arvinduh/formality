@@ -7,9 +7,13 @@
 
 #![deny(clippy::print_stdout, clippy::print_stderr)]
 
+use std::ffi;
 use std::io;
+use std::path;
+use std::process;
 
 use thiserror;
+use which;
 
 /// An external program fml runs, and how to get it when it is missing.
 pub struct Tool {
@@ -48,4 +52,36 @@ pub struct Output {
   pub stdout: String,
   /// Everything the tool wrote to stderr, decoded lossily as UTF-8.
   pub stderr: String,
+}
+
+impl Tool {
+  /// Runs the tool with `args` in `cwd` and waits for it to finish.
+  ///
+  /// # Errors
+  ///
+  /// Returns [`Error::Missing`] when the binary is not on `PATH`, and
+  /// [`Error::Spawn`] when it is found but cannot be started.
+  pub fn run(
+    &self,
+    args: &[&ffi::OsStr],
+    cwd: &path::Path,
+  ) -> Result<Output, Error> {
+    let program = which::which(self.binary).map_err(|_| Error::Missing {
+      binary: self.binary,
+      install: self.install,
+    })?;
+    let output = process::Command::new(program)
+      .args(args)
+      .current_dir(cwd)
+      .output()
+      .map_err(|source| Error::Spawn {
+        binary: self.binary,
+        source,
+      })?;
+    Ok(Output {
+      code: output.status.code(),
+      stdout: String::from_utf8_lossy(&output.stdout).into_owned(),
+      stderr: String::from_utf8_lossy(&output.stderr).into_owned(),
+    })
+  }
 }

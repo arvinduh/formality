@@ -8,6 +8,7 @@ repository.workspace = true
 
 [dependencies]
 thiserror = "2"
+which = "8.0.5"
 
 [lints]
 workspace = true
