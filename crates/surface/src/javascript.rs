@@ -170,3 +170,59 @@ fn reported(output: &str, cwd: &path::Path) -> Vec<Problem> {
     })
     .collect()
 }
+
+#[cfg(test)]
+mod tests {
+  use std::fs;
+
+  use super::*;
+  use crate::testing;
+
+  #[test]
+  fn format_check_reports_without_writing_and_format_writes() {
+    let source = "const a = 'x'\n";
+    let dir = testing::workspace(&[("a.ts", source)]);
+    let files = [dir.path().join("a.ts")];
+    let check = testing::with_context(dir.path(), |ctx| {
+      JavaScript.format(ctx, &files, true).expect("check")
+    });
+    assert_eq!(check.changed, files);
+    assert_eq!(fs::read_to_string(&files[0]).expect("read"), source);
+
+    testing::with_context(dir.path(), |ctx| {
+      JavaScript.format(ctx, &files, false)
+    })
+    .expect("format");
+    let text = fs::read_to_string(&files[0]).expect("read");
+    assert_eq!(text, "const a = \"x\";\n");
+  }
+
+  #[test]
+  fn lint_uses_fml_rules_only_without_a_biome_config() {
+    let source = (
+      "a.ts",
+      "export function f(): void {\n  for (const k in {}) {\n    console.log(k);\n  }\n}\n",
+    );
+    let dir = testing::workspace(&[source]);
+    let files = [dir.path().join("a.ts")];
+    let report = testing::with_context(dir.path(), |ctx| {
+      JavaScript.lint(ctx, &files, false).expect("lint")
+    });
+    let found = |report: &Report| {
+      report
+        .problems
+        .iter()
+        .any(|p| p.message.contains("noForIn"))
+    };
+    assert!(found(&report), "noForIn under fml's rules");
+    assert_eq!(report.problems[0].path, files[0]);
+    assert_eq!(report.problems[0].line, 2);
+
+    let dir = testing::workspace(&[source, ("biome.json", "{}\n")]);
+    let files = [dir.path().join("a.ts")];
+    let report = testing::with_context(dir.path(), |ctx| {
+      JavaScript.lint(ctx, &files, false).expect("lint")
+    });
+    assert!(!found(&report), "the biome.json leaves noForIn off");
+  }
+}
