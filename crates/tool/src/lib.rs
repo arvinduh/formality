@@ -70,9 +70,15 @@ impl Tool {
       binary: self.binary,
       install: self.install,
     })?;
+    // fml parses what tools print, so it asks them for plain text even when
+    // the caller's environment forces color.
     let output = process::Command::new(program)
       .args(args)
       .current_dir(cwd)
+      .env_remove("FORCE_COLOR")
+      .env_remove("CLICOLOR_FORCE")
+      .env("NO_COLOR", "1")
+      .env("CARGO_TERM_COLOR", "never")
       .output()
       .map_err(|source| Error::Spawn {
         binary: self.binary,
