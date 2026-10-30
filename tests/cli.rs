@@ -75,6 +75,20 @@ fn paths_print_relative_to_the_current_directory() {
 }
 
 #[test]
+fn a_file_outside_the_workspace_is_formatted_by_absolute_path() {
+  // fml 0.4.1 panicked here: it checked the file against the workspace's
+  // gitignore, which only takes paths under the workspace.
+  let dir = workspace(&[(".gitignore", "*.log\n")]);
+  let other = tempfile::tempdir().expect("tempdir");
+  let file = other.path().join("a.toml");
+  fs::write(&file, "a=1\n").expect("write");
+  let arg = file.to_str().expect("UTF-8 path");
+  let output = fml(dir.path(), &["-q", "fmt", "--check", arg]);
+  assert_eq!(output.status.code(), Some(1), "{}", stderr(&output));
+  assert!(stdout(&output).ends_with("a.toml\n"), "{}", stdout(&output));
+}
+
+#[test]
 fn a_missing_tool_exits_2_naming_its_install_command() {
   let dir = workspace(&[("a.sh", "echo a\n")]);
   let output = process::Command::new(env!("CARGO_BIN_EXE_fml"))
