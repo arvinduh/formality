@@ -9,11 +9,6 @@ use std::path;
 use config;
 use tool;
 
-use crate::Context;
-use crate::Error;
-use crate::Report;
-use crate::Surface;
-
 /// The ruff binary, which formats and lints.
 const RUFF: tool::Tool = tool::Tool {
   binary: "ruff",
@@ -26,7 +21,7 @@ const RULES: &str = "E,F,I,UP,B,SIM";
 /// Python: `.py` and `.pyi` files.
 pub struct Python;
 
-impl Surface for Python {
+impl crate::Surface for Python {
   fn name(&self) -> &'static str {
     "python"
   }
@@ -37,10 +32,10 @@ impl Surface for Python {
 
   fn format(
     &self,
-    ctx: &Context,
+    ctx: &crate::Context,
     files: &[path::PathBuf],
     check: bool,
-  ) -> Result<Report, Error> {
+  ) -> Result<crate::Report, crate::Error> {
     let settings = settings(ctx.settings(self.name(), native(ctx))?.as_ref());
     let imports = ruff(ctx, &["check", "--select", "I"], &settings, files)?;
     let layout = ruff(ctx, &["format", "--check"], &settings, files)?;
@@ -58,7 +53,7 @@ impl Surface for Python {
       )?;
       ruff(ctx, &["format"], &settings, &changed)?;
     }
-    Ok(Report {
+    Ok(crate::Report {
       changed,
       problems: Vec::new(),
     })
@@ -66,10 +61,10 @@ impl Surface for Python {
 
   fn lint(
     &self,
-    ctx: &Context,
+    ctx: &crate::Context,
     files: &[path::PathBuf],
     fix: bool,
-  ) -> Result<Report, Error> {
+  ) -> Result<crate::Report, crate::Error> {
     let native = native(ctx);
     let mut args = vec!["check"];
     if !native {
@@ -80,7 +75,7 @@ impl Surface for Python {
     }
     let settings = settings(ctx.settings(self.name(), native)?.as_ref());
     let output = ruff(ctx, &args, &settings, files)?;
-    Ok(Report {
+    Ok(crate::Report {
       changed: Vec::new(),
       problems: crate::locate(crate::problems(&output, ctx.root), files),
     })
@@ -90,7 +85,7 @@ impl Surface for Python {
 /// Whether ruff will find a config of its own: a `ruff.toml`, a
 /// `.ruff.toml` or a `pyproject.toml` with a `[tool.ruff]` table at or above
 /// the root, or a user-level `ruff/ruff.toml`.
-fn native(ctx: &Context) -> bool {
+fn native(ctx: &crate::Context) -> bool {
   let project = tool::nearest_config(
     ctx.root,
     &["ruff.toml", ".ruff.toml", "pyproject.toml"],
@@ -132,11 +127,11 @@ fn settings(settings: Option<&config::Global>) -> Vec<String> {
 ///
 /// Exit code 1 means findings, which the caller reads from the output.
 fn ruff(
-  ctx: &Context,
+  ctx: &crate::Context,
   args: &[&str],
   settings: &[String],
   files: &[path::PathBuf],
-) -> Result<String, Error> {
+) -> Result<String, crate::Error> {
   let args: Vec<String> = args
     .iter()
     .copied()
@@ -152,6 +147,7 @@ mod tests {
   use tempfile;
 
   use super::*;
+  use crate::Surface;
 
   /// Writes `files` (name and text) into a new temp dir and returns it.
   fn workspace(files: &[(&str, &str)]) -> tempfile::TempDir {
@@ -163,9 +159,12 @@ mod tests {
   }
 
   /// Runs `pass` against a context rooted at `root` with no fml config.
-  fn with_context<T>(root: &path::Path, pass: impl Fn(&Context) -> T) -> T {
+  fn with_context<T>(
+    root: &path::Path,
+    pass: impl Fn(&crate::Context) -> T,
+  ) -> T {
     let config = config::Config::new(Vec::new()).expect("config");
-    pass(&Context {
+    pass(&crate::Context {
       root,
       config: &config,
       project: false,

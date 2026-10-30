@@ -4,11 +4,6 @@ use std::path;
 
 use tool;
 
-use crate::Context;
-use crate::Error;
-use crate::Report;
-use crate::Surface;
-
 /// The yamllint binary.
 const YAMLLINT: tool::Tool = tool::Tool {
   binary: "yamllint",
@@ -21,7 +16,7 @@ const CONFIGS: &[&str] = &[".yamllint", ".yamllint.yaml", ".yamllint.yml"];
 /// YAML: `.yaml` and `.yml` files.
 pub struct Yaml;
 
-impl Surface for Yaml {
+impl crate::Surface for Yaml {
   fn name(&self) -> &'static str {
     "yaml"
   }
@@ -32,11 +27,11 @@ impl Surface for Yaml {
 
   fn format(
     &self,
-    ctx: &Context,
+    ctx: &crate::Context,
     files: &[path::PathBuf],
     check: bool,
-  ) -> Result<Report, Error> {
-    Ok(Report {
+  ) -> Result<crate::Report, crate::Error> {
+    Ok(crate::Report {
       changed: crate::prettier::format(self.name(), ctx, files, check)?,
       problems: Vec::new(),
     })
@@ -44,10 +39,10 @@ impl Surface for Yaml {
 
   fn lint(
     &self,
-    ctx: &Context,
+    ctx: &crate::Context,
     files: &[path::PathBuf],
     _fix: bool,
-  ) -> Result<Report, Error> {
+  ) -> Result<crate::Report, crate::Error> {
     let mut args = vec!["--format=parsable".to_owned()];
     let native = tool::nearest_config(ctx.root, CONFIGS).is_some();
     if !native {
@@ -64,7 +59,7 @@ impl Surface for Yaml {
       ));
     }
     let output = crate::run(&YAMLLINT, &args, files, ctx.root, &[0, 1])?;
-    Ok(Report {
+    Ok(crate::Report {
       changed: Vec::new(),
       problems: crate::locate(crate::problems(&output.stdout, ctx.root), files),
     })
@@ -76,6 +71,7 @@ mod tests {
   use std::fs;
 
   use super::*;
+  use crate::Surface;
   use crate::testing;
 
   #[test]

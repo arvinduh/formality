@@ -5,11 +5,6 @@ use std::path;
 use config;
 use tool;
 
-use crate::Context;
-use crate::Error;
-use crate::Report;
-use crate::Surface;
-
 /// The clang-format binary.
 const CLANG_FORMAT: tool::Tool = tool::Tool {
   binary: "clang-format",
@@ -30,7 +25,7 @@ const CHECKS: &str = "-*,bugprone-*,google-*,modernize-*,performance-*,\
 /// C and C++: sources and headers.
 pub struct Cpp;
 
-impl Surface for Cpp {
+impl crate::Surface for Cpp {
   fn name(&self) -> &'static str {
     "cpp"
   }
@@ -41,10 +36,10 @@ impl Surface for Cpp {
 
   fn format(
     &self,
-    ctx: &Context,
+    ctx: &crate::Context,
     files: &[path::PathBuf],
     check: bool,
-  ) -> Result<Report, Error> {
+  ) -> Result<crate::Report, crate::Error> {
     let names = [".clang-format", "_clang-format"];
     let native = tool::nearest_config(ctx.root, &names).is_some();
     let style = ctx
@@ -63,7 +58,7 @@ impl Surface for Cpp {
       args.push("-i".to_owned());
       crate::run(&CLANG_FORMAT, &args, &changed, ctx.root, &[0])?;
     }
-    Ok(Report {
+    Ok(crate::Report {
       changed,
       problems: Vec::new(),
     })
@@ -71,10 +66,10 @@ impl Surface for Cpp {
 
   fn lint(
     &self,
-    ctx: &Context,
+    ctx: &crate::Context,
     files: &[path::PathBuf],
     fix: bool,
-  ) -> Result<Report, Error> {
+  ) -> Result<crate::Report, crate::Error> {
     let mut args = vec!["--quiet".to_owned()];
     if tool::nearest_config(ctx.root, &[".clang-tidy"]).is_none() {
       args.push(format!("--checks={CHECKS}"));
@@ -83,7 +78,7 @@ impl Surface for Cpp {
       args.push("--fix".to_owned());
     }
     let output = crate::run(&CLANG_TIDY, &args, files, ctx.root, &[0, 1])?;
-    Ok(Report {
+    Ok(crate::Report {
       changed: Vec::new(),
       problems: crate::locate(crate::problems(&output.stdout, ctx.root), files),
     })
@@ -109,6 +104,7 @@ mod tests {
   use std::fs;
 
   use super::*;
+  use crate::Surface;
   use crate::testing;
 
   #[test]
@@ -142,7 +138,7 @@ mod tests {
     let report = testing::with_context(dir.path(), |ctx| {
       Cpp.lint(ctx, &files, false).expect("lint")
     });
-    let found = |report: &Report| {
+    let found = |report: &crate::Report| {
       report
         .problems
         .iter()

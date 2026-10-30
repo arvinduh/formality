@@ -4,11 +4,6 @@ use std::path;
 
 use tool;
 
-use crate::Context;
-use crate::Error;
-use crate::Report;
-use crate::Surface;
-
 /// The shfmt binary.
 const SHFMT: tool::Tool = tool::Tool {
   binary: "shfmt",
@@ -24,7 +19,7 @@ const SHELLCHECK: tool::Tool = tool::Tool {
 /// Shell: `.sh` and `.bash` files.
 pub struct Shell;
 
-impl Surface for Shell {
+impl crate::Surface for Shell {
   fn name(&self) -> &'static str {
     "shell"
   }
@@ -35,10 +30,10 @@ impl Surface for Shell {
 
   fn format(
     &self,
-    ctx: &Context,
+    ctx: &crate::Context,
     files: &[path::PathBuf],
     check: bool,
-  ) -> Result<Report, Error> {
+  ) -> Result<crate::Report, crate::Error> {
     // shfmt has no config file of its own, so fml's settings always apply:
     // switch cases indented (`-ci`), binary operators leading lines (`-bn`).
     let indent = ctx
@@ -54,7 +49,7 @@ impl Surface for Shell {
       args.push("-w".to_owned());
       crate::run(&SHFMT, &args, &changed, ctx.root, &[0])?;
     }
-    Ok(Report {
+    Ok(crate::Report {
       changed,
       problems: Vec::new(),
     })
@@ -62,15 +57,15 @@ impl Surface for Shell {
 
   fn lint(
     &self,
-    ctx: &Context,
+    ctx: &crate::Context,
     files: &[path::PathBuf],
     _fix: bool,
-  ) -> Result<Report, Error> {
+  ) -> Result<crate::Report, crate::Error> {
     // shellcheck reads `.shellcheckrc` above the file and `~/.shellcheckrc`
     // on its own, so fml adds no checks.
     let args = ["--format=gcc".to_owned()];
     let output = crate::run(&SHELLCHECK, &args, files, ctx.root, &[0, 1])?;
-    Ok(Report {
+    Ok(crate::Report {
       changed: Vec::new(),
       problems: crate::locate(crate::problems(&output.stdout, ctx.root), files),
     })
@@ -82,6 +77,7 @@ mod tests {
   use std::fs;
 
   use super::*;
+  use crate::Surface;
   use crate::testing;
 
   #[test]

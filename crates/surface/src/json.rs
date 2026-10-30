@@ -2,15 +2,10 @@
 
 use std::path;
 
-use crate::Context;
-use crate::Error;
-use crate::Report;
-use crate::Surface;
-
 /// JSON: `.json` and `.jsonc` files.
 pub struct Json;
 
-impl Surface for Json {
+impl crate::Surface for Json {
   fn name(&self) -> &'static str {
     "json"
   }
@@ -21,11 +16,11 @@ impl Surface for Json {
 
   fn format(
     &self,
-    ctx: &Context,
+    ctx: &crate::Context,
     files: &[path::PathBuf],
     check: bool,
-  ) -> Result<Report, Error> {
-    Ok(Report {
+  ) -> Result<crate::Report, crate::Error> {
+    Ok(crate::Report {
       changed: crate::prettier::format(self.name(), ctx, files, check)?,
       problems: Vec::new(),
     })
@@ -33,11 +28,11 @@ impl Surface for Json {
 
   fn lint(
     &self,
-    _ctx: &Context,
+    _ctx: &crate::Context,
     _files: &[path::PathBuf],
     _fix: bool,
-  ) -> Result<Report, Error> {
-    Ok(Report::default())
+  ) -> Result<crate::Report, crate::Error> {
+    Ok(crate::Report::default())
   }
 }
 
@@ -46,6 +41,7 @@ mod tests {
   use std::fs;
 
   use super::*;
+  use crate::Surface;
   use crate::testing;
 
   #[test]

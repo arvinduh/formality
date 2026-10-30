@@ -13,10 +13,6 @@ use pulldown_cmark;
 use tempfile;
 use tool;
 
-use crate::Context;
-use crate::Error;
-use crate::Report;
-use crate::Surface;
 use crate::prettier;
 
 /// The markdownlint-cli2 binary.
@@ -42,7 +38,7 @@ const CONFIGS: &[&str] = &[
 /// Markdown: `.md` files.
 pub struct Markdown;
 
-impl Surface for Markdown {
+impl crate::Surface for Markdown {
   fn name(&self) -> &'static str {
     "markdown"
   }
@@ -53,10 +49,10 @@ impl Surface for Markdown {
 
   fn format(
     &self,
-    ctx: &Context,
+    ctx: &crate::Context,
     files: &[path::PathBuf],
     check: bool,
-  ) -> Result<Report, Error> {
+  ) -> Result<crate::Report, crate::Error> {
     let mut changed = prettier::format(self.name(), ctx, files, check)?;
     let args = prettier::args(self.name(), ctx)?;
     let breaks = ctx.settings(self.name(), prettier::native(ctx))?.is_some();
@@ -80,7 +76,7 @@ impl Surface for Markdown {
         changed.push(file.clone());
       }
     }
-    Ok(Report {
+    Ok(crate::Report {
       changed,
       problems: Vec::new(),
     })
@@ -88,10 +84,10 @@ impl Surface for Markdown {
 
   fn lint(
     &self,
-    ctx: &Context,
+    ctx: &crate::Context,
     files: &[path::PathBuf],
     fix: bool,
-  ) -> Result<Report, Error> {
+  ) -> Result<crate::Report, crate::Error> {
     let mut args = if fix {
       vec!["--fix".to_owned()]
     } else {
@@ -111,7 +107,7 @@ impl Surface for Markdown {
     };
     let output = crate::run(&MARKDOWNLINT, &args, files, ctx.root, &[0, 1])?;
     drop(rules);
-    Ok(Report {
+    Ok(crate::Report {
       changed: Vec::new(),
       problems: crate::locate(crate::problems(&output.stderr, ctx.root), files),
     })
@@ -162,6 +158,7 @@ mod tests {
   use std::fs;
 
   use super::*;
+  use crate::Surface;
   use crate::testing;
 
   #[test]

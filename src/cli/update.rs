@@ -14,6 +14,8 @@ use semver;
 use tempfile;
 use thiserror;
 
+use crate::cli;
+
 /// The cargo-dist app name, which names the binary and the installers.
 const APP: &str = "fml";
 
@@ -53,11 +55,36 @@ pub enum Error {
 }
 
 /// What `fml update` did.
-pub enum Outcome {
+enum Outcome {
   /// The running version is the latest.
   Latest(String),
-  /// The binary was replaced: the old version, then the new one.
-  Updated(String, String),
+  /// The binary was replaced.
+  Updated {
+    /// The version that was running.
+    from: String,
+    /// The version installed over it.
+    to: String,
+  },
+}
+
+/// Installs the latest release when it is newer and prints what it did,
+/// unless `quiet`.
+///
+/// # Errors
+///
+/// Returns an error when the update fails.
+#[expect(clippy::print_stdout, reason = "fml's output")]
+pub fn run(quiet: bool) -> Result<cli::Status, cli::Error> {
+  match install()? {
+    Outcome::Latest(version) if !quiet => {
+      println!("fml {version} is the latest release");
+    }
+    Outcome::Updated { from, to } if !quiet => {
+      println!("updated fml from {from} to {to}");
+    }
+    _ => {}
+  }
+  Ok(cli::Status::Clean)
 }
 
 /// Installs the latest release over the running binary when it is newer.
@@ -66,7 +93,7 @@ pub enum Outcome {
 ///
 /// Returns an error when the binary cannot be replaced where it is, or the
 /// release cannot be fetched or installed.
-pub fn run() -> Result<Outcome, Error> {
+fn install() -> Result<Outcome, Error> {
   let current = env!("CARGO_PKG_VERSION");
   let exe = running_exe().map_err(Error::Exe)?;
   let dir = exe.parent().unwrap_or_else(|| path::Path::new("."));
@@ -76,9 +103,8 @@ pub fn run() -> Result<Outcome, Error> {
       "path is not UTF-8",
     ))
   })?;
-  let version = semver::Version::parse(current).map_err(|err| {
-    Error::Exe(io::Error::new(io::ErrorKind::InvalidData, err))
-  })?;
+  let version = semver::Version::parse(current)
+    .expect("Cargo only builds packages with a semver version");
   let mut updater = axoupdater::AxoUpdater::new_for(APP);
   if let Ok(token) = env::var(TOKEN) {
     updater.set_github_token(&token);
@@ -100,7 +126,10 @@ pub fn run() -> Result<Outcome, Error> {
   let result = updater.run_sync().map_err(Box::new)?;
   let latest =
     result.map_or_else(|| current.to_owned(), |r| r.new_version.to_string());
-  Ok(Outcome::Updated(current.to_owned(), latest))
+  Ok(Outcome::Updated {
+    from: current.to_owned(),
+    to: latest,
+  })
 }
 
 /// The running binary's path, with symlinks resolved so its directory holds
