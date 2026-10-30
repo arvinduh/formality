@@ -50,7 +50,7 @@ impl Surface for Rust {
     check: bool,
   ) -> Result<Report, Error> {
     let mut args = vec!["--edition".to_owned(), edition(ctx.root)];
-    if let Some(settings) = ctx.settings(native(ctx))? {
+    if let Some(settings) = ctx.settings(self.name(), native(ctx))? {
       args.extend(["--config".to_owned(), settings_arg(&settings)]);
     }
     let mut check_args = args.clone();

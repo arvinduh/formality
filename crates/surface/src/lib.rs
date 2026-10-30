@@ -121,21 +121,24 @@ pub enum Error {
 }
 
 impl Context<'_> {
-  /// The formatting settings fml passes a tool: the workspace's
-  /// `formality.toml` when it has one, else nothing when the tool has its own
-  /// config (`native`), else fml's defaults.
+  /// The formatting settings fml passes `language`'s tools: the workspace's
+  /// `formality.toml` when it has one, its `[language]` table over
+  /// `[global]`, else nothing when the tool has its own config (`native`),
+  /// else fml's defaults.
   ///
   /// `None` means pass no settings, so the tool reads its own config.
   ///
   /// # Errors
   ///
-  /// Returns an error when `[global]` has an unknown key or a wrong value.
+  /// Returns an error when `[global]` or `[language]` has an unknown key or
+  /// a wrong value.
   pub fn settings(
     &self,
+    language: &str,
     native: bool,
   ) -> Result<Option<config::Global>, config::Error> {
     if self.project {
-      return self.config.section("global").map(Some);
+      return self.config.sections(&["global", language]).map(Some);
     }
     Ok((!native).then(config::Global::default))
   }

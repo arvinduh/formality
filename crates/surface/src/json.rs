@@ -26,7 +26,7 @@ impl Surface for Json {
     check: bool,
   ) -> Result<Report, Error> {
     Ok(Report {
-      changed: crate::prettier::format(ctx, files, check)?,
+      changed: crate::prettier::format(self.name(), ctx, files, check)?,
       problems: Vec::new(),
     })
   }
@@ -63,5 +63,18 @@ mod tests {
       .expect("format");
     let text = fs::read_to_string(&file).expect("read");
     assert_eq!(text, "{ \"a\": 1 }\n");
+  }
+
+  #[test]
+  fn a_language_table_overrides_global_settings() {
+    let dir = testing::workspace(&[("a.json", "{\"a\":{\"b\":1}}\n")]);
+    let files = [dir.path().join("a.json")];
+    let toml = "[global]\nline_length = 10\n[json]\nindent_size = 4\n";
+    testing::with_project(dir.path(), toml, |ctx| {
+      Json.format(ctx, &files, false)
+    })
+    .expect("format");
+    let text = fs::read_to_string(&files[0]).expect("read");
+    assert!(text.starts_with("{\n    \"a\""), "{text}");
   }
 }

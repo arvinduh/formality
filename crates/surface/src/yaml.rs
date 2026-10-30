@@ -37,7 +37,7 @@ impl Surface for Yaml {
     check: bool,
   ) -> Result<Report, Error> {
     Ok(Report {
-      changed: crate::prettier::format(ctx, files, check)?,
+      changed: crate::prettier::format(self.name(), ctx, files, check)?,
       problems: Vec::new(),
     })
   }
@@ -53,7 +53,9 @@ impl Surface for Yaml {
     if !native {
       // yamllint's default, without the `---` rule prettier does not enforce,
       // and wrapping where the formatter wraps.
-      let width = ctx.settings(false)?.map_or(80, |s| s.line_length);
+      let width = ctx
+        .settings(self.name(), false)?
+        .map_or(80, |s| s.line_length);
       args.push(format!(
         "--config-data={{extends: default, rules: {{document-start: \
          disable, line-length: {{max: {width}}}}}}}"

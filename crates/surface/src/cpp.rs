@@ -48,7 +48,7 @@ impl Surface for Cpp {
     let names = [".clang-format", "_clang-format"];
     let native = tool::nearest_config(ctx.root, &names).is_some();
     let style = ctx
-      .settings(native)?
+      .settings(self.name(), native)?
       .map_or("file".to_owned(), |s| style(&s));
     let mut args = vec![format!("--style={style}")];
     let mut check_args = args.clone();

@@ -34,7 +34,7 @@ impl Surface for Markdown {
     check: bool,
   ) -> Result<Report, Error> {
     Ok(Report {
-      changed: crate::prettier::format(ctx, files, check)?,
+      changed: crate::prettier::format(self.name(), ctx, files, check)?,
       problems: Vec::new(),
     })
   }

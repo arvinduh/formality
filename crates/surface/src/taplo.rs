@@ -37,7 +37,7 @@ impl Surface for Toml {
     let native =
       tool::nearest_config(ctx.root, &[".taplo.toml", "taplo.toml"]).is_some();
     let mut args = vec!["fmt".to_owned()];
-    args.extend(settings(ctx.settings(native)?.as_ref()));
+    args.extend(settings(ctx.settings(self.name(), native)?.as_ref()));
     let mut check_args = args.clone();
     check_args.push("--check".to_owned());
     let output = crate::run(&TAPLO, &check_args, files, ctx.root, &[0, 1])?;

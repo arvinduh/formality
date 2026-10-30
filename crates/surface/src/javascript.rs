@@ -79,7 +79,7 @@ impl Surface for JavaScript {
   ) -> Result<Report, Error> {
     let native = tool::nearest_config(ctx.root, CONFIGS).is_some();
     let mut args = vec!["format".to_owned(), "--reporter=github".to_owned()];
-    args.extend(settings(ctx.settings(native)?.as_ref()));
+    args.extend(settings(ctx.settings(self.name(), native)?.as_ref()));
     let output = crate::run(&BIOME, &args, files, ctx.root, &[0, 1])?;
     let mut changed: Vec<path::PathBuf> = reported(&output.stdout, ctx.root)
       .into_iter()

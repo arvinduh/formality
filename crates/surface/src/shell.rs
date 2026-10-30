@@ -41,7 +41,9 @@ impl Surface for Shell {
   ) -> Result<Report, Error> {
     // shfmt has no config file of its own, so fml's settings always apply:
     // switch cases indented (`-ci`), binary operators leading lines (`-bn`).
-    let indent = ctx.settings(false)?.map_or(2, |s| s.indent_size);
+    let indent = ctx
+      .settings(self.name(), false)?
+      .map_or(2, |s| s.indent_size);
     let mut args = vec![format!("-i={indent}"), "-ci".into(), "-bn".into()];
     args.push("-l".to_owned());
     let output = crate::run(&SHFMT, &args, files, ctx.root, &[0, 1])?;

@@ -41,7 +41,7 @@ impl Surface for Python {
     files: &[path::PathBuf],
     check: bool,
   ) -> Result<Report, Error> {
-    let settings = settings(ctx.settings(native(ctx))?.as_ref());
+    let settings = settings(ctx.settings(self.name(), native(ctx))?.as_ref());
     let imports = ruff(ctx, &["check", "--select", "I"], &settings, files)?;
     let layout = ruff(ctx, &["format", "--check"], &settings, files)?;
     let mut changed: Vec<path::PathBuf> = crate::problems(&imports, ctx.root)
@@ -80,7 +80,7 @@ impl Surface for Python {
     if fix {
       args.push("--fix");
     }
-    let settings = settings(ctx.settings(native)?.as_ref());
+    let settings = settings(ctx.settings(self.name(), native)?.as_ref());
     let output = ruff(ctx, &args, &settings, files)?;
     Ok(Report {
       changed: Vec::new(),

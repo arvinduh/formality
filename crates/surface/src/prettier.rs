@@ -28,19 +28,20 @@ const CONFIGS: &[&str] = &[
   "prettier.config.js",
 ];
 
-/// Formats `files` with prettier, or with `check` only lists the files that
+/// Formats `language`'s `files` with prettier, or with `check` only lists the files that
 /// would change, and returns those files.
 ///
 /// # Errors
 ///
 /// Returns an error when prettier is missing or fails, or the config is wrong.
 pub fn format(
+  language: &str,
   ctx: &Context,
   files: &[path::PathBuf],
   check: bool,
 ) -> Result<Vec<path::PathBuf>, Error> {
   let native = tool::nearest_config(ctx.root, CONFIGS).is_some();
-  let mut args = settings(ctx.settings(native)?.as_ref());
+  let mut args = settings(ctx.settings(language, native)?.as_ref());
   args.push("--list-different".to_owned());
   let output = crate::run(&PRETTIER, &args, files, ctx.root, &[0, 1])?;
   let changed: Vec<path::PathBuf> = output
