@@ -1,0 +1,15 @@
+[package]
+name = "fml-config"
+description = "Reads fml's layered formality.toml config"
+edition.workspace = true
+authors.workspace = true
+license.workspace = true
+repository.workspace = true
+
+[dependencies]
+serde = { version = "1.0.229", features = ["derive"] }
+thiserror = "2"
+toml = "1.1.4"
+
+[lints]
+workspace = true
