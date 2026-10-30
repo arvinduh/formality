@@ -66,3 +66,43 @@ impl Surface for Yaml {
     })
   }
 }
+
+#[cfg(test)]
+mod tests {
+  use std::fs;
+
+  use super::*;
+  use crate::testing;
+
+  #[test]
+  fn format_writes_with_prettier() {
+    let dir = testing::workspace(&[("a.yaml", "a:   [1,2]\n")]);
+    let files = [dir.path().join("a.yaml")];
+    let report = testing::with_context(dir.path(), |ctx| {
+      Yaml.format(ctx, &files, false).expect("format")
+    });
+    assert_eq!(report.changed, files);
+    let text = fs::read_to_string(&files[0]).expect("read");
+    assert_eq!(text, "a: [1, 2]\n");
+  }
+
+  #[test]
+  fn lint_uses_fml_rules_only_without_a_yamllint_config() {
+    let source = ("a.yaml", "a: 1 \n");
+    let dir = testing::workspace(&[source]);
+    let files = [dir.path().join("a.yaml")];
+    let report = testing::with_context(dir.path(), |ctx| {
+      Yaml.lint(ctx, &files, false).expect("lint")
+    });
+    assert_eq!(report.problems.len(), 1, "trailing spaces, no `---` rule");
+    assert_eq!((report.problems[0].line, report.problems[0].column), (1, 5));
+    assert_eq!(report.problems[0].path, files[0]);
+
+    let dir = testing::workspace(&[source, (".yamllint", "rules: {}\n")]);
+    let files = [dir.path().join("a.yaml")];
+    let report = testing::with_context(dir.path(), |ctx| {
+      Yaml.lint(ctx, &files, false).expect("lint")
+    });
+    assert!(report.problems.is_empty(), "the .yamllint enables no rules");
+  }
+}
