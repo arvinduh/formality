@@ -1,17 +1,11 @@
 #!/usr/bin/env bash
-# formality pre-commit hook
-# Activated via: git config core.hooksPath .githooks
+# Formats and lints the staged files with this checkout's fml.
+# Enable with: git config core.hooksPath .githooks
 set -euo pipefail
 
 cargo build -q --bin fml
+fml=./target/debug/fml
+[[ -x $fml ]] || fml=./target/debug/fml.exe
 
-if [ -x "./target/debug/fml" ]; then
-  FML="./target/debug/fml"
-elif [ -x "./target/debug/fml.exe" ]; then
-  FML="./target/debug/fml.exe"
-else
-  FML="fml"
-fi
-
-"$FML" fmt --staged --allow-missing
-"$FML" lint --staged --allow-missing
+"$fml" fmt --staged
+"$fml" lint --staged
