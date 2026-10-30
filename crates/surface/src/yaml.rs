@@ -51,14 +51,16 @@ impl Surface for Yaml {
     let mut args = vec!["--format=parsable".to_owned()];
     let native = tool::nearest_config(ctx.root, CONFIGS).is_some();
     if !native {
-      // yamllint's default, without the `---` rule prettier does not enforce,
-      // and wrapping where the formatter wraps.
+      // yamllint's default, agreeing with prettier: one space before a
+      // comment, no `---`, and wrapping where it wraps. Keys such as a
+      // workflow's `on:` are not booleans.
       let width = ctx
         .settings(self.name(), false)?
         .map_or(80, |s| s.line_length);
       args.push(format!(
-        "--config-data={{extends: default, rules: {{document-start: \
-         disable, line-length: {{max: {width}}}}}}}"
+        "--config-data={{extends: default, rules: {{comments: \
+         {{min-spaces-from-content: 1}}, document-start: disable, \
+         line-length: {{max: {width}}}, truthy: {{check-keys: false}}}}}}"
       ));
     }
     let output = crate::run(&YAMLLINT, &args, files, ctx.root, &[0, 1])?;
@@ -90,14 +92,14 @@ mod tests {
 
   #[test]
   fn lint_uses_fml_rules_only_without_a_yamllint_config() {
-    let source = ("a.yaml", "a: 1 \n");
+    let source = ("a.yaml", "on: 1 # c\na: 1 \n");
     let dir = testing::workspace(&[source]);
     let files = [dir.path().join("a.yaml")];
     let report = testing::with_context(dir.path(), |ctx| {
       Yaml.lint(ctx, &files, false).expect("lint")
     });
     assert_eq!(report.problems.len(), 1, "trailing spaces, no `---` rule");
-    assert_eq!((report.problems[0].line, report.problems[0].column), (1, 5));
+    assert_eq!((report.problems[0].line, report.problems[0].column), (2, 5));
     assert_eq!(report.problems[0].path, files[0]);
 
     let dir = testing::workspace(&[source, (".yamllint", "rules: {}\n")]);
