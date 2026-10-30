@@ -45,6 +45,13 @@ jobs:
       - name: Set up Rust cache
         uses: Swatinem/rust-cache@v2
 
+      - name: Set up Go
+        # shfmt installs with `go install`; macOS runners have no Go.
+        uses: actions/setup-go@v5
+        with:
+          go-version: stable
+          cache: false
+
       - name: Install tools
         shell: bash
         run: .github/install-tools.sh
@@ -74,6 +81,13 @@ jobs:
 
       - name: Set up Rust cache
         uses: Swatinem/rust-cache@v2
+
+      - name: Set up Go
+        # shfmt installs with `go install`; macOS runners have no Go.
+        uses: actions/setup-go@v5
+        with:
+          go-version: stable
+          cache: false
 
       - name: Install tools
         run: .github/install-tools.sh
