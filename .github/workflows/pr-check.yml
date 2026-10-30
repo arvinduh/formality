@@ -88,6 +88,11 @@ jobs:
         # tests fail on a clean runner with no taplo installed.
         run: ./target/debug/fml doctor --install
 
+      - name: Install tools the surface crate tests need
+        # doctor installs only the tools for languages this repo has, but
+        # crates/surface tests every language it supports.
+        run: pipx install ruff==0.16.4
+
       - name: Run full test suite
         run: cargo test --verbose
 
@@ -166,6 +171,11 @@ jobs:
 
       - name: Install tool dependencies via fml
         run: ./target/debug/fml doctor --install
+
+      - name: Install tools the surface crate tests need
+        # doctor installs only the tools for languages this repo has, but
+        # crates/surface tests every language it supports.
+        run: pipx install ruff==0.16.4
 
       - name: Run full test suite
         # --no-fail-fast: a failing lib test must not hide the integration
