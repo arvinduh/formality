@@ -1,123 +1,39 @@
 # AGENTS.md
 
-fml: polyglot format/lint/config orchestrator, 12 language surfaces.
-
-Process and Rust style come from the global directives and the `orchestrate` and
-`rust-guide` skills. This file records only what is specific to this repo. Check
-`docs/INDEX.md` before reading source; `docs/style-guide.md` holds the Rust
-deviations and repo-specific code rules.
+fml formats and lints every file in a repo with one tool per language. See
+[docs/architecture.md](docs/architecture.md) for the crates and their rules,
+and [CONTRIBUTING.md](CONTRIBUTING.md) for the checks and code conventions.
 
 ## Toolchain
 
-`rust-toolchain.toml` pins stable `1.98.1`; CI pins the same version. This repo
-may use nightly for its own development tooling, but fml itself must build and
-run on stable, and must never require nightly from its users.
-
-## Gate
-
-The full gate, run before a PR is marked ready:
-
-```bash
-cargo test
-cargo clippy --all-targets -- -D warnings
-cargo run -q -- fmt
-```
-
-- `cargo test --lib -q` is the fast inner loop. It skips every file under
-  `tests/`, so it is never the gate.
-- Always run the freshly built binary (`cargo run -q -- ...`), never a global
-  `fml` on `PATH`.
-- Schema drift: `cargo test --test repo schema_drift`; regenerate with
-  `UPDATE_SCHEMA=1 cargo test -j 2 --test repo schema_drift`.
-- The root carries only `formality.toml`, no generated native configs
-  (`.rustfmt.toml`, `.prettierrc`, ...), so `fml sync --check` is not run here.
+`rust-toolchain.toml` pins stable `1.98.1`, and CI pins the same version. fml
+must build on stable.
 
 ## Compatibility
 
-Until fml's first official release, 1.0.0, nothing keeps backwards
-compatibility, CLI flags and the `formality.toml` schema included: no shims,
-deprecated aliases, tailored "removed in vX" errors, migration paths or
-compatibility URLs. Removing something removes it outright.
-
-## Pre-commit hook
-
-Activate with `git config core.hooksPath .githooks`. `.githooks/pre-commit`
-builds the binary, then runs `fml fmt --staged --allow-missing` and
-`fml lint --staged --allow-missing`.
-
-- `fmt --staged` can rewrite a file after it was staged, leaving the commit and
-  the working tree diverged. Run `git status` after every commit.
-- A commit blocked by its own dogfooding is the hook working; fix the file, do
-  not route around it.
+Until 1.0.0 nothing keeps backwards compatibility, CLI flags and config keys
+included: no shims, deprecated aliases or migration paths. Removing something
+removes it outright.
 
 ## CI and merging
 
-- `.github/workflows/pr-check.yml` runs `Library Tests` (clippy + full
-  `cargo test`), `Formality Dogfooding` (`fml fmt --check`, `fml lint`, schema
-  drift), and `Security Audit`.
-- `.github/workflows/install-regression.yml` runs `Fresh-Install Regression`
-  (3-OS matrix) only on PRs touching its `paths` list: install, lookup,
-  version-probe and spawn code. Code that can break installs belongs on that
-  list.
+- `.github/workflows/pr-check.yml` runs the tests on Linux (`Library Tests`),
+  macOS and Windows, plus `Formality Dogfooding` (`fml fmt --check` and
+  `fml lint` on this repo) and `Security Audit`.
 - Branch protection on `main` requires `Library Tests` and
-  `Formality Dogfooding` plus resolved conversations. It requires zero approving
-  reviews.
-- Branch protection matches checks by job `name`. A worker cannot see branch
-  protection, so the lead checks any PR that renames a job, moves a check to
-  another workflow, or changes triggers against
-  `gh api repos/arvinduh/formality/branches/main/protection` before merging.
-- Merge with `gh pr merge --squash --delete-branch`.
-- No shared `CARGO_TARGET_DIR` is configured: each worktree builds its own
-  multi-GB `target/`, which goes away only with the worktree.
+  `Formality Dogfooding` by job name, so renaming either needs the same change
+  in branch protection.
+- PRs are squash-merged.
+- `.github/install-tools.sh` pins every external tool CI uses.
 
-## Smart Format
+## Releases
 
-`fml fmt` must leave files that pass trivial lint checks. Mechanical fixes
-(import sorting, structural markdownlint fixes) belong in
-`LanguageSurface::format()`; `fml lint` is semantic analysis only.
-
-## Layout
-
-The library (`src/lib.rs`) never prints; the binary (`src/main.rs` + `src/cli/`)
-owns all terminal I/O. See `docs/architecture.md`.
-
-- `src/config` — `formality.toml` parsing, resolution, schema
-- `src/engine` — runner, targets, diffing, doctor checks and installs, LSP
-  primitives, updates
-- `src/surfaces` — the trait and shared toolkit; `lang/` holds one file per
-  language (`docs/new-surface-guide.md` adds one), `sync/` native configs
-  - `tooling::TOOLS` (`src/surfaces/tooling.rs`) is the only home of a tool's
-    install chain, install hint, pinned and minimum version, and version probe
-  - registry order (`src/surfaces/registry.rs`) sets both result output order
-    (an explicit `--lang` list keeps its own) and `.editorconfig` section order
-- `src/cli` — thin per-command orchestration, the LSP server, plain-line `ui`
-- `tests/api`, `tests/cli`, `tests/repo` — library tests, process-only tests
-  (exit codes, LSP stdio), and repo hygiene
-
-## Issues
-
-Workflow state is derived from GitHub
-([ADR 0006](docs/adr/0006-derived-issue-state.md)): labels `triage`, `design`,
-`ready`, plus native blockers, assignees and draft PRs. Topical labels:
-`architecture`, `dx`, `documentation`, `rust`, `ci`, `compatibility`, `surface`,
-`bug`, `enhancement`.
-
-- A parent issue carries no state label; its Done list names its sub-issues.
-- A blocker in another repository cannot always be linked natively: the issue
-  carries no `ready` label and a comment naming the blocker and how to tell it
-  cleared (#246).
-
-Issue and PR numbers cited in code or docs written before 2026-08-26 predate the
-repo's recreation and point at unrelated issues; see
-`docs/INDEX.md#note-on-pre-recreation-issuepr-numbers`.
+Bare `x.y.z` tags, never `vx.y.z`. See [docs/release.md](docs/release.md).
 
 ## Ask first
 
-- Branch protection or required status check names.
-- Version bumps: hand edits in a dedicated `chore(release)` PR
-  (`docs/release.md`). `Cargo.toml` and `editors/vscode/package.json` move
-  together (`tests/repo/version_lockstep.rs`). The `semver` crate in
-  `Cargo.toml` parses external tools' versions, not formality's own.
+- Branch protection or required check names.
+- Version bumps and release tags.
 
 ## Never
 

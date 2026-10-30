@@ -10,16 +10,18 @@ superseded file instead of deleting it).
 Each ADR states the decision, the real context/rationale that produced it
 (citing the issue/PR where it was actually decided, not invented after the
 fact), and cross-links rather than duplicates any doc that already explains the
-mechanism in depth (e.g. [style-guide.md](../style-guide.md)).
+mechanism in depth.
+
+Obsolete ADRs describe code that the 0.5.0 rewrite removed.
 
 ## Index
 
 | #                                                         | Title                                                                          | Status             |
 | --------------------------------------------------------- | ------------------------------------------------------------------------------ | ------------------ |
-| [0001](0001-arc-shared-execution-context.md)              | Arc-shared `ExecutionContext` fields                                           | Accepted           |
-| [0002](0002-tokei-as-library-not-subprocess.md)           | `tokei` as a library dependency, not a subprocess, for a future `fml stat`     | Proposed           |
+| [0001](0001-arc-shared-execution-context.md)              | Arc-shared `ExecutionContext` fields                                           | Obsolete           |
+| [0002](0002-tokei-as-library-not-subprocess.md)           | `tokei` as a library dependency, not a subprocess, for a future `fml stat`     | Obsolete           |
 | [0003](0003-two-tag-release-versioning.md)                | Independent `v*`/`s*` release tags instead of a single unified tag             | Superseded by 0007 |
 | [0004](0004-status-label-tracking-not-shared-document.md) | Per-issue `status:*` labels instead of a shared hand-edited tracking document  | Superseded by 0006 |
-| [0005](0005-extra-args-exit-code-contracts.md)            | Static per-call-site exit-code classifiers, not re-derived from the final argv | Accepted           |
+| [0005](0005-extra-args-exit-code-contracts.md)            | Static per-call-site exit-code classifiers, not re-derived from the final argv | Obsolete           |
 | [0006](0006-derived-issue-state.md)                       | Issue state derived from GitHub, not stored in `status:*` labels               | Accepted           |
-| [0007](0007-one-current-schema.md)                        | One current schema instead of versioned schema releases                        | Accepted           |
+| [0007](0007-one-current-schema.md)                        | One current schema instead of versioned schema releases                        | Obsolete           |
