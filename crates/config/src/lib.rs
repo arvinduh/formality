@@ -125,3 +125,51 @@ impl Layer {
     }
   }
 }
+
+/// The settings every tool with the matching knob shares, from `[global]`.
+///
+/// A setting no layer gives takes fml's default: 2-space indent, 80 columns,
+/// double quotes and `\n` line endings.
+#[derive(serde::Deserialize)]
+#[serde(default, deny_unknown_fields)]
+pub struct Global {
+  /// Spaces per indent level.
+  pub indent_size: u8,
+  /// The column a formatter wraps at.
+  pub line_length: u16,
+  /// The quote style for languages that have a choice.
+  pub quote_style: Quote,
+  /// The line ending formatters write.
+  pub end_of_line: EndOfLine,
+}
+
+impl Default for Global {
+  fn default() -> Self {
+    Self {
+      indent_size: 2,
+      line_length: 80,
+      quote_style: Quote::Double,
+      end_of_line: EndOfLine::Lf,
+    }
+  }
+}
+
+/// A string quote style.
+#[derive(serde::Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum Quote {
+  /// `'text'`.
+  Single,
+  /// `"text"`.
+  Double,
+}
+
+/// A line ending.
+#[derive(serde::Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum EndOfLine {
+  /// `\n`.
+  Lf,
+  /// `\r\n`.
+  Crlf,
+}
