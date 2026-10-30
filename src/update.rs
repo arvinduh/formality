@@ -56,8 +56,13 @@ pub enum Error {
 pub enum Outcome {
   /// The running version is the latest.
   Latest(String),
-  /// The binary was replaced: the old version, then the new one.
-  Updated(String, String),
+  /// The binary was replaced.
+  Updated {
+    /// The version that was running.
+    from: String,
+    /// The version installed over it.
+    to: String,
+  },
 }
 
 /// Installs the latest release over the running binary when it is newer.
@@ -100,7 +105,10 @@ pub fn run() -> Result<Outcome, Error> {
   let result = updater.run_sync().map_err(Box::new)?;
   let latest =
     result.map_or_else(|| current.to_owned(), |r| r.new_version.to_string());
-  Ok(Outcome::Updated(current.to_owned(), latest))
+  Ok(Outcome::Updated {
+    from: current.to_owned(),
+    to: latest,
+  })
 }
 
 /// The running binary's path, with symlinks resolved so its directory holds

@@ -227,8 +227,8 @@ fn updated(quiet: bool) -> Result<report::Status, Error> {
     update::Outcome::Latest(version) if !quiet => {
       println!("fml {version} is the latest release");
     }
-    update::Outcome::Updated(old, new) if !quiet => {
-      println!("updated fml from {old} to {new}");
+    update::Outcome::Updated { from, to } if !quiet => {
+      println!("updated fml from {from} to {to}");
     }
     _ => {}
   }
