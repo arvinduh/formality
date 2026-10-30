@@ -85,3 +85,21 @@ impl Tool {
     })
   }
 }
+
+/// Finds the nearest of `names` in `start` or the directories above it, the
+/// way a tool looks for its own config file.
+///
+/// Within one directory, `names` are tried in order. Returns `None` when no
+/// directory up to the filesystem root holds any of them.
+#[must_use]
+pub fn nearest_config(
+  start: &path::Path,
+  names: &[&str],
+) -> Option<path::PathBuf> {
+  start.ancestors().find_map(|dir| {
+    names
+      .iter()
+      .map(|name| dir.join(name))
+      .find(|path| path.is_file())
+  })
+}
