@@ -44,13 +44,11 @@ impl Surface for Python {
     let settings = settings(ctx.settings(self.name(), native(ctx))?.as_ref());
     let imports = ruff(ctx, &["check", "--select", "I"], &settings, files)?;
     let layout = ruff(ctx, &["format", "--check"], &settings, files)?;
-    let mut changed: Vec<path::PathBuf> = crate::problems(&imports, ctx.root)
+    let reported = crate::problems(&imports, ctx.root)
       .into_iter()
       .chain(crate::problems(&layout, ctx.root))
-      .map(|problem| problem.path)
-      .collect();
-    changed.sort_unstable();
-    changed.dedup();
+      .map(|problem| problem.path);
+    let changed = crate::changed(files, ctx.root, reported);
     if !check && !changed.is_empty() {
       ruff(
         ctx,

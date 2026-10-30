@@ -81,11 +81,9 @@ impl Surface for JavaScript {
     let mut args = vec!["format".to_owned(), "--reporter=github".to_owned()];
     args.extend(settings(ctx.settings(self.name(), native)?.as_ref()));
     let output = crate::run(&BIOME, &args, files, ctx.root, &[0, 1])?;
-    let mut changed: Vec<path::PathBuf> = reported(&output.stdout, ctx.root)
-      .into_iter()
-      .map(|problem| problem.path)
-      .collect();
-    changed.dedup();
+    let problems = reported(&output.stdout, ctx.root).into_iter();
+    let changed =
+      crate::changed(files, ctx.root, problems.map(|problem| problem.path));
     if !check && !changed.is_empty() {
       args.push("--write".to_owned());
       crate::run(&BIOME, &args, &changed, ctx.root, &[0])?;

@@ -43,12 +43,8 @@ pub fn format(
   let mut args = args(language, ctx)?;
   args.push("--list-different".to_owned());
   let output = crate::run(&PRETTIER, &args, files, ctx.root, &[0, 1])?;
-  let changed: Vec<path::PathBuf> = output
-    .stdout
-    .lines()
-    .filter(|line| !line.is_empty())
-    .map(|line| ctx.root.join(line))
-    .collect();
+  let reported = output.stdout.lines().filter(|line| !line.is_empty());
+  let changed = crate::changed(files, ctx.root, reported.map(Into::into));
   if !check && !changed.is_empty() {
     args.pop();
     args.push("--write".to_owned());

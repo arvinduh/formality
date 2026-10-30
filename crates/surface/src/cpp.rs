@@ -55,12 +55,10 @@ impl Surface for Cpp {
     check_args.extend(["--dry-run".to_owned(), "-Werror".to_owned()]);
     let output =
       crate::run(&CLANG_FORMAT, &check_args, files, ctx.root, &[0, 1])?;
-    let mut changed: Vec<path::PathBuf> =
-      crate::problems(&output.stderr, ctx.root)
-        .into_iter()
-        .map(|problem| problem.path)
-        .collect();
-    changed.dedup();
+    let reported = crate::problems(&output.stderr, ctx.root)
+      .into_iter()
+      .map(|problem| problem.path);
+    let changed = crate::changed(files, ctx.root, reported);
     if !check && !changed.is_empty() {
       args.push("-i".to_owned());
       crate::run(&CLANG_FORMAT, &args, &changed, ctx.root, &[0])?;

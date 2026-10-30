@@ -20,7 +20,9 @@ pub mod taplo;
 mod testing;
 pub mod yaml;
 
+use std::collections;
 use std::ffi;
+use std::fs;
 use std::io;
 use std::path;
 
@@ -190,6 +192,31 @@ fn number(text: &str) -> Option<(u32, &str)> {
     .find(|c: char| !c.is_ascii_digit())
     .unwrap_or(text.len());
   Some((text[..end].parse().ok()?, &text[end..]))
+}
+
+/// The `files` a tool reported, in their order. Paths are compared in
+/// canonical form, so a tool that prints one another way, such as with
+/// Windows' `\\?\` prefix or a long name for a short one, still names its
+/// input file.
+fn changed(
+  files: &[path::PathBuf],
+  root: &path::Path,
+  reported: impl IntoIterator<Item = path::PathBuf>,
+) -> Vec<path::PathBuf> {
+  let reported: collections::HashSet<path::PathBuf> = reported
+    .into_iter()
+    .map(|path| canonical(&root.join(path)))
+    .collect();
+  files
+    .iter()
+    .filter(|file| reported.contains(&canonical(file)))
+    .cloned()
+    .collect()
+}
+
+/// `path` with links and short names resolved, or as is when it cannot be.
+fn canonical(path: &path::Path) -> path::PathBuf {
+  fs::canonicalize(path).unwrap_or_else(|_| path.to_owned())
 }
 
 /// Runs `tool` with `args`, then `files`, in `cwd`, and returns its output

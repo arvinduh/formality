@@ -56,11 +56,8 @@ impl Surface for Rust {
     let mut check_args = args.clone();
     check_args.extend(["--check".to_owned(), "--files-with-diff".to_owned()]);
     let output = rustfmt(ctx, &check_args, files)?;
-    let changed: Vec<path::PathBuf> = output
-      .lines()
-      .filter(|line| !line.is_empty())
-      .map(|line| ctx.root.join(line))
-      .collect();
+    let reported = output.lines().filter(|line| !line.is_empty());
+    let changed = crate::changed(files, ctx.root, reported.map(Into::into));
     if !check && !changed.is_empty() {
       rustfmt(ctx, &args, &changed)?;
     }

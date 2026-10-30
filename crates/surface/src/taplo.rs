@@ -41,7 +41,7 @@ impl Surface for Toml {
     let mut check_args = args.clone();
     check_args.push("--check".to_owned());
     let output = crate::run(&TAPLO, &check_args, files, ctx.root, &[0, 1])?;
-    let changed = unformatted(&output.stderr);
+    let changed = crate::changed(files, ctx.root, unformatted(&output.stderr));
     if !check && !changed.is_empty() {
       crate::run(&TAPLO, &args, &changed, ctx.root, &[0])?;
     }
@@ -84,7 +84,8 @@ fn unformatted(log: &str) -> Vec<path::PathBuf> {
     .filter(|line| line.contains("not properly formatted"))
     .filter_map(|line| {
       let (_, path) = line.split_once("path=\"")?;
-      Some(path::PathBuf::from(path.strip_suffix('"')?))
+      let path = path.strip_suffix('"')?.replace("\\\\", "\\");
+      Some(path::PathBuf::from(path))
     })
     .collect()
 }
