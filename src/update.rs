@@ -81,9 +81,8 @@ pub fn run() -> Result<Outcome, Error> {
       "path is not UTF-8",
     ))
   })?;
-  let version = semver::Version::parse(current).map_err(|err| {
-    Error::Exe(io::Error::new(io::ErrorKind::InvalidData, err))
-  })?;
+  let version = semver::Version::parse(current)
+    .expect("Cargo only builds packages with a semver version");
   let mut updater = axoupdater::AxoUpdater::new_for(APP);
   if let Ok(token) = env::var(TOKEN) {
     updater.set_github_token(&token);
