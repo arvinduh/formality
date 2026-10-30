@@ -11,6 +11,9 @@ repository = "https://github.com/arvinduh/formality"
 
 [workspace.dependencies]
 config = { package = "fml-config", path = "crates/config" }
+discover = { package = "fml-discover", path = "crates/discover" }
+engine = { package = "fml-engine", path = "crates/engine" }
+surface = { package = "fml-surface", path = "crates/surface" }
 tool = { package = "fml-tool", path = "crates/tool" }
 
 [package]

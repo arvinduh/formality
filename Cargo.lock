@@ -536,6 +536,16 @@ dependencies = [
 ]
 
 [[package]]
+name = "fml-engine"
+version = "0.0.0"
+dependencies = [
+ "fml-config",
+ "fml-surface",
+ "rayon",
+ "tempfile",
+]
+
+[[package]]
 name = "fml-surface"
 version = "0.0.0"
 dependencies = [
