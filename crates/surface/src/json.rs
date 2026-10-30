@@ -40,3 +40,28 @@ impl Surface for Json {
     Ok(Report::default())
   }
 }
+
+#[cfg(test)]
+mod tests {
+  use std::fs;
+
+  use super::*;
+  use crate::testing;
+
+  #[test]
+  fn format_check_reports_without_writing_and_format_writes() {
+    let dir = testing::workspace(&[("a.json", "{\"a\":1}\n")]);
+    let file = dir.path().join("a.json");
+    let files = [file.clone()];
+    let check = testing::with_context(dir.path(), |ctx| {
+      Json.format(ctx, &files, true).expect("check")
+    });
+    assert_eq!(check.changed, files);
+    assert_eq!(fs::read_to_string(&file).expect("read"), "{\"a\":1}\n");
+
+    testing::with_context(dir.path(), |ctx| Json.format(ctx, &files, false))
+      .expect("format");
+    let text = fs::read_to_string(&file).expect("read");
+    assert_eq!(text, "{ \"a\": 1 }\n");
+  }
+}

@@ -11,6 +11,8 @@ pub mod json;
 mod prettier;
 pub mod python;
 pub mod rust;
+#[cfg(test)]
+mod testing;
 
 use std::ffi;
 use std::path;
