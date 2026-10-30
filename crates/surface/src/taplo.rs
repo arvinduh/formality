@@ -36,7 +36,9 @@ impl Surface for Toml {
   ) -> Result<Report, Error> {
     let native =
       tool::nearest_config(ctx.root, &[".taplo.toml", "taplo.toml"]).is_some();
-    let mut args = vec!["fmt".to_owned()];
+    // fml parses taplo's logs, so it asks for them uncolored on every
+    // platform rather than trusting taplo's color detection.
+    let mut args = vec!["fmt".to_owned(), "--colors=never".to_owned()];
     args.extend(settings(ctx.settings(self.name(), native)?.as_ref()));
     let mut check_args = args.clone();
     check_args.push("--check".to_owned());
