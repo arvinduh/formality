@@ -12,7 +12,7 @@ use crate::Context;
 use crate::Error;
 
 /// The prettier binary.
-const PRETTIER: tool::Tool = tool::Tool {
+pub const PRETTIER: tool::Tool = tool::Tool {
   binary: "prettier",
   install: "npm install -g prettier",
 };
@@ -28,8 +28,8 @@ const CONFIGS: &[&str] = &[
   "prettier.config.js",
 ];
 
-/// Formats `language`'s `files` with prettier, or with `check` only lists the files that
-/// would change, and returns those files.
+/// Formats `language`'s `files` with prettier, or with `check` only lists
+/// the files that would change, and returns those files.
 ///
 /// # Errors
 ///
@@ -40,8 +40,7 @@ pub fn format(
   files: &[path::PathBuf],
   check: bool,
 ) -> Result<Vec<path::PathBuf>, Error> {
-  let native = tool::nearest_config(ctx.root, CONFIGS).is_some();
-  let mut args = settings(ctx.settings(language, native)?.as_ref());
+  let mut args = args(language, ctx)?;
   args.push("--list-different".to_owned());
   let output = crate::run(&PRETTIER, &args, files, ctx.root, &[0, 1])?;
   let changed: Vec<path::PathBuf> = output
@@ -56,6 +55,21 @@ pub fn format(
     crate::run(&PRETTIER, &args, &changed, ctx.root, &[0])?;
   }
   Ok(changed)
+}
+
+/// The prettier arguments that carry `language`'s settings, or none when
+/// prettier has a config of its own and no `formality.toml` overrides it.
+///
+/// # Errors
+///
+/// Returns an error when the config is wrong.
+pub fn args(language: &str, ctx: &Context) -> Result<Vec<String>, Error> {
+  Ok(settings(ctx.settings(language, native(ctx))?.as_ref()))
+}
+
+/// Whether prettier finds a config of its own above the root.
+pub fn native(ctx: &Context) -> bool {
+  tool::nearest_config(ctx.root, CONFIGS).is_some()
 }
 
 /// The prettier arguments that carry `settings`, or none to let prettier read
