@@ -1,5 +1,5 @@
-<!-- Title: `<type>(<scope>): <summary>`, the eventual squash commit subject.
-Branch: `<type>/<slug>`, e.g. `fix/spawn`, `feat/diagnostics`. -->
+<!-- markdownlint-disable-file MD041 -->
+<!-- Title: `type(scope): summary`, the squash commit's subject. -->
 
 Fixes #
 
@@ -7,12 +7,8 @@ Fixes #
 
 <!-- What changed and why. -->
 
-## Gate
+## Checks
 
-- [ ] `cargo test` (full suite; `--lib` alone skips `tests/`)
-- [ ] `cargo clippy --all-targets -- -D warnings`
-- [ ] `cargo run -q -- fmt`
-
-## Notes for reviewers
-
-<!-- The one claim a reviewer should verify independently, if any. -->
+- [ ] `cargo test --workspace`
+- [ ] `cargo clippy --workspace --all-targets -- -D warnings`
+- [ ] `cargo run -q -- fmt --check` and `cargo run -q -- lint`
