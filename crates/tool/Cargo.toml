@@ -1,0 +1,17 @@
+[package]
+name = "fml-tool"
+description = "Finds and runs the external formatters and linters fml wraps"
+edition.workspace = true
+authors.workspace = true
+license.workspace = true
+repository.workspace = true
+
+[dependencies]
+thiserror = "2"
+which = "8.0.5"
+
+[dev-dependencies]
+tempfile = "3.27.0"
+
+[lints]
+workspace = true
