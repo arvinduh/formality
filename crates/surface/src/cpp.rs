@@ -105,3 +105,60 @@ fn style(settings: &config::Global) -> String {
     settings.indent_size, settings.line_length
   )
 }
+
+#[cfg(test)]
+mod tests {
+  use std::fs;
+
+  use super::*;
+  use crate::testing;
+
+  #[test]
+  fn format_check_reports_without_writing_and_format_writes() {
+    let source = "int main(){\nreturn 0;}\n";
+    let dir = testing::workspace(&[("a.cc", source)]);
+    let files = [dir.path().join("a.cc")];
+    let check = testing::with_context(dir.path(), |ctx| {
+      Cpp.format(ctx, &files, true).expect("check")
+    });
+    assert_eq!(check.changed, files);
+    assert_eq!(fs::read_to_string(&files[0]).expect("read"), source);
+
+    testing::with_context(dir.path(), |ctx| Cpp.format(ctx, &files, false))
+      .expect("format");
+    let text = fs::read_to_string(&files[0]).expect("read");
+    assert_eq!(
+      text, "int main() { return 0; }\n",
+      "Google keeps it on a line"
+    );
+  }
+
+  #[test]
+  fn lint_uses_fml_checks_only_without_a_clang_tidy_config() {
+    let source = (
+      "a.cc",
+      "int main() {\n  int* p = 0;\n  return p ? 1 : 0;\n}\n",
+    );
+    let dir = testing::workspace(&[source]);
+    let files = [dir.path().join("a.cc")];
+    let report = testing::with_context(dir.path(), |ctx| {
+      Cpp.lint(ctx, &files, false).expect("lint")
+    });
+    let found = |report: &Report| {
+      report
+        .problems
+        .iter()
+        .any(|p| p.message.contains("modernize-use-nullptr"))
+    };
+    assert!(found(&report), "modernize-use-nullptr under fml's checks");
+    assert_eq!(report.problems[0].path, files[0]);
+
+    let config = (".clang-tidy", "Checks: '-*,bugprone-*'\n");
+    let dir = testing::workspace(&[source, config]);
+    let files = [dir.path().join("a.cc")];
+    let report = testing::with_context(dir.path(), |ctx| {
+      Cpp.lint(ctx, &files, false).expect("lint")
+    });
+    assert!(!found(&report), "the .clang-tidy turns modernize off");
+  }
+}
