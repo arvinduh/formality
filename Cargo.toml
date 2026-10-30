@@ -9,6 +9,10 @@ authors = ["Arvin Duh"]
 license = "MIT"
 repository = "https://github.com/arvinduh/formality"
 
+[workspace.dependencies]
+config = { package = "fml-config", path = "crates/config" }
+tool = { package = "fml-tool", path = "crates/tool" }
+
 [package]
 name = "fml"
 version = "0.4.1"

@@ -1,0 +1,15 @@
+[package]
+name = "fml-surface"
+description = "The languages fml formats and lints"
+edition.workspace = true
+authors.workspace = true
+license.workspace = true
+repository.workspace = true
+
+[dependencies]
+config.workspace = true
+thiserror = "2"
+tool.workspace = true
+
+[lints]
+workspace = true
