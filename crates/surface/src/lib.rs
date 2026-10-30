@@ -123,6 +123,14 @@ pub enum Error {
   /// fml could not write a config it hands a tool.
   #[error("could not write a tool config: {0}")]
   Io(#[from] io::Error),
+  /// fml could not read or write a file it formats itself.
+  #[error("could not access {}: {source}", path.display())]
+  File {
+    /// The file.
+    path: path::PathBuf,
+    /// The operating system's reason.
+    source: io::Error,
+  },
   /// A tool ran but failed instead of reporting.
   #[error("{binary} failed with exit code {code:?}: {stderr}")]
   Failed {
