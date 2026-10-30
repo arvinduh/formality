@@ -8,13 +8,13 @@
 
 use std::path;
 
+use serde;
 use thiserror;
 use toml;
 
 /// The config layers fml was given, lowest priority first.
 pub struct Config {
   /// Each layer's file and text, kept so errors can quote the line.
-  #[expect(dead_code, reason = "`section` reads it in the next commit")]
   layers: Vec<Layer>,
 }
 
@@ -55,12 +55,65 @@ impl Config {
     }
     Ok(Self { layers })
   }
+
+  /// Reads section `name` as `T`, a later layer's key replacing an earlier
+  /// one's. With no layer setting the section, it is `T::default()`.
+  ///
+  /// `T` sees each layer's section on its own first, so an unknown key or a
+  /// wrong type is reported in the file and on the line that holds it.
+  ///
+  /// # Errors
+  ///
+  /// Returns an error when a layer's section has a key `T` rejects or a value
+  /// of the wrong type.
+  pub fn section<T: serde::de::DeserializeOwned + Default>(
+    &self,
+    name: &str,
+  ) -> Result<T, Error> {
+    let mut merged = toml::Table::new();
+    let mut last = None;
+    for layer in &self.layers {
+      let Some(section) = layer.table()?.remove(name) else {
+        continue;
+      };
+      layer.check::<T>(name)?;
+      if let toml::Value::Table(section) = section {
+        merged.extend(section);
+      }
+      last = Some(layer);
+    }
+    let Some(layer) = last else {
+      return Ok(T::default());
+    };
+    let merged = toml::Value::Table(merged);
+    merged.try_into().map_err(|source| layer.error(source))
+  }
 }
 
 impl Layer {
   /// Parses the whole layer as a plain table.
   fn table(&self) -> Result<toml::Table, Error> {
     self.text.parse().map_err(|source| self.error(source))
+  }
+
+  /// Reads this layer's section `name` on its own as `T`, so an error carries
+  /// the line it is on.
+  fn check<T: serde::de::DeserializeOwned>(
+    &self,
+    name: &str,
+  ) -> Result<(), Error> {
+    let table = toml::de::DeTable::parse(&self.text)
+      .map_err(|source| self.error(source))?;
+    let section = table
+      .into_inner()
+      .into_iter()
+      .find_map(|(key, value)| (key.get_ref() == name).then_some(value));
+    let Some(section) = section else {
+      return Ok(());
+    };
+    T::deserialize(toml::de::ValueDeserializer::from(section))
+      .map(drop)
+      .map_err(|source| self.error(source))
   }
 
   /// Attaches this layer's path and text to `source`.
