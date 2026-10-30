@@ -66,7 +66,7 @@ impl Surface for Yaml {
     let output = crate::run(&YAMLLINT, &args, files, ctx.root, &[0, 1])?;
     Ok(Report {
       changed: Vec::new(),
-      problems: crate::problems(&output.stdout, ctx.root),
+      problems: crate::locate(crate::problems(&output.stdout, ctx.root), files),
     })
   }
 }

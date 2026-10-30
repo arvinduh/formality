@@ -84,7 +84,8 @@ impl Surface for Rust {
     let args: Vec<&ffi::OsStr> =
       args.into_iter().map(ffi::OsStr::new).collect();
     let output = CARGO.run(&args, dir)?;
-    let problems: Vec<crate::Problem> = crate::problems(&output.stderr, dir)
+    let problems = crate::problems(&output.stderr, dir);
+    let problems: Vec<crate::Problem> = crate::locate(problems, files)
       .into_iter()
       .filter(|problem| files.contains(&problem.path))
       .collect();

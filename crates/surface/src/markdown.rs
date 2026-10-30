@@ -113,7 +113,7 @@ impl Surface for Markdown {
     drop(rules);
     Ok(Report {
       changed: Vec::new(),
-      problems: crate::problems(&output.stderr, ctx.root),
+      problems: crate::locate(crate::problems(&output.stderr, ctx.root), files),
     })
   }
 }

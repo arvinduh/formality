@@ -72,7 +72,7 @@ impl Surface for Shell {
     let output = crate::run(&SHELLCHECK, &args, files, ctx.root, &[0, 1])?;
     Ok(Report {
       changed: Vec::new(),
-      problems: crate::problems(&output.stdout, ctx.root),
+      problems: crate::locate(crate::problems(&output.stdout, ctx.root), files),
     })
   }
 }

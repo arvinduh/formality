@@ -118,7 +118,7 @@ impl Surface for JavaScript {
     drop(rules);
     Ok(Report {
       changed: Vec::new(),
-      problems: reported(&output.stdout, ctx.root),
+      problems: crate::locate(reported(&output.stdout, ctx.root), files),
     })
   }
 }

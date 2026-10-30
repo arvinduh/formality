@@ -82,7 +82,7 @@ impl Surface for Python {
     let output = ruff(ctx, &args, &settings, files)?;
     Ok(Report {
       changed: Vec::new(),
-      problems: crate::problems(&output, ctx.root),
+      problems: crate::locate(crate::problems(&output, ctx.root), files),
     })
   }
 }
