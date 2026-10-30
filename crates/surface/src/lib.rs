@@ -7,18 +7,18 @@
 
 #![deny(clippy::print_stdout, clippy::print_stderr)]
 
-pub mod cpp;
-pub mod javascript;
-pub mod json;
-pub mod markdown;
+mod cpp;
+mod javascript;
+mod json;
+mod markdown;
 mod prettier;
-pub mod python;
-pub mod rust;
-pub mod shell;
-pub mod taplo;
+mod python;
+mod rust;
+mod shell;
+mod taplo;
 #[cfg(test)]
 mod testing;
-pub mod yaml;
+mod yaml;
 
 use std::collections;
 use std::ffi;
