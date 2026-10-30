@@ -127,8 +127,9 @@ impl Context<'_> {
   }
 }
 
-/// Reads the `path:line:column: message` lines most linters print, resolving
-/// relative paths against `cwd` and skipping lines of any other shape.
+/// Reads the `path:line[:column]: message` lines most linters print,
+/// resolving relative paths against `cwd` and skipping lines of any other
+/// shape. A line with no column is placed at column 1.
 fn problems(output: &str, cwd: &path::Path) -> Vec<Problem> {
   output
     .lines()
@@ -136,21 +137,29 @@ fn problems(output: &str, cwd: &path::Path) -> Vec<Problem> {
     .collect()
 }
 
-/// Reads one `path:line:column: message` line. The numbers are found by
+/// Reads one `path:line[:column]: message` line. The numbers are found by
 /// position, so a Windows drive letter's colon stays part of the path.
 fn problem(line: &str, cwd: &path::Path) -> Option<Problem> {
   line.match_indices(':').find_map(|(at, _)| {
-    let mut parts = line[at + 1..].splitn(3, ':');
-    let row = parts.next()?.parse().ok()?;
-    let column = parts.next()?.parse().ok()?;
-    let message = parts.next()?.trim().to_owned();
+    let (row, rest) = number(&line[at + 1..])?;
+    let (column, rest) =
+      rest.strip_prefix(':').and_then(number).unwrap_or((1, rest));
     Some(Problem {
       path: cwd.join(&line[..at]),
       line: row,
       column,
-      message,
+      message: rest.trim_start_matches(':').trim().to_owned(),
     })
   })
+}
+
+/// Splits the leading decimal number off `text`, or `None` when `text` does
+/// not start with a digit.
+fn number(text: &str) -> Option<(u32, &str)> {
+  let end = text
+    .find(|c: char| !c.is_ascii_digit())
+    .unwrap_or(text.len());
+  Some((text[..end].parse().ok()?, &text[end..]))
 }
 
 /// Runs `tool` with `args`, then `files`, in `cwd`, and returns its output
