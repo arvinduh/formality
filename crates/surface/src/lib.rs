@@ -13,6 +13,7 @@ pub mod python;
 pub mod rust;
 #[cfg(test)]
 mod testing;
+pub mod yaml;
 
 use std::ffi;
 use std::path;
