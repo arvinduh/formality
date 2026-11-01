@@ -1,17 +1,14 @@
 name: CI
 
-# Runs on every pull request and again on main, so a main tip that two
-# separately green PRs produced is still tested as a whole. Pushes to main
-# also test macOS. Branch protection requires the "Tests (ubuntu-latest)"
-# and "Tests (windows-latest)" job names.
+# Gates every pull request on Linux. Windows and macOS run the same tests at
+# release time, in the release workflow's build jobs. Branch protection
+# requires the "Tests (ubuntu-latest)" job name.
 on:
   pull_request:
     branches: ["main"]
-  push:
-    branches: ["main"]
 
 concurrency:
-  group: ci-${{ github.head_ref || github.run_id }}
+  group: ci-${{ github.head_ref }}
   cancel-in-progress: true
 
 env:
@@ -19,14 +16,8 @@ env:
 
 jobs:
   test:
-    name: Tests (${{ matrix.os }})
-    runs-on: ${{ matrix.os }}
-    strategy:
-      fail-fast: false
-      matrix:
-        os: [ubuntu-latest, windows-latest, macos-latest]
-        exclude:
-          - os: ${{ github.event_name == 'pull_request' && 'macos-latest' }}
+    name: Tests (ubuntu-latest)
+    runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v7
 
@@ -37,13 +28,12 @@ jobs:
       - uses: Swatinem/rust-cache@v2
 
       - uses: actions/setup-go@v7
-        # shfmt installs with `go install`; macOS runners have no Go.
+        # shfmt installs with `go install`, which needs a recent Go.
         with:
           go-version: stable
           cache: false
 
       - name: Install tools
-        shell: bash
         run: .github/install-tools.sh
 
       - run: cargo fmt --all --check

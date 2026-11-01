@@ -18,10 +18,10 @@ removes it outright.
 ## CI and merging
 
 - `.github/workflows/ci.yml` runs `cargo fmt --check`, clippy and the tests
-  on Linux and Windows for PRs, and on macOS too for pushes to `main`.
-- Branch protection on `main` requires `Tests (ubuntu-latest)` and
-  `Tests (windows-latest)` by job name, so renaming either needs the same
-  change in branch protection.
+  on Linux for each PR. Branch protection requires its job name,
+  `Tests (ubuntu-latest)`, so renaming it needs the same change there.
+- Windows and macOS run the tests only at release, in each build job
+  (`.github/build-setup.yml`). A failure there blocks the release.
 - PRs are squash-merged.
 - `.github/install-tools.sh` pins every external tool CI uses.
 

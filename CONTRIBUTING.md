@@ -19,8 +19,9 @@ cargo clippy --workspace --all-targets -- -D warnings
 cargo test --workspace
 ```
 
-CI runs them on Linux and Windows, and on macOS after a merge. CI does not
-check the repo's Markdown, TOML or YAML; `fml fmt` and `fml lint` do, locally.
+CI runs them on Linux for each PR, and the tests run on Windows and macOS
+before each release. CI does not check the repo's Markdown, TOML or YAML;
+`fml fmt` and `fml lint` do, locally.
 
 ## Code
 
