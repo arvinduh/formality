@@ -1,19 +1,17 @@
-//! Markdown, formatted by prettier and linted by markdownlint-cli2.
+//! Markdown, formatted in-process by dprint and linted by markdownlint-cli2.
 //!
-//! After prettier, fml formats block-level HTML, which prettier keeps as
-//! written, and under fml's settings writes hard breaks as a backslash.
-
-mod html;
+//! dprint formats block-level HTML and writes hard breaks as a backslash on
+//! its own. Code blocks are kept as written. markdownlint only reports.
 
 use std::fs;
 use std::path;
 
 use config;
-use pulldown_cmark;
+use dprint_core;
+use dprint_plugin_markdown;
+use dprint_plugin_markdown::configuration;
 use tempfile;
 use tool;
-
-use crate::prettier;
 
 /// The markdownlint-cli2 binary.
 const MARKDOWNLINT: tool::Tool = tool::Tool {
@@ -53,28 +51,28 @@ impl crate::Surface for Markdown {
     files: &[path::PathBuf],
     check: bool,
   ) -> Result<crate::Report, crate::Error> {
-    let mut changed = prettier::format(self.name(), ctx, files, check)?;
-    let args = prettier::args(self.name(), ctx)?;
-    let breaks = ctx.settings(self.name(), prettier::native(ctx))?.is_some();
-    // Under `check`, this reads the file as written, not as prettier would
-    // leave it. A file prettier would change is already listed, so only a
-    // file prettier leaves alone can be added here, and for it the two are
-    // the same.
+    let settings = ctx.settings(self.name(), false)?.unwrap_or_default();
+    let config = dprint(&settings);
+    let mut changed = Vec::new();
     for file in files {
-      let text = fs::read_to_string(file)?;
-      let mut tidy = html::format(&text, file, ctx.root, &args)?;
-      if breaks {
-        tidy = backslash_breaks(&tidy);
-      }
-      if tidy == text {
+      let access = |source| crate::Error::File {
+        path: file.clone(),
+        source,
+      };
+      let text = fs::read_to_string(file).map_err(access)?;
+      let tidy =
+        dprint_plugin_markdown::format_text(&text, &config, |_, _, _| Ok(None))
+          .map_err(|source| crate::Error::Markdown {
+            path: file.clone(),
+            source,
+          })?;
+      let Some(tidy) = tidy else {
         continue;
-      }
+      };
       if !check {
-        fs::write(file, &tidy)?;
+        fs::write(file, tidy).map_err(access)?;
       }
-      if !changed.contains(file) {
-        changed.push(file.clone());
-      }
+      changed.push(file.clone());
     }
     Ok(crate::Report {
       changed,
@@ -115,22 +113,27 @@ impl crate::Surface for Markdown {
   }
 }
 
-/// Rewrites each hard break written as trailing spaces as a backslash, which
-/// survives editors that trim trailing whitespace.
-fn backslash_breaks(src: &str) -> String {
-  let mut out = String::with_capacity(src.len());
-  let mut cursor = 0;
-  for (event, range) in html::parse(src).into_offset_iter() {
-    if event == pulldown_cmark::Event::HardBreak
-      && src[range.clone()].starts_with(' ')
-    {
-      out.push_str(&src[cursor..range.start]);
-      out.push_str("\\\n");
-      cursor = range.end;
+/// The dprint config that carries `settings`. Lists indent by their marker's
+/// width, or by 4 spaces when `indent_size` is 4 or more. Code blocks keep
+/// their indentation, which dprint would otherwise strip.
+fn dprint(settings: &config::Global) -> configuration::Configuration {
+  let newline = match settings.end_of_line {
+    config::EndOfLine::Lf => dprint_core::configuration::NewLineKind::LineFeed,
+    config::EndOfLine::Crlf => {
+      dprint_core::configuration::NewLineKind::CarriageReturnLineFeed
     }
-  }
-  out.push_str(&src[cursor..]);
-  out
+  };
+  let lists = if settings.indent_size >= 4 {
+    configuration::ListIndentKind::PythonMarkdown
+  } else {
+    configuration::ListIndentKind::CommonMark
+  };
+  configuration::ConfigurationBuilder::new()
+    .line_width(u32::from(settings.line_length))
+    .new_line_kind(newline)
+    .list_indent_kind(lists)
+    .code_block_preserve_indentation(true)
+    .build()
 }
 
 /// The rule markdownlint-cli2 names after the level:
@@ -171,7 +174,20 @@ mod tests {
   use crate::testing;
 
   #[test]
-  fn format_writes_with_prettier() {
+  fn format_keeps_code_block_indentation() {
+    let source = "# a\n\n```text\n   x\n  y\n```\n";
+    let dir = testing::workspace(&[("a.md", source)]);
+    let files = [dir.path().join("a.md")];
+    let report = testing::with_context(dir.path(), |ctx| {
+      Markdown.format(ctx, &files, false).expect("format")
+    });
+    assert!(report.changed.is_empty(), "the block is already formatted");
+    let text = fs::read_to_string(&files[0]).expect("read");
+    assert_eq!(text, source);
+  }
+
+  #[test]
+  fn format_writes_with_dprint() {
     let dir = testing::workspace(&[("a.md", "# a\n\n* b\n")]);
     let files = [dir.path().join("a.md")];
     let report = testing::with_context(dir.path(), |ctx| {
@@ -233,7 +249,7 @@ mod tests {
     let check = testing::with_context(dir.path(), |ctx| {
       Markdown.format(ctx, &files, true).expect("check")
     });
-    assert_eq!(check.changed, files, "prettier keeps the spaces");
+    assert_eq!(check.changed, files, "check reports the trailing spaces");
 
     testing::with_context(dir.path(), |ctx| {
       Markdown.format(ctx, &files, false)
@@ -254,7 +270,7 @@ mod tests {
     })
     .expect("format");
     let text = fs::read_to_string(&files[0]).expect("read");
-    let want = "<p align=\"center\">\n  <img src=\"a.png\" alt=\"b\" />\n</p>\n\n\
+    let want = "<p align=\"center\">\n  <img src=\"a.png\" alt=\"b\">\n</p>\n\n\
                 a <b>c</b> d\n";
     assert_eq!(text, want);
   }

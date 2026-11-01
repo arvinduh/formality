@@ -51,12 +51,16 @@ run, such as a missing tool or a bad config.
 | C and C++ (`cpp`) | `c`, `cc`, `cpp`, `h`, ... | `clang-format` | `clang-tidy`        |
 | JavaScript and TS | `js`, `jsx`, `ts`, ...     | `biome`        | `biome`             |
 | JSON              | `json`, `jsonc`            | `prettier`     |                     |
-| Markdown          | `md`                       | `prettier`     | `markdownlint-cli2` |
+| Markdown          | `md`                       | built in       | `markdownlint-cli2` |
 | Python            | `py`, `pyi`                | `ruff`         | `ruff`              |
 | Rust              | `rs`                       | `rustfmt`      | `cargo clippy`      |
 | Shell             | `sh`, `bash`               | `shfmt`        | `shellcheck`        |
 | TOML              | `toml`                     | `taplo`        |                     |
 | YAML              | `yaml`, `yml`              | `prettier`     | `yamllint`          |
+
+fml formats Markdown itself with
+[dprint-plugin-markdown](https://crates.io/crates/dprint-plugin-markdown), so
+a `.prettierrc` does not apply to it, and it keeps code blocks as written.
 
 ## Configure
 
