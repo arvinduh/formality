@@ -1,7 +1,10 @@
 //! Markdown, formatted in-process by dprint and linted by markdownlint-cli2.
 //!
 //! dprint formats block-level HTML and writes hard breaks as a backslash on
-//! its own. Code blocks are kept as written. markdownlint only reports.
+//! its own. Fenced code in a language fml knows is formatted by that
+//! language; other code is kept as written. markdownlint only reports.
+
+mod fence;
 
 use std::fs;
 use std::path;
@@ -53,24 +56,50 @@ impl crate::Surface for Markdown {
   ) -> Result<crate::Report, crate::Error> {
     let settings = ctx.settings(self.name(), false)?.unwrap_or_default();
     let config = dprint(&settings);
-    let mut changed = Vec::new();
+    // The first pass formats everything but the code blocks and collects
+    // them; the second, for files that have any, writes them back formatted.
+    let mut blocks = fence::Blocks::new();
+    let mut passes = Vec::new();
     for file in files {
-      let access = |source| crate::Error::File {
-        path: file.clone(),
-        source,
+      let text =
+        fs::read_to_string(file).map_err(|source| crate::Error::File {
+          path: file.clone(),
+          source,
+        })?;
+      let mut fenced = false;
+      let tidy = markdown(file, &text, &config, |tag, code| {
+        if let Some(extension) = fence::extension(tag) {
+          let codes = blocks.entry(extension).or_default();
+          codes
+            .entry(code.to_owned())
+            .or_insert_with(|| code.to_owned());
+          fenced = true;
+        }
+        None
+      })?;
+      passes.push((text, tidy, fenced));
+    }
+    if !blocks.is_empty() {
+      fence::format(ctx, &mut blocks)?;
+    }
+    let mut changed = Vec::new();
+    for (file, (text, tidy, fenced)) in files.iter().zip(passes) {
+      let tidy = if fenced {
+        markdown(file, &text, &config, |tag, code| {
+          let extension = fence::extension(tag)?;
+          blocks.get(extension)?.get(code).cloned()
+        })?
+      } else {
+        tidy
       };
-      let text = fs::read_to_string(file).map_err(access)?;
-      let tidy =
-        dprint_plugin_markdown::format_text(&text, &config, |_, _, _| Ok(None))
-          .map_err(|source| crate::Error::Markdown {
-            path: file.clone(),
-            source,
-          })?;
       let Some(tidy) = tidy else {
         continue;
       };
       if !check {
-        fs::write(file, tidy).map_err(access)?;
+        fs::write(file, tidy).map_err(|source| crate::Error::File {
+          path: file.clone(),
+          source,
+        })?;
       }
       changed.push(file.clone());
     }
@@ -111,6 +140,24 @@ impl crate::Surface for Markdown {
       ),
     })
   }
+}
+
+/// `text`, the contents of `file`, as dprint formats it, or `None` when it
+/// is already formatted. `block` gives a fenced block's formatted code from
+/// its info string and code, or `None` to keep it as written.
+fn markdown(
+  file: &path::Path,
+  text: &str,
+  config: &configuration::Configuration,
+  mut block: impl FnMut(&str, &str) -> Option<String>,
+) -> Result<Option<String>, crate::Error> {
+  dprint_plugin_markdown::format_text(text, config, |tag, code, _| {
+    Ok(block(tag, code))
+  })
+  .map_err(|source| crate::Error::Markdown {
+    path: file.to_owned(),
+    source,
+  })
 }
 
 /// The dprint config that carries `settings`. Lists indent by their marker's
@@ -184,6 +231,24 @@ mod tests {
     assert!(report.changed.is_empty(), "the block is already formatted");
     let text = fs::read_to_string(&files[0]).expect("read");
     assert_eq!(text, source);
+  }
+
+  #[test]
+  fn format_formats_fenced_code_with_its_language() {
+    let source = "# a\n\n```rust\nfn main() {\nlet x = 1;\n}\n```\n\n\
+                  ```rust,ignore\nlet x =\n```\n\n```text\na   b\n```\n";
+    let dir = testing::workspace(&[("a.md", source)]);
+    let files = [dir.path().join("a.md")];
+    testing::with_context(dir.path(), |ctx| {
+      Markdown.format(ctx, &files, false)
+    })
+    .expect("format");
+    let text = fs::read_to_string(&files[0]).expect("read");
+    let want = "# a\n\n```rust\nfn main() {\n  let x = 1;\n}\n```\n\n\
+                ```rust,ignore\nlet x =\n```\n\n```text\na   b\n```\n";
+    assert_eq!(text, want, "a block that does not parse stays as written");
+    let left: Vec<_> = fs::read_dir(dir.path()).expect("list").collect();
+    assert_eq!(left.len(), 1, "the blocks' temp dir is gone");
   }
 
   #[test]
