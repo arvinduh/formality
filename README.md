@@ -84,6 +84,9 @@ indent_size = 4
 A language table, named as in the table above, overrides `[global]` for that
 language. Lint rules always come from the tool's own config, never from
 `formality.toml`.
+When a tool has no config, fml lints with its own rule set; for Rust, a
+manifest without a `[lints]` or `[workspace.lints]` table gets clippy's
+pedantic group plus lints for docs, `unwrap`, imports and `allow`.
 
 Config layers merge in order: `~/.config/formality/config.toml`, the
 workspace's file, then `-c FILE`. An unknown key is an error that names its

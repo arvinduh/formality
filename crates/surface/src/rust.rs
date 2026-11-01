@@ -28,6 +28,28 @@ const CARGO: tool::Tool = tool::Tool {
 /// The edition rustfmt parses with when no `Cargo.toml` names one.
 const EDITION: &str = "2024";
 
+/// The rust-guide's lint set, as clippy flags, for a crate whose manifest
+/// has no `[lints]` table. The group comes first so the lints after it set
+/// their own level, and every lint warns so one run reports all of them.
+const LINTS: &[&str] = &[
+  "-Wclippy::pedantic",
+  "-Wmissing_docs",
+  "-Wunsafe_op_in_unsafe_fn",
+  "-Wunused_qualifications",
+  "-Wclippy::wildcard_imports",
+  "-Aclippy::single_component_path_imports",
+  "-Wclippy::dbg_macro",
+  "-Wclippy::todo",
+  "-Wclippy::undocumented_unsafe_blocks",
+  "-Wclippy::missing_docs_in_private_items",
+  "-Wclippy::unwrap_used",
+  "-Wclippy::missing_assert_message",
+  "-Wclippy::exit",
+  "-Wclippy::allow_attributes",
+  "-Wclippy::allow_attributes_without_reason",
+  "-Wclippy::redundant_clone",
+];
+
 /// Rust: `.rs` files.
 pub struct Rust;
 
@@ -82,6 +104,10 @@ impl crate::Surface for Rust {
     ];
     if fix {
       args.extend(["--fix", "--allow-dirty", "--allow-staged"]);
+    }
+    if !has_lints(&manifest) {
+      args.push("--");
+      args.extend(LINTS);
     }
     let args: Vec<&ffi::OsStr> =
       args.into_iter().map(ffi::OsStr::new).collect();
@@ -192,6 +218,22 @@ fn edition(root: &path::Path) -> String {
   edition.unwrap_or(EDITION).to_owned()
 }
 
+/// Whether the manifest at `path` has a `[lints]` or `[workspace.lints]`
+/// table, which clippy reads on its own. One that cannot be read counts as
+/// having one, so fml adds nothing to a manifest cargo will reject anyway.
+fn has_lints(path: &path::Path) -> bool {
+  let Some(manifest) = fs::read_to_string(path)
+    .ok()
+    .and_then(|text| text.parse::<toml::Table>().ok())
+  else {
+    return true;
+  };
+  manifest.contains_key("lints")
+    || manifest
+      .get("workspace")
+      .is_some_and(|workspace| workspace.get("lints").is_some())
+}
+
 /// Runs rustfmt with `args` over `files` in the root and returns its stdout.
 ///
 /// Exit code 1 under `--check` means some file would change.
@@ -267,8 +309,27 @@ mod tests {
   }
 
   #[test]
-  fn lint_reports_clippy_findings_in_the_given_files() {
+  fn lint_uses_the_guide_lints_only_without_a_lints_table() {
     let manifest = "[package]\nname = \"t\"\nedition = \"2024\"\n";
+    let dir = workspace(&[
+      ("Cargo.toml", manifest),
+      (
+        "src/main.rs",
+        "//! A.\n\nfn main() {\n  f();\n}\n\nfn f() {}\n",
+      ),
+    ]);
+    let files = [dir.path().join("src/main.rs")];
+    let report = with_context(dir.path(), |ctx| Rust.lint(ctx, &files, false))
+      .expect("lint");
+    let rules: Vec<_> = report.problems.iter().map(|p| &p.rule).collect();
+    let want = Some("clippy::missing_docs_in_private_items".to_owned());
+    assert_eq!(rules, [&want], "f has no doc comment");
+  }
+
+  #[test]
+  fn lint_reports_clippy_findings_in_the_given_files() {
+    let manifest =
+      "[package]\nname = \"t\"\nedition = \"2024\"\n[lints.rust]\n";
     let dir = workspace(&[
       ("Cargo.toml", manifest),
       ("src/main.rs", "fn main() {\n  let x = 1;\n}\n"),
