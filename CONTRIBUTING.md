@@ -7,25 +7,20 @@ wraps at the versions CI uses:
 
 ```sh
 .github/install-tools.sh
-git config core.hooksPath .githooks
 ```
-
-The pre-commit hook builds fml and runs `fml fmt --staged` and
-`fml lint --staged` on the commit.
 
 ## Checks
 
 A PR is ready when these pass:
 
 ```sh
-cargo test --workspace
+cargo fmt --all --check
 cargo clippy --workspace --all-targets -- -D warnings
-cargo run -q -- fmt --check
-cargo run -q -- lint
+cargo test --workspace
 ```
 
-Always run the freshly built binary with `cargo run`, never an `fml` on
-`PATH`. CI runs the tests on Linux, macOS and Windows.
+CI runs them on Linux and Windows, and on macOS after a merge. CI does not
+check the repo's Markdown, TOML or YAML; `fml fmt` and `fml lint` do, locally.
 
 ## Code
 
