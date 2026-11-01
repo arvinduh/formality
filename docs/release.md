@@ -21,6 +21,6 @@ file; GitHub's `--generate-notes` writes the notes from the merged PRs.
 ## Regenerating the release workflow
 
 `allow-dirty = ["ci"]` keeps `dist generate` from overwriting
-`release.yml`. After a dist bump, regenerate it and re-apply the three
-`LOCAL EDIT` changes: the bare tag glob, `fetch-depth: 0` on the `host`
-checkout, and the `gh release create --generate-notes` step.
+`release.yml`. After a dist bump, regenerate it and re-apply the four
+`LOCAL EDIT` changes: the two installer checksum steps, `fetch-depth: 0` on
+the `host` checkout, and the `gh release create --generate-notes` step.
