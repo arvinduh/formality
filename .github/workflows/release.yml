@@ -365,8 +365,8 @@ jobs:
         # After a dist bump, re-apply this step and the fetch-depth edit
         # (docs/release.md).
         run: |
-          # The nearest earlier release tag; releases before 0.5.0 used vx.y.z.
-          notes_start="$(git describe --tags --abbrev=0 --match '[0-9]*' --match 'v[0-9]*' "$RELEASE_COMMIT^" 2>/dev/null || true)"
+          # The nearest earlier release tag.
+          notes_start="$(git describe --tags --abbrev=0 --match '[0-9]*' "$RELEASE_COMMIT^" 2>/dev/null || true)"
           start_flag=""
           if [ -n "$notes_start" ]; then
             start_flag="--notes-start-tag $notes_start"
