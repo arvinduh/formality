@@ -127,6 +127,16 @@ jobs:
             curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y
             echo "$HOME/.cargo/bin" >> $GITHUB_PATH
           fi
+      - name: Set up Go
+        uses: actions/setup-go@v7
+        with:
+          go-version: stable
+          cache: false
+      - name: Install tools
+        run: .github/install-tools.sh
+        shell: bash
+      - name: Run tests
+        run: cargo test --workspace --no-fail-fast
       - name: Install dist
         run: ${{ matrix.install_dist.run }}
       # Get the dist-manifest

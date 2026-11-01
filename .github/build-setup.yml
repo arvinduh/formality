@@ -1,0 +1,13 @@
+# Steps dist runs in each release build job before `dist build`, set by
+# `github-build-setup` in Cargo.toml. They run the tests on every release
+# target, so a Windows or macOS failure stops the release before it ships.
+- name: Set up Go
+  uses: actions/setup-go@v7
+  with:
+    go-version: stable
+    cache: false
+- name: Install tools
+  run: .github/install-tools.sh
+  shell: bash
+- name: Run tests
+  run: cargo test --workspace --no-fail-fast
