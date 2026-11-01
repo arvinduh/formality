@@ -26,13 +26,13 @@ language with the command that installs it.
 ## Use
 
 ```sh
-fml fmt              # format the workspace
-fml fmt --check      # list the files that would change
-fml lint             # report lint violations
-fml fix              # apply lint autofixes, then format
-fml fmt --staged     # only files in the git index
-fml lint --changed   # only files that differ from HEAD, plus untracked ones
-fml fmt src a.py     # only these files and directories
+fml fmt            # format the workspace
+fml fmt --check    # list the files that would change
+fml lint           # report lint violations
+fml fix            # apply lint autofixes, then format
+fml fmt --staged   # only files in the git index
+fml lint --changed # only files that differ from HEAD, plus untracked ones
+fml fmt src a.py   # only these files and directories
 ```
 
 When violations span more than one rule, `fml lint` also prints a count per
@@ -60,7 +60,10 @@ run, such as a missing tool or a bad config.
 
 fml formats Markdown itself with
 [dprint-plugin-markdown](https://crates.io/crates/dprint-plugin-markdown), so
-a `.prettierrc` does not apply to it, and it keeps code blocks as written.
+a `.prettierrc` does not apply to it. A fenced code block tagged with one of
+the languages above, such as `rust` or `json`, is formatted by that
+language's formatter; other blocks, and blocks that do not parse, are kept
+as written.
 
 ## Configure
 
