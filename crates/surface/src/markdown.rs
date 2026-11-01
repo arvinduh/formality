@@ -109,7 +109,10 @@ impl crate::Surface for Markdown {
     drop(rules);
     Ok(crate::Report {
       changed: Vec::new(),
-      problems: crate::locate(crate::problems(&output.stderr, ctx.root), files),
+      problems: crate::locate(
+        crate::problems(&output.stderr, ctx.root, rule),
+        files,
+      ),
     })
   }
 }
@@ -130,6 +133,14 @@ fn backslash_breaks(src: &str) -> String {
   }
   out.push_str(&src[cursor..]);
   out
+}
+
+/// The rule markdownlint-cli2 names after the level:
+/// `error MD033/no-inline-html ...`.
+fn rule(message: &str) -> Option<&str> {
+  message
+    .split_whitespace()
+    .find(|word| word.starts_with("MD"))
 }
 
 /// The markdownlint config fml lints with when markdownlint has none: every

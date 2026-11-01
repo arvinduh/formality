@@ -50,7 +50,7 @@ impl crate::Surface for Cpp {
     check_args.extend(["--dry-run".to_owned(), "-Werror".to_owned()]);
     let output =
       crate::run(&CLANG_FORMAT, &check_args, files, ctx.root, &[0, 1])?;
-    let reported = crate::problems(&output.stderr, ctx.root)
+    let reported = crate::problems(&output.stderr, ctx.root, |_| None)
       .into_iter()
       .map(|problem| problem.path);
     let changed = crate::changed(files, ctx.root, reported);
@@ -80,7 +80,10 @@ impl crate::Surface for Cpp {
     let output = crate::run(&CLANG_TIDY, &args, files, ctx.root, &[0, 1])?;
     Ok(crate::Report {
       changed: Vec::new(),
-      problems: crate::locate(crate::problems(&output.stdout, ctx.root), files),
+      problems: crate::locate(
+        crate::problems(&output.stdout, ctx.root, crate::bracketed),
+        files,
+      ),
     })
   }
 }
@@ -142,7 +145,7 @@ mod tests {
       report
         .problems
         .iter()
-        .any(|p| p.message.contains("modernize-use-nullptr"))
+        .any(|p| p.rule.as_deref() == Some("modernize-use-nullptr"))
     };
     assert!(found(&report), "modernize-use-nullptr under fml's checks");
     assert_eq!(report.problems[0].path, files[0]);

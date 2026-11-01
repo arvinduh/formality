@@ -39,9 +39,9 @@ impl crate::Surface for Python {
     let settings = settings(ctx.settings(self.name(), native(ctx))?.as_ref());
     let imports = ruff(ctx, &["check", "--select", "I"], &settings, files)?;
     let layout = ruff(ctx, &["format", "--check"], &settings, files)?;
-    let reported = crate::problems(&imports, ctx.root)
+    let reported = crate::problems(&imports, ctx.root, |_| None)
       .into_iter()
-      .chain(crate::problems(&layout, ctx.root))
+      .chain(crate::problems(&layout, ctx.root, |_| None))
       .map(|problem| problem.path);
     let changed = crate::changed(files, ctx.root, reported);
     if !check && !changed.is_empty() {
@@ -77,7 +77,7 @@ impl crate::Surface for Python {
     let output = ruff(ctx, &args, &settings, files)?;
     Ok(crate::Report {
       changed: Vec::new(),
-      problems: crate::locate(crate::problems(&output, ctx.root), files),
+      problems: crate::locate(crate::problems(&output, ctx.root, rule), files),
     })
   }
 }
@@ -120,6 +120,11 @@ fn settings(settings: Option<&config::Global>) -> Vec<String> {
     format!("--config=format.quote-style='{quotes}'"),
     format!("--config=format.line-ending='{ending}'"),
   ]
+}
+
+/// The rule ruff's concise output starts a message with: `F401 ...`.
+fn rule(message: &str) -> Option<&str> {
+  message.split_whitespace().next()
 }
 
 /// Runs ruff with `args`, `settings` and `files` in the root, in its concise
@@ -199,7 +204,7 @@ mod tests {
     });
     assert_eq!(report.problems.len(), 1, "F401 under fml's rules");
     assert_eq!(report.problems[0].line, 1);
-    assert!(report.problems[0].message.starts_with("F401"));
+    assert_eq!(report.problems[0].rule.as_deref(), Some("F401"));
 
     let dir = workspace(&[source, ("ruff.toml", "lint.select = [\"E\"]\n")]);
     let files = [dir.path().join("a.py")];

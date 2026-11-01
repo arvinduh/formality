@@ -153,11 +153,13 @@ fn reported(output: &str, cwd: &path::Path) -> Vec<crate::Problem> {
           .split(',')
           .find_map(|pair| pair.strip_prefix(name)?.strip_prefix('='))
       };
+      let rule = field("title")?;
       Some(crate::Problem {
         path: cwd.join(unescape(field("file")?)),
         line: field("line")?.parse().ok()?,
         column: field("col")?.parse().ok()?,
-        message: format!("{} {}", field("title")?, message.trim()),
+        message: format!("{rule} {}", message.trim()),
+        rule: Some(rule.to_owned()),
       })
     })
     .collect()
@@ -224,7 +226,7 @@ mod tests {
       report
         .problems
         .iter()
-        .any(|p| p.message.contains("noForIn"))
+        .any(|p| p.rule.as_deref().is_some_and(|r| r.ends_with("/noForIn")))
     };
     assert!(found(&report), "noForIn under fml's rules");
     assert_eq!(report.problems[0].path, files[0]);

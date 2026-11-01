@@ -67,7 +67,10 @@ impl crate::Surface for Shell {
     let output = crate::run(&SHELLCHECK, &args, files, ctx.root, &[0, 1])?;
     Ok(crate::Report {
       changed: Vec::new(),
-      problems: crate::locate(crate::problems(&output.stdout, ctx.root), files),
+      problems: crate::locate(
+        crate::problems(&output.stdout, ctx.root, crate::bracketed),
+        files,
+      ),
     })
   }
 }
@@ -104,6 +107,6 @@ mod tests {
     });
     assert_eq!(report.problems.len(), 1);
     assert_eq!((report.problems[0].line, report.problems[0].column), (2, 6));
-    assert!(report.problems[0].message.contains("SC2086"));
+    assert_eq!(report.problems[0].rule.as_deref(), Some("SC2086"));
   }
 }

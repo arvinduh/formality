@@ -61,9 +61,18 @@ impl crate::Surface for Yaml {
     let output = crate::run(&YAMLLINT, &args, files, ctx.root, &[0, 1])?;
     Ok(crate::Report {
       changed: Vec::new(),
-      problems: crate::locate(crate::problems(&output.stdout, ctx.root), files),
+      problems: crate::locate(
+        crate::problems(&output.stdout, ctx.root, rule),
+        files,
+      ),
     })
   }
+}
+
+/// The rule yamllint's parsable output ends a message with:
+/// `... (document-start)`.
+fn rule(message: &str) -> Option<&str> {
+  Some(message.strip_suffix(')')?.rsplit_once('(')?.1)
 }
 
 #[cfg(test)]
@@ -96,6 +105,7 @@ mod tests {
     });
     assert_eq!(report.problems.len(), 1, "trailing spaces, no `---` rule");
     assert_eq!((report.problems[0].line, report.problems[0].column), (2, 5));
+    assert_eq!(report.problems[0].rule.as_deref(), Some("trailing-spaces"));
     assert_eq!(report.problems[0].path, files[0]);
 
     let dir = testing::workspace(&[source, (".yamllint", "rules: {}\n")]);
