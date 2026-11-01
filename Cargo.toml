@@ -102,8 +102,8 @@ source-tarball = false
 # Steps each build job runs first: the tests, on every release target
 github-build-setup = "../build-setup.yml"
 
-# dist builds Apple Silicon on macos-14 by default, which GitHub no longer
-# runs: the 0.1.0 build job was cancelled twice before a runner took it.
+# dist builds Apple Silicon on macos-14 by default, and the 0.1.0 build job
+# there was cancelled twice before any runner took it.
 [workspace.metadata.dist.github-custom-runners]
 aarch64-apple-darwin = "macos-15"
 
