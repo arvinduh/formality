@@ -36,7 +36,7 @@ jobs:
 
       - uses: Swatinem/rust-cache@v2
 
-      - uses: actions/setup-go@v6
+      - uses: actions/setup-go@v7
         # shfmt installs with `go install`; macOS runners have no Go.
         with:
           go-version: stable
