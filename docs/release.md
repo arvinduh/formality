@@ -10,7 +10,7 @@ file; GitHub's `--generate-notes` writes the notes from the merged PRs.
 2. Once it merges, tag that commit and push the tag:
 
    ```sh
-   git tag 0.5.0 && git push origin 0.5.0
+   git tag 0.1.0 && git push origin 0.1.0
    ```
 
 3. `.github/workflows/release.yml` runs the tests on every target in
