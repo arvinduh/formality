@@ -2,9 +2,11 @@
 //!
 //! dprint formats block-level HTML and writes hard breaks as a backslash on
 //! its own. Fenced code in a language fml knows is formatted by that
-//! language; other code is kept as written. markdownlint only reports.
+//! language; other code is kept as written. markdownlint only reports, and
+//! `fix` applies the fixes whose intent is clear itself.
 
 mod fence;
+mod fix;
 
 use std::fs;
 use std::path;
@@ -113,10 +115,9 @@ impl crate::Surface for Markdown {
     &self,
     ctx: &crate::Context,
     files: &[path::PathBuf],
-    _fix: bool,
+    fix: bool,
   ) -> Result<crate::Report, crate::Error> {
-    // markdownlint only reports. Its fixers change meaning, such as MD018
-    // turning a wrapped line that starts `#123` into a heading.
+    // markdownlint only reports; fml applies the fixes that keep meaning.
     let mut args = Vec::new();
     // Held until markdownlint-cli2 exits: the directory holding fml's rules,
     // when it has no config of its own.
@@ -130,15 +131,24 @@ impl crate::Surface for Markdown {
       args.extend(["--config".to_owned(), path.display().to_string()]);
       Some(dir)
     };
-    let output = crate::run(&MARKDOWNLINT, &args, files, ctx.root, &[0, 1])?;
-    drop(rules);
-    Ok(crate::Report {
-      changed: Vec::new(),
-      problems: crate::locate(
+    let lint = || -> Result<Vec<crate::Problem>, crate::Error> {
+      let output = crate::run(&MARKDOWNLINT, &args, files, ctx.root, &[0, 1])?;
+      Ok(crate::locate(
         crate::problems(&output.stderr, ctx.root, rule),
         files,
-      ),
-    })
+      ))
+    };
+    let mut problems = lint()?;
+    let changed = if fix {
+      fix::apply(&problems)?
+    } else {
+      Vec::new()
+    };
+    if !changed.is_empty() {
+      problems = lint()?;
+    }
+    drop(rules);
+    Ok(crate::Report { changed, problems })
   }
 }
 
@@ -276,15 +286,28 @@ mod tests {
   }
 
   #[test]
-  fn lint_with_fix_never_rewrites_the_file() {
-    let source = "# a\n\nSee the fix in PR\n#123 for details.\n";
+  fn lint_with_fix_keeps_meaning_and_reports_what_is_left() {
+    let source = "# a\n\nSee the fix in PR\n#123 for details.\n\n```\nx\n```\n";
     let dir = testing::workspace(&[("a.md", source)]);
     let files = [dir.path().join("a.md")];
-    testing::with_context(dir.path(), |ctx| {
+    let report = testing::with_context(dir.path(), |ctx| {
       Markdown.lint(ctx, &files, true).expect("lint")
     });
     let text = fs::read_to_string(&files[0]).expect("read");
-    assert_eq!(text, source, "#123 stays prose, not a heading");
+    let want =
+      "# a\n\nSee the fix in PR\n#123 for details.\n\n```text\nx\n```\n";
+    assert_eq!(text, want, "#123 stays prose, not a heading");
+    assert_eq!(report.changed, files);
+    let rules: Vec<_> = report
+      .problems
+      .iter()
+      .filter_map(|p| p.rule.as_deref())
+      .collect();
+    assert_eq!(
+      rules,
+      ["MD018/no-missing-space-atx"],
+      "only the unfixed one"
+    );
   }
 
   #[test]
