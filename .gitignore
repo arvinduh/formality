@@ -1,11 +1,4 @@
 /target
-.ruff_cache
-.vscode/
-/.artifacts/
 /.agents/
-# Directory form (`/.claude/`) would permanently block any future
-# `!/.claude/<file>` negation — git never descends into an excluded
-# directory. Use the `*` form so a committed convention file (e.g.
-# .claude/settings.json) can still be un-ignored later.
 /.claude/*
 /.worktrees/
