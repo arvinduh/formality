@@ -35,6 +35,9 @@ fml lint --changed   # only files that differ from HEAD, plus untracked ones
 fml fmt src a.py     # only these files and directories
 ```
 
+When violations span more than one rule, `fml lint` also prints a count per
+rule, most frequent first, to plan a cleanup by rule.
+
 `-q` prints nothing on success and only the violations on failure. `-v` logs
 each language's time and `-vv` each command; `RUST_LOG` overrides both.
 
