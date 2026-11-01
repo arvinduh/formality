@@ -1,7 +1,0 @@
-# fml's own settings for this repo; see README.md for every key.
-
-[global]
-indent_size = 2
-line_length = 80
-quote_style = "double"
-end_of_line = "lf"

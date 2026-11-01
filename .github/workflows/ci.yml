@@ -1,0 +1,43 @@
+name: CI
+
+# Gates every pull request on Linux. Windows and macOS run the same tests at
+# release time, in the release workflow's build jobs. Branch protection
+# requires the "Tests (ubuntu-latest)" job name.
+on:
+  pull_request:
+    branches: ["main"]
+
+concurrency:
+  group: ci-${{ github.head_ref }}
+  cancel-in-progress: true
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  test:
+    name: Tests (ubuntu-latest)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Install the pinned Rust toolchain
+        # Reads rust-toolchain.toml.
+        run: rustup toolchain install
+
+      - uses: Swatinem/rust-cache@v2
+
+      - uses: actions/setup-go@v7
+        # shfmt installs with `go install`, which needs a recent Go.
+        with:
+          go-version: stable
+          cache: false
+
+      - name: Install tools
+        run: .github/install-tools.sh
+
+      - run: cargo fmt --all --check
+
+      - run: cargo clippy --workspace --all-targets -- -D warnings
+
+      - run: cargo test --workspace --no-fail-fast

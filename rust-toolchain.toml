@@ -1,6 +1,4 @@
-# Pins the Rust toolchain for local dev. CI pins the same version in
-# .github/workflows/pr-check.yml, since its toolchain action does not read
-# this file, so bump both together.
+# Pins the Rust toolchain; CI installs it from this file.
 [toolchain]
 channel = "1.98.1"
 components = ["rustfmt", "clippy"]

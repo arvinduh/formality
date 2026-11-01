@@ -99,6 +99,8 @@ install-updater = false
 allow-dirty = ["ci"]
 # GitHub already attaches source archives to every release
 source-tarball = false
+# Steps each build job runs first: the tests, on every release target
+github-build-setup = "../build-setup.yml"
 
 [profile.dist]
 inherits = "release"

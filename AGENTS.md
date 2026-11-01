@@ -6,7 +6,7 @@ and [CONTRIBUTING.md](CONTRIBUTING.md) for the checks and code conventions.
 
 ## Toolchain
 
-`rust-toolchain.toml` pins stable `1.98.1`, and CI pins the same version. fml
+`rust-toolchain.toml` pins stable `1.98.1`, and CI installs it from there. fml
 must build on stable.
 
 ## Compatibility
@@ -17,12 +17,11 @@ removes it outright.
 
 ## CI and merging
 
-- `.github/workflows/pr-check.yml` runs the tests on Linux (`Library Tests`),
-  macOS and Windows, plus `Formality Dogfooding` (`fml fmt --check` and
-  `fml lint` on this repo) and `Security Audit`.
-- Branch protection on `main` requires `Library Tests` and
-  `Formality Dogfooding` by job name, so renaming either needs the same change
-  in branch protection.
+- `.github/workflows/ci.yml` runs `cargo fmt --check`, clippy and the tests
+  on Linux for each PR. Branch protection requires its job name,
+  `Tests (ubuntu-latest)`, so renaming it needs the same change there.
+- Windows and macOS run the tests only at release, in each build job
+  (`.github/build-setup.yml`). A failure there blocks the release.
 - PRs are squash-merged.
 - `.github/install-tools.sh` pins every external tool CI uses.
 
