@@ -109,6 +109,9 @@ pub struct Problem {
   pub column: u32,
   /// The rule and message as the linter wrote them.
   pub message: String,
+  /// The rule's name, such as `F401` or `clippy::unwrap_used`, when the
+  /// linter names one.
+  pub rule: Option<String>,
 }
 
 /// Why a language could not format or lint its files.
@@ -169,12 +172,27 @@ impl Context<'_> {
 
 /// Reads the `path:line[:column]: message` lines most linters print,
 /// resolving relative paths against `cwd` and skipping lines of any other
-/// shape. A line with no column is placed at column 1.
-fn problems(output: &str, cwd: &path::Path) -> Vec<Problem> {
+/// shape. A line with no column is placed at column 1. `rule` finds the
+/// rule's name in a message.
+fn problems(
+  output: &str,
+  cwd: &path::Path,
+  rule: fn(&str) -> Option<&str>,
+) -> Vec<Problem> {
   output
     .lines()
     .filter_map(|line| problem(line, cwd))
+    .map(|mut problem| {
+      problem.rule = rule(&problem.message).map(str::to_owned);
+      problem
+    })
     .collect()
+}
+
+/// The rule named in brackets at the end of `message`, as shellcheck and
+/// clang-tidy write it: `... [SC2086]`.
+fn bracketed(message: &str) -> Option<&str> {
+  Some(message.strip_suffix(']')?.rsplit_once('[')?.1)
 }
 
 /// Reads one `path:line[:column]: message` line. The numbers are found by
@@ -189,6 +207,7 @@ fn problem(line: &str, cwd: &path::Path) -> Option<Problem> {
       line: row,
       column,
       message: rest.trim_start_matches(':').trim().to_owned(),
+      rule: None,
     })
   })
 }

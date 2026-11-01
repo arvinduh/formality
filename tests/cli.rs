@@ -66,6 +66,22 @@ fn violations_exit_1_and_quiet_prints_only_them() {
 }
 
 #[test]
+fn lint_counts_violations_per_rule_unless_quiet() {
+  let source = "import os\nimport sys\n\nx = 1\nprint(x == None)\n";
+  let dir = workspace(&[("a.py", source)]);
+  let output = fml(dir.path(), &["lint"]);
+  assert_eq!(output.status.code(), Some(1), "{}", stderr(&output));
+  let out = stdout(&output);
+  assert!(
+    out.ends_with("    2  F401\n    1  E711\n3 violations\n"),
+    "{out}"
+  );
+
+  let output = fml(dir.path(), &["-q", "lint"]);
+  assert_eq!(stdout(&output).lines().count(), 3, "{}", stdout(&output));
+}
+
+#[test]
 fn paths_print_relative_to_the_current_directory() {
   let dir = workspace(&[("a.toml", "a=1\n"), ("sub/b.toml", "b=1\n")]);
   let output = fml(&dir.path().join("sub"), &["-q", "fmt", "--check"]);

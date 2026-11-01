@@ -1,9 +1,10 @@
 //! Printing what a run found, and the exit status it adds up to.
 //!
-//! Owns fml's output: one line per changed file or problem, then a summary,
-//! or with `quiet` only what failed. Paths print relative to the current
-//! directory.
+//! Owns fml's output: one line per changed file or problem, a count per
+//! rule when problems span more than one, then a summary, or with `quiet`
+//! only what failed. Paths print relative to the current directory.
 
+use std::collections;
 use std::iter;
 use std::path;
 
@@ -38,6 +39,8 @@ pub fn print(
   cwd: &path::Path,
 ) -> Status {
   let (mut changed, mut problems, mut failed) = (0, 0, 0);
+  let mut rules: collections::HashMap<&str, usize> =
+    collections::HashMap::new();
   for outcome in outcomes {
     let report = match &outcome.result {
       Ok(report) => report,
@@ -59,6 +62,9 @@ pub fn print(
       let file = relative(&problem.path, cwd);
       let (line, column) = (problem.line, problem.column);
       println!("{file}:{line}:{column}: {}", problem.message);
+      if let Some(rule) = &problem.rule {
+        *rules.entry(rule).or_default() += 1;
+      }
     }
     changed += report.changed.len();
     problems += report.problems.len();
@@ -71,9 +77,22 @@ pub fn print(
     Status::Clean
   };
   if !run.quiet {
+    if rules.len() > 1 {
+      for (rule, n) in tally(rules) {
+        println!("{n:5}  {rule}");
+      }
+    }
     println!("{}", summary(run, changed, problems, failed));
   }
   status
+}
+
+/// Each rule with its count, most frequent first, so a cleanup can be
+/// planned by rule.
+fn tally(rules: collections::HashMap<&str, usize>) -> Vec<(&str, usize)> {
+  let mut rules: Vec<(&str, usize)> = rules.into_iter().collect();
+  rules.sort_unstable_by(|a, b| b.1.cmp(&a.1).then(a.0.cmp(b.0)));
+  rules
 }
 
 /// The one-line summary, such as `2 files formatted, 1 violation`.

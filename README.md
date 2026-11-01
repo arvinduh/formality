@@ -35,6 +35,9 @@ fml lint --changed   # only files that differ from HEAD, plus untracked ones
 fml fmt src a.py     # only these files and directories
 ```
 
+When violations span more than one rule, `fml lint` also prints a count per
+rule, most frequent first, to plan a cleanup by rule.
+
 `-q` prints nothing on success and only the violations on failure. `-v` logs
 each language's time and `-vv` each command; `RUST_LOG` overrides both.
 
@@ -81,6 +84,9 @@ indent_size = 4
 A language table, named as in the table above, overrides `[global]` for that
 language. Lint rules always come from the tool's own config, never from
 `formality.toml`.
+When a tool has no config, fml lints with its own rule set; for Rust, a
+manifest without a `[lints]` or `[workspace.lints]` table gets clippy's
+pedantic group plus lints for docs, `unwrap`, imports and `allow`.
 
 Config layers merge in order: `~/.config/formality/config.toml`, the
 workspace's file, then `-c FILE`. An unknown key is an error that names its

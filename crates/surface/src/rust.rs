@@ -3,11 +3,13 @@
 //! Owns both tools' arguments and output. Clippy checks a whole Cargo
 //! workspace at once, so its findings are filtered to the files asked about.
 
+use std::collections;
 use std::ffi;
 use std::fs;
 use std::path;
 
 use config;
+use serde_json;
 use toml;
 use tool;
 
@@ -25,6 +27,28 @@ const CARGO: tool::Tool = tool::Tool {
 
 /// The edition rustfmt parses with when no `Cargo.toml` names one.
 const EDITION: &str = "2024";
+
+/// The rust-guide's lint set, as clippy flags, for a crate whose manifest
+/// has no `[lints]` table. The group comes first so the lints after it set
+/// their own level, and every lint warns so one run reports all of them.
+const LINTS: &[&str] = &[
+  "-Wclippy::pedantic",
+  "-Wmissing_docs",
+  "-Wunsafe_op_in_unsafe_fn",
+  "-Wunused_qualifications",
+  "-Wclippy::wildcard_imports",
+  "-Aclippy::single_component_path_imports",
+  "-Wclippy::dbg_macro",
+  "-Wclippy::todo",
+  "-Wclippy::undocumented_unsafe_blocks",
+  "-Wclippy::missing_docs_in_private_items",
+  "-Wclippy::unwrap_used",
+  "-Wclippy::missing_assert_message",
+  "-Wclippy::exit",
+  "-Wclippy::allow_attributes",
+  "-Wclippy::allow_attributes_without_reason",
+  "-Wclippy::redundant_clone",
+];
 
 /// Rust: `.rs` files.
 pub struct Rust;
@@ -72,14 +96,23 @@ impl crate::Surface for Rust {
       return Ok(crate::Report::default());
     };
     let dir = manifest.parent().unwrap_or(ctx.root);
-    let mut args = vec!["clippy", "--quiet", "--message-format=short"];
+    let mut args = vec![
+      "clippy",
+      "--quiet",
+      "--all-targets",
+      "--message-format=json",
+    ];
     if fix {
       args.extend(["--fix", "--allow-dirty", "--allow-staged"]);
+    }
+    if !has_lints(&manifest) {
+      args.push("--");
+      args.extend(LINTS);
     }
     let args: Vec<&ffi::OsStr> =
       args.into_iter().map(ffi::OsStr::new).collect();
     let output = CARGO.run(&args, dir)?;
-    let problems = crate::problems(&output.stderr, dir);
+    let problems = diagnostics(&output.stdout, dir);
     let problems: Vec<crate::Problem> = crate::locate(problems, files)
       .into_iter()
       .filter(|problem| files.contains(&problem.path))
@@ -96,6 +129,52 @@ impl crate::Surface for Rust {
       problems,
     })
   }
+}
+
+/// Reads the lints and errors in cargo's JSON messages, resolving paths
+/// against `cwd`. A site that several targets report, such as a library
+/// built once plain and once for its tests, is kept once.
+fn diagnostics(output: &str, cwd: &path::Path) -> Vec<crate::Problem> {
+  let mut seen = collections::HashSet::new();
+  output
+    .lines()
+    .filter_map(|line| diagnostic(line, cwd))
+    .filter(|problem| {
+      let key = (problem.path.clone(), problem.line, problem.column);
+      seen.insert((key, problem.rule.clone()))
+    })
+    .collect()
+}
+
+/// Reads one cargo JSON message, or `None` when it is not a diagnostic with
+/// a place, such as a build-finished line or a count of warnings. Some
+/// compile errors have no code, so the rule is optional.
+fn diagnostic(line: &str, cwd: &path::Path) -> Option<crate::Problem> {
+  let message = line.parse::<serde_json::Value>().ok()?;
+  if message["reason"] != "compiler-message" {
+    return None;
+  }
+  let diagnostic = &message["message"];
+  let rule = diagnostic["code"]["code"].as_str();
+  let spans = diagnostic["spans"].as_array()?;
+  let span = spans
+    .iter()
+    .find(|span| span["is_primary"] == true)
+    .or_else(|| spans.first())?;
+  let number = |key: &str| u32::try_from(span[key].as_u64()?).ok();
+  let level = diagnostic["level"].as_str()?;
+  let text = diagnostic["message"].as_str()?;
+  let message = match rule {
+    Some(rule) => format!("{level}: {text} [{rule}]"),
+    None => format!("{level}: {text}"),
+  };
+  Some(crate::Problem {
+    path: cwd.join(span["file_name"].as_str()?),
+    line: number("line_start")?,
+    column: number("column_start")?,
+    message,
+    rule: rule.map(str::to_owned),
+  })
 }
 
 /// Whether rustfmt will find a config of its own: a `rustfmt.toml` or
@@ -137,6 +216,22 @@ fn edition(root: &path::Path) -> String {
       .find_map(|table| table.get("edition")?.as_str())
   });
   edition.unwrap_or(EDITION).to_owned()
+}
+
+/// Whether the manifest at `path` has a `[lints]` or `[workspace.lints]`
+/// table, which clippy reads on its own. One that cannot be read counts as
+/// having one, so fml adds nothing to a manifest cargo will reject anyway.
+fn has_lints(path: &path::Path) -> bool {
+  let Some(manifest) = fs::read_to_string(path)
+    .ok()
+    .and_then(|text| text.parse::<toml::Table>().ok())
+  else {
+    return true;
+  };
+  manifest.contains_key("lints")
+    || manifest
+      .get("workspace")
+      .is_some_and(|workspace| workspace.get("lints").is_some())
 }
 
 /// Runs rustfmt with `args` over `files` in the root and returns its stdout.
@@ -214,8 +309,27 @@ mod tests {
   }
 
   #[test]
-  fn lint_reports_clippy_findings_in_the_given_files() {
+  fn lint_uses_the_guide_lints_only_without_a_lints_table() {
     let manifest = "[package]\nname = \"t\"\nedition = \"2024\"\n";
+    let dir = workspace(&[
+      ("Cargo.toml", manifest),
+      (
+        "src/main.rs",
+        "//! A.\n\nfn main() {\n  f();\n}\n\nfn f() {}\n",
+      ),
+    ]);
+    let files = [dir.path().join("src/main.rs")];
+    let report = with_context(dir.path(), |ctx| Rust.lint(ctx, &files, false))
+      .expect("lint");
+    let rules: Vec<_> = report.problems.iter().map(|p| &p.rule).collect();
+    let want = Some("clippy::missing_docs_in_private_items".to_owned());
+    assert_eq!(rules, [&want], "f has no doc comment");
+  }
+
+  #[test]
+  fn lint_reports_clippy_findings_in_the_given_files() {
+    let manifest =
+      "[package]\nname = \"t\"\nedition = \"2024\"\n[lints.rust]\n";
     let dir = workspace(&[
       ("Cargo.toml", manifest),
       ("src/main.rs", "fn main() {\n  let x = 1;\n}\n"),
@@ -225,5 +339,6 @@ mod tests {
       .expect("lint");
     assert_eq!(report.problems.len(), 1, "the unused variable");
     assert_eq!(report.problems[0].line, 2);
+    assert_eq!(report.problems[0].rule.as_deref(), Some("unused_variables"));
   }
 }
