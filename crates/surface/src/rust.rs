@@ -3,11 +3,13 @@
 //! Owns both tools' arguments and output. Clippy checks a whole Cargo
 //! workspace at once, so its findings are filtered to the files asked about.
 
+use std::collections;
 use std::ffi;
 use std::fs;
 use std::path;
 
 use config;
+use serde_json;
 use toml;
 use tool;
 
@@ -72,14 +74,19 @@ impl crate::Surface for Rust {
       return Ok(crate::Report::default());
     };
     let dir = manifest.parent().unwrap_or(ctx.root);
-    let mut args = vec!["clippy", "--quiet", "--message-format=short"];
+    let mut args = vec![
+      "clippy",
+      "--quiet",
+      "--all-targets",
+      "--message-format=json",
+    ];
     if fix {
       args.extend(["--fix", "--allow-dirty", "--allow-staged"]);
     }
     let args: Vec<&ffi::OsStr> =
       args.into_iter().map(ffi::OsStr::new).collect();
     let output = CARGO.run(&args, dir)?;
-    let problems = crate::problems(&output.stderr, dir, |_| None);
+    let problems = diagnostics(&output.stdout, dir);
     let problems: Vec<crate::Problem> = crate::locate(problems, files)
       .into_iter()
       .filter(|problem| files.contains(&problem.path))
@@ -96,6 +103,52 @@ impl crate::Surface for Rust {
       problems,
     })
   }
+}
+
+/// Reads the lints and errors in cargo's JSON messages, resolving paths
+/// against `cwd`. A site that several targets report, such as a library
+/// built once plain and once for its tests, is kept once.
+fn diagnostics(output: &str, cwd: &path::Path) -> Vec<crate::Problem> {
+  let mut seen = collections::HashSet::new();
+  output
+    .lines()
+    .filter_map(|line| diagnostic(line, cwd))
+    .filter(|problem| {
+      let key = (problem.path.clone(), problem.line, problem.column);
+      seen.insert((key, problem.rule.clone()))
+    })
+    .collect()
+}
+
+/// Reads one cargo JSON message, or `None` when it is not a diagnostic with
+/// a place, such as a build-finished line or a count of warnings. Some
+/// compile errors have no code, so the rule is optional.
+fn diagnostic(line: &str, cwd: &path::Path) -> Option<crate::Problem> {
+  let message = line.parse::<serde_json::Value>().ok()?;
+  if message["reason"] != "compiler-message" {
+    return None;
+  }
+  let diagnostic = &message["message"];
+  let rule = diagnostic["code"]["code"].as_str();
+  let spans = diagnostic["spans"].as_array()?;
+  let span = spans
+    .iter()
+    .find(|span| span["is_primary"] == true)
+    .or_else(|| spans.first())?;
+  let number = |key: &str| u32::try_from(span[key].as_u64()?).ok();
+  let level = diagnostic["level"].as_str()?;
+  let text = diagnostic["message"].as_str()?;
+  let message = match rule {
+    Some(rule) => format!("{level}: {text} [{rule}]"),
+    None => format!("{level}: {text}"),
+  };
+  Some(crate::Problem {
+    path: cwd.join(span["file_name"].as_str()?),
+    line: number("line_start")?,
+    column: number("column_start")?,
+    message,
+    rule: rule.map(str::to_owned),
+  })
 }
 
 /// Whether rustfmt will find a config of its own: a `rustfmt.toml` or
@@ -225,5 +278,6 @@ mod tests {
       .expect("lint");
     assert_eq!(report.problems.len(), 1, "the unused variable");
     assert_eq!(report.problems[0].line, 2);
+    assert_eq!(report.problems[0].rule.as_deref(), Some("unused_variables"));
   }
 }

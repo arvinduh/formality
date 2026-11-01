@@ -486,6 +486,7 @@ dependencies = [
  "fml-config",
  "fml-tool",
  "pulldown-cmark",
+ "serde_json",
  "tempfile",
  "thiserror",
  "toml",
