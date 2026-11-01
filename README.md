@@ -65,6 +65,13 @@ the languages above, such as `rust` or `json`, is formatted by that
 language's formatter; other blocks, and blocks that do not parse, are kept
 as written.
 
+`fml fix` does not run markdownlint's fixers, since some guess wrong, such
+as turning a wrapped `#123` into a heading. fml fixes five rules itself,
+where the intent is clear: a fence with no language gets `text` (MD040), a
+bare URL gets `<>` (MD034), a heading drops trailing punctuation (MD026), a
+line that is only bold becomes a heading one level down (MD036), and
+`#Title` alone between blank lines gets its space (MD018).
+
 ## Configure
 
 The workspace root is the nearest directory with `formality.toml`,
