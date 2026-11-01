@@ -86,13 +86,11 @@ impl crate::Surface for Markdown {
     &self,
     ctx: &crate::Context,
     files: &[path::PathBuf],
-    fix: bool,
+    _fix: bool,
   ) -> Result<crate::Report, crate::Error> {
-    let mut args = if fix {
-      vec!["--fix".to_owned()]
-    } else {
-      Vec::new()
-    };
+    // markdownlint only reports. Its fixers change meaning, such as MD018
+    // turning a wrapped line that starts `#123` into a heading.
+    let mut args = Vec::new();
     // Held until markdownlint-cli2 exits: the directory holding fml's rules,
     // when it has no config of its own.
     let rules = if tool::nearest_config(ctx.root, CONFIGS).is_some() {
@@ -194,6 +192,18 @@ mod tests {
     assert!(!report.problems.is_empty());
     assert_eq!(report.problems[0].path, files[0]);
     assert!(report.problems[0].message.contains("MD"));
+  }
+
+  #[test]
+  fn lint_with_fix_never_rewrites_the_file() {
+    let source = "# a\n\nSee the fix in PR\n#123 for details.\n";
+    let dir = testing::workspace(&[("a.md", source)]);
+    let files = [dir.path().join("a.md")];
+    testing::with_context(dir.path(), |ctx| {
+      Markdown.lint(ctx, &files, true).expect("lint")
+    });
+    let text = fs::read_to_string(&files[0]).expect("read");
+    assert_eq!(text, source, "#123 stays prose, not a heading");
   }
 
   #[test]

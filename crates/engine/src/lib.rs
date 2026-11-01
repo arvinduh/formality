@@ -92,9 +92,16 @@ fn apply(
     Command::Fix => {
       let lint = language.lint(ctx, files, !check)?;
       let format = language.format(ctx, files, check)?;
+      // Formatting can clear problems or add them, so after it rewrites a
+      // file the linter's earlier report is stale.
+      let problems = if check || format.changed.is_empty() {
+        lint.problems
+      } else {
+        language.lint(ctx, files, false)?.problems
+      };
       Ok(surface::Report {
         changed: format.changed,
-        problems: lint.problems,
+        problems,
       })
     }
   }
@@ -156,5 +163,15 @@ mod tests {
     assert!(report.problems.is_empty(), "the unused import is fixed");
     let text = fs::read_to_string(dir.path().join("a.py")).expect("read");
     assert_eq!(text, "x = 1\n");
+  }
+
+  #[test]
+  fn fix_reports_what_is_left_after_formatting() {
+    let long = format!("x = [{}]\n", "1, ".repeat(30));
+    let files = [("a.py", long.as_str())];
+    let (_dir, outcomes) = run_in(&files, Command::Fix, false);
+    let report = outcomes[0].result.as_ref().expect("report");
+    assert_eq!(report.changed.len(), 1, "ruff format wraps the line");
+    assert!(report.problems.is_empty(), "the wrap clears E501");
   }
 }
