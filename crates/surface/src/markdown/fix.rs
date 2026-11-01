@@ -81,17 +81,21 @@ fn fix(
       let rest = &body[start + url.len()..];
       format!("{}<{url}>{rest}", &body[..start])
     }
-    // A heading drops its trailing punctuation.
+    // A heading drops a trailing `.`, `,`, `:` or `;`. A `!` stays, since
+    // it carries tone.
     "MD026" => {
       let mark = quoted(&problem.message, "[Punctuation: '", "']")?;
+      matches!(mark, "." | "," | ":" | ";").then_some(())?;
       body.trim_end().strip_suffix(mark)?.trim_end().to_owned()
     }
     // A paragraph that is only emphasis becomes a heading one level below
     // the one it is under, or level 2 at the top.
     "MD036" => {
       let text = quoted(&problem.message, "[Context: \"", "\"]")?;
-      let marker = body.chars().next().filter(|c| matches!(c, '*' | '_'))?;
-      body.starts_with(marker).then_some(())?;
+      body.starts_with(['*', '_']).then_some(())?;
+      // markdownlint already skips text that ends in punctuation; a label
+      // such as `Note: unstable` is a callout, not a section.
+      (!text.contains(':')).then_some(())?;
       let level = (levels.get(at)? + 1).clamp(2, 6);
       format!("{} {text}", "#".repeat(level))
     }
@@ -218,5 +222,22 @@ mod tests {
     let want = "# a\n\n## Bold heading\n\nSee <https://example.com/x>, ok.\n\n\
                 ## Done\n\n```text\ncode\n```\n\n# Title\n\nSee PR\n#123 here.\n";
     assert_eq!(text, want);
+  }
+
+  #[test]
+  fn apply_leaves_what_it_cannot_be_sure_of() {
+    let source = "# a\n\n**Note: unstable**\n\n## Wow!\n\nSee x https://a.b ok.\n\n\
+                  #123\n";
+    let dir = testing::workspace(&[("a.md", source)]);
+    let path = dir.path().join("a.md");
+    let found = [
+      problem(&path, 3, 1, "error MD036/x x [Context: \"Note: unstable\"]"),
+      problem(&path, 5, 7, "error MD026/x x [Punctuation: '!']"),
+      // The URL is not where markdownlint says, so the line is left alone.
+      problem(&path, 7, 1, "error MD034/x x [Context: \"https://a.b\"]"),
+      problem(&path, 9, 1, "error MD018/x x [Context: \"#123\"]"),
+    ];
+    assert!(apply(&found).expect("apply").is_empty());
+    assert_eq!(fs::read_to_string(&path).expect("read"), source);
   }
 }
