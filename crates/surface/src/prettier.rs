@@ -1,4 +1,4 @@
-//! Prettier, the formatter Markdown, YAML and JSON share.
+//! Prettier, the formatter YAML and JSON share.
 //!
 //! Owns prettier's arguments and its list of changed files. The languages that
 //! use it own their linters.
@@ -9,7 +9,7 @@ use config;
 use tool;
 
 /// The prettier binary.
-pub const PRETTIER: tool::Tool = tool::Tool {
+const PRETTIER: tool::Tool = tool::Tool {
   binary: "prettier",
   install: "npm install -g prettier",
 };
@@ -56,7 +56,7 @@ pub fn format(
 /// # Errors
 ///
 /// Returns an error when the config is wrong.
-pub fn args(
+fn args(
   language: &str,
   ctx: &crate::Context,
 ) -> Result<Vec<String>, crate::Error> {
@@ -64,7 +64,7 @@ pub fn args(
 }
 
 /// Whether prettier finds a config of its own above the root.
-pub fn native(ctx: &crate::Context) -> bool {
+fn native(ctx: &crate::Context) -> bool {
   tool::nearest_config(ctx.root, CONFIGS).is_some()
 }
 

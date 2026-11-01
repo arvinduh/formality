@@ -26,6 +26,7 @@ use std::fs;
 use std::io;
 use std::path;
 
+use dprint_plugin_markdown;
 use thiserror;
 
 use config;
@@ -133,6 +134,14 @@ pub enum Error {
     path: path::PathBuf,
     /// The operating system's reason.
     source: io::Error,
+  },
+  /// dprint could not format a Markdown file.
+  #[error("could not format {}: {source}", path.display())]
+  Markdown {
+    /// The file.
+    path: path::PathBuf,
+    /// dprint's reason.
+    source: dprint_plugin_markdown::FormatError,
   },
   /// A tool ran but failed instead of reporting.
   #[error("{binary} failed with exit code {code:?}: {stderr}")]
