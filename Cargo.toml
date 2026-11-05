@@ -18,7 +18,7 @@ tool = { package = "fml-tool", path = "crates/tool" }
 
 [package]
 name = "fml"
-version = "0.1.0"
+version = "0.1.1"
 description = "Formats and lints every file in a repo with the best tool for each language"
 readme = "README.md"
 edition.workspace = true
