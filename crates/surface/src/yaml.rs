@@ -96,6 +96,19 @@ mod tests {
   }
 
   #[test]
+  fn format_wraps_long_strings_at_the_line_length() {
+    let source = format!("a: {}\n", ["word"; 20].join(" "));
+    let dir = testing::workspace(&[("a.yaml", &source)]);
+    let files = [dir.path().join("a.yaml")];
+    testing::with_context(dir.path(), |ctx| {
+      Yaml.format(ctx, &files, false).expect("format")
+    });
+    let text = fs::read_to_string(&files[0]).expect("read");
+    let (head, tail) = (["word"; 15].join(" "), ["word"; 5].join(" "));
+    assert_eq!(text, format!("a:\n  {head}\n  {tail}\n"), "wrapped at 80");
+  }
+
+  #[test]
   fn lint_uses_fml_rules_only_without_a_yamllint_config() {
     let source = ("a.yaml", "on: 1 # c\na: 1 \n");
     let dir = testing::workspace(&[source]);
