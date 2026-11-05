@@ -69,7 +69,8 @@ fn native(ctx: &crate::Context) -> bool {
 }
 
 /// The prettier arguments that carry `settings`, or none to let prettier read
-/// its own config.
+/// its own config. YAML strings wrap at the line length; a folded plain or
+/// quoted scalar reads back as the same value.
 fn settings(settings: Option<&config::Global>) -> Vec<String> {
   let Some(settings) = settings else {
     return Vec::new();
@@ -82,6 +83,7 @@ fn settings(settings: Option<&config::Global>) -> Vec<String> {
     format!("--tab-width={}", settings.indent_size),
     format!("--print-width={}", settings.line_length),
     format!("--end-of-line={ending}"),
+    "--prose-wrap=always".to_owned(),
   ];
   if matches!(settings.quote_style, config::Quote::Single) {
     args.push("--single-quote".to_owned());

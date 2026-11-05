@@ -170,9 +170,10 @@ fn markdown(
   })
 }
 
-/// The dprint config that carries `settings`. Lists indent by their marker's
-/// width, or by 4 spaces when `indent_size` is 4 or more. Code blocks keep
-/// their indentation, which dprint would otherwise strip.
+/// The dprint config that carries `settings`. Prose wraps at the line length,
+/// so MD013 only flags lines with no space to break at. Lists indent by their
+/// marker's width, or by 4 spaces when `indent_size` is 4 or more. Code blocks
+/// keep their indentation, which dprint would otherwise strip.
 fn dprint(settings: &config::Global) -> configuration::Configuration {
   let newline = match settings.end_of_line {
     config::EndOfLine::Lf => dprint_core::configuration::NewLineKind::LineFeed,
@@ -187,6 +188,7 @@ fn dprint(settings: &config::Global) -> configuration::Configuration {
   };
   configuration::ConfigurationBuilder::new()
     .line_width(u32::from(settings.line_length))
+    .text_wrap(configuration::TextWrap::Always)
     .new_line_kind(newline)
     .list_indent_kind(lists)
     .code_block_preserve_indentation(true)
@@ -241,6 +243,19 @@ mod tests {
     assert!(report.changed.is_empty(), "the block is already formatted");
     let text = fs::read_to_string(&files[0]).expect("read");
     assert_eq!(text, source);
+  }
+
+  #[test]
+  fn format_wraps_prose_at_the_line_length() {
+    let source = format!("# a\n\n{}\n", ["word"; 20].join(" "));
+    let dir = testing::workspace(&[("a.md", &source)]);
+    let files = [dir.path().join("a.md")];
+    testing::with_context(dir.path(), |ctx| {
+      Markdown.format(ctx, &files, false).expect("format")
+    });
+    let text = fs::read_to_string(&files[0]).expect("read");
+    let (head, tail) = (["word"; 16].join(" "), ["word"; 4].join(" "));
+    assert_eq!(text, format!("# a\n\n{head}\n{tail}\n"), "wrapped at 80");
   }
 
   #[test]

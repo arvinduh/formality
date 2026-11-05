@@ -65,6 +65,9 @@ the languages above, such as `rust` or `json`, is formatted by that
 language's formatter; other blocks, and blocks that do not parse, are kept
 as written.
 
+Markdown prose and YAML strings wrap at the line length. A line with nowhere
+to break, such as a long URL or a comment, is left for the linter to report.
+
 `fml fix` does not run markdownlint's fixers, since some guess wrong, such
 as turning a wrapped `#123` into a heading. fml fixes five rules itself,
 where the intent is clear: a fence with no language gets `text` (MD040), a
