@@ -1,8 +1,8 @@
 # AGENTS.md
 
 fml formats and lints every file in a repo with one tool per language. See
-[docs/architecture.md](docs/architecture.md) for the crates and their rules,
-and [CONTRIBUTING.md](CONTRIBUTING.md) for the checks and code conventions.
+[docs/architecture.md](docs/architecture.md) for the crates and their rules, and
+[CONTRIBUTING.md](CONTRIBUTING.md) for the checks and code conventions.
 
 ## Toolchain
 
@@ -17,9 +17,9 @@ removes it outright.
 
 ## CI and merging
 
-- `.github/workflows/ci.yml` runs `cargo fmt --check`, clippy and the tests
-  on Linux for each PR. Branch protection requires its job name,
-  `Tests (ubuntu-latest)`, so renaming it needs the same change there.
+- `.github/workflows/ci.yml` runs `cargo fmt --check`, clippy and the tests on
+  Linux for each PR. Branch protection requires its job name, `Tests
+  (ubuntu-latest)`, so renaming it needs the same change there.
 - Windows and macOS run the tests only at release, in each build job
   (`.github/build-setup.yml`). A failure there blocks the release.
 - PRs are squash-merged.

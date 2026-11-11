@@ -15,13 +15,13 @@ file; GitHub's `--generate-notes` writes the notes from the merged PRs.
 
 3. `.github/workflows/release.yml` runs the tests on every target in
    `[workspace.metadata.dist]`, then builds them, uploads the archives and
-   installers, and creates the release. A failing test stops it before
-   anything is published; fix it on `main` and tag the fix. Check that
-   `fml update` on the previous release finds it.
+   installers, and creates the release. A failing test stops it before anything
+   is published; fix it on `main` and tag the fix. Check that `fml update` on
+   the previous release finds it.
 
 ## Regenerating the release workflow
 
-`allow-dirty = ["ci"]` keeps `dist generate` from overwriting
-`release.yml`. After a dist bump, regenerate it and re-apply the four
-`LOCAL EDIT` changes: the two installer checksum steps, `fetch-depth: 0` on
-the `host` checkout, and the `gh release create --generate-notes` step.
+`allow-dirty = ["ci"]` keeps `dist generate` from overwriting `release.yml`.
+After a dist bump, regenerate it and re-apply the four `LOCAL EDIT` changes: the
+two installer checksum steps, `fetch-depth: 0` on the `host` checkout, and the
+`gh release create --generate-notes` step.

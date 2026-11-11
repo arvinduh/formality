@@ -27,8 +27,8 @@ fml (src/) ──► engine ──► surface ──► tool
 
 ## Rules
 
-- Libraries take the data they need from their caller and do no ambient I/O:
-  no environment variables, no current directory, no printing
+- Libraries take the data they need from their caller and do no ambient I/O: no
+  environment variables, no current directory, no printing
   (`#![deny(clippy::print_stdout, clippy::print_stderr)]`).
 - Each error lives in the crate that raises it; the binary maps them to exit
   codes: `0` clean, `1` violations, `2` operational failure.

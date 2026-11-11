@@ -41,8 +41,8 @@ rule, most frequent first, to plan a cleanup by rule.
 `-q` prints nothing on success and only the violations on failure. `-v` logs
 each language's time and `-vv` each command; `RUST_LOG` overrides both.
 
-Exit codes: `0` clean, `1` violations or files to format, `2` fml could not
-run, such as a missing tool or a bad config.
+Exit codes: `0` clean, `1` violations or files to format, `2` fml could not run,
+such as a missing tool or a bad config.
 
 ## Languages
 
@@ -59,22 +59,21 @@ run, such as a missing tool or a bad config.
 | YAML              | `yaml`, `yml`              | `prettier`     | `yamllint`          |
 
 fml formats Markdown itself with
-[dprint-plugin-markdown](https://crates.io/crates/dprint-plugin-markdown), so
-a `.prettierrc` does not apply to it. A fenced code block tagged with one of
-the languages above, such as `rust` or `json`, is formatted by that
-language's formatter; other blocks, and blocks that do not parse, are kept
-as written.
+[dprint-plugin-markdown](https://crates.io/crates/dprint-plugin-markdown), so a
+`.prettierrc` does not apply to it. A fenced code block tagged with one of the
+languages above, such as `rust` or `json`, is formatted by that language's
+formatter; other blocks, and blocks that do not parse, are kept as written.
 
-Markdown prose and YAML strings wrap at the line length. A line with nowhere
-to break, such as a long URL or a comment, is left for the linter to report.
+Markdown prose and YAML strings wrap at the line length. A line with nowhere to
+break, such as a long URL or a comment, is left for the linter to report.
 
-`fml fix` does not run markdownlint's fixers, since some guess wrong, such
-as turning a wrapped `#123` into a heading. fml fixes five rules itself,
-where the intent is clear: a fence with no language gets `text` (MD040), a
-bare URL gets `<>` (MD034), a heading drops a trailing `.`, `,`, `:` or `;`
-(MD026), a line that is only bold becomes a heading one level down unless it
-reads as a label such as `Note: unstable` (MD036), and `#Title` alone
-between blank lines gets its space (MD018).
+`fml fix` does not run markdownlint's fixers, since some guess wrong, such as
+turning a wrapped `#123` into a heading. fml fixes five rules itself, where the
+intent is clear: a fence with no language gets `text` (MD040), a bare URL gets
+`<>` (MD034), a heading drops a trailing `.`, `,`, `:` or `;` (MD026), a line
+that is only bold becomes a heading one level down unless it reads as a label
+such as `Note: unstable` (MD036), and `#Title` alone between blank lines gets
+its space (MD018).
 
 ## Configure
 
@@ -92,8 +91,8 @@ of these that exists:
 [global]
 indent_size = 2
 line_length = 80
-quote_style = "double" # or "single"
-end_of_line = "lf"     # or "crlf"
+quote_style = "double"   # or "single"
+end_of_line = "lf"       # or "crlf"
 ignore = ["fixtures/**"] # gitignore syntax, appended after .gitignore
 
 [python]
@@ -102,15 +101,14 @@ indent_size = 4
 
 A language table, named as in the table above, overrides `[global]` for that
 language. Lint rules always come from the tool's own config, never from
-`formality.toml`.
-When a tool has no config, fml lints with its own rule set; for Rust, a
-manifest without a `[lints]` or `[workspace.lints]` table gets clippy's
-pedantic group plus lints for docs, `unwrap`, imports and `allow`.
+`formality.toml`. When a tool has no config, fml lints with its own rule set;
+for Rust, a manifest without a `[lints]` or `[workspace.lints]` table gets
+clippy's pedantic group plus lints for docs, `unwrap`, imports and `allow`.
 
-Config layers merge in order: `~/.config/formality/config.toml`, the
-workspace's file, then `-c FILE`. An unknown key is an error that names its
-file and line. Files the tools' own ignore files exclude, those in
-`.gitignore`, and those matching patterns in `ignore` are skipped.
+Config layers merge in order: `~/.config/formality/config.toml`, the workspace's
+file, then `-c FILE`. An unknown key is an error that names its file and line.
+Files the tools' own ignore files exclude, those in `.gitignore`, and those
+matching patterns in `ignore` are skipped.
 
 ## Contributing
 
