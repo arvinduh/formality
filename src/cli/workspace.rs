@@ -27,7 +27,8 @@ pub struct Workspace {
   pub project: bool,
   /// The user's config directory, such as `~/.config`.
   pub user_config: Option<path::PathBuf>,
-  /// The gitignore patterns of the root's `.gitignore`.
+  /// The combined ignore patterns: root `.gitignore` (if present), then
+  /// `formality.toml` `[global].ignore`.
   pub ignores: Vec<String>,
 }
 
@@ -68,11 +69,14 @@ pub fn load(
     })?;
     layers.push((path.to_path_buf(), text));
   }
-  let ignores = read_optional(&root.join(".gitignore"))?
+  let mut ignores = read_optional(&root.join(".gitignore"))?
     .map(|text| patterns(&text))
     .unwrap_or_default();
+  let config = config::Config::new(layers)?;
+  let global: config::Global = config.sections(&["global"])?;
+  ignores.extend(global.ignore);
   Ok(Workspace {
-    config: config::Config::new(layers)?,
+    config,
     root,
     project: has_project,
     user_config,
