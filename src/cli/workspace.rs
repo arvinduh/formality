@@ -131,3 +131,53 @@ fn patterns(text: &str) -> Vec<String> {
     .map(str::to_owned)
     .collect()
 }
+
+#[cfg(test)]
+mod tests {
+  use std::fs;
+
+  use tempfile;
+
+  use super::*;
+
+  #[test]
+  fn loads_ignores_from_gitignore_and_formality_toml() {
+    let dir = tempfile::tempdir().expect("tempdir");
+    let root = dir.path();
+    fs::write(root.join(".gitignore"), "from_git\n# comment\n").expect("write");
+    fs::write(
+      root.join("formality.toml"),
+      "[global]\nignore = [\"from_config\", \"!from_git\"]\n",
+    )
+    .expect("write");
+
+    let workspace = load(root, None).expect("load");
+    assert_eq!(
+      workspace.ignores,
+      vec![
+        "from_git".to_owned(),
+        "from_config".to_owned(),
+        "!from_git".to_owned(),
+      ],
+      "gitignore patterns followed by formality.toml ignore patterns"
+    );
+  }
+
+  #[test]
+  fn loads_ignores_from_formality_toml_when_no_gitignore() {
+    let dir = tempfile::tempdir().expect("tempdir");
+    let root = dir.path();
+    fs::write(
+      root.join("formality.toml"),
+      "[global]\nignore = [\"only_config\"]\n",
+    )
+    .expect("write");
+
+    let workspace = load(root, None).expect("load");
+    assert_eq!(
+      workspace.ignores,
+      vec!["only_config".to_owned()],
+      "config ignore loaded without gitignore"
+    );
+  }
+}
