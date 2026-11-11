@@ -94,6 +94,7 @@ indent_size = 2
 line_length = 80
 quote_style = "double" # or "single"
 end_of_line = "lf"     # or "crlf"
+ignore = ["fixtures/**"] # gitignore syntax, appended after .gitignore
 
 [python]
 indent_size = 4
@@ -108,8 +109,8 @@ pedantic group plus lints for docs, `unwrap`, imports and `allow`.
 
 Config layers merge in order: `~/.config/formality/config.toml`, the
 workspace's file, then `-c FILE`. An unknown key is an error that names its
-file and line. Files the tools' own ignore files exclude, and those in
-`.gitignore`, are skipped.
+file and line. Files the tools' own ignore files exclude, those in
+`.gitignore`, and those matching patterns in `ignore` are skipped.
 
 ## Contributing
 
