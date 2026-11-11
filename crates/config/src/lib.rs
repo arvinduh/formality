@@ -203,6 +203,8 @@ pub struct Global {
   pub quote_style: Quote,
   /// The line ending formatters write.
   pub end_of_line: EndOfLine,
+  /// Extra ignore patterns to skip, appended after `.gitignore`.
+  pub ignore: Vec<String>,
 }
 
 impl Default for Global {
@@ -212,6 +214,7 @@ impl Default for Global {
       line_length: 80,
       quote_style: Quote::Double,
       end_of_line: EndOfLine::Lf,
+      ignore: Vec::new(),
     }
   }
 }
@@ -258,6 +261,19 @@ mod tests {
     assert!(
       matches!(global.quote_style, Quote::Double),
       "default quotes"
+    );
+    assert!(global.ignore.is_empty(), "default ignore is empty");
+  }
+
+  #[test]
+  fn ignore_parses_patterns() {
+    let text = "[global]\nignore = [\"target\", \"!target/keep.rs\"]\n";
+    let loaded = config(&[("formality.toml", text)]).expect("config");
+    let global: Global = loaded.sections(&["global"]).expect("global");
+    assert_eq!(
+      global.ignore,
+      vec!["target".to_owned(), "!target/keep.rs".to_owned()],
+      "parsed ignore patterns"
     );
   }
 

@@ -27,7 +27,8 @@ pub struct Workspace {
   pub project: bool,
   /// The user's config directory, such as `~/.config`.
   pub user_config: Option<path::PathBuf>,
-  /// The gitignore patterns of the root's `.gitignore`.
+  /// The combined ignore patterns: root `.gitignore` (if present), then
+  /// `formality.toml` `[global].ignore`.
   pub ignores: Vec<String>,
 }
 
@@ -68,11 +69,14 @@ pub fn load(
     })?;
     layers.push((path.to_path_buf(), text));
   }
-  let ignores = read_optional(&root.join(".gitignore"))?
+  let mut ignores = read_optional(&root.join(".gitignore"))?
     .map(|text| patterns(&text))
     .unwrap_or_default();
+  let config = config::Config::new(layers)?;
+  let global: config::Global = config.sections(&["global"])?;
+  ignores.extend(global.ignore);
   Ok(Workspace {
-    config: config::Config::new(layers)?,
+    config,
     root,
     project: has_project,
     user_config,
@@ -126,4 +130,54 @@ fn patterns(text: &str) -> Vec<String> {
     .filter(|line| !line.is_empty() && !line.starts_with('#'))
     .map(str::to_owned)
     .collect()
+}
+
+#[cfg(test)]
+mod tests {
+  use std::fs;
+
+  use tempfile;
+
+  use super::*;
+
+  #[test]
+  fn loads_ignores_from_gitignore_and_formality_toml() {
+    let dir = tempfile::tempdir().expect("tempdir");
+    let root = dir.path();
+    fs::write(root.join(".gitignore"), "from_git\n# comment\n").expect("write");
+    fs::write(
+      root.join("formality.toml"),
+      "[global]\nignore = [\"from_config\", \"!from_git\"]\n",
+    )
+    .expect("write");
+
+    let workspace = load(root, None).expect("load");
+    assert_eq!(
+      workspace.ignores,
+      vec![
+        "from_git".to_owned(),
+        "from_config".to_owned(),
+        "!from_git".to_owned(),
+      ],
+      "gitignore patterns followed by formality.toml ignore patterns"
+    );
+  }
+
+  #[test]
+  fn loads_ignores_from_formality_toml_when_no_gitignore() {
+    let dir = tempfile::tempdir().expect("tempdir");
+    let root = dir.path();
+    fs::write(
+      root.join("formality.toml"),
+      "[global]\nignore = [\"only_config\"]\n",
+    )
+    .expect("write");
+
+    let workspace = load(root, None).expect("load");
+    assert_eq!(
+      workspace.ignores,
+      vec!["only_config".to_owned()],
+      "config ignore loaded without gitignore"
+    );
+  }
 }
