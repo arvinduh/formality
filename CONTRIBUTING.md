@@ -19,9 +19,9 @@ cargo clippy --workspace --all-targets -- -D warnings
 cargo test --workspace
 ```
 
-CI runs them on Linux for each PR, and the tests run on Windows and macOS
-before each release. CI does not check the repo's Markdown, TOML or YAML;
-`fml fmt` and `fml lint` do, locally.
+CI runs them on Linux for each PR, and the tests run on Windows and macOS before
+each release. CI does not check the repo's Markdown, TOML or YAML; `fml fmt` and
+`fml lint` do, locally.
 
 ## Code
 
@@ -33,6 +33,6 @@ before each release. CI does not check the repo's Markdown, TOML or YAML;
 
 ## Commits and PRs
 
-Commits and PR titles follow Conventional Commits with a scope:
-`type(scope): summary`, such as `fix(surface): ...` or `ci(release): ...`.
-PRs are squash-merged, so the PR title becomes the commit on `main`.
+Commits and PR titles follow Conventional Commits with a scope: `type(scope):
+summary`, such as `fix(surface): ...` or `ci(release): ...`. PRs are
+squash-merged, so the PR title becomes the commit on `main`.
